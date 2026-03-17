@@ -14,9 +14,17 @@ export interface FacebookTokenParams {
 }
 
 export interface FacebookPage {
-  id: string;
-  name: string;
   access_token: string;
+  category: string;
+  category_list: [
+    {
+      id: string;
+      name: string;
+    },
+  ];
+  name: string;
+  id: string;
+  tasks: string[];
 }
 
 export interface FacebookPostParams {
@@ -65,7 +73,7 @@ export const generateAuthUrl = (params: FacebookAuthUrlParams): string => {
     throw new Error("Facebook App ID not configured");
   }
 
-  return `https://www.facebook.com/v19.0/dialog/oauth?client_id=${process.env.FB_APP_ID}&redirect_uri=${params.redirect_uri}&scope=pages_show_list,pages_manage_posts,pages_read_engagement&response_type=code`;
+  return `https://www.facebook.com/v25.0/dialog/oauth?client_id=${process.env.FB_APP_ID}&redirect_uri=${params.redirect_uri}&scope=pages_show_list,pages_manage_posts,pages_read_engagement&response_type=code`;
 };
 
 export const exchangeCodeForToken = async (params: FacebookTokenParams) => {
@@ -92,28 +100,30 @@ export const exchangeCodeForToken = async (params: FacebookTokenParams) => {
   } catch (error: any) {
     console.error(
       "Facebook token exchange error:",
-      error.response?.data || error.message
+      error.response?.data || error.message,
     );
     throw new Error(error.response?.data?.error?.message || error.message);
   }
 };
-
+// -------------------------------------------------------------------------------
+// Get user pages using access token
 export const getUserPages = async (
-  accessToken: string
+  accessToken: string,
 ): Promise<FacebookPage[]> => {
   try {
     const url = `${FB_API}/me/accounts?access_token=${accessToken}`;
     const { data } = await axios.get(url);
-    return data.data || [];
+    return data.data;
   } catch (error: any) {
     console.error(
       "Facebook pages error:",
-      error.response?.data || error.message
+      error.response?.data || error.message,
     );
     throw new Error(error.response?.data?.error?.message || error.message);
   }
 };
 
+// publish post on a page
 export const createPost = async (params: FacebookPostParams) => {
   try {
     let url: string;
@@ -141,13 +151,15 @@ export const createPost = async (params: FacebookPostParams) => {
   } catch (error: any) {
     console.error(
       "Facebook post error:",
-      error.response?.data || error.message
+      error.response?.data || error.message,
     );
     throw new Error(error.response?.data?.error?.message || error.message);
   }
 };
 
-export const schedulePost = async (params: FacebookScheduleParams) => {
+export const schedulePost = async (
+  params: FacebookScheduleParams,
+): Promise<{ data: { id: string } }> => {
   try {
     const url = `${FB_API}/${params.pageId}/feed`;
     const postData = {
@@ -162,7 +174,21 @@ export const schedulePost = async (params: FacebookScheduleParams) => {
   } catch (error: any) {
     console.error(
       "Facebook schedule error:",
-      error.response?.data || error.message
+      error.response?.data || error.message,
+    );
+    throw new Error(error.response?.data?.error?.message || error.message);
+  }
+};
+
+export const getPagePosts = async (pageId: string, accessToken: string) => {
+  try {
+    const url = `${FB_API}/${pageId}/posts?access_token=${accessToken}`;
+    const { data } = await axios.get(url);
+    return data;
+  } catch (error: any) {
+    console.error(
+      "Facebook posts error:",
+      error.response?.data || error.message,
     );
     throw new Error(error.response?.data?.error?.message || error.message);
   }
@@ -176,7 +202,7 @@ export const getPostComments = async (postId: string, accessToken: string) => {
   } catch (error: any) {
     console.error(
       "Facebook comments error:",
-      error.response?.data || error.message
+      error.response?.data || error.message,
     );
     throw new Error(error.response?.data?.error?.message || error.message);
   }
@@ -195,7 +221,7 @@ export const replyToComment = async (params: FacebookCommentParams) => {
   } catch (error: any) {
     console.error(
       "Facebook reply error:",
-      error.response?.data || error.message
+      error.response?.data || error.message,
     );
     throw new Error(error.response?.data?.error?.message || error.message);
   }
@@ -207,7 +233,7 @@ export const saveFacebookToken = async (
   userId: number,
   tokenData: FacebookTokenData,
   userInfo: FacebookUserInfo,
-  deviceInfo?: DeviceInfo
+  deviceInfo?: DeviceInfo,
 ) => {
   try {
     const expiresAt = tokenData.expires_in
@@ -277,7 +303,7 @@ export const getUserFacebookAccounts = async (userId: number) => {
 
 export const saveFacebookPages = async (
   facebookAccountId: number,
-  pages: FacebookPage[]
+  pages: FacebookPage[],
 ) => {
   try {
     const savedPages = await Promise.all(
@@ -302,7 +328,7 @@ export const saveFacebookPages = async (
             pageAccessToken: page.access_token,
           },
         });
-      })
+      }),
     );
 
     // Log the pages connection activity
@@ -324,7 +350,7 @@ export const logFacebookActivity = async (
   activityData?: any,
   facebookPageId?: number,
   success: boolean = true,
-  errorMessage?: string
+  errorMessage?: string,
 ) => {
   try {
     await prisma.facebookActivity.create({
@@ -347,7 +373,7 @@ export const logFacebookActivity = async (
 
 export const updateUserAnalytics = async (
   facebookAccountId: number,
-  activityType: string
+  activityType: string,
 ) => {
   try {
     const account = await prisma.facebookAccount.findUnique({
@@ -428,11 +454,11 @@ export const getUserAnalytics = async (userId: number, days: number = 30) => {
         totalAccounts: facebookAccounts.length,
         totalPages: facebookAccounts.reduce(
           (sum, acc) => sum + acc.pages.length,
-          0
+          0,
         ),
         totalActivities: facebookAccounts.reduce(
           (sum, acc) => sum + acc.activities.length,
-          0
+          0,
         ),
         recentActivity: facebookAccounts
           .flatMap((acc) => acc.activities)
@@ -511,7 +537,7 @@ export const getAdminAnalytics = async (days: number = 30) => {
 
 export const switchDevice = async (
   facebookAccountId: number,
-  newDeviceInfo: DeviceInfo
+  newDeviceInfo: DeviceInfo,
 ) => {
   try {
     const account = await prisma.facebookAccount.update({

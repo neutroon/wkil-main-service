@@ -15,13 +15,14 @@ import {
   switchDevice,
   deactivateFacebookAccount,
   logFacebookActivity,
-} from "../services/facebook.service";
-import { authenticateToken } from "../middlewares/auth.middleware";
+  getPagePosts,
+} from "../../services/facebook.service";
+import { authenticateToken } from "../../middlewares/auth.middleware";
 import {
   validateFacebookPost,
   validateFacebookSchedule,
-} from "../middlewares/validation.middleware";
-import { facebookLimiter } from "../middlewares/rateLimit.middleware";
+} from "../../middlewares/validation.middleware";
+import { facebookLimiter } from "../../middlewares/rateLimit.middleware";
 
 const facebookRoutes = Router();
 
@@ -63,7 +64,7 @@ facebookRoutes.get(
 
       // Get user info from Facebook
       const userInfoResponse = await fetch(
-        `https://graph.facebook.com/me?access_token=${tokenData.access_token}&fields=id,name,email`
+        `https://graph.facebook.com/me?access_token=${tokenData.access_token}&fields=id,name,email`,
       );
       const userInfo = await userInfoResponse.json();
       console.log("User info:", userInfo);
@@ -81,7 +82,7 @@ facebookRoutes.get(
         userId,
         tokenData,
         userInfo,
-        deviceInfo
+        deviceInfo,
       );
 
       res.json({
@@ -95,7 +96,7 @@ facebookRoutes.get(
         error: error.message,
       });
     }
-  }
+  },
 );
 
 // Step 2: Get user pages and save to database
@@ -105,8 +106,6 @@ facebookRoutes.get(
   async (req: Request, res: Response) => {
     try {
       const { access_token, facebook_account_id } = req.query;
-
-      const userId = (req as any).user.id;
 
       if (!access_token) {
         return res.status(400).json({ error: "access_token is required" });
@@ -124,7 +123,7 @@ facebookRoutes.get(
       console.error("Facebook pages error:", error.message);
       res.status(500).json({ error: error.message });
     }
-  }
+  },
 );
 
 // Step 3: Create a post on a page (protected route with validation and rate limiting)
@@ -166,7 +165,7 @@ facebookRoutes.post(
       console.error("Facebook post error:", error.message);
       res.status(500).json({ error: error.message });
     }
-  }
+  },
 );
 
 // Step 4: Schedule a post (protected route)
@@ -195,7 +194,29 @@ facebookRoutes.post(
       console.error("Facebook schedule error:", error.message);
       res.status(500).json({ error: error.message });
     }
-  }
+  },
+);
+
+// Step 4.1: Get page posts (protected route)
+facebookRoutes.get(
+  "/page-posts/:pageId",
+  authenticateToken,
+  async (req: Request, res: Response) => {
+    try {
+      const { pageId } = req.params;
+      const { access_token } = req.query;
+
+      if (!access_token) {
+        return res.status(400).json({ error: "access_token is required" });
+      }
+
+      const result = await getPagePosts(pageId, access_token as string);
+      res.json(result);
+    } catch (error: any) {
+      console.error("Facebook page posts error:", error.message);
+      res.status(500).json({ error: error.message });
+    }
+  },
 );
 
 // Step 5: Get comments for a post (protected route)
@@ -217,7 +238,7 @@ facebookRoutes.get(
       console.error("Facebook comments error:", error.message);
       res.status(500).json({ error: error.message });
     }
-  }
+  },
 );
 
 // Step 6: Reply to a comment (protected route)
@@ -245,7 +266,7 @@ facebookRoutes.post(
       console.error("Facebook reply error:", error.message);
       res.status(500).json({ error: error.message });
     }
-  }
+  },
 );
 
 // New routes for account management and analytics
@@ -263,7 +284,7 @@ facebookRoutes.get(
       console.error("Get Facebook accounts error:", error.message);
       res.status(500).json({ error: error.message });
     }
-  }
+  },
 );
 
 // Get user analytics
@@ -276,14 +297,14 @@ facebookRoutes.get(
       const { days = 30 } = req.query;
       const analytics = await getUserAnalytics(
         userId,
-        parseInt(days as string)
+        parseInt(days as string),
       );
       res.json({ data: analytics });
     } catch (error: any) {
       console.error("Get user analytics error:", error.message);
       res.status(500).json({ error: error.message });
     }
-  }
+  },
 );
 
 // Switch device for an account
@@ -304,7 +325,7 @@ facebookRoutes.post(
       // Verify the account belongs to the user
       const account = await getUserFacebookAccounts(userId);
       const targetAccount = account.find(
-        (acc) => acc.id === parseInt(facebookAccountId)
+        (acc) => acc.id === parseInt(facebookAccountId),
       );
 
       if (!targetAccount) {
@@ -313,14 +334,14 @@ facebookRoutes.post(
 
       const updatedAccount = await switchDevice(
         parseInt(facebookAccountId),
-        deviceInfo
+        deviceInfo,
       );
       res.json({ data: updatedAccount });
     } catch (error: any) {
       console.error("Switch device error:", error.message);
       res.status(500).json({ error: error.message });
     }
-  }
+  },
 );
 
 // Deactivate Facebook account
@@ -346,7 +367,7 @@ facebookRoutes.delete(
       console.error("Deactivate account error:", error.message);
       res.status(500).json({ error: error.message });
     }
-  }
+  },
 );
 
 // Admin routes for analytics and user management
@@ -368,7 +389,7 @@ facebookRoutes.get(
       console.error("Get admin analytics error:", error.message);
       res.status(500).json({ error: error.message });
     }
-  }
+  },
 );
 
 export default facebookRoutes;

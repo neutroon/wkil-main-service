@@ -4,7 +4,7 @@ import cookieParser from "cookie-parser";
 import adminRoutes from "./routes/admin.routes";
 import managerRoutes from "./routes/manager.routes";
 import leadRoutes from "./routes/lead.routes";
-import facebookRoutes from "./routes/facebook.routes";
+import facebookRoutes from "./routes/meta/facebook.routes";
 import userRoutes from "./routes/user.routes";
 import contentRoutes from "./routes/content.routes";
 import {
@@ -17,6 +17,7 @@ import { generalLimiter } from "./middlewares/rateLimit.middleware";
 import authRoutes from "./routes/auth.routes";
 import dashboardRoutes from "./routes/dashboard.routes";
 import os from "os";
+import scrapeRoutes from "./routes/scraping/scrape";
 
 const app = express();
 
@@ -43,6 +44,7 @@ app.use("/v1/leads", leadRoutes);
 app.use("/v1/admin", adminRoutes);
 app.use("/v1/manager", managerRoutes);
 app.use("/v1/dashboard", dashboardRoutes);
+app.use("/v1/scrape", scrapeRoutes);
 
 // Health check endpoint
 app.get("/v1/health", (req, res) => {

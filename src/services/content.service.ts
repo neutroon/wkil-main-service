@@ -21,7 +21,7 @@ export interface GeneratedContent {
 }
 
 export const generatePostContent = async (
-  request: ContentGenerationRequest
+  request: ContentGenerationRequest,
 ): Promise<GeneratedContent> => {
   const {
     topic,
@@ -39,7 +39,7 @@ export const generatePostContent = async (
   console.log(
     `[ContentService] Post generation started: "${topic}" | Tone: ${tone} | Image: ${
       generateImage ? "Yes" : "No"
-    }`
+    }`,
   );
 
   // Validate tone and length
@@ -58,7 +58,7 @@ export const generatePostContent = async (
 
   if (!validLengths.includes(length)) {
     throw new Error(
-      `Invalid length. Must be one of: ${validLengths.join(", ")}`
+      `Invalid length. Must be one of: ${validLengths.join(", ")}`,
     );
   }
 
@@ -67,7 +67,7 @@ export const generatePostContent = async (
 
   // Generate content using Gemini with enhanced error handling
   const result = await geminiModel.generateContent(prompt);
-  const response = await result.response;
+  const response = result.response;
 
   if (!response) {
     throw new Error("No response received from Gemini");
@@ -86,7 +86,7 @@ export const generatePostContent = async (
   if (generateImage && parsedResponse.suggestedImage) {
     try {
       const imageBuffer = await generateImageWithImagen(
-        parsedResponse.suggestedImage
+        parsedResponse.suggestedImage,
       );
       const { url, publicId } = await uploadBufferToCloudinary(imageBuffer);
 
@@ -100,7 +100,7 @@ export const generatePostContent = async (
     } catch (imageError: any) {
       console.error(
         "[ContentService] Image generation error:",
-        imageError.message
+        imageError.message,
       );
       // Return text content even if image generation fails
       console.log(`[ContentService] Post generated with image error`);
@@ -122,7 +122,7 @@ function buildPostPrompt(
   tone: string,
   length: string,
   keywords: string[],
-  context: string
+  context: string,
 ): string {
   const lengthGuidelines = {
     short: "Keep it under 100 characters, be concise and punchy",
@@ -200,8 +200,8 @@ async function generateImageWithImagen(prompt: string): Promise<Buffer> {
     console.log(
       `[ContentService] Generating image for prompt: ${prompt.substring(
         0,
-        50
-      )}...`
+        50,
+      )}...`,
     );
 
     const result = await imageModel.generateContent(prompt);
@@ -228,7 +228,7 @@ async function generateImageWithImagen(prompt: string): Promise<Buffer> {
     }
 
     console.log(
-      `[ContentService] Image generated successfully (${imageBuffer.length} bytes)`
+      `[ContentService] Image generated successfully (${imageBuffer.length} bytes)`,
     );
     return imageBuffer;
   } catch (error: any) {
@@ -239,7 +239,7 @@ async function generateImageWithImagen(prompt: string): Promise<Buffer> {
 
 // Helper function to upload buffer to Cloudinary
 async function uploadBufferToCloudinary(
-  buffer: Buffer
+  buffer: Buffer,
 ): Promise<{ url: string; publicId: string }> {
   return new Promise((resolve, reject) => {
     const uploadStream = cloudinary.uploader.upload_stream(
@@ -253,7 +253,7 @@ async function uploadBufferToCloudinary(
         } else {
           reject(new Error("No result from Cloudinary upload"));
         }
-      }
+      },
     );
     uploadStream.end(buffer);
   });

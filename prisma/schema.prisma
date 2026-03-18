@@ -14,16 +14,6 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model Admin {
-  id        Int      @id @default(autoincrement())
-  name      String
-  email     String   @unique
-  password  String
-  role      String   @default("admin") // "admin" or "user"
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
 model User {
   id                  Int       @id @default(autoincrement())
   name                String
@@ -45,6 +35,9 @@ model User {
   // Existing relations
   facebookAccounts FacebookAccount[]
   analytics        UserAnalytics[]
+
+  // Business profile creation
+  isBusinessProfileCreated Boolean @default(false)
 }
 
 model UserManagement {

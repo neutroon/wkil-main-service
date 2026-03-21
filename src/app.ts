@@ -18,6 +18,7 @@ import authRoutes from "./routes/auth.routes";
 import dashboardRoutes from "./routes/dashboard.routes";
 import os from "os";
 import scrapeRoutes from "./routes/scraping/scrape";
+import businessProfileRouts from "./routes/buisnessProfile.routes";
 
 const app = express();
 
@@ -45,6 +46,7 @@ app.use("/v1/admin", adminRoutes);
 app.use("/v1/manager", managerRoutes);
 app.use("/v1/dashboard", dashboardRoutes);
 app.use("/v1/scrape", scrapeRoutes);
+app.use("/v1/business-profile", businessProfileRouts);
 
 // Health check endpoint
 app.get("/v1/health", (req, res) => {

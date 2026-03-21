@@ -34,19 +34,27 @@ messengerRoutes.post("/webhook", async (req: Request, res: Response) => {
   res.status(200).send("EVENT_RECEIVED");
 
   try {
+    const rawBody = req.body;
+
     // Verify the request is from Meta
     const signature = req.headers["x-hub-signature-256"] as string;
-    if (!verifySignature(req.body, signature)) {
+    if (!verifySignature(rawBody, signature)) {
       console.error("[Messenger] Invalid signature");
       return;
     }
 
-    const body = req.body;
+    const body = Buffer.isBuffer(rawBody)
+      ? JSON.parse(rawBody.toString("utf8"))
+      : rawBody;
 
-    if (body.object !== "page") return;
+    console.log("[Messenger] Webhook event received");
+
+    if (body?.object !== "page" || !Array.isArray(body?.entry)) return;
 
     for (const entry of body.entry) {
       const pageId = entry.id;
+
+      if (!Array.isArray(entry?.messaging)) continue;
 
       for (const event of entry.messaging) {
         // Ignore delivery/read receipts and echoes

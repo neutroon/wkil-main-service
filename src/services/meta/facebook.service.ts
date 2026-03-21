@@ -308,7 +308,7 @@ export const saveFacebookPages = async (
   try {
     const savedPages = await Promise.all(
       pages.map(async (page) => {
-        return await prisma.facebookPage.upsert({
+        const saved = await prisma.facebookPage.upsert({
           where: {
             facebookAccountId_pageId: {
               facebookAccountId,
@@ -328,6 +328,9 @@ export const saveFacebookPages = async (
             pageAccessToken: page.access_token,
           },
         });
+        await subscribePageToWebhook(page.access_token, page.id);
+
+        return saved;
       }),
     );
 
@@ -343,6 +346,20 @@ export const saveFacebookPages = async (
     throw new Error("Failed to save Facebook pages");
   }
 };
+async function subscribePageToWebhook(pageAccessToken: string, pageId: string) {
+  const response = await fetch(
+    `https://graph.facebook.com/v25.0/${pageId}/subscribed_apps?access_token=${pageAccessToken}&subscribed_fields=messages,messaging_postbacks`,
+    { method: "POST" },
+  );
+
+  const data = await response.json();
+
+  if (!data.success) {
+    console.error(`[Messenger] Failed to subscribe page ${pageId}:`, data);
+  } else {
+    console.log(`[Messenger] Page ${pageId} subscribed to webhook ✅`);
+  }
+}
 
 export const logFacebookActivity = async (
   facebookAccountId: number,

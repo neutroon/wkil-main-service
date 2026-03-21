@@ -1,4 +1,4 @@
-import geminiModel from "../config/gemini";
+import generateContent from "../config/gemini";
 import { imageModel } from "../config/vertexai";
 import cloudinary from "../config/cloudinary";
 
@@ -66,16 +66,13 @@ export const generatePostContent = async (
   const prompt = buildPostPrompt(topic, tone, length, keywords, context);
 
   // Generate content using Gemini with enhanced error handling
-  const result = await geminiModel.generateContent(prompt);
-  const response = result.response;
+  const generatedText = await generateContent(prompt);
 
-  if (!response) {
+  if (!generatedText) {
     throw new Error("No response received from Gemini");
   }
 
-  const generatedText = response.text();
-
-  if (!generatedText || generatedText.trim().length === 0) {
+  if (generatedText.trim().length === 0) {
     throw new Error("Empty response from Gemini");
   }
 

@@ -16,7 +16,7 @@ import {
   deactivateFacebookAccount,
   logFacebookActivity,
   getPagePosts,
-} from "../../services/facebook.service";
+} from "../../services/meta/facebook.service";
 import { authenticateToken } from "../../middlewares/auth.middleware";
 import {
   validateFacebookPost,

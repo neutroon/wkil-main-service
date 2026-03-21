@@ -36,7 +36,7 @@ import {
   getAdminAnalytics,
   getUserFacebookAccounts,
   deactivateFacebookAccount,
-} from "../services/facebook.service";
+} from "../services/meta/facebook.service";
 
 const adminRoutes = Router();
 
@@ -55,7 +55,7 @@ adminRoutes.post(
   "/addAdmin",
   authLimiter,
   validateAdminRegistration,
-  registerAdmin
+  registerAdmin,
 );
 
 // Manager creation (admin/super_admin only)
@@ -63,7 +63,7 @@ adminRoutes.post(
   "/create-manager",
   adminLimiter,
   validateAdminRegistration,
-  createManager
+  createManager,
 );
 
 // user creation (admin/super_admin/manager only)
@@ -71,7 +71,7 @@ adminRoutes.post(
   "/create-user",
   adminLimiter,
   validateUserRegistration,
-  registerUser
+  registerUser,
 );
 
 // User management with admin rate limiting
@@ -81,12 +81,12 @@ adminRoutes.put("/users/:id", adminLimiter, updateUser);
 adminRoutes.patch(
   "/users/:id/deactivate",
   adminLimiter,
-  deactivateUserController
+  deactivateUserController,
 );
 adminRoutes.patch(
   "/users/:id/reactivate",
   adminLimiter,
-  reactivateUserController
+  reactivateUserController,
 );
 adminRoutes.delete("/users/:id", adminLimiter, permanentlyDeleteUserController);
 
@@ -99,7 +99,7 @@ adminRoutes.get("/assignments", adminLimiter, getAllUserAssignmentsController);
 adminRoutes.delete(
   "/assignments/:id",
   adminLimiter,
-  removeUserAssignmentController
+  removeUserAssignmentController,
 );
 
 // Facebook account management and analytics
@@ -115,7 +115,7 @@ adminRoutes.get(
       console.error("Get admin Facebook analytics error:", error.message);
       res.status(500).json({ error: error.message });
     }
-  }
+  },
 );
 
 adminRoutes.get(
@@ -130,7 +130,7 @@ adminRoutes.get(
       console.error("Get user Facebook accounts error:", error.message);
       res.status(500).json({ error: error.message });
     }
-  }
+  },
 );
 
 adminRoutes.delete(
@@ -148,7 +148,7 @@ adminRoutes.delete(
       console.error("Deactivate Facebook account error:", error.message);
       res.status(500).json({ error: error.message });
     }
-  }
+  },
 );
 
 export default adminRoutes;

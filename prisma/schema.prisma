@@ -5,13 +5,15 @@
 // Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
   // output   = "../src/generated/prisma"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [vector]
 }
 
 model User {
@@ -37,7 +39,64 @@ model User {
   analytics        UserAnalytics[]
 
   // Business profile creation
-  isBusinessProfileCreated Boolean @default(false)
+  isBusinessProfileCreated Boolean           @default(false)
+  businessProfiles         BusinessProfile[]
+}
+
+model BusinessProfile {
+  id     Int  @id @default(autoincrement())
+  userId Int
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name                String
+  identity            String
+  targetAudience      String
+  voiceAndTone        String
+  productsServices    String[]
+  expectedUserIntents String[]
+  corePolicies        String
+  phoneNumbers        String[]
+  workingHours        String?
+  address             String?
+
+  scrapedWebsiteUrl String?
+  scrapedMarkdown   String?
+
+  ragIngested   Boolean   @default(false)
+  ragIngestedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  faqs   BusinessProfileFaq[]
+  chunks BusinessProfileChunk[]
+}
+
+model BusinessProfileFaq {
+  id         Int             @id @default(autoincrement())
+  businessId Int
+  business   BusinessProfile @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  question String
+  answer   String
+
+  @@index([businessId])
+}
+
+model BusinessProfileChunk {
+  id                Int                        @id @default(autoincrement())
+  businessProfileId Int
+  businessProfile   BusinessProfile            @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+  content           String
+  chunkType         String
+  // raw_content | identity | product | contact | faq | intents
+  embedding         Unsupported("vector(768)")
+  chunkIndex        Int
+  createdAt         DateTime                   @default(now())
+  updatedAt         DateTime                   @updatedAt
+
+  @@index([businessProfileId])
+  @@index([businessProfileId, chunkType]) // fast filtered deletes
 }
 
 model UserManagement {

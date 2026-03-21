@@ -73,7 +73,7 @@ export const generateAuthUrl = (params: FacebookAuthUrlParams): string => {
     throw new Error("Facebook App ID not configured");
   }
 
-  return `https://www.facebook.com/v25.0/dialog/oauth?client_id=${process.env.FB_APP_ID}&redirect_uri=${params.redirect_uri}&scope=pages_show_list,pages_manage_posts,pages_read_engagement&response_type=code`;
+  return `https://www.facebook.com/v25.0/dialog/oauth?client_id=${process.env.FB_APP_ID}&redirect_uri=${params.redirect_uri}&scope=pages_show_list,pages_manage_posts,pages_read_engagement,pages_messaging,pages_manage_metadata&response_type=code`;
 };
 
 export const exchangeCodeForToken = async (params: FacebookTokenParams) => {

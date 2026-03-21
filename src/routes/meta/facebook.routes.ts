@@ -23,6 +23,7 @@ import {
   validateFacebookSchedule,
 } from "../../middlewares/validation.middleware";
 import { facebookLimiter } from "../../middlewares/rateLimit.middleware";
+import prisma from "../../config/prisma";
 
 const facebookRoutes = Router();
 
@@ -106,6 +107,7 @@ facebookRoutes.get(
   async (req: Request, res: Response) => {
     try {
       const { access_token, facebook_account_id } = req.query;
+      const userId = (req as any).user.id;
 
       if (!access_token) {
         return res.status(400).json({ error: "access_token is required" });
@@ -115,7 +117,43 @@ facebookRoutes.get(
 
       // If facebook_account_id is provided, save pages to database
       if (facebook_account_id) {
-        await saveFacebookPages(parseInt(facebook_account_id as string), pages);
+        const rawAccountId = String(facebook_account_id).trim();
+        let internalFacebookAccountId: number | null = null;
+
+        // Support either internal account ID (int) or Facebook user ID (string digits).
+        const numericAccountId = Number(rawAccountId);
+        if (
+          Number.isSafeInteger(numericAccountId) &&
+          numericAccountId > 0 &&
+          numericAccountId <= 2147483647
+        ) {
+          const accountById = await prisma.facebookAccount.findFirst({
+            where: { id: numericAccountId, userId, isActive: true },
+            select: { id: true },
+          });
+          if (accountById) {
+            internalFacebookAccountId = accountById.id;
+          }
+        }
+
+        if (!internalFacebookAccountId) {
+          const accountByFacebookUserId = await prisma.facebookAccount.findFirst({
+            where: { facebookUserId: rawAccountId, userId, isActive: true },
+            select: { id: true },
+          });
+          if (accountByFacebookUserId) {
+            internalFacebookAccountId = accountByFacebookUserId.id;
+          }
+        }
+
+        if (!internalFacebookAccountId) {
+          return res.status(400).json({
+            error:
+              "Invalid facebook_account_id. Use your internal Facebook account id or facebook user id.",
+          });
+        }
+
+        await saveFacebookPages(internalFacebookAccountId, pages);
       }
 
       res.json({ data: pages });
@@ -392,4 +430,47 @@ facebookRoutes.get(
   },
 );
 
+// POST /v1/facebook/pages/:pageId/link-business
+facebookRoutes.post(
+  "/pages/:pageId/link-business",
+  authenticateToken,
+  async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).user.id;
+      const { pageId } = req.params;
+      const { businessProfileId } = req.body;
+
+      if (!businessProfileId) {
+        return res.status(400).json({ error: "businessProfileId is required" });
+      }
+
+      // Verify the page belongs to this user
+      const page = await prisma.facebookPage.findFirst({
+        where: { pageId, facebookAccount: { userId } },
+      });
+
+      if (!page) {
+        return res.status(404).json({ error: "Page not found" });
+      }
+
+      // Verify the business profile belongs to this user
+      const businessProfile = await prisma.businessProfile.findFirst({
+        where: { id: parseInt(businessProfileId), userId },
+      });
+
+      if (!businessProfile) {
+        return res.status(404).json({ error: "Business profile not found" });
+      }
+
+      const updated = await prisma.facebookPage.update({
+        where: { id: page.id },
+        data: { businessProfileId: parseInt(businessProfileId) },
+      });
+
+      res.json({ success: true, page: updated });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  },
+);
 export default facebookRoutes;

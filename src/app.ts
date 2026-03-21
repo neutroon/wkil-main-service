@@ -19,8 +19,12 @@ import dashboardRoutes from "./routes/dashboard.routes";
 import os from "os";
 import scrapeRoutes from "./routes/scraping/scrape";
 import businessProfileRouts from "./routes/buisnessProfile.routes";
+import messengerRoutes from "./routes/meta/messenger.routes";
 
 const app = express();
+
+app.use("/v1/messenger/webhook", express.raw({ type: "application/json" }));
+app.use("/v1/messenger", messengerRoutes);
 
 // Security middleware
 app.use(securityHeaders);

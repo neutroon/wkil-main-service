@@ -68,8 +68,9 @@ model BusinessProfile {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  faqs   BusinessProfileFaq[]
-  chunks BusinessProfileChunk[]
+  faqs          BusinessProfileFaq[]
+  chunks        BusinessProfileChunk[]
+  facebookPages FacebookPage[]
 }
 
 model BusinessProfileFaq {
@@ -158,20 +159,24 @@ model FacebookPage {
   id                Int             @id @default(autoincrement())
   facebookAccountId Int
   facebookAccount   FacebookAccount @relation(fields: [facebookAccountId], references: [id], onDelete: Cascade)
-  pageId            String
-  pageName          String
-  pageAccessToken   String
-  category          String?
-  isActive          Boolean         @default(true)
-  lastUsedAt        DateTime?
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
+
+  pageId          String
+  pageName        String
+  pageAccessToken String
+  category        String?
+  isActive        Boolean   @default(true)
+  lastUsedAt      DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   // Relations
-  activities FacebookActivity[]
+  activities        FacebookActivity[]
+  businessProfile   BusinessProfile?   @relation(fields: [businessProfileId], references: [id], onDelete: SetNull)
+  businessProfileId Int?
 
   @@unique([facebookAccountId, pageId])
   @@index([pageId])
+  @@index([businessProfileId])
 }
 
 model FacebookActivity {

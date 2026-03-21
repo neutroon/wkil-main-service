@@ -15,7 +15,7 @@ async function sendMessengerReply(
   pageAccessToken: string,
 ) {
   const response = await fetch(
-    `https://graph.facebook.com/v19.0/me/messages?access_token=${pageAccessToken}`,
+    `https://graph.facebook.com/v25.0/me/messages?access_token=${pageAccessToken}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },

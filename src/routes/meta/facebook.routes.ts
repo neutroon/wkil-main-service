@@ -137,10 +137,11 @@ facebookRoutes.get(
         }
 
         if (!internalFacebookAccountId) {
-          const accountByFacebookUserId = await prisma.facebookAccount.findFirst({
-            where: { facebookUserId: rawAccountId, userId, isActive: true },
-            select: { id: true },
-          });
+          const accountByFacebookUserId =
+            await prisma.facebookAccount.findFirst({
+              where: { facebookUserId: rawAccountId, userId, isActive: true },
+              select: { id: true },
+            });
           if (accountByFacebookUserId) {
             internalFacebookAccountId = accountByFacebookUserId.id;
           }

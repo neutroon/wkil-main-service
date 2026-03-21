@@ -1,0 +1,10 @@
+import { BusinessProfile } from "@prisma/client";
+
+export const CHUNK_TYPE_FIELDS: Record<string, string[]> = {
+  identity: ["name", "identity", "voiceAndTone", "targetAudience"],
+  product: ["productsServices"],
+  contact: ["phoneNumbers", "address", "workingHours"],
+  faq: ["faqs"],
+  intents: ["expectedUserIntents", "corePolicies"],
+  raw_content: ["scrapedMarkdown"],
+};

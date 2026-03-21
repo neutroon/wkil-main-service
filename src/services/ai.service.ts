@@ -1,4 +1,4 @@
-import geminiModel from "../config/gemini";
+import generateContent from "../config/gemini";
 
 async function discoverStrategicLinks(baseUrl: string, pageContent: string) {
   const prompt = `
@@ -31,15 +31,12 @@ async function discoverStrategicLinks(baseUrl: string, pageContent: string) {
   `;
 
   try {
-    const result = await geminiModel.generateContent({
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: {
-        responseMimeType: "application/json",
-      },
-    });
+    const result = await generateContent(prompt, "application/json");
 
-    const responseText = result.response.text();
-    const parsedData = JSON.parse(responseText);
+    if (!result) {
+      throw new Error("Failed to generate content with Gemini");
+    }
+    const parsedData = JSON.parse(result);
 
     return parsedData.urls || [];
   } catch (error) {
@@ -87,16 +84,12 @@ async function extractBusinessIdentity(markdown: string) {
   `;
 
   try {
-    const result = await geminiModel.generateContent({
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: {
-        responseMimeType: "application/json",
-      },
-    });
+    const result = await generateContent(prompt, "application/json");
 
-    const responseText = result.response.text();
-
-    const parsedData = JSON.parse(responseText);
+    if (!result) {
+      throw new Error("Failed to generate content with Gemini");
+    }
+    const parsedData = JSON.parse(result);
 
     return parsedData;
   } catch (error) {

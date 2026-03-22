@@ -1,13 +1,26 @@
 import prisma from "../../config/prisma";
 import generateContent from "../../config/gemini";
 import { retrieveRelevantChunks } from "../../rag/rag.service";
+import {
+  getOrCreateConversation,
+  getConversationHistory,
+  saveMessage,
+} from "./conversation.service";
 
 interface Message {
   role: "user" | "model";
   content: string;
 }
 
-// ─── Send a message back via Messenger Send API ──────────────────────────────
+/** Prisma stores `role` as String; narrow to prompt roles we persist. */
+function toPromptMessages(
+  rows: { role: string; content: string }[],
+): Message[] {
+  return rows.map((m) => ({
+    role: m.role === "model" ? "model" : "user",
+    content: m.content,
+  }));
+}
 
 async function sendMessengerReply(
   recipientId: string,
@@ -34,15 +47,13 @@ async function sendMessengerReply(
   return response.json();
 }
 
-// ─── Build system prompt from business profile ───────────────────────────────
-
 function buildSystemPrompt(
   context: { chunkType: string; content: string }[],
   businessName: string,
 ): string {
   const contextText = context.map((c) => c.content).join("\n\n");
 
-  return `You are a helpful AI assistant for ${businessName}. 
+  return `You are a helpful AI assistant for ${businessName}.
 You answer customer questions based only on the information provided below.
 If you don't know the answer from the provided context, politely say you don't have that information and suggest they contact the business directly.
 Keep responses concise and friendly.
@@ -51,9 +62,7 @@ BUSINESS CONTEXT:
 ${contextText}`;
 }
 
-// ─── Build conversation history for Gemini ───────────────────────────────────
-
-function buildConversationContents(
+function buildFullPrompt(
   history: Message[],
   systemPrompt: string,
   newMessage: string,
@@ -71,13 +80,10 @@ Customer: ${newMessage}
 Assistant:`;
 }
 
-// ─── Core chat function ───────────────────────────────────────────────────────
-
 export async function handleMessengerMessage(
   pageId: string,
   senderId: string,
   messageText: string,
-  history: Message[] = [],
 ) {
   // 1. Find the FacebookPage + linked BusinessProfile
   const page = await prisma.facebookPage.findFirst({
@@ -85,41 +91,44 @@ export async function handleMessengerMessage(
     include: { businessProfile: true },
   });
 
-  if (!page) {
-    throw new Error(`No active page found for pageId: ${pageId}`);
-  }
-
+  if (!page) throw new Error(`No active page found for pageId: ${pageId}`);
   if (!page.businessProfileId || !page.businessProfile) {
     throw new Error(`Page ${pageId} has no linked business profile`);
   }
 
-  // 2. Retrieve relevant chunks via RAG
+  // 2. Get or create conversation + load history
+  const conversation = await getOrCreateConversation(
+    pageId,
+    senderId,
+    page.businessProfileId,
+  );
+  const history = await getConversationHistory(conversation.id);
+
+  // 3. Save user message
+  await saveMessage(conversation.id, "user", messageText);
+
+  // 4. Retrieve relevant chunks via RAG
   const relevantChunks = await retrieveRelevantChunks(
     page.businessProfileId,
     messageText,
     5,
   );
 
-  // 3. Build prompt
+  // 5. Build prompt with history + context
   const systemPrompt = buildSystemPrompt(
     relevantChunks,
     page.businessProfile.name,
   );
+  const fullPrompt = buildFullPrompt(history, systemPrompt, messageText);
 
-  const fullPrompt = buildConversationContents(
-    history,
-    systemPrompt,
-    messageText,
-  );
-
-  // 4. Generate reply
+  // 6. Generate reply
   const reply = await generateContent(fullPrompt);
+  if (!reply) throw new Error("No reply generated");
 
-  if (!reply) {
-    throw new Error("No reply generated");
-  }
+  // 7. Save assistant reply
+  await saveMessage(conversation.id, "model", reply);
 
-  // 5. Send reply via Messenger
+  // 8. Send reply via Messenger
   await sendMessengerReply(senderId, reply, page.pageAccessToken);
 
   console.log(

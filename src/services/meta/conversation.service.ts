@@ -1,21 +1,39 @@
 import prisma from "../../config/prisma";
 
 const HISTORY_LIMIT = 10;
+const INACTIVITY_HOURS = 24;
 
-// Get or create a conversation for this sender+page combo
 export async function getOrCreateConversation(
   pageId: string,
   senderId: string,
   businessProfileId: number,
 ) {
-  return prisma.conversation.upsert({
-    where: { pageId_senderId: { pageId, senderId } },
-    update: { updatedAt: new Date() },
-    create: { pageId, senderId, businessProfileId },
+  const cutoff = new Date(Date.now() - INACTIVITY_HOURS * 60 * 60 * 1000);
+
+  // Look for an active conversation within the last 24 hours
+  const existing = await prisma.conversation.findFirst({
+    where: {
+      pageId,
+      senderId,
+      updatedAt: { gte: cutoff }, // ← only if active within 24h
+    },
+  });
+
+  if (existing) {
+    // Update the timestamp to keep it alive
+    return prisma.conversation.update({
+      where: { id: existing.id },
+      data: { updatedAt: new Date() },
+    });
+  }
+
+  // No active conversation — start a fresh one
+  // (old one stays in DB for history/analytics)
+  return prisma.conversation.create({
+    data: { pageId, senderId, businessProfileId },
   });
 }
 
-// Get last N messages for a conversation
 export async function getConversationHistory(conversationId: number) {
   const messages = await prisma.conversationMessage.findMany({
     where: { conversationId },
@@ -23,11 +41,9 @@ export async function getConversationHistory(conversationId: number) {
     take: HISTORY_LIMIT,
   });
 
-  // Reverse to get chronological order
   return messages.reverse();
 }
 
-// Save a message to the conversation
 export async function saveMessage(
   conversationId: number,
   role: "user" | "model",

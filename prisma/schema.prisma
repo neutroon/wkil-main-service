@@ -100,6 +100,32 @@ model BusinessProfileChunk {
   @@index([businessProfileId, chunkType]) // fast filtered deletes
 }
 
+model Conversation {
+  id                Int      @id @default(autoincrement())
+  pageId            String
+  senderId          String // Facebook sender PSID
+  businessProfileId Int
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  messages ConversationMessage[]
+
+  @@index([pageId, senderId]) // one conversation per user per page
+  @@index([pageId, senderId, updatedAt])
+}
+
+model ConversationMessage {
+  id             Int          @id @default(autoincrement())
+  conversationId Int
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String // "user" | "model"
+  content        String
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId])
+  @@index([conversationId, createdAt])
+}
+
 model UserManagement {
   id         Int      @id @default(autoincrement())
   managerId  Int // The manager/admin

@@ -119,7 +119,11 @@ export async function handleMessengerMessage(
     relevantChunks,
     page.businessProfile.name,
   );
-  const fullPrompt = buildFullPrompt(history, systemPrompt, messageText);
+  const fullPrompt = buildFullPrompt(
+    toPromptMessages(history),
+    systemPrompt,
+    messageText,
+  );
 
   // 6. Generate reply
   const reply = await generateContent(fullPrompt);

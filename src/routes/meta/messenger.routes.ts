@@ -1,100 +1,139 @@
 import { Router, Request, Response } from "express";
-import { createHmac } from "crypto";
-import { handleMessengerMessage } from "../../services/meta/messenger.service";
+import { Prisma } from "@prisma/client";
+import prisma from "../../config/prisma";
+import { enqueueMessengerJob } from "../../queues/messenger.queue";
+import { logger } from "../../utils/logger";
+import { verifyMetaWebhookSignature } from "../../utils/metaWebhook";
 
 const messengerRoutes = Router();
 
-// ─── Webhook Verification (Meta calls this once when you set up the webhook) ──
+const isDev = process.env.NODE_ENV !== "production";
+
+function isProcessedMessengerTableMissing(error: unknown): boolean {
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    if (error.code === "P2021") return true;
+  }
+  const msg = error instanceof Error ? error.message : String(error);
+  return (
+    msg.includes("ProcessedMessengerMessage") &&
+    msg.includes("does not exist")
+  );
+}
 
 messengerRoutes.get("/webhook", (req: Request, res: Response) => {
-  console.log("[Messenger] Verification request received");
-  console.log("Query params:", req.query);
-  console.log("Expected token:", process.env.MESSENGER_VERIFY_TOKEN);
-
   const VERIFY_TOKEN = process.env.MESSENGER_VERIFY_TOKEN;
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
 
-  console.log(`mode: ${mode}, token: ${token}, challenge: ${challenge}`);
+  if (isDev) {
+    logger.debug("messenger.webhook.verify_request", {
+      mode,
+      challengePresent: Boolean(challenge),
+    });
+  }
 
   if (mode === "subscribe" && token === VERIFY_TOKEN) {
-    console.log("[Messenger] Webhook verified ✅");
+    logger.info("messenger.webhook.verified");
     return res.status(200).send(challenge);
   }
 
-  console.log("[Messenger] Verification failed ❌");
+  logger.warn("messenger.webhook.verify_failed");
   return res.status(403).json({ error: "Verification failed" });
 });
 
-// ─── Incoming Messages ────────────────────────────────────────────────────────
-
 messengerRoutes.post("/webhook", async (req: Request, res: Response) => {
-  // Always respond 200 immediately — Meta will retry if you don't
   res.status(200).send("EVENT_RECEIVED");
 
   try {
-    const rawBody = req.body;
+    const rawBody = req.body as Buffer | unknown;
+    const signature = req.headers["x-hub-signature-256"] as string | undefined;
 
-    // Verify the request is from Meta
-    const signature = req.headers["x-hub-signature-256"] as string;
-    if (!verifySignature(rawBody, signature)) {
-      console.error("[Messenger] Invalid signature");
+    if (
+      !verifyMetaWebhookSignature(
+        rawBody as Buffer,
+        signature,
+        process.env.FB_APP_SECRET,
+      )
+    ) {
+      logger.error("messenger.webhook.invalid_signature");
       return;
     }
 
-    const body = Buffer.isBuffer(rawBody)
-      ? JSON.parse(rawBody.toString("utf8"))
-      : rawBody;
+    let body: unknown;
+    try {
+      const str = Buffer.isBuffer(rawBody)
+        ? rawBody.toString("utf8")
+        : JSON.stringify(rawBody);
+      body = JSON.parse(str) as unknown;
+    } catch {
+      logger.error("messenger.webhook.invalid_json");
+      return;
+    }
 
-    console.log("[Messenger] Webhook event received");
+    const payload = body as {
+      object?: string;
+      entry?: Array<{
+        id?: string;
+        messaging?: Array<{
+          sender?: { id?: string };
+          message?: { text?: string; is_echo?: boolean; mid?: string };
+        }>;
+      }>;
+    };
 
-    if (body?.object !== "page" || !Array.isArray(body?.entry)) return;
+    logger.info("messenger.webhook.event_received");
 
-    for (const entry of body.entry) {
+    if (payload.object !== "page" || !Array.isArray(payload.entry)) return;
+
+    for (const entry of payload.entry) {
       const pageId = entry.id;
-
-      if (!Array.isArray(entry?.messaging)) continue;
+      if (!pageId || !Array.isArray(entry.messaging)) continue;
 
       for (const event of entry.messaging) {
-        // Ignore delivery/read receipts and echoes
         if (!event.message || event.message.is_echo) continue;
 
-        const senderId = event.sender.id;
+        const senderId = event.sender?.id;
         const messageText = event.message.text;
+        const messageMid = event.message.mid;
 
-        if (!messageText) continue; // ignore attachments for now
+        if (!senderId || !messageText) continue;
 
-        console.log(
-          `[Messenger] Message from ${senderId} on page ${pageId}: "${messageText}"`,
-        );
+        if (messageMid) {
+          try {
+            const inserted = await prisma.processedMessengerMessage.createMany({
+              data: [{ messageMid }],
+              skipDuplicates: true,
+            });
+            if (inserted.count === 0) {
+              logger.debug("messenger.webhook.duplicate_mid_skipped", {
+                messageMid,
+              });
+              continue;
+            }
+          } catch (e: unknown) {
+            if (isProcessedMessengerTableMissing(e)) {
+              logger.warn(
+                "messenger.webhook.idempotency_table_missing_run_prisma_migrate",
+              );
+            } else {
+              throw e;
+            }
+          }
+        }
 
-        // History comes from client for stateful conversations
-        // For Messenger, history is managed on the frontend/session layer
-        await handleMessengerMessage(pageId, senderId, messageText);
+        logger.info("messenger.webhook.message_enqueued", {
+          pageId,
+          senderId,
+        });
+
+        enqueueMessengerJob({ pageId, senderId, messageText });
       }
     }
-  } catch (error) {
-    console.error("[Messenger] Webhook error:", error);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.error("messenger.webhook.handler_error", { error: message });
   }
 });
-
-// ─── Signature Verification ───────────────────────────────────────────────────
-
-function verifySignature(rawBody: any, signature: string): boolean {
-  if (!signature) return false;
-
-  const APP_SECRET = process.env.FB_APP_SECRET;
-  if (!APP_SECRET) return false;
-
-  const body = Buffer.isBuffer(rawBody)
-    ? rawBody
-    : Buffer.from(JSON.stringify(rawBody));
-
-  const expected =
-    "sha256=" + createHmac("sha256", APP_SECRET).update(body).digest("hex");
-
-  return expected === signature;
-}
 
 export default messengerRoutes;

@@ -1,8 +1,15 @@
-import { GoogleGenAI } from "@google/genai";
+import {
+  GoogleGenAI,
+  HarmBlockThreshold,
+  HarmCategory,
+} from "@google/genai";
+import { logger } from "../utils/logger";
 
-// Debug: Log environment variables
-console.log("Gemini Config:");
-console.log("GEMINI_API_KEY:", process.env.GEMINI_API_KEY ? "Set" : "Not set");
+if (process.env.NODE_ENV !== "production") {
+  logger.debug("gemini.config", {
+    geminiApiKeySet: Boolean(process.env.GEMINI_API_KEY),
+  });
+}
 
 if (!process.env.GEMINI_API_KEY) {
   throw new Error("GEMINI_API_KEY environment variable is required");
@@ -20,6 +27,60 @@ async function generateContent(prompt: string, responseMimeType?: string) {
       responseMimeType: responseMimeType || "text/plain",
     },
   });
+  return response.text;
+}
+
+const MESSENGER_SAFETY_SETTINGS = [
+  {
+    category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+    threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+  },
+  {
+    category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+    threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+  },
+  {
+    category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+    threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+  },
+  {
+    category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+    threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+  },
+];
+
+/**
+ * Structured generation for Messenger: system instruction + explicit turns (better than one concatenated blob).
+ */
+export async function generateMessengerAssistantReply(params: {
+  systemInstruction: string;
+  /** Prior turns only (excludes the latest customer message). */
+  historyTurns: { role: "user" | "model"; text: string }[];
+  customerMessage: string;
+}): Promise<string | undefined> {
+  const contents = [
+    ...params.historyTurns.map((t) => ({
+      role: t.role,
+      parts: [{ text: t.text }],
+    })),
+    {
+      role: "user" as const,
+      parts: [{ text: params.customerMessage }],
+    },
+  ];
+
+  const response = await genAI.models.generateContent({
+    model: "gemini-2.5-flash",
+    contents,
+    config: {
+      systemInstruction: params.systemInstruction,
+      temperature: 0.35,
+      maxOutputTokens: 512,
+      responseMimeType: "text/plain",
+      safetySettings: MESSENGER_SAFETY_SETTINGS,
+    },
+  });
+
   return response.text;
 }
 

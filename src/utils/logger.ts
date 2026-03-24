@@ -1,6 +1,6 @@
 /**
  * Minimal structured logger for production (JSON lines to stdout).
- * Replace with pino/winston later if you need transports.
+ * Replace with pino/winston later if we need transports.
  */
 
 type LogLevel = "debug" | "info" | "warn" | "error";

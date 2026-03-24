@@ -13,7 +13,10 @@ import {
   sanitizeRequest,
   requestSizeLimit,
 } from "./middlewares/security.middleware";
-import { generalLimiter } from "./middlewares/rateLimit.middleware";
+import {
+  generalLimiter,
+  messengerWebhookLimiter,
+} from "./middlewares/rateLimit.middleware";
 import authRoutes from "./routes/auth.routes";
 import dashboardRoutes from "./routes/dashboard.routes";
 import os from "os";
@@ -23,7 +26,23 @@ import messengerRoutes from "./routes/meta/messenger.routes";
 
 const app = express();
 
-app.use("/v1/messenger/webhook", express.raw({ type: "application/json" }));
+// Behind ngrok / load balancers Meta sends X-Forwarded-For; required for express-rate-limit
+// IP keys and avoids ERR_ERL_UNEXPECTED_X_FORWARDED_FOR. Set TRUST_PROXY=0 to disable.
+if (process.env.TRUST_PROXY === "0" || process.env.TRUST_PROXY === "false") {
+  app.set("trust proxy", false);
+} else {
+  const n = Number(process.env.TRUST_PROXY);
+  app.set(
+    "trust proxy",
+    Number.isFinite(n) && n >= 0 ? n : 1,
+  );
+}
+
+app.use(
+  "/v1/messenger/webhook",
+  messengerWebhookLimiter,
+  express.raw({ type: "application/json" }),
+);
 app.use("/v1/messenger", messengerRoutes);
 
 // Security middleware

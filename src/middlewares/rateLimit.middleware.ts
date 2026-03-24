@@ -72,3 +72,15 @@ export const managerLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+/** Meta may burst webhook deliveries; allow a higher ceiling than general API. */
+export const messengerWebhookLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 600,
+  message: {
+    error: "Too many webhook requests",
+    code: "MESSENGER_WEBHOOK_RATE_LIMIT",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});

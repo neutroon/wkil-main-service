@@ -89,9 +89,15 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
     // trigger full ingestion
     await ingestBusinessProfile(businessProfile.id);
 
+    const formattedProfile = {
+      ...businessProfile,
+      isConnectedToMeta: false,
+      socialId: null,
+    };
+
     return res.status(201).json({
       message: "Business profile created successfully",
-      businessProfile,
+      businessProfile: formattedProfile,
     });
   } catch (error) {
     console.error("Error creating business profile:", error);
@@ -114,15 +120,29 @@ export const getBusinessProfiles = async (req: Request, res: Response) => {
       },
       include: {
         faqs: true,
+        facebookPages: {
+          select: {
+            pageId: true,
+          },
+        },
       },
       orderBy: {
         createdAt: "desc",
       },
     });
 
+    const formattedProfiles = businessProfiles.map((profile) => {
+      const { facebookPages, ...rest } = profile;
+      return {
+        ...rest,
+        isConnectedToMeta: facebookPages.length > 0,
+        socialId: facebookPages.length > 0 ? facebookPages[0].pageId : null,
+      };
+    });
+
     return res.status(200).json({
       message: "Business profiles fetched successfully",
-      businessProfiles,
+      businessProfiles: formattedProfiles,
     });
   } catch (error) {
     console.error("Error fetching business profile:", error);
@@ -193,6 +213,11 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
       },
       include: {
         faqs: true,
+        facebookPages: {
+          select: {
+            pageId: true,
+          },
+        },
       },
     });
 
@@ -202,9 +227,16 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
     ) as (keyof BusinessProfileBody)[];
     await partialReIngestBusinessProfile(profileId, updatedFields);
 
+    const { facebookPages, ...rest } = businessProfile;
+    const formattedProfile = {
+      ...rest,
+      isConnectedToMeta: facebookPages.length > 0,
+      socialId: facebookPages.length > 0 ? facebookPages[0].pageId : null,
+    };
+
     return res.status(200).json({
       message: "Business profile updated successfully",
-      businessProfile,
+      businessProfile: formattedProfile,
     });
   } catch (error) {
     console.error("Error updating business profile:", error);

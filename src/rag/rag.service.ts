@@ -1,7 +1,24 @@
 import { embedQuery, embedTexts } from "../config/gemini";
 import prisma from "../config/prisma";
+import { logger } from "../utils/logger";
 import { chunkBusinessProfile } from "./chunker";
 import { CHUNK_TYPE_FIELDS } from "./chunkTypeFields";
+import { applySimilarityThreshold } from "./similarityThreshold";
+
+const DEFAULT_RAG_MIN_SIMILARITY = 0.25;
+const MAX_CHUNK_CHARS = 2000;
+
+function ragMinSimilarity(): number {
+  const raw = process.env.RAG_MIN_SIMILARITY;
+  if (raw === undefined || raw === "") return DEFAULT_RAG_MIN_SIMILARITY;
+  const n = Number(raw);
+  return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : DEFAULT_RAG_MIN_SIMILARITY;
+}
+
+function truncateChunkContent(content: string, maxChars: number): string {
+  if (content.length <= maxChars) return content;
+  return content.slice(0, maxChars) + "…";
+}
 
 async function insertChunks(
   businessProfileId: number,
@@ -93,12 +110,17 @@ export async function retrieveRelevantChunks(
   businessProfileId: number,
   query: string,
   topK: number = 5,
-): Promise<{ chunkType: string; content: string }[]> {
+  options?: { minSimilarity?: number; fetchLimit?: number },
+): Promise<{ chunkType: string; content: string; similarity: number }[]> {
+  const minSimilarity = options?.minSimilarity ?? ragMinSimilarity();
+  const fetchLimit =
+    options?.fetchLimit ?? Math.min(50, Math.max(topK * 5, 15));
+
   // 1. Embed the user's query
   const queryEmbedding = await embedQuery(query);
   const vector = `[${queryEmbedding.join(",")}]`;
 
-  // 2. Cosine similarity search via pgvector
+  // 2. Cosine similarity search via pgvector (fetch extra rows, then threshold)
   const chunks = await prisma.$queryRaw<
     { chunkType: string; content: string; similarity: number }[]
   >`
@@ -107,12 +129,23 @@ export async function retrieveRelevantChunks(
     FROM public."BusinessProfileChunk"
     WHERE "businessProfileId" = ${businessProfileId}
     ORDER BY embedding <=> ${vector}::vector
-    LIMIT ${topK}
+    LIMIT ${fetchLimit}
   `;
 
-  console.log(
-    `[RAG] Retrieved ${chunks.length} chunks for query: "${query.slice(0, 50)}..."`,
+  const filtered = applySimilarityThreshold(chunks, minSimilarity, topK).map(
+    (c) => ({
+      ...c,
+      content: truncateChunkContent(c.content, MAX_CHUNK_CHARS),
+    }),
   );
 
-  return chunks;
+  logger.debug("rag.retrieve", {
+    businessProfileId,
+    rawCount: chunks.length,
+    keptCount: filtered.length,
+    minSimilarity,
+    queryPreview: query.slice(0, 80),
+  });
+
+  return filtered;
 }

@@ -1,8 +1,13 @@
 import axios from "axios";
-import { PrismaClient } from "@prisma/client";
+import prisma from "../../config/prisma";
+import { mapFacebookGraphError } from "../../utils/facebookGraphError";
+import { logger } from "../../utils/logger";
+import {
+  decryptFacebookSecret,
+  encryptFacebookSecret,
+} from "../../utils/tokenCrypto";
 
 const FB_API = process.env.FB_API_URL;
-const prisma = new PrismaClient();
 
 export interface FacebookAuthUrlParams {
   redirect_uri: string;
@@ -68,6 +73,29 @@ export interface DeviceInfo {
   device: string;
 }
 
+export { mapFacebookGraphError } from "../../utils/facebookGraphError";
+
+function decryptFacebookAccountForResponse<
+  T extends { accessToken: string; refreshToken: string | null },
+>(acc: T): T {
+  return {
+    ...acc,
+    accessToken: decryptFacebookSecret(acc.accessToken),
+    refreshToken: acc.refreshToken
+      ? decryptFacebookSecret(acc.refreshToken)
+      : null,
+  };
+}
+
+function decryptFacebookPageForResponse<
+  P extends { pageAccessToken: string },
+>(page: P): P {
+  return {
+    ...page,
+    pageAccessToken: decryptFacebookSecret(page.pageAccessToken),
+  };
+}
+
 export const generateAuthUrl = (params: FacebookAuthUrlParams): string => {
   if (!process.env.FB_APP_ID) {
     throw new Error("Facebook App ID not configured");
@@ -90,19 +118,19 @@ export const exchangeCodeForToken = async (params: FacebookTokenParams) => {
       code: params.code,
     };
 
-    console.log("Token URL:", tokenUrl);
-    console.log("Params:", requestParams);
+    logger.debug("facebook.oauth.token_exchange", {
+      tokenUrl,
+      clientId: process.env.FB_APP_ID,
+    });
 
     const { data } = await axios.post(tokenUrl, null, {
       params: requestParams,
     });
     return data;
-  } catch (error: any) {
-    console.error(
-      "Facebook token exchange error:",
-      error.response?.data || error.message,
-    );
-    throw new Error(error.response?.data?.error?.message || error.message);
+  } catch (error: unknown) {
+    const mapped = mapFacebookGraphError(error);
+    logger.error("facebook.oauth.token_exchange_failed", mapped);
+    throw new Error(mapped.message);
   }
 };
 // -------------------------------------------------------------------------------
@@ -114,12 +142,10 @@ export const getUserPages = async (
     const url = `${FB_API}/me/accounts?access_token=${accessToken}`;
     const { data } = await axios.get(url);
     return data.data;
-  } catch (error: any) {
-    console.error(
-      "Facebook pages error:",
-      error.response?.data || error.message,
-    );
-    throw new Error(error.response?.data?.error?.message || error.message);
+  } catch (error: unknown) {
+    const mapped = mapFacebookGraphError(error);
+    logger.error("facebook.pages.fetch_failed", mapped);
+    throw new Error(mapped.message);
   }
 };
 
@@ -148,12 +174,12 @@ export const createPost = async (params: FacebookPostParams) => {
 
     const { data } = await axios.post(url, postData);
     return data;
-  } catch (error: any) {
-    console.error(
-      "Facebook post error:",
-      error.response?.data || error.message,
-    );
-    throw new Error(error.response?.data?.error?.message || error.message);
+  } catch (error: unknown) {
+    const mapped = mapFacebookGraphError(error);
+    logger.error("facebook.post.create_failed", mapped);
+    const codePart =
+      mapped.code !== undefined ? ` (code: ${mapped.code})` : "";
+    throw new Error(`${mapped.message}${codePart}`);
   }
 };
 
@@ -171,12 +197,12 @@ export const schedulePost = async (
 
     const { data } = await axios.post(url, postData);
     return data;
-  } catch (error: any) {
-    console.error(
-      "Facebook schedule error:",
-      error.response?.data || error.message,
-    );
-    throw new Error(error.response?.data?.error?.message || error.message);
+  } catch (error: unknown) {
+    const mapped = mapFacebookGraphError(error);
+    logger.error("facebook.post.schedule_failed", mapped);
+    const codePart =
+      mapped.code !== undefined ? ` (code: ${mapped.code})` : "";
+    throw new Error(`${mapped.message}${codePart}`);
   }
 };
 
@@ -185,12 +211,10 @@ export const getPagePosts = async (pageId: string, accessToken: string) => {
     const url = `${FB_API}/${pageId}/posts?access_token=${accessToken}`;
     const { data } = await axios.get(url);
     return data;
-  } catch (error: any) {
-    console.error(
-      "Facebook posts error:",
-      error.response?.data || error.message,
-    );
-    throw new Error(error.response?.data?.error?.message || error.message);
+  } catch (error: unknown) {
+    const mapped = mapFacebookGraphError(error);
+    logger.error("facebook.posts.fetch_failed", mapped);
+    throw new Error(mapped.message);
   }
 };
 
@@ -199,12 +223,10 @@ export const getPostComments = async (postId: string, accessToken: string) => {
     const url = `${FB_API}/${postId}/comments?access_token=${accessToken}`;
     const { data } = await axios.get(url);
     return data;
-  } catch (error: any) {
-    console.error(
-      "Facebook comments error:",
-      error.response?.data || error.message,
-    );
-    throw new Error(error.response?.data?.error?.message || error.message);
+  } catch (error: unknown) {
+    const mapped = mapFacebookGraphError(error);
+    logger.error("facebook.comments.fetch_failed", mapped);
+    throw new Error(mapped.message);
   }
 };
 
@@ -218,12 +240,10 @@ export const replyToComment = async (params: FacebookCommentParams) => {
 
     const { data } = await axios.post(url, postData);
     return data;
-  } catch (error: any) {
-    console.error(
-      "Facebook reply error:",
-      error.response?.data || error.message,
-    );
-    throw new Error(error.response?.data?.error?.message || error.message);
+  } catch (error: unknown) {
+    const mapped = mapFacebookGraphError(error);
+    logger.error("facebook.comment.reply_failed", mapped);
+    throw new Error(mapped.message);
   }
 };
 
@@ -236,29 +256,45 @@ export const saveFacebookToken = async (
   deviceInfo?: DeviceInfo,
 ) => {
   try {
+    const existing = await prisma.facebookAccount.findUnique({
+      where: { facebookUserId: userInfo.id },
+      select: { userId: true },
+    });
+    if (existing && existing.userId !== userId) {
+      throw new Error(
+        "This Facebook account is already linked to another user. Log in as that user or disconnect the account first.",
+      );
+    }
+
     const expiresAt = tokenData.expires_in
       ? new Date(Date.now() + tokenData.expires_in * 1000)
+      : null;
+
+    const encAccess = encryptFacebookSecret(tokenData.access_token);
+    const encRefresh = tokenData.refresh_token
+      ? encryptFacebookSecret(tokenData.refresh_token)
       : null;
 
     const facebookAccount = await prisma.facebookAccount.upsert({
       where: { facebookUserId: userInfo.id },
       update: {
-        accessToken: tokenData.access_token,
+        accessToken: encAccess,
         tokenType: tokenData.token_type || "bearer",
         expiresAt,
-        refreshToken: tokenData.refresh_token,
+        refreshToken: encRefresh,
         scope: tokenData.scope,
         isActive: true,
         lastUsedAt: new Date(),
         deviceInfo: deviceInfo ? JSON.stringify(deviceInfo) : null,
+        userId,
       },
       create: {
         userId,
         facebookUserId: userInfo.id,
-        accessToken: tokenData.access_token,
+        accessToken: encAccess,
         tokenType: tokenData.token_type || "bearer",
         expiresAt,
-        refreshToken: tokenData.refresh_token,
+        refreshToken: encRefresh,
         scope: tokenData.scope,
         deviceInfo: deviceInfo ? JSON.stringify(deviceInfo) : null,
       },
@@ -271,10 +307,11 @@ export const saveFacebookToken = async (
       deviceInfo,
     });
 
-    return facebookAccount;
-  } catch (error: any) {
-    console.error("Save Facebook token error:", error);
-    throw new Error("Failed to save Facebook token");
+    return decryptFacebookAccountForResponse(facebookAccount);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error("facebook.token.save_failed", { error: msg });
+    throw error instanceof Error ? error : new Error("Failed to save Facebook token");
   }
 };
 
@@ -294,9 +331,14 @@ export const getUserFacebookAccounts = async (userId: number) => {
       orderBy: { lastUsedAt: "desc" },
     });
 
-    return accounts;
-  } catch (error: any) {
-    console.error("Get user Facebook accounts error:", error);
+    return accounts.map((acc) => ({
+      ...decryptFacebookAccountForResponse(acc),
+      pages: acc.pages.map((p) => decryptFacebookPageForResponse(p)),
+    }));
+  } catch (error: unknown) {
+    logger.error("facebook.accounts.fetch_failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     throw new Error("Failed to get Facebook accounts");
   }
 };
@@ -317,7 +359,7 @@ export const saveFacebookPages = async (
           },
           update: {
             pageName: page.name,
-            pageAccessToken: page.access_token,
+            pageAccessToken: encryptFacebookSecret(page.access_token),
             isActive: true,
             lastUsedAt: new Date(),
           },
@@ -325,12 +367,12 @@ export const saveFacebookPages = async (
             facebookAccountId,
             pageId: page.id,
             pageName: page.name,
-            pageAccessToken: page.access_token,
+            pageAccessToken: encryptFacebookSecret(page.access_token),
           },
         });
         await subscribePageToWebhook(page.access_token, page.id);
 
-        return saved;
+        return decryptFacebookPageForResponse(saved);
       }),
     );
 
@@ -341,8 +383,10 @@ export const saveFacebookPages = async (
     });
 
     return savedPages;
-  } catch (error: any) {
-    console.error("Save Facebook pages error:", error);
+  } catch (error: unknown) {
+    logger.error("facebook.pages.save_failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     throw new Error("Failed to save Facebook pages");
   }
 };
@@ -355,9 +399,9 @@ async function subscribePageToWebhook(pageAccessToken: string, pageId: string) {
   const data = await response.json();
 
   if (!data.success) {
-    console.error(`[Messenger] Failed to subscribe page ${pageId}:`, data);
+    logger.warn("facebook.messenger.subscribe_failed", { pageId, data });
   } else {
-    console.log(`[Messenger] Page ${pageId} subscribed to webhook ✅`);
+    logger.info("facebook.messenger.page_subscribed", { pageId });
   }
 }
 
@@ -383,8 +427,10 @@ export const logFacebookActivity = async (
 
     // Update analytics
     await updateUserAnalytics(facebookAccountId, activityType);
-  } catch (error: any) {
-    console.error("Log Facebook activity error:", error);
+  } catch (error: unknown) {
+    logger.error("facebook.activity.log_failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 };
 
@@ -435,8 +481,10 @@ export const updateUserAnalytics = async (
       update: analyticsData,
       create: analyticsData,
     });
-  } catch (error: any) {
-    console.error("Update user analytics error:", error);
+  } catch (error: unknown) {
+    logger.error("facebook.analytics.update_failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 };
 
@@ -464,26 +512,34 @@ export const getUserAnalytics = async (userId: number, days: number = 30) => {
       },
     });
 
+    const accountsForApi = facebookAccounts.map((acc) => ({
+      ...decryptFacebookAccountForResponse(acc),
+      pages: acc.pages.map((p) => decryptFacebookPageForResponse(p)),
+      activities: acc.activities,
+    }));
+
     return {
       analytics,
-      facebookAccounts,
+      facebookAccounts: accountsForApi,
       summary: {
-        totalAccounts: facebookAccounts.length,
-        totalPages: facebookAccounts.reduce(
+        totalAccounts: accountsForApi.length,
+        totalPages: accountsForApi.reduce(
           (sum, acc) => sum + acc.pages.length,
           0,
         ),
-        totalActivities: facebookAccounts.reduce(
+        totalActivities: accountsForApi.reduce(
           (sum, acc) => sum + acc.activities.length,
           0,
         ),
-        recentActivity: facebookAccounts
+        recentActivity: accountsForApi
           .flatMap((acc) => acc.activities)
           .slice(0, 10),
       },
     };
-  } catch (error: any) {
-    console.error("Get user analytics error:", error);
+  } catch (error: unknown) {
+    logger.error("facebook.analytics.user_fetch_failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     throw new Error("Failed to get user analytics");
   }
 };
@@ -519,7 +575,13 @@ export const getAdminAnalytics = async (days: number = 30) => {
         where: { createdAt: { gte: startDate } },
         include: {
           facebookAccount: {
-            include: { user: { select: { name: true, email: true } } },
+            select: {
+              id: true,
+              userId: true,
+              facebookUserId: true,
+              isActive: true,
+              user: { select: { name: true, email: true } },
+            },
           },
           facebookPage: { select: { pageName: true } },
         },
@@ -546,8 +608,10 @@ export const getAdminAnalytics = async (days: number = 30) => {
       recentActivities,
       userAnalytics,
     };
-  } catch (error: any) {
-    console.error("Get admin analytics error:", error);
+  } catch (error: unknown) {
+    logger.error("facebook.analytics.admin_fetch_failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     throw new Error("Failed to get admin analytics");
   }
 };
@@ -569,9 +633,11 @@ export const switchDevice = async (
       newDeviceInfo,
     });
 
-    return account;
-  } catch (error: any) {
-    console.error("Switch device error:", error);
+    return decryptFacebookAccountForResponse(account);
+  } catch (error: unknown) {
+    logger.error("facebook.device.switch_failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     throw new Error("Failed to switch device");
   }
 };
@@ -592,8 +658,10 @@ export const deactivateFacebookAccount = async (facebookAccountId: number) => {
     });
 
     await logFacebookActivity(facebookAccountId, "account_deactivated");
-  } catch (error: any) {
-    console.error("Deactivate Facebook account error:", error);
+  } catch (error: unknown) {
+    logger.error("facebook.account.deactivate_failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     throw new Error("Failed to deactivate account");
   }
 };

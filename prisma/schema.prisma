@@ -126,6 +126,13 @@ model ConversationMessage {
   @@index([conversationId, createdAt])
 }
 
+/// Deduplicate Meta webhook retries using message.mid
+model ProcessedMessengerMessage {
+  id         Int      @id @default(autoincrement())
+  messageMid String   @unique
+  createdAt  DateTime @default(now())
+}
+
 model UserManagement {
   id         Int      @id @default(autoincrement())
   managerId  Int // The manager/admin

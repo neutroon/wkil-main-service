@@ -87,9 +87,9 @@ function decryptFacebookAccountForResponse<
   };
 }
 
-function decryptFacebookPageForResponse<
-  P extends { pageAccessToken: string },
->(page: P): P {
+function decryptFacebookPageForResponse<P extends { pageAccessToken: string }>(
+  page: P,
+): P {
   return {
     ...page,
     pageAccessToken: decryptFacebookSecret(page.pageAccessToken),
@@ -101,7 +101,16 @@ export const generateAuthUrl = (params: FacebookAuthUrlParams): string => {
     throw new Error("Facebook App ID not configured");
   }
 
-  return `https://www.facebook.com/v25.0/dialog/oauth?client_id=${process.env.FB_APP_ID}&redirect_uri=${params.redirect_uri}&scope=pages_show_list,pages_manage_posts,pages_read_engagement,pages_messaging,pages_manage_metadata&response_type=code`;
+  const scope = [
+    "pages_show_list",
+    "pages_manage_posts",
+    "pages_read_engagement",
+    "pages_messaging",
+    "pages_manage_metadata",
+    "pages_manage_engagement",
+  ];
+
+  return `https://www.facebook.com/v25.0/dialog/oauth?client_id=${process.env.FB_APP_ID}&redirect_uri=${params.redirect_uri}&scope=${scope.join(",")}&response_type=code`;
 };
 
 export const exchangeCodeForToken = async (params: FacebookTokenParams) => {
@@ -177,8 +186,7 @@ export const createPost = async (params: FacebookPostParams) => {
   } catch (error: unknown) {
     const mapped = mapFacebookGraphError(error);
     logger.error("facebook.post.create_failed", mapped);
-    const codePart =
-      mapped.code !== undefined ? ` (code: ${mapped.code})` : "";
+    const codePart = mapped.code !== undefined ? ` (code: ${mapped.code})` : "";
     throw new Error(`${mapped.message}${codePart}`);
   }
 };
@@ -200,8 +208,7 @@ export const schedulePost = async (
   } catch (error: unknown) {
     const mapped = mapFacebookGraphError(error);
     logger.error("facebook.post.schedule_failed", mapped);
-    const codePart =
-      mapped.code !== undefined ? ` (code: ${mapped.code})` : "";
+    const codePart = mapped.code !== undefined ? ` (code: ${mapped.code})` : "";
     throw new Error(`${mapped.message}${codePart}`);
   }
 };
@@ -220,7 +227,7 @@ export const getPagePosts = async (pageId: string, accessToken: string) => {
 
 export const getPostComments = async (postId: string, accessToken: string) => {
   try {
-    const url = `${FB_API}/${postId}/comments?access_token=${accessToken}`;
+    const url = `${FB_API}/${postId}/comments?access_token=${accessToken}&fields=id,message,from{id,name},created_time,like_count,comments{id,message,from{id,name},created_time,like_count}`;
     const { data } = await axios.get(url);
     return data;
   } catch (error: unknown) {
@@ -311,7 +318,9 @@ export const saveFacebookToken = async (
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     logger.error("facebook.token.save_failed", { error: msg });
-    throw error instanceof Error ? error : new Error("Failed to save Facebook token");
+    throw error instanceof Error
+      ? error
+      : new Error("Failed to save Facebook token");
   }
 };
 

@@ -131,18 +131,18 @@ export const getBusinessProfiles = async (req: Request, res: Response) => {
       },
     });
 
-    const formattedProfiles = businessProfiles.map((profile) => {
-      const { facebookPages, ...rest } = profile;
-      return {
-        ...rest,
-        isConnectedToMeta: facebookPages.length > 0,
-        socialId: facebookPages.length > 0 ? facebookPages[0].pageId : null,
-      };
-    });
+    // const formattedProfiles = businessProfiles.map((profile) => {
+    //   const { facebookPages, ...rest } = profile;
+    //   return {
+    //     ...rest,
+    //     isConnectedToMeta: facebookPages.length > 0,
+    //     socialId: facebookPages.length > 0 ? facebookPages[0].pageId : null,
+    //   };
+    // });
 
     return res.status(200).json({
       message: "Business profiles fetched successfully",
-      businessProfiles: formattedProfiles,
+      businessProfiles,
     });
   } catch (error) {
     console.error("Error fetching business profile:", error);

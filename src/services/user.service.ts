@@ -9,7 +9,7 @@ export const createUser = async (
   name: string,
   email: string,
   password: string,
-  role: string = "user"
+  role: string = "user",
 ) => {
   const hashed = await bcrypt.hash(password, 10);
 
@@ -78,7 +78,7 @@ export const loginUser = async (email: string, password: string) => {
 
 export const getUserById = async (
   id: number,
-  includeInactive: boolean = false
+  includeInactive: boolean = false,
 ) => {
   return prisma.user.findFirst({
     where: {
@@ -96,6 +96,9 @@ export const getUserById = async (
           _count: { select: { activities: true } },
         },
       },
+      businessProfiles: true,
+      _count: { select: { businessProfiles: true } },
+      isBusinessProfileCreated: true,
       analytics: true,
       role: true,
       isActive: true,
@@ -127,7 +130,7 @@ export const updateUserRole = async (
   id: number,
   role: string,
   name: string,
-  email: string
+  email: string,
 ) => {
   return prisma.user.update({
     where: { id },
@@ -204,7 +207,7 @@ export const permanentlyDeleteUser = async (id: number) => {
 export const assignUserToManager = async (
   managerId: number,
   userId: number,
-  assignedBy: number
+  assignedBy: number,
 ) => {
   // Verify manager has appropriate role
   const manager = await prisma.user.findFirst({
@@ -318,7 +321,7 @@ export const getManagerHierarchy = async (userId: number) => {
 
 export const canManageUser = async (
   managerId: number,
-  targetUserId: number
+  targetUserId: number,
 ): Promise<boolean> => {
   // Check if user is super admin or admin (can manage anyone)
   const manager = await prisma.user.findFirst({
@@ -351,7 +354,7 @@ export const canManageUser = async (
 
 export const removeUserAssignment = async (
   assignmentId: number,
-  removedBy: number
+  removedBy: number,
 ) => {
   return prisma.userManagement.update({
     where: { id: assignmentId },
@@ -377,16 +380,16 @@ export const getManagerDashboard = async (managerId: number) => {
   const activeUsers = managedUsers.filter((u) => u.user.isActive).length;
   const totalFacebookAccounts = managedUsers.reduce(
     (sum, u) => sum + u.user.facebookAccounts.length,
-    0
+    0,
   );
   const totalPages = managedUsers.reduce(
     (sum, u) =>
       sum +
       u.user.facebookAccounts.reduce(
         (accSum, acc) => accSum + acc.pages.length,
-        0
+        0,
       ),
-    0
+    0,
   );
 
   // Get recent activities for managed users
@@ -427,11 +430,11 @@ export const getManagerDashboard = async (managerId: number) => {
       facebookAccounts: u.user.facebookAccounts.length,
       totalPages: u.user.facebookAccounts.reduce(
         (sum, acc) => sum + acc.pages.length,
-        0
+        0,
       ),
       totalActivities: u.user.facebookAccounts.reduce(
         (sum, acc) => sum + acc._count.activities,
-        0
+        0,
       ),
       recentAnalytics: u.user.analytics.slice(0, 7), // Last 7 days
     })),

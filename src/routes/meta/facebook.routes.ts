@@ -282,11 +282,12 @@ facebookRoutes.get(
 
 // Step 6: Reply to a comment (protected route)
 facebookRoutes.post(
-  "/reply",
+  "/reply/:commentId",
   authenticateToken,
   async (req: Request, res: Response) => {
     try {
-      const { commentId, message, accessToken } = req.body;
+      const { commentId } = req.params;
+      const { message, accessToken } = req.body;
 
       if (!commentId || !message || !accessToken) {
         return res.status(400).json({

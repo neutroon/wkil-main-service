@@ -133,7 +133,7 @@ export const reactivateUserController = async (req: Request, res: Response) => {
 
 export const permanentlyDeleteUserController = async (
   req: Request,
-  res: Response
+  res: Response,
 ) => {
   try {
     const { id } = req.params;

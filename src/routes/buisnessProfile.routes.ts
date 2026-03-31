@@ -1,6 +1,7 @@
 import { Router } from "express";
 import {
   createBusinessProfile,
+  deleteBusinessProfile,
   getBusinessProfiles,
   retrieveBusinessProfile,
   updateBusinessProfile,
@@ -14,6 +15,8 @@ businessProfileRouts.use(authenticateToken);
 businessProfileRouts.post("/", createBusinessProfile);
 
 businessProfileRouts.put("/:id", updateBusinessProfile);
+
+businessProfileRouts.delete("/:id", deleteBusinessProfile);
 
 businessProfileRouts.get("/", getBusinessProfiles);
 

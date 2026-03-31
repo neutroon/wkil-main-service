@@ -244,6 +244,42 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
   }
 };
 
+export const deleteBusinessProfile = async (req: Request, res: Response) => {
+  try {
+    const userId: number = (req as any).user.id;
+
+    if (!userId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const profileId = parseInt(req.params.id);
+
+    if (isNaN(profileId)) {
+      return res.status(400).json({ message: "Invalid profile id" });
+    }
+
+    // Verify the profile exists AND belongs to this user
+    const existing = await prisma.businessProfile.findFirst({
+      where: { id: profileId, userId },
+    });
+
+    if (!existing) {
+      return res.status(404).json({ message: "Business profile not found" });
+    }
+
+    await prisma.businessProfile.delete({
+      where: { id: profileId },
+    });
+
+    return res.status(200).json({
+      message: "Business profile deleted successfully",
+    });
+  } catch (error) {
+    console.error("Error deleting business profile:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
 export const retrieveBusinessProfile = async (req: Request, res: Response) => {
   try {
     const { query } = req.body;

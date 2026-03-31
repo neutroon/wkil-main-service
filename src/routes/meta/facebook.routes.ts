@@ -475,4 +475,41 @@ facebookRoutes.post(
     }
   },
 );
+
+// DELETE /v1/facebook/pages/:pageId/unlink-business
+facebookRoutes.delete(
+  "/pages/:pageId/unlink-business",
+  authenticateToken,
+  async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).user.id;
+      const { pageId } = req.params;
+
+      // Verify the page belongs to this user
+      const page = await prisma.facebookPage.findFirst({
+        where: { pageId, facebookAccount: { userId } },
+      });
+
+      if (!page) {
+        return res.status(404).json({ error: "Page not found" });
+      }
+
+      if (!page.businessProfileId) {
+        return res
+          .status(400)
+          .json({ error: "Page is not linked to any business profile" });
+      }
+
+      const updated = await prisma.facebookPage.update({
+        where: { id: page.id },
+        data: { businessProfileId: null },
+      });
+
+      res.json({ success: true, page: updated });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  },
+);
+
 export default facebookRoutes;

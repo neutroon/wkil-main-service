@@ -84,3 +84,15 @@ export const messengerWebhookLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+/** WhatsApp Cloud API may burst webhook deliveries same as Messenger. */
+export const whatsappWebhookLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 600,
+  message: {
+    error: "Too many webhook requests",
+    code: "WHATSAPP_WEBHOOK_RATE_LIMIT",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});

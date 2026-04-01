@@ -35,8 +35,9 @@ model User {
   assignedUsers UserManagement[] @relation("AssignerRelations")
 
   // Existing relations
-  facebookAccounts FacebookAccount[]
-  analytics        UserAnalytics[]
+  facebookAccounts  FacebookAccount[]
+  analytics         UserAnalytics[]
+  whatsAppAccounts  WhatsAppAccount[]
 
   // Business profile creation
   isBusinessProfileCreated Boolean           @default(false)
@@ -68,9 +69,10 @@ model BusinessProfile {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  faqs          BusinessProfileFaq[]
-  chunks        BusinessProfileChunk[]
-  facebookPages FacebookPage[]
+  faqs            BusinessProfileFaq[]
+  chunks          BusinessProfileChunk[]
+  facebookPages   FacebookPage[]
+  whatsAppAccounts WhatsAppAccount[]
 }
 
 model BusinessProfileFaq {
@@ -131,6 +133,34 @@ model ProcessedMessengerMessage {
   id         Int      @id @default(autoincrement())
   messageMid String   @unique
   createdAt  DateTime @default(now())
+}
+
+/// Deduplicate WhatsApp Cloud API webhook retries using wamid
+model ProcessedWhatsAppMessage {
+  id        Int      @id @default(autoincrement())
+  wamid     String   @unique
+  createdAt DateTime @default(now())
+}
+
+/// WhatsApp Business phone number linked to a user
+model WhatsAppAccount {
+  id                  Int             @id @default(autoincrement())
+  userId              Int
+  user                User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  phoneNumberId       String          // Meta's permanent phone-number ID
+  displayPhoneNumber  String          // Human-readable, e.g. "+1 555 000 1234"
+  wabaId              String          // WhatsApp Business Account ID
+  accessToken         String          // Encrypted system-user or page access token
+  businessProfileId   Int?
+  businessProfile     BusinessProfile? @relation(fields: [businessProfileId], references: [id], onDelete: SetNull)
+  isActive            Boolean         @default(true)
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  @@unique([userId, phoneNumberId])
+  @@index([userId])
+  @@index([phoneNumberId])
+  @@index([businessProfileId])
 }
 
 model UserManagement {

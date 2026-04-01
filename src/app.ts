@@ -16,6 +16,7 @@ import {
 import {
   generalLimiter,
   messengerWebhookLimiter,
+  whatsappWebhookLimiter,
 } from "./middlewares/rateLimit.middleware";
 import authRoutes from "./routes/auth.routes";
 import dashboardRoutes from "./routes/dashboard.routes";
@@ -23,6 +24,7 @@ import os from "os";
 import scrapeRoutes from "./routes/scraping/scrape";
 import businessProfileRouts from "./routes/buisnessProfile.routes";
 import messengerRoutes from "./routes/meta/messenger.routes";
+import whatsappRoutes from "./routes/meta/whatsapp.routes";
 
 const app = express();
 
@@ -44,6 +46,13 @@ app.use(
   express.raw({ type: "application/json" }),
 );
 app.use("/v1/messenger", messengerRoutes);
+
+app.use(
+  "/v1/whatsapp/webhook",
+  whatsappWebhookLimiter,
+  express.raw({ type: "application/json" }),
+);
+app.use("/v1/whatsapp", whatsappRoutes);
 
 // Security middleware
 app.use(securityHeaders);

@@ -77,25 +77,30 @@ async function sendMessengerReply(
 
 function buildSystemPromptWithContext(
   context: { chunkType: string; content: string }[],
-  businessName: string,
+  businessProfile: { name: string; voice: string; tone: string },
 ): string {
   const contextText = context.map((c) => c.content).join("\n\n");
+  const toneInstruction = `\nFollow this voice strictly: ${businessProfile.voice}\nFollow this tone strictly: ${businessProfile.tone}`;
 
-  return `You are a helpful AI assistant for ${businessName}.
+  return `You are a helpful AI assistant for ${businessProfile.name}.
 You answer customer questions based only on the information provided below.
 If you don't know the answer from the provided context, politely say you don't have that information and suggest they contact the business directly.
-Keep responses concise and friendly.
+${toneInstruction}
 
 BUSINESS CONTEXT:
 ${contextText}`;
 }
 
-function buildSystemPromptNoRetrievedContext(businessName: string): string {
-  return `You are a helpful AI assistant for ${businessName}.
+function buildSystemPromptNoRetrievedContext(
+  businessProfile: { name: string; voice: string; tone: string },
+): string {
+  const toneInstruction = `\nFollow this voice strictly: ${businessProfile.voice}\nFollow this tone strictly: ${businessProfile.tone}`;
+
+  return `You are a helpful AI assistant for ${businessProfile.name}.
 No relevant knowledge base passages were retrieved for this question (or the question is outside your business data).
 Do not invent business facts, prices, policies, or hours.
 Politely say you don't have that specific information and suggest the customer contact the business directly.
-Keep responses concise and friendly.`;
+${toneInstruction}`;
 }
 
 export async function handleMessengerMessage(
@@ -156,9 +161,9 @@ export async function handleMessengerMessage(
         relevantChunks.length > 0
           ? buildSystemPromptWithContext(
               relevantChunks,
-              businessProfile.name,
+              businessProfile,
             )
-          : buildSystemPromptNoRetrievedContext(businessProfile.name);
+          : buildSystemPromptNoRetrievedContext(businessProfile);
 
       const generated = await generateMessengerAssistantReply({
         systemInstruction,

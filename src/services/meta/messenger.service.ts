@@ -78,7 +78,25 @@ async function sendMessengerReply(
   return response.json();
 }
 
-
+async function sendMessengerAction(
+  recipientId: string,
+  action: "mark_seen" | "typing_on" | "typing_off",
+  pageAccessToken: string,
+) {
+  await fetch(
+    `https://graph.facebook.com/v25.0/me/messages?access_token=${pageAccessToken}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        recipient: { id: recipientId },
+        sender_action: action,
+      }),
+    },
+  ).catch((err) => {
+    logger.warn("messenger.sender_action_failed", { recipientId, action, error: String(err) });
+  });
+}
 
 export async function handleMessengerMessage(
   pageId: string,
@@ -114,6 +132,10 @@ export async function handleMessengerMessage(
     logger.error("messenger.decrypt_token_failed", { pageId, error: msg });
     return;
   }
+
+  // Mark as read and show typing indicator immediately
+  void sendMessengerAction(senderId, "mark_seen", pageAccessToken);
+  void sendMessengerAction(senderId, "typing_on", pageAccessToken);
 
   const businessProfile = page.businessProfile;
 

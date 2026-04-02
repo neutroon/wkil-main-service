@@ -29,6 +29,7 @@ async function drainQueue(): Promise<void> {
         job.phoneNumberId,
         job.from,
         job.messageText,
+        job.wamid
       );
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);

@@ -26,6 +26,7 @@ import businessProfileRouts from "./routes/buisnessProfile.routes";
 import messengerRoutes from "./routes/meta/messenger.routes";
 import whatsappRoutes from "./routes/meta/whatsapp.routes";
 import crmRoutes from "./routes/crm.routes";
+import externalDataSourceRoutes from "./routes/externalDataSource.routes";
 
 const app = express();
 
@@ -81,6 +82,7 @@ app.use("/v1/dashboard", dashboardRoutes);
 app.use("/v1/scrape", scrapeRoutes);
 app.use("/v1/business-profile", businessProfileRouts);
 app.use("/v1/crm", crmRoutes);
+app.use("/v1/external-data", externalDataSourceRoutes);
 
 // Health check endpoint
 app.get("/v1/health", (req, res) => {

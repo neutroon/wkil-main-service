@@ -18,7 +18,7 @@ if (!process.env.GEMINI_API_KEY) {
 }
 
 // Initialize Google Generative AI
-const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+export const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 // Use Gemini 2.5 Flash for content generation (latest available model)
 async function generateContent(prompt: string, responseMimeType?: string) {
@@ -32,7 +32,7 @@ async function generateContent(prompt: string, responseMimeType?: string) {
   return response.text;
 }
 
-const MESSENGER_SAFETY_SETTINGS = [
+export const MESSENGER_SAFETY_SETTINGS = [
   {
     category: HarmCategory.HARM_CATEGORY_HARASSMENT,
     threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
@@ -93,6 +93,33 @@ export function buildCaptureLeadTool(fieldMapping: any): Tool[] {
       ],
     },
   ];
+}
+
+export function buildExternalQueryTools(dataSources: any[]): Tool[] {
+  if (!dataSources || dataSources.length === 0) return [];
+  
+  const functionDeclarations = dataSources.map((ds) => {
+    let properties: any = {};
+    let required: string[] = [];
+
+    if (ds.expectedParamsSchema && typeof ds.expectedParamsSchema === "object") {
+      for (const [key, val] of Object.entries(ds.expectedParamsSchema)) {
+        properties[key] = { type: Type.STRING, description: String(val) };
+      }
+      required = Object.keys(properties);
+    }
+
+    return {
+      name: `query_external_api_${ds.id}`,
+      description: ds.description || `Fetch data from ${ds.name}. Ask user for required fields if missing.`,
+      parameters: {
+        type: Type.OBJECT,
+        properties: Object.keys(properties).length > 0 ? properties : { q: { type: Type.STRING, description: "Optional search term" } },
+      },
+    };
+  });
+
+  return [{ functionDeclarations }];
 }
 
 /**

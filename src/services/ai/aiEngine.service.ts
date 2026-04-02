@@ -74,20 +74,33 @@ export async function runAIEngineLoop(params: {
       const args = call.args as any;
 
       if (call.name === "capture_lead") {
-        await pushLeadToCrm(params.businessProfileId, {
+        const crmResult = await pushLeadToCrm(params.businessProfileId, {
           ...args,
           phone: args.phone || params.customerPhone,
         });
         
-        functionResponses.push({
-          functionResponse: {
-            name: call.name,
-            response: { 
-              success: true, 
-              message: "Lead successfully saved to CRM. You must now thank the user politely according to your persona and tell them the team will be in touch shortly." 
-            },
-          }
-        });
+        if (crmResult.success) {
+          functionResponses.push({
+            functionResponse: {
+              name: call.name,
+              response: { 
+                success: true, 
+                message: "Lead successfully saved to CRM. You must now thank the user politely according to your persona and tell them the team will be in touch shortly." 
+              },
+            }
+          });
+        } else {
+          logger.warn("ai.crm_validation_kickback", { error: crmResult.error });
+          functionResponses.push({
+            functionResponse: {
+              name: call.name,
+              response: { 
+                success: false, 
+                error: `CRM Webhook rejected the data. Reason: ${crmResult.error}. You MUST inform the user what was invalid (e.g. phone number format) and politely ask them to correct it. DO NOT thank them.` 
+              },
+            }
+          });
+        }
       } else if (call.name.startsWith("query_external_api_")) {
         const sourceId = parseInt(call.name.split("_").pop() || "0", 10);
         logger.info("ai.executing_external_tool", { sourceId, args });

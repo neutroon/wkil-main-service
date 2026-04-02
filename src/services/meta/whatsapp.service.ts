@@ -9,7 +9,7 @@ import {
   saveMessage,
 } from "./conversation.service";
 import { buildSystemPrompt } from "./prompt.service";
-import { crmCaptureLeadTool } from "../../config/gemini";
+import { buildCaptureLeadTool } from "../../config/gemini";
 import { pushLeadToCrm } from "../crm/crm.service";
 
 interface Message {
@@ -152,9 +152,9 @@ export async function handleWhatsAppMessage(
 
       const crmIntegrations = await prisma.crmIntegration.findMany({
         where: { businessProfileId: businessProfile.id, isActive: true },
-        take: 1, // Currently just using the boolean presence to enable the tool
+        take: 1, 
       });
-      const tools = crmIntegrations.length > 0 ? [crmCaptureLeadTool] : undefined;
+      const tools = crmIntegrations.length > 0 ? buildCaptureLeadTool(crmIntegrations[0].fieldMapping) : undefined;
 
       const generated = await generateMessengerAssistantReply({
         systemInstruction,
@@ -171,10 +171,8 @@ export async function handleWhatsAppMessage(
           if (call.name === "capture_lead") {
             const args = call.args as any;
             const success = await pushLeadToCrm(businessProfile.id, {
-              name: args.name,
-              email: args.email,
+              ...args,
               phone: args.phone || from, // fallback to the whatsapp caller ID
-              notes: args.notes,
             });
             responseText = `Thanks ${args.name ? args.name.split(" ")[0] : ""}! I've securely passed your details to our team. Someone will be in touch with you shortly.`;
           }

@@ -8,6 +8,7 @@ import {
   getConversationHistory,
   saveMessage,
 } from "./conversation.service";
+import { buildSystemPrompt } from "./prompt.service";
 
 interface Message {
   role: "user" | "model";
@@ -80,33 +81,7 @@ export async function sendWhatsAppReply(
   }
 }
 
-function buildSystemPromptWithContext(
-  context: { chunkType: string; content: string }[],
-  businessProfile: { name: string; voice: string; tone: string },
-): string {
-  const contextText = context.map((c) => c.content).join("\n\n");
-  const toneInstruction = `\nFollow this voice strictly: ${businessProfile.voice}\nFollow this tone strictly: ${businessProfile.tone}`;
 
-  return `You are a helpful AI assistant for ${businessProfile.name}.
-You answer customer questions based only on the information provided below.
-If you don't know the answer from the provided context, politely say you don't have that information and suggest they contact the business directly.
-${toneInstruction}
-
-BUSINESS CONTEXT:
-${contextText}`;
-}
-
-function buildSystemPromptNoRetrievedContext(
-  businessProfile: { name: string; voice: string; tone: string },
-): string {
-  const toneInstruction = `\nFollow this voice strictly: ${businessProfile.voice}\nFollow this tone strictly: ${businessProfile.tone}`;
-
-  return `You are a helpful AI assistant for ${businessProfile.name}.
-No relevant knowledge base passages were retrieved for this question.
-Do not invent business facts, prices, policies, or hours.
-Politely say you don't have that specific information and suggest the customer contact the business directly.
-${toneInstruction}`;
-}
 
 /**
  * Core handler: look up the WhatsApp account → business profile → run RAG + AI → reply.
@@ -168,10 +143,10 @@ export async function handleWhatsAppMessage(
         5,
       );
 
-      const systemInstruction =
-        relevantChunks.length > 0
-          ? buildSystemPromptWithContext(relevantChunks, businessProfile)
-          : buildSystemPromptNoRetrievedContext(businessProfile);
+      const systemInstruction = buildSystemPrompt(
+        businessProfile as any,
+        relevantChunks,
+      );
 
       const generated = await generateMessengerAssistantReply({
         systemInstruction,

@@ -2,6 +2,8 @@ import {
   GoogleGenAI,
   HarmBlockThreshold,
   HarmCategory,
+  Type,
+  Tool
 } from "@google/genai";
 import { logger } from "../utils/logger";
 
@@ -49,19 +51,52 @@ const MESSENGER_SAFETY_SETTINGS = [
   },
 ];
 
+export const crmCaptureLeadTool: Tool = {
+  functionDeclarations: [
+    {
+      name: "capture_lead",
+      description:
+        "Captures a prospective lead's contact information. Automatically triggers when a user explicitly expresses strong buying intent or directly asks to be contacted by sales.",
+      parameters: {
+        type: Type.OBJECT,
+        properties: {
+          name: {
+            type: Type.STRING,
+            description: "The full name of the prospect.",
+          },
+          email: {
+            type: Type.STRING,
+            description: "The email address of the prospect. Prefer email over phone if both aren't available.",
+          },
+          phone: {
+            type: Type.STRING,
+            description: "The phone number of the prospect.",
+          },
+          notes: {
+            type: Type.STRING,
+            description: "A summary of the prospect's explicit intent or question.",
+          },
+        },
+        required: ["name"],
+      },
+    },
+  ],
+};
+
 /**
  * Structured generation for Messenger: system instruction + explicit turns (better than one concatenated blob).
  */
 export async function generateMessengerAssistantReply(params: {
   systemInstruction: string;
   /** Prior turns only (excludes the latest customer message). */
-  historyTurns: { role: "user" | "model"; text: string }[];
+  historyTurns: { role: "user" | "model"; text?: string; parts?: any[] }[];
   customerMessage: string;
-}): Promise<string | undefined> {
+  tools?: Tool[];
+}): Promise<any> {
   const contents = [
     ...params.historyTurns.map((t) => ({
       role: t.role,
-      parts: [{ text: t.text }],
+      parts: t.parts ? t.parts : [{ text: t.text }],
     })),
     {
       role: "user" as const,
@@ -78,10 +113,11 @@ export async function generateMessengerAssistantReply(params: {
       maxOutputTokens: 512,
       responseMimeType: "text/plain",
       safetySettings: MESSENGER_SAFETY_SETTINGS,
+      tools: params.tools,
     },
   });
 
-  return response.text;
+  return response;
 }
 
 // For ingestion — used when embedding chunks

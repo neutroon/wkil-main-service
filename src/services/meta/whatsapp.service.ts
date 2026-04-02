@@ -85,6 +85,32 @@ export async function sendWhatsAppReply(
 
 
 
+export async function sendWhatsAppAction(
+  messageId: string,
+  phoneNumberId: string,
+  accessToken: string,
+): Promise<void> {
+  const response = await fetch(
+    `https://graph.facebook.com/v25.0/${phoneNumberId}/messages`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        status: "read",
+        message_id: messageId,
+        typing_indicator: { type: "text" }
+      }),
+    },
+  );
+  if (!response.ok) {
+    logger.warn("whatsapp.sender_action_failed", { messageId, error: await response.text() });
+  }
+}
+
 /**
  * Core handler: look up the WhatsApp account → business profile → run RAG + AI → reply.
  * Uses the shared Conversation tables (pageId = phoneNumberId, senderId = customer phone).
@@ -93,6 +119,7 @@ export async function handleWhatsAppMessage(
   phoneNumberId: string,
   from: string,
   messageText: string,
+  wamid?: string
 ): Promise<void> {
   const account = await prisma.whatsAppAccount.findFirst({
     where: { phoneNumberId, isActive: true },
@@ -122,6 +149,11 @@ export async function handleWhatsAppMessage(
     const msg = e instanceof Error ? e.message : String(e);
     logger.error("whatsapp.decrypt_token_failed", { phoneNumberId, error: msg });
     return;
+  }
+
+  // Mark message as read and show typing indicator
+  if (wamid) {
+    void sendWhatsAppAction(wamid, phoneNumberId, accessToken);
   }
 
   const businessProfile = account.businessProfile;

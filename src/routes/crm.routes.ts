@@ -46,7 +46,7 @@ crmRoutes.get("/business-profiles/:profileId", authenticateToken, authorizeBusin
 crmRoutes.post("/business-profiles/:profileId", authenticateToken, authorizeBusinessProfile, async (req: Request, res: Response) => {
   try {
     const profileId = parseInt(req.params.profileId);
-    const { provider, webhookUrl, apiKey } = req.body;
+    const { provider, webhookUrl, apiKey, fieldMapping } = req.body;
 
     if (!provider) {
         return res.status(400).json({ error: "Provider (e.g. 'webhook') is required" });
@@ -62,6 +62,7 @@ crmRoutes.post("/business-profiles/:profileId", authenticateToken, authorizeBusi
       update: {
         webhookUrl,
         apiKey,
+        fieldMapping,
         isActive: true,
       },
       create: {
@@ -69,6 +70,7 @@ crmRoutes.post("/business-profiles/:profileId", authenticateToken, authorizeBusi
         provider,
         webhookUrl,
         apiKey,
+        fieldMapping,
         isActive: true,
       }
     });

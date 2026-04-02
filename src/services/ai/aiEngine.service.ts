@@ -78,12 +78,17 @@ export async function runAIEngineLoop(params: {
           ...args,
           phone: args.phone || params.customerPhone,
         });
-        responseText = `Thanks ${args.name ? args.name.split(" ")[0] : ""}! I've securely passed your details to our team. Someone will be in touch with you shortly.`;
-        // Since we consider lead capturing a terminal action that ends the loop successfully:
-        return responseText;
-      } 
-      
-      if (call.name.startsWith("query_external_api_")) {
+        
+        functionResponses.push({
+          functionResponse: {
+            name: call.name,
+            response: { 
+              success: true, 
+              message: "Lead successfully saved to CRM. You must now thank the user politely according to your persona and tell them the team will be in touch shortly." 
+            },
+          }
+        });
+      } else if (call.name.startsWith("query_external_api_")) {
         const sourceId = parseInt(call.name.split("_").pop() || "0", 10);
         logger.info("ai.executing_external_tool", { sourceId, args });
         const result = await executeExternalQuery(sourceId, args);

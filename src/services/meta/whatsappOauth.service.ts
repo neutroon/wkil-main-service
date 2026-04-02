@@ -20,7 +20,7 @@ export interface WabaAccount {
 
 // ─── Step 1: Exchange short-lived SDK code for a long-lived User Access Token ──
 
-export async function exchangeCodeForToken(code: string): Promise<string> {
+export async function exchangeCodeForToken(code: string, redirectUri?: string): Promise<string> {
   const appId = process.env.FB_APP_ID;
   const appSecret = process.env.FB_APP_SECRET;
 
@@ -32,6 +32,10 @@ export async function exchangeCodeForToken(code: string): Promise<string> {
   url.searchParams.set("client_id", appId);
   url.searchParams.set("client_secret", appSecret);
   url.searchParams.set("code", code);
+
+  if (redirectUri) {
+    url.searchParams.set("redirect_uri", redirectUri);
+  }
 
   const res = await fetch(url.toString());
   const data = await res.json() as any;

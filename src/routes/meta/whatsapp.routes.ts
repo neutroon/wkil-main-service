@@ -6,8 +6,12 @@ import { logger } from "../../utils/logger";
 import { verifyMetaWebhookSignature } from "../../utils/metaWebhook";
 import { authenticateToken } from "../../middlewares/auth.middleware";
 import { encryptFacebookSecret } from "../../utils/tokenCrypto";
+import conversationsRoutes from "./conversations.routes";
 
 const whatsappRoutes = Router();
+
+// ─── Sub-routers ──────────────────────────────────────────────────────────────
+whatsappRoutes.use("/conversations", conversationsRoutes);
 
 const isDev = process.env.NODE_ENV !== "production";
 

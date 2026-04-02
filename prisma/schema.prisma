@@ -74,6 +74,7 @@ model BusinessProfile {
   chunks          BusinessProfileChunk[]
   facebookPages   FacebookPage[]
   whatsAppAccounts WhatsAppAccount[]
+  crmIntegrations CrmIntegration[]
 }
 
 model BusinessProfileFaq {
@@ -101,6 +102,21 @@ model BusinessProfileChunk {
 
   @@index([businessProfileId])
   @@index([businessProfileId, chunkType]) // fast filtered deletes
+}
+
+model CrmIntegration {
+  id                Int             @id @default(autoincrement())
+  businessProfileId Int
+  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+  provider          String          // e.g., "hubspot", "gohighlevel", "webhook"
+  apiKey            String?         // Optional: generic storage for CRM keys
+  webhookUrl        String?         // Optional: for custom integrations or Zapier/Make
+  fieldMapping      Json?           // Optional configuration for mapping fields
+  isActive          Boolean         @default(true)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@index([businessProfileId])
 }
 
 model Conversation {

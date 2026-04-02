@@ -51,37 +51,49 @@ const MESSENGER_SAFETY_SETTINGS = [
   },
 ];
 
-export const crmCaptureLeadTool: Tool = {
-  functionDeclarations: [
+/**
+ * Dynamically builds a Lead Capture tool for Gemini based on custom field mappings.
+ * If no custom mapping exists, it defaults to the standard name/email/phone schema.
+ */
+export function buildCaptureLeadTool(fieldMapping: any): Tool[] {
+  const properties: Record<string, any> = {};
+  const required: string[] = [];
+
+  if (fieldMapping && typeof fieldMapping === "object" && Object.keys(fieldMapping).length > 0) {
+    // Dynamically build properties based on user configuration
+    for (const [key, description] of Object.entries(fieldMapping)) {
+      properties[key] = {
+        type: Type.STRING,
+        description: String(description) || `The ${key} provided by the prospect.`,
+      };
+      required.push(key);
+    }
+  } else {
+    // Default Schema Standard
+    properties["name"] = { type: Type.STRING, description: "The full name of the prospect." };
+    properties["email"] = { type: Type.STRING, description: "The email address of the prospect." };
+    properties["phone"] = { type: Type.STRING, description: "The phone number of the prospect." };
+    properties["notes"] = { type: Type.STRING, description: "A summary of the prospect's intent." };
+    required.push("name");
+  }
+
+  return [
     {
-      name: "capture_lead",
-      description:
-        "Captures a prospective lead's contact information. Automatically triggers when a user explicitly expresses strong buying intent or directly asks to be contacted by sales.",
-      parameters: {
-        type: Type.OBJECT,
-        properties: {
-          name: {
-            type: Type.STRING,
-            description: "The full name of the prospect.",
-          },
-          email: {
-            type: Type.STRING,
-            description: "The email address of the prospect. Prefer email over phone if both aren't available.",
-          },
-          phone: {
-            type: Type.STRING,
-            description: "The phone number of the prospect.",
-          },
-          notes: {
-            type: Type.STRING,
-            description: "A summary of the prospect's explicit intent or question.",
+      functionDeclarations: [
+        {
+          name: "capture_lead",
+          description:
+            "Captures a prospective lead's information. Trigger this ONLY when the user explicitly expresses strong buying intent, asks for a callback, tells you their contact details, or wants to proceed with an action.",
+          parameters: {
+            type: Type.OBJECT,
+            properties,
+            required,
           },
         },
-        required: ["name"],
-      },
+      ],
     },
-  ],
-};
+  ];
+}
 
 /**
  * Structured generation for Messenger: system instruction + explicit turns (better than one concatenated blob).

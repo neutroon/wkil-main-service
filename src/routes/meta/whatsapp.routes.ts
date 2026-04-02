@@ -7,6 +7,12 @@ import { verifyMetaWebhookSignature } from "../../utils/metaWebhook";
 import { authenticateToken } from "../../middlewares/auth.middleware";
 import { encryptFacebookSecret } from "../../utils/tokenCrypto";
 import conversationsRoutes from "./conversations.routes";
+import {
+  exchangeCodeForToken,
+  discoverWabaAccounts,
+  subscribeWebhook,
+  saveWhatsAppAccount,
+} from "../../services/meta/whatsappOauth.service";
 
 const whatsappRoutes = Router();
 
@@ -173,6 +179,100 @@ whatsappRoutes.post("/webhook", async (req: Request, res: Response) => {
     logger.error("whatsapp.webhook.handler_error", { error: message });
   }
 });
+
+// ─── Embedded Signup OAuth (authenticated) ───────────────────────────────────
+
+/**
+ * GET /v1/whatsapp/oauth/phone-numbers
+ * Preview step: Given an SDK code, return available WABA accounts & phone numbers
+ * so the frontend can display a picker before committing.
+ * Query: { code: string }
+ */
+whatsappRoutes.get(
+  "/oauth/phone-numbers",
+  authenticateToken,
+  async (req: Request, res: Response) => {
+    try {
+      const { code } = req.query;
+      if (!code) {
+        return res.status(400).json({ error: "code is required" });
+      }
+
+      const accessToken = await exchangeCodeForToken(code as string);
+      const accounts = await discoverWabaAccounts(accessToken);
+
+      res.json({ data: accounts });
+    } catch (error: any) {
+      logger.error("whatsapp.oauth.phone_numbers_failed", { error: error.message });
+      res.status(500).json({ error: error.message });
+    }
+  },
+);
+
+/**
+ * POST /v1/whatsapp/oauth
+ * Full Embedded Signup connect flow:
+ *   1. Exchange SDK code for long-lived token
+ *   2. Discover WABA + phone numbers
+ *   3. Subscribe webhook on chosen WABA
+ *   4. Upsert WhatsAppAccount row in DB
+ * Body: { code: string, phoneNumberId: string, businessProfileId?: number }
+ */
+whatsappRoutes.post(
+  "/oauth",
+  authenticateToken,
+  async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).user.id;
+      const { code, phoneNumberId, businessProfileId } = req.body;
+
+      if (!code || !phoneNumberId) {
+        return res.status(400).json({ error: "code and phoneNumberId are required" });
+      }
+
+      // Step 1: Exchange SDK code for token
+      const accessToken = await exchangeCodeForToken(code as string);
+
+      // Step 2: Discover phone numbers to find the matching WABA and display name
+      const accounts = await discoverWabaAccounts(accessToken);
+      let wabaId: string | undefined;
+      let displayPhoneNumber: string | undefined;
+
+      for (const waba of accounts) {
+        const phone = waba.phone_numbers.find((p) => p.id === phoneNumberId);
+        if (phone) {
+          wabaId = waba.id;
+          displayPhoneNumber = phone.display_phone_number;
+          break;
+        }
+      }
+
+      if (!wabaId || !displayPhoneNumber) {
+        return res.status(404).json({
+          error: `Phone number ${phoneNumberId} not found in any WABA associated with this token.`,
+        });
+      }
+
+      // Step 3: Subscribe our webhook to this WABA
+      await subscribeWebhook(wabaId, accessToken);
+
+      // Step 4: Persist into DB
+      const account = await saveWhatsAppAccount({
+        userId,
+        wabaId,
+        phoneNumberId,
+        displayPhoneNumber,
+        accessToken,
+        businessProfileId: businessProfileId ? parseInt(businessProfileId) : undefined,
+      });
+
+      res.status(201).json({ success: true, account });
+    } catch (error: any) {
+      logger.error("whatsapp.oauth.connect_failed", { error: error.message });
+      res.status(500).json({ error: error.message });
+    }
+  },
+);
 
 // ─── Account management (authenticated) ──────────────────────────────────────
 

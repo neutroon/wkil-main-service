@@ -40,39 +40,39 @@ if (process.env.TRUST_PROXY === "0" || process.env.TRUST_PROXY === "false") {
   );
 }
 
+// ── Global middleware (must come BEFORE all routes) ──────────────────────────
+app.use(securityHeaders);
+app.use(cors(corsOptions));       // ← CORS first so preflight OPTIONS always works
+app.use(cookieParser());
+app.use(sanitizeRequest);
+app.use(requestSizeLimit);
+app.use(generalLimiter);
+
+// ── Raw-body paths (declared before express.json()) ──────────────────────────
+// Meta requires HMAC verification against raw bytes, so these webhook paths
+// use express.raw() instead of the JSON parser mounted below.
 app.use(
   "/v1/messenger/webhook",
   messengerWebhookLimiter,
   express.raw({ type: "application/json" }),
 );
-app.use("/v1/messenger", messengerRoutes);
-
 app.use(
   "/v1/whatsapp/webhook",
   whatsappWebhookLimiter,
   express.raw({ type: "application/json" }),
 );
-app.use("/v1/whatsapp", whatsappRoutes);
 
-// Security middleware
-app.use(securityHeaders);
-app.use(cors(corsOptions));
-app.use(cookieParser());
+// ── JSON / URL-encoded body parser (all other routes) ────────────────────────
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
-// Request processing middleware
-app.use(sanitizeRequest);
-app.use(requestSizeLimit);
-
-// General rate limiting
-app.use(generalLimiter);
-
-// Routes
+// ── Routes ───────────────────────────────────────────────────────────────────
 app.use("/v1/auth", authRoutes);
 app.use("/v1/users", userRoutes);
 app.use("/v1/content", contentRoutes);
 app.use("/v1/facebook", facebookRoutes);
+app.use("/v1/messenger", messengerRoutes);
+app.use("/v1/whatsapp", whatsappRoutes);
 app.use("/v1/leads", leadRoutes);
 app.use("/v1/admin", adminRoutes);
 app.use("/v1/manager", managerRoutes);

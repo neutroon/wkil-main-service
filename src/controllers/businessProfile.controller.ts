@@ -16,7 +16,8 @@ interface BusinessProfileBody {
   name: string;
   identity: string;
   targetAudience: string;
-  voiceAndTone: string;
+  voice: string;
+  tone: string;
   productsServices: string[];
   expectedUserIntents: string[];
   corePolicies: string;
@@ -32,7 +33,8 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
       name,
       identity,
       targetAudience,
-      voiceAndTone,
+      voice,
+      tone,
       productsServices,
       expectedUserIntents,
       corePolicies,
@@ -54,7 +56,8 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
         name,
         identity,
         targetAudience,
-        voiceAndTone,
+        voice,
+        tone,
         productsServices,
         expectedUserIntents,
         corePolicies,
@@ -168,7 +171,8 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
       name,
       identity,
       targetAudience,
-      voiceAndTone,
+      voice,
+      tone,
       productsServices,
       expectedUserIntents,
       corePolicies,
@@ -193,7 +197,8 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
         name,
         identity,
         targetAudience,
-        voiceAndTone,
+        voice,
+        tone,
         productsServices,
         expectedUserIntents,
         corePolicies,

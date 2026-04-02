@@ -9,6 +9,8 @@ import {
   saveMessage,
 } from "./conversation.service";
 import { buildSystemPrompt } from "./prompt.service";
+import { crmCaptureLeadTool } from "../../config/gemini";
+import { pushLeadToCrm } from "../crm/crm.service";
 
 interface Message {
   role: "user" | "model";
@@ -137,16 +139,39 @@ export async function handleMessengerMessage(
         relevantChunks,
       );
 
+      const crmIntegrations = await prisma.crmIntegration.findMany({
+        where: { businessProfileId: businessProfile.id, isActive: true },
+        take: 1,
+      });
+      const tools = crmIntegrations.length > 0 ? [crmCaptureLeadTool] : undefined;
+
       const generated = await generateMessengerAssistantReply({
         systemInstruction,
         historyTurns,
         customerMessage: messageText,
+        tools,
       });
 
-      if (!generated?.trim()) {
-        throw new Error("No reply generated");
+      let responseText = generated.text || "";
+
+      // Intercept Function Calling
+      if (generated.functionCalls && generated.functionCalls.length > 0) {
+        for (const call of generated.functionCalls) {
+          if (call.name === "capture_lead") {
+            const args = call.args as any;
+            const success = await pushLeadToCrm(businessProfile.id, {
+              name: args.name,
+              email: args.email,
+              phone: args.phone,
+              notes: args.notes,
+            });
+            responseText = `Thanks ${args.name ? args.name.split(" ")[0] : ""}! I've securely passed your details to our team. Someone will be in touch with you shortly.`;
+          }
+        }
       }
-      reply = generated.trim();
+
+      if (!responseText.trim()) throw new Error("No reply generated");
+      reply = responseText.trim();
     }
 
     await saveMessage(conversation.id, "model", reply);

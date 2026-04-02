@@ -1,7 +1,7 @@
 import { BusinessProfile } from "@prisma/client";
 
 export const CHUNK_TYPE_FIELDS: Record<string, string[]> = {
-  identity: ["name", "identity", "voiceAndTone", "targetAudience"],
+  identity: ["name", "identity", "voice", "tone", "targetAudience"],
   product: ["productsServices"],
   contact: ["phoneNumbers", "address", "workingHours"],
   faq: ["faqs"],

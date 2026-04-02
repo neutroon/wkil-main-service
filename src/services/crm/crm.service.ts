@@ -1,4 +1,5 @@
 import prisma from "../../config/prisma";
+import { logger } from "../../utils/logger";
 
 export interface LeadPayload {
   [key: string]: any;
@@ -18,7 +19,7 @@ export async function pushLeadToCrm(
   });
 
   if (integrations.length === 0) {
-    console.log(`[CRM] No active integrations found for profile ${businessProfileId}`);
+    logger.info("crm.no_active_integrations", { businessProfileId });
     return false;
   }
 
@@ -39,13 +40,23 @@ export async function pushLeadToCrm(
         });
 
         if (response.ok) {
-          console.log(`[CRM] Successfully pushed lead to webhook: ${integration.webhookUrl}`);
+          logger.info("crm.webhook_success", { url: integration.webhookUrl, businessProfileId });
           successCount++;
         } else {
-          console.error(`[CRM] Webhook returned status ${response.status}`);
+          // Parse the error body to capture specific validation errors (e.g. invalid mobile number)
+          const errorBody = await response.text().catch(() => "Unable to read response body");
+          logger.error("crm.webhook_validation_failed", {
+            url: integration.webhookUrl,
+            status: response.status,
+            errorBody,
+            leadPayload: lead
+          });
         }
       } catch (err: any) {
-        console.error(`[CRM] Failed to push to webhook:`, err.message);
+        logger.error("crm.webhook_request_failed", { 
+          url: integration.webhookUrl, 
+          error: err.message 
+        });
       }
     }
     

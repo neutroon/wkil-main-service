@@ -4,6 +4,7 @@ import { generatePostContent } from "../services/content.service";
 import { authenticateToken } from "../middlewares/auth.middleware";
 import { validateContentGeneration } from "../middlewares/validation.middleware";
 import { contentLimiter } from "../middlewares/rateLimit.middleware";
+import prisma from "../config/prisma";
 import upload from "../config/upload";
 
 const contentRoutes = Router();
@@ -20,20 +21,35 @@ contentRoutes.post(
     try {
       const {
         topic,
-        tone = "casual",
+        businessProfileId,
         length = "medium",
         keywords = [],
         context = "",
         generateImage = false,
       } = req.body;
+      const userId = (req as any).user.id as number;
+
+      let businessProfile = null;
+      if (businessProfileId) {
+        businessProfile = await prisma.businessProfile.findFirst({
+          where: { id: parseInt(String(businessProfileId), 10), userId },
+          select: { name: true, identity: true, targetAudience: true, voice: true, tone: true },
+        });
+      } else {
+        // Fallback to the first profile owned by the user
+        businessProfile = await prisma.businessProfile.findFirst({
+          where: { userId },
+          select: { name: true, identity: true, targetAudience: true, voice: true, tone: true },
+        });
+      }
 
       const result = await generatePostContent({
         topic,
-        tone,
         length,
         keywords,
         context,
         generateImage,
+        businessProfile,
       });
 
       const endTime = Date.now();

@@ -193,12 +193,12 @@ whatsappRoutes.get(
   authenticateToken,
   async (req: Request, res: Response) => {
     try {
-      const { code } = req.query;
+      const { code, redirect_uri } = req.query;
       if (!code) {
         return res.status(400).json({ error: "code is required" });
       }
 
-      const accessToken = await exchangeCodeForToken(code as string);
+      const accessToken = await exchangeCodeForToken(code as string, redirect_uri as string);
       const accounts = await discoverWabaAccounts(accessToken);
 
       res.json({ data: accounts });
@@ -224,14 +224,14 @@ whatsappRoutes.post(
   async (req: Request, res: Response) => {
     try {
       const userId = (req as any).user.id;
-      const { code, phoneNumberId, businessProfileId } = req.body;
+      const { code, phoneNumberId, businessProfileId, redirect_uri } = req.body;
 
       if (!code || !phoneNumberId) {
         return res.status(400).json({ error: "code and phoneNumberId are required" });
       }
 
       // Step 1: Exchange SDK code for token
-      const accessToken = await exchangeCodeForToken(code as string);
+      const accessToken = await exchangeCodeForToken(code as string, redirect_uri as string);
 
       // Step 2: Discover phone numbers to find the matching WABA and display name
       const accounts = await discoverWabaAccounts(accessToken);

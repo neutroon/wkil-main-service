@@ -16,7 +16,8 @@ export function chunkBusinessProfile(profile: BusinessProfileWithFaqs) {
     content: `Business: ${profile.name}
   Identity: ${profile.identity}
   Target Audience: ${profile.targetAudience}
-  Voice & Tone: ${profile.voiceAndTone}`,
+  Voice: ${profile.voice}
+  Tone: ${profile.tone}`,
   });
 
   // products/services — one chunk per item

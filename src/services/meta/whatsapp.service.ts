@@ -9,8 +9,8 @@ import {
   saveMessage,
 } from "./conversation.service";
 import { buildSystemPrompt } from "./prompt.service";
-import { buildCaptureLeadTool } from "../../config/gemini";
-import { pushLeadToCrm } from "../crm/crm.service";
+import { buildCaptureLeadTool, buildExternalQueryTools } from "../../config/gemini";
+import { runAIEngineLoop } from "../ai/aiEngine.service";
 
 interface Message {
   role: "user" | "model";
@@ -96,7 +96,14 @@ export async function handleWhatsAppMessage(
 ): Promise<void> {
   const account = await prisma.whatsAppAccount.findFirst({
     where: { phoneNumberId, isActive: true },
-    include: { businessProfile: true },
+    include: { 
+      businessProfile: {
+        include: {
+          externalDataSources: { where: { isActive: true } },
+          crmIntegrations: { where: { isActive: true }, take: 1 }
+        }
+      } 
+    },
   });
 
   if (!account) {
@@ -150,46 +157,35 @@ export async function handleWhatsAppMessage(
         relevantChunks,
       );
 
-      const crmIntegrations = await prisma.crmIntegration.findMany({
-        where: { businessProfileId: businessProfile.id, isActive: true },
-        take: 1, 
-      });
-      const tools = crmIntegrations.length > 0 ? buildCaptureLeadTool(crmIntegrations[0].fieldMapping) : undefined;
+      const tools = [];
+      const captureTool = businessProfile.crmIntegrations.length > 0 
+        ? buildCaptureLeadTool(businessProfile.crmIntegrations[0].fieldMapping) 
+        : [];
+      const externalTools = buildExternalQueryTools(businessProfile.externalDataSources);
 
-      const generated = await generateMessengerAssistantReply({
+      if (captureTool.length > 0) tools.push(...captureTool);
+      
+      // Combine functionDeclarations into a single Tool object to satisfy Gemini SDK if needed,
+      // or we can pass multiple Tool objects. Usually, one Tool object with an array of functionDeclarations is best.
+      let finalTools = undefined;
+      if (tools.length > 0 || externalTools.length > 0) {
+        finalTools = [{
+          functionDeclarations: [
+            ...(tools[0]?.functionDeclarations || []),
+            ...(externalTools.length > 0 && externalTools[0].functionDeclarations ? externalTools[0].functionDeclarations : [])
+          ]
+        }];
+      }
+
+      reply = await runAIEngineLoop({
         systemInstruction,
         historyTurns,
         customerMessage: messageText,
-        tools,
+        tools: finalTools,
+        businessProfileId: businessProfile.id,
+        customerPhone: from,
       });
 
-      // Safely extract text parts without triggering the SDK's "non-text parts" warning
-      let responseText = "";
-      const candidate = (generated as any).candidates?.[0];
-      if (candidate?.content?.parts) {
-        responseText = candidate.content.parts
-          .filter((p: any) => p.text)
-          .map((p: any) => p.text)
-          .join("")
-          .trim();
-      }
-
-      // Intercept Function Calling
-      if (generated.functionCalls && generated.functionCalls.length > 0) {
-        for (const call of generated.functionCalls) {
-          if (call.name === "capture_lead") {
-            const args = call.args as any;
-            const success = await pushLeadToCrm(businessProfile.id, {
-              ...args,
-              phone: args.phone || from, // fallback to the whatsapp caller ID
-            });
-            responseText = `Thanks ${args.name ? args.name.split(" ")[0] : ""}! I've securely passed your details to our team. Someone will be in touch with you shortly.`;
-          }
-        }
-      }
-
-      if (!responseText.trim()) throw new Error("No reply generated");
-      reply = responseText.trim();
     }
 
     await saveMessage(conversation.id, "model", reply);

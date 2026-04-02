@@ -163,7 +163,16 @@ export async function handleWhatsAppMessage(
         tools,
       });
 
-      let responseText = generated.text || "";
+      // Safely extract text parts without triggering the SDK's "non-text parts" warning
+      let responseText = "";
+      const candidate = (generated as any).candidates?.[0];
+      if (candidate?.content?.parts) {
+        responseText = candidate.content.parts
+          .filter((p: any) => p.text)
+          .map((p: any) => p.text)
+          .join("")
+          .trim();
+      }
 
       // Intercept Function Calling
       if (generated.functionCalls && generated.functionCalls.length > 0) {

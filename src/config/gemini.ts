@@ -83,10 +83,12 @@ export const buildDynamicProperties = (mapping: any): Record<string, any> => {
            description: (value as any).description || `True/false flag for ${key}`
          };
       } else {
+         const nestedProps = buildDynamicProperties((value as any).properties || value);
          props[key] = {
            type: Type.OBJECT,
            description: (value as any).description || `Details for ${key}`,
-           properties: buildDynamicProperties((value as any).properties || value), 
+           properties: nestedProps, 
+           required: Object.keys(nestedProps)
          };
       }
     } else {

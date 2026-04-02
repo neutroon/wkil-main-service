@@ -1,10 +1,7 @@
 import prisma from "../../config/prisma";
 
 export interface LeadPayload {
-  name: string;
-  email?: string;
-  phone?: string;
-  notes?: string;
+  [key: string]: any;
 }
 
 /**

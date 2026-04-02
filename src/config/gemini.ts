@@ -55,60 +55,57 @@ export const MESSENGER_SAFETY_SETTINGS = [
  * Dynamically builds a Lead Capture tool for Gemini based on custom field mappings.
  * If no custom mapping exists, it defaults to the standard name/email/phone schema.
  */
+// Helper function to recursively build Gemini properties globally for any config tool
+export const buildDynamicProperties = (mapping: any): Record<string, any> => {
+  const props: Record<string, any> = {};
+  for (const [key, value] of Object.entries(mapping)) {
+    if (typeof value === "object" && value !== null) {
+      
+      const mappedType = String((value as any).type).toUpperCase();
+      
+      if (mappedType === "ARRAY") {
+         props[key] = {
+           type: Type.ARRAY,
+           description: (value as any).description || `List of ${key}`,
+           items: {
+             type: Type.OBJECT,
+             properties: buildDynamicProperties((value as any).items || {})
+           }
+         };
+      } else if (mappedType === "NUMBER" || mappedType === "INTEGER") {
+         props[key] = {
+           type: mappedType === "INTEGER" ? Type.INTEGER : Type.NUMBER,
+           description: (value as any).description || `Numeric value for ${key}`
+         };
+      } else if (mappedType === "BOOLEAN") {
+         props[key] = {
+           type: Type.BOOLEAN,
+           description: (value as any).description || `True/false flag for ${key}`
+         };
+      } else {
+         props[key] = {
+           type: Type.OBJECT,
+           description: (value as any).description || `Details for ${key}`,
+           properties: buildDynamicProperties((value as any).properties || value), 
+         };
+      }
+    } else {
+      props[key] = {
+        type: Type.STRING,
+        description: String(value) || `The ${key}`,
+      };
+    }
+  }
+  return props;
+};
+
 export function buildCaptureLeadTool(fieldMapping: any): Tool[] {
   const properties: Record<string, any> = {};
   const required: string[] = [];
 
-  // Helper function to recursively build Gemini properties
-  const buildProperties = (mapping: any): Record<string, any> => {
-    const props: Record<string, any> = {};
-    for (const [key, value] of Object.entries(mapping)) {
-      if (typeof value === "object" && value !== null) {
-        
-        const mappedType = String((value as any).type).toUpperCase();
-        
-        if (mappedType === "ARRAY") {
-           props[key] = {
-             type: Type.ARRAY,
-             description: (value as any).description || `List of ${key}`,
-             items: {
-               type: Type.OBJECT,
-               // Recursively define the objects inside the array:
-               properties: buildProperties((value as any).items || {})
-             }
-           };
-        } else if (mappedType === "NUMBER" || mappedType === "INTEGER") {
-           props[key] = {
-             type: mappedType === "INTEGER" ? Type.INTEGER : Type.NUMBER,
-             description: (value as any).description || `Numeric value for ${key}`
-           };
-        } else if (mappedType === "BOOLEAN") {
-           props[key] = {
-             type: Type.BOOLEAN,
-             description: (value as any).description || `True/false flag for ${key}`
-           };
-        } else {
-           // Default to nested Object
-           props[key] = {
-             type: Type.OBJECT,
-             description: (value as any).description || `Details for ${key}`,
-             properties: buildProperties((value as any).properties || value), 
-           };
-        }
-      } else {
-        // Standard string fallback
-        props[key] = {
-          type: Type.STRING,
-          description: String(value) || `The ${key} provided by the prospect.`,
-        };
-      }
-    }
-    return props;
-  };
-
   if (fieldMapping && typeof fieldMapping === "object" && Object.keys(fieldMapping).length > 0) {
     // Dynamically build properties based on user configuration
-    for (const [key, propConfig] of Object.entries(buildProperties(fieldMapping))) {
+    for (const [key, propConfig] of Object.entries(buildDynamicProperties(fieldMapping))) {
       properties[key] = propConfig;
       required.push(key);
     }
@@ -147,9 +144,7 @@ export function buildExternalQueryTools(dataSources: any[]): Tool[] {
     let required: string[] = [];
 
     if (ds.expectedParamsSchema && typeof ds.expectedParamsSchema === "object") {
-      for (const [key, val] of Object.entries(ds.expectedParamsSchema)) {
-        properties[key] = { type: Type.STRING, description: String(val) };
-      }
+      properties = buildDynamicProperties(ds.expectedParamsSchema);
       required = Object.keys(properties);
     }
 

@@ -4,11 +4,17 @@ import cloudinary from "../config/cloudinary";
 
 export interface ContentGenerationRequest {
   topic: string;
-  tone?: string;
   length?: string;
   keywords?: string[];
   context?: string;
   generateImage?: boolean;
+  businessProfile?: {
+    name: string;
+    identity: string;
+    targetAudience: string;
+    voice: string;
+    tone: string;
+  } | null;
 }
 
 export interface GeneratedContent {
@@ -25,11 +31,11 @@ export const generatePostContent = async (
 ): Promise<GeneratedContent> => {
   const {
     topic,
-    tone = "casual",
     length = "medium",
     keywords = [],
     context = "",
     generateImage = false,
+    businessProfile,
   } = request;
 
   if (!topic) {
@@ -37,24 +43,13 @@ export const generatePostContent = async (
   }
 
   console.log(
-    `[ContentService] Post generation started: "${topic}" | Tone: ${tone} | Image: ${
+    `[ContentService] Post generation started: "${topic}" | Image: ${
       generateImage ? "Yes" : "No"
     }`,
   );
 
-  // Validate tone and length
-  const validTones = [
-    "casual",
-    "professional",
-    "funny",
-    "exciting",
-    "informative",
-  ];
+  // Validate length
   const validLengths = ["short", "medium", "long"];
-
-  if (!validTones.includes(tone)) {
-    throw new Error(`Invalid tone. Must be one of: ${validTones.join(", ")}`);
-  }
 
   if (!validLengths.includes(length)) {
     throw new Error(
@@ -63,7 +58,7 @@ export const generatePostContent = async (
   }
 
   // Build the prompt for Gemini
-  const prompt = buildPostPrompt(topic, tone, length, keywords, context);
+  const prompt = buildPostPrompt(request);
 
   // Generate content using Gemini with enhanced error handling
   const generatedText = await generateContent(prompt);
@@ -114,56 +109,51 @@ export const generatePostContent = async (
 };
 
 // Helper function to build effective prompts
-function buildPostPrompt(
-  topic: string,
-  tone: string,
-  length: string,
-  keywords: string[],
-  context: string,
-): string {
+function buildPostPrompt(req: ContentGenerationRequest): string {
+  const { topic, length, keywords, context, businessProfile } = req;
+
   const lengthGuidelines = {
     short: "Keep it under 100 characters, be concise and punchy",
     medium: "Write 1-2 sentences, around 100-200 characters",
     long: "Write 2-3 sentences, around 200-300 characters",
   };
 
-  const toneGuidelines = {
-    casual: "Use a friendly, conversational tone with emojis",
-    professional: "Use a formal, business-appropriate tone",
-    funny: "Use humor, wit, and entertaining language",
-    exciting: "Use energetic, enthusiastic language with exclamation points",
-    informative: "Use clear, educational language with facts",
-  };
+  const selectedLength =
+    lengthGuidelines[(length || "medium") as keyof typeof lengthGuidelines] ||
+    lengthGuidelines.medium;
 
-  let prompt = `Generate a Facebook post about "${topic}".`;
+  return `You are an expert social media manager. Generate a highly engaging Facebook post about "${topic}".
 
-  prompt += `\n\nRequirements:`;
-  prompt += `\n- Tone: ${
-    toneGuidelines[tone as keyof typeof toneGuidelines] || toneGuidelines.casual
-  }`;
-  prompt += `\n- Length: ${
-    lengthGuidelines[length as keyof typeof lengthGuidelines] ||
-    lengthGuidelines.medium
-  }`;
+${
+  businessProfile
+    ? `<persona>
+- Agency/Business Name: ${businessProfile.name}
+- Identity/Industry: ${businessProfile.identity}
+- Target Audience: ${businessProfile.targetAudience}
+- Voice: ${businessProfile.voice}
+- Tone: ${businessProfile.tone}
+</persona>
 
-  if (keywords.length > 0) {
-    prompt += `\n- Include these keywords naturally: ${keywords.join(", ")}`;
-  }
-
-  if (context) {
-    prompt += `\n- Additional context: ${context}`;
-  }
-
-  prompt += `\n\nFormat your response as JSON with this structure:
-{
-  "content": "The main post text",
-  "hashtags": ["#hashtag1", "#hashtag2"],
-  "suggestedImage": "Brief description of ideal image"
+Your post must perfectly embody the Voice and Tone described above, appealing directly to the Target Audience. Ignore generic fallback tones and stick exclusively to this persona.`
+    : `<tone>\nUse a friendly, professional tone optimized for high social media engagement.\n</tone>`
 }
 
-Make the post engaging, platform-appropriate for Facebook, and include relevant hashtags.`;
+<post_requirements>
+1. Length: ${selectedLength}
+${keywords && keywords.length > 0 ? `2. Keywords to include naturally: ${keywords.join(", ")}` : ""}
+${context ? `3. Additional Context: ${context}` : ""}
+4. Output format: Must be raw, strictly valid JSON without markdown wrapping.
+</post_requirements>
 
-  return prompt;
+<json_structure>
+{
+  "content": "The main post text including emojis and line breaks if appropriate",
+  "hashtags": ["#hashtag1", "#hashtag2"],
+  "suggestedImage": "Brief visual description of an ideal AI-generated image to attach to this post"
+}
+</json_structure>
+
+Return ONLY the JSON.`;
 }
 
 // Helper function to parse Gemini response

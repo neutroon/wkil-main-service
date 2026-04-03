@@ -215,6 +215,7 @@ export async function handleWhatsAppMessage(
         tools: finalTools,
         businessProfileId: businessProfile.id,
         customerPhone: from,
+        channel: "whatsapp",
       });
 
     }

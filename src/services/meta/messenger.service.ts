@@ -191,6 +191,7 @@ export async function handleMessengerMessage(
         customerMessage: messageText,
         tools: finalTools,
         businessProfileId: businessProfile.id,
+        channel: "messenger",
       });
     }
 

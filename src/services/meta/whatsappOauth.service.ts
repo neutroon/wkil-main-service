@@ -91,9 +91,13 @@ export async function exchangeCodeForToken(code: string, redirectUri?: string): 
   attempts.push(undefined);
   // 2) explicitly empty string
   attempts.push("");
-  // 3) trimmed redirectUri from frontend
+  // 3) Meta's OAuth dialog request often uses an internal "xd_arbiter" redirect_uri.
+  // If Meta ignores the hash fragment portion when validating, the base URL can match.
+  // (Derived from your popup URL: https://staticxx.facebook.com/x/connect/xd_arbiter/?version=46#... )
+  attempts.push("https://staticxx.facebook.com/x/connect/xd_arbiter/?version=46");
+  // 4) trimmed redirectUri from frontend
   if (trimmed !== "") attempts.push(trimmed);
-  // 4) trailing slash normalized variant (only if we meaningfully changed it)
+  // 5) trailing slash normalized variant (only if we meaningfully changed it)
   if (trimmed !== "") {
     const withoutTrailingSlash = trimmed.endsWith("/") ? trimmed.slice(0, -1) : trimmed;
     const withTrailingSlash = trimmed.endsWith("/") ? trimmed : `${trimmed}/`;

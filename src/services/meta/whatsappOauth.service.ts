@@ -149,38 +149,95 @@ export async function exchangeCodeForToken(code: string, redirectUri?: string): 
 // ─── Step 2: Discover all WABA accounts & phone numbers for this token ─────────
 
 export async function discoverWabaAccounts(token: string): Promise<WabaAccount[]> {
-  // Fetch all WhatsApp Business Accounts the token has access to
-  const wabaRes = await fetch(
-    `${DISCOVERY_GRAPH_API}/me/businesses?fields=whatsapp_business_accounts{id,name}&access_token=${token}`,
+  const systemUserToken = process.env.FB_SYSTEM_USER_ACCESS_TOKEN;
+  if (!systemUserToken) {
+    throw new Error(
+      "FB_SYSTEM_USER_ACCESS_TOKEN is required for WABA discovery (debug_token flow)",
+    );
+  }
+
+  // Step A: Resolve shared WABA IDs from the newly minted business token.
+  const debugRes = await fetch(
+    `${DISCOVERY_GRAPH_API}/debug_token?input_token=${encodeURIComponent(token)}`,
+    {
+      headers: {
+        Authorization: `Bearer ${systemUserToken}`,
+      },
+    },
   );
-  const wabaData = await wabaRes.json() as any;
+  const debugData = (await debugRes.json()) as {
+    data?: {
+      granular_scopes?: Array<{
+        scope?: string;
+        target_ids?: Array<string | number>;
+      }>;
+    };
+    error?: { message?: string };
+  };
 
-  if (!wabaRes.ok) {
-    logger.error("whatsapp_oauth.waba_discovery_failed", { error: wabaData });
-    throw new Error(wabaData?.error?.message || "WABA discovery failed");
+  if (!debugRes.ok) {
+    logger.error("whatsapp_oauth.waba_discovery_failed", { error: debugData });
+    throw new Error(debugData?.error?.message || "WABA discovery failed (debug_token)");
   }
 
+  const granularScopes = debugData?.data?.granular_scopes || [];
+  const wabaIds = Array.from(
+    new Set(
+      granularScopes
+        .filter((s) => s.scope === "whatsapp_business_management")
+        .flatMap((s) => s.target_ids || [])
+        .map((id) => String(id)),
+    ),
+  );
+
+  if (wabaIds.length === 0) {
+    throw new Error(
+      "No WhatsApp Business Accounts were found in debug_token granular_scopes",
+    );
+  }
+
+  // Step B: Fetch WABA details + phone numbers.
   const accounts: WabaAccount[] = [];
-
-  // Flatten businesses -> waba accounts
-  const businesses: any[] = wabaData.data || [];
-  for (const biz of businesses) {
-    const wabas: any[] = biz.whatsapp_business_accounts?.data || [];
-    for (const waba of wabas) {
-      // Fetch phone numbers for this WABA
-      const phonesRes = await fetch(
-        `${DISCOVERY_GRAPH_API}/${waba.id}/phone_numbers?fields=id,display_phone_number,verified_name&access_token=${token}`,
-      );
-      const phonesData = await phonesRes.json() as any;
-      accounts.push({
-        id: waba.id,
-        name: waba.name,
-        phone_numbers: phonesData.data || [],
-      });
+  for (const wabaId of wabaIds) {
+    const wabaRes = await fetch(
+      `${DISCOVERY_GRAPH_API}/${wabaId}?fields=id,name&access_token=${token}`,
+    );
+    const wabaData = (await wabaRes.json()) as {
+      id?: string;
+      name?: string;
+      error?: { message?: string };
+    };
+    if (!wabaRes.ok) {
+      logger.warn("whatsapp_oauth.waba_fetch_failed", { wabaId, error: wabaData });
+      continue;
     }
+
+    const phonesRes = await fetch(
+      `${DISCOVERY_GRAPH_API}/${wabaId}/phone_numbers?fields=id,display_phone_number,verified_name&access_token=${token}`,
+    );
+    const phonesData = (await phonesRes.json()) as {
+      data?: WabaPhoneNumber[];
+      error?: { message?: string };
+    };
+    if (!phonesRes.ok) {
+      logger.warn("whatsapp_oauth.waba_phone_numbers_failed", {
+        wabaId,
+        error: phonesData,
+      });
+      continue;
+    }
+
+    accounts.push({
+      id: wabaData.id || wabaId,
+      name: wabaData.name || `WABA ${wabaId}`,
+      phone_numbers: phonesData.data || [],
+    });
   }
 
-  logger.info("whatsapp_oauth.waba_accounts_discovered", { count: accounts.length });
+  logger.info("whatsapp_oauth.waba_accounts_discovered", {
+    count: accounts.length,
+    resolvedWabaIds: wabaIds.length,
+  });
   return accounts;
 }
 

@@ -6,6 +6,9 @@ const GRAPH_API = "https://graph.facebook.com/v25.0";
 // Meta Embedded Signup onboarding (Tech Provider) docs show token exchange using v21.0.
 // We keep other calls on `GRAPH_API` but align the token exchange endpoint version.
 const OAUTH_GRAPH_API = "https://graph.facebook.com/v21.0";
+// The "discover WABA accounts + phone numbers" step relies on Graph fields/endpoints
+// that appear to differ by version; use v21.0 to match the Embedded Signup token exchange.
+const DISCOVERY_GRAPH_API = "https://graph.facebook.com/v21.0";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -148,7 +151,7 @@ export async function exchangeCodeForToken(code: string, redirectUri?: string): 
 export async function discoverWabaAccounts(token: string): Promise<WabaAccount[]> {
   // Fetch all WhatsApp Business Accounts the token has access to
   const wabaRes = await fetch(
-    `${GRAPH_API}/me/businesses?fields=whatsapp_business_accounts{id,name}&access_token=${token}`,
+    `${DISCOVERY_GRAPH_API}/me/businesses?fields=whatsapp_business_accounts{id,name}&access_token=${token}`,
   );
   const wabaData = await wabaRes.json() as any;
 
@@ -166,7 +169,7 @@ export async function discoverWabaAccounts(token: string): Promise<WabaAccount[]
     for (const waba of wabas) {
       // Fetch phone numbers for this WABA
       const phonesRes = await fetch(
-        `${GRAPH_API}/${waba.id}/phone_numbers?fields=id,display_phone_number,verified_name&access_token=${token}`,
+        `${DISCOVERY_GRAPH_API}/${waba.id}/phone_numbers?fields=id,display_phone_number,verified_name&access_token=${token}`,
       );
       const phonesData = await phonesRes.json() as any;
       accounts.push({

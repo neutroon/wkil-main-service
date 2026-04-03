@@ -1,10 +1,60 @@
 import prisma from "../../config/prisma";
 import { logger } from "../../utils/logger";
 
+type CanonicalVerification = "verified" | "unverified" | "failed";
+
+type ExternalQueryEnvelope = {
+  success: boolean;
+  verification: CanonicalVerification;
+  actionType: string;
+  reason: string;
+  data: unknown;
+  error?: string;
+};
+
+function looksEmptyResult(data: unknown): boolean {
+  if (data == null) return true;
+  if (Array.isArray(data)) return data.length === 0;
+  if (typeof data === "object") {
+    return Object.keys(data as Record<string, unknown>).length === 0;
+  }
+  return false;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * External data queries are read-only fetches. If the HTTP layer succeeded and the
+ * body is non-empty JSON, that is sufficient "verification" for guardrails — we are
+ * not asserting a write-side confirmation (order booked, etc.); the model must still
+ * ground answers in this payload. Explicit provider error signals map to failed.
+ */
+/** Exported for unit tests; read-only external query semantics. */
+export function toCanonicalVerificationRead(data: unknown): {
+  verification: CanonicalVerification;
+  reason: string;
+} {
+  if (looksEmptyResult(data)) {
+    return { verification: "failed", reason: "no_data_found" };
+  }
+  if (isRecord(data)) {
+    if (data.success === false) {
+      return { verification: "failed", reason: "provider_success_false" };
+    }
+    const statusRaw = String(data.status ?? "").toLowerCase();
+    if (["failed", "error", "cancelled", "canceled"].includes(statusRaw)) {
+      return { verification: "failed", reason: `provider_status_${statusRaw}` };
+    }
+  }
+  return { verification: "verified", reason: "data_returned" };
+}
+
 export async function executeExternalQuery(
   sourceId: number,
   args: Record<string, any>
-): Promise<any> {
+): Promise<ExternalQueryEnvelope> {
   const source = await prisma.externalDataSource.findUnique({
     where: { id: sourceId },
   });
@@ -49,13 +99,34 @@ export async function executeExternalQuery(
 
     if (!response.ok) {
         logger.warn("external_api_failed", { url: finalUrl, status: response.status });
-        return { error: `External API returned status ${response.status}`, success: false };
+        return {
+          success: false,
+          verification: "failed",
+          actionType: `external_query_${sourceId}`,
+          reason: "http_error",
+          data: null,
+          error: `External API returned status ${response.status}`,
+        };
     }
 
     const data = await response.json();
-    return { success: true, data };
+    const canonical = toCanonicalVerificationRead(data);
+    return {
+      success: canonical.verification !== "failed",
+      verification: canonical.verification,
+      actionType: `external_query_${sourceId}`,
+      reason: canonical.reason,
+      data,
+    };
   } catch (error: any) {
     logger.error("external_api_error", { errorMessage: String(error) });
-    return { error: String(error), success: false };
+    return {
+      success: false,
+      verification: "failed",
+      actionType: `external_query_${sourceId}`,
+      reason: "network_or_runtime_error",
+      data: null,
+      error: String(error),
+    };
   }
 }

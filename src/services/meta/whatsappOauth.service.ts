@@ -20,7 +20,7 @@ export interface WabaAccount {
 
 // ─── Step 1: Exchange short-lived SDK code for a long-lived User Access Token ──
 
-export async function exchangeCodeForToken(code: string): Promise<string> {
+export async function exchangeCodeForToken(code: string, redirectUri?: string): Promise<string> {
   const appId = process.env.FB_APP_ID;
   const appSecret = process.env.FB_APP_SECRET;
 
@@ -33,10 +33,12 @@ export async function exchangeCodeForToken(code: string): Promise<string> {
   url.searchParams.set("client_secret", appSecret);
   url.searchParams.set("code", code);
   
-  // CRITICAL: When exchanging a code retrieved via the Facebook JavaScript SDK (FB.login),
-  // the redirect_uri parameter MUST be present and set to an empty string. 
-  // Omission or passing the frontend URL will result in error 100 subcode 36008.
-  url.searchParams.set("redirect_uri", "");
+  // Must match the URL Meta used when issuing the code (typically full page URL for FB.login).
+  if (redirectUri) {
+    url.searchParams.set("redirect_uri", redirectUri);
+  } else {
+    url.searchParams.set("redirect_uri", "");
+  }
 
   const res = await fetch(url.toString());
   const data = await res.json() as any;

@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express";
+import { randomUUID } from "crypto";
 import { Prisma } from "@prisma/client";
 import prisma from "../../config/prisma";
 import { enqueueWhatsAppJob } from "../../queues/whatsapp.queue";
@@ -20,6 +21,11 @@ const whatsappRoutes = Router();
 whatsappRoutes.use("/conversations", conversationsRoutes);
 
 const isDev = process.env.NODE_ENV !== "production";
+const OAUTH_EXCHANGE_REF_TTL_MS = 10 * 60 * 1000;
+const oauthPreviewTokenCache = new Map<
+  string,
+  { userId: number; accessToken: string; createdAt: number }
+>();
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -195,6 +201,7 @@ whatsappRoutes.get(
   authenticateToken,
   async (req: Request, res: Response) => {
     try {
+      const userId = (req as any).user.id as number;
       const { code, redirectUri } = req.query;
       if (!code) {
         return res.status(400).json({ error: "code is required" });
@@ -202,8 +209,14 @@ whatsappRoutes.get(
 
       const accessToken = await exchangeCodeForToken(code as string, redirectUri as string);
       const accounts = await discoverWabaAccounts(accessToken);
+      const exchangeRef = randomUUID();
+      oauthPreviewTokenCache.set(exchangeRef, {
+        userId,
+        accessToken,
+        createdAt: Date.now(),
+      });
 
-      res.json({ data: accounts });
+      res.json({ data: accounts, exchangeRef });
     } catch (error: any) {
       logger.error("whatsapp.oauth.phone_numbers_failed", { error: error.message });
       res.status(500).json({ error: error.message });
@@ -226,14 +239,31 @@ whatsappRoutes.post(
   async (req: Request, res: Response) => {
     try {
       const userId = (req as any).user.id;
-      const { code, phoneNumberId, businessProfileId, redirectUri } = req.body;
+      const { code, phoneNumberId, businessProfileId, redirectUri, exchangeRef } = req.body;
 
-      if (!code || !phoneNumberId) {
-        return res.status(400).json({ error: "code and phoneNumberId are required" });
+      if (!phoneNumberId || (!code && !exchangeRef)) {
+        return res.status(400).json({
+          error: "phoneNumberId is required and either code or exchangeRef must be provided",
+        });
       }
 
-      // Step 1: Exchange SDK code for token
-      const accessToken = await exchangeCodeForToken(code as string, redirectUri as string);
+      // Step 1: Reuse the preview token when available; fallback to code exchange.
+      let accessToken: string | undefined;
+      if (exchangeRef && typeof exchangeRef === "string") {
+        const cached = oauthPreviewTokenCache.get(exchangeRef);
+        if (cached) {
+          const expired = Date.now() - cached.createdAt > OAUTH_EXCHANGE_REF_TTL_MS;
+          if (!expired && cached.userId === userId) {
+            accessToken = cached.accessToken;
+            oauthPreviewTokenCache.delete(exchangeRef);
+          } else if (expired) {
+            oauthPreviewTokenCache.delete(exchangeRef);
+          }
+        }
+      }
+      if (!accessToken) {
+        accessToken = await exchangeCodeForToken(code as string, redirectUri as string);
+      }
 
       // Step 2: Discover phone numbers to find the matching WABA and display name
       const accounts = await discoverWabaAccounts(accessToken);

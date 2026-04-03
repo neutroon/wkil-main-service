@@ -149,35 +149,76 @@ export async function exchangeCodeForToken(code: string, redirectUri?: string): 
 // ─── Step 2: Discover all WABA accounts & phone numbers for this token ─────────
 
 export async function discoverWabaAccounts(token: string): Promise<WabaAccount[]> {
-  const systemUserToken = process.env.FB_SYSTEM_USER_ACCESS_TOKEN;
-  if (!systemUserToken) {
-    throw new Error(
-      "FB_SYSTEM_USER_ACCESS_TOKEN is required for WABA discovery (debug_token flow)",
-    );
+  const appId = process.env.FB_APP_ID;
+  const appSecret = process.env.FB_APP_SECRET;
+  const systemUserToken = process.env.FB_SYSTEM_USER_ACCESS_TOKEN?.trim();
+  if (!appId || !appSecret) {
+    throw new Error("FB_APP_ID and FB_APP_SECRET must be set in environment");
   }
 
-  // Step A: Resolve shared WABA IDs from the newly minted business token.
-  const debugRes = await fetch(
-    `${DISCOVERY_GRAPH_API}/debug_token?input_token=${encodeURIComponent(token)}`,
-    {
-      headers: {
-        Authorization: `Bearer ${systemUserToken}`,
-      },
-    },
-  );
-  const debugData = (await debugRes.json()) as {
-    data?: {
-      granular_scopes?: Array<{
-        scope?: string;
-        target_ids?: Array<string | number>;
-      }>;
-    };
-    error?: { message?: string };
-  };
+  // Prefer system user token when available, but fall back to app access token.
+  // `debug_token` accepts an app access token in the Authorization header.
+  const debugAuthCandidates: Array<{
+    label: "system_user" | "app_access";
+    token: string;
+  }> = [];
+  if (systemUserToken) {
+    debugAuthCandidates.push({ label: "system_user", token: systemUserToken });
+  }
+  debugAuthCandidates.push({ label: "app_access", token: `${appId}|${appSecret}` });
 
-  if (!debugRes.ok) {
+  let debugData:
+    | {
+        data?: {
+          granular_scopes?: Array<{
+            scope?: string;
+            target_ids?: Array<string | number>;
+          }>;
+        };
+        error?: { message?: string; code?: number };
+      }
+    | undefined;
+  let debugSucceeded = false;
+  let lastDebugError = "WABA discovery failed (debug_token)";
+
+  // Step A: Resolve shared WABA IDs from the newly minted business token.
+  for (const candidate of debugAuthCandidates) {
+    const debugRes = await fetch(
+      `${DISCOVERY_GRAPH_API}/debug_token?input_token=${encodeURIComponent(token)}`,
+      {
+        headers: {
+          Authorization: `Bearer ${candidate.token}`,
+        },
+      },
+    );
+    debugData = (await debugRes.json()) as {
+      data?: {
+        granular_scopes?: Array<{
+          scope?: string;
+          target_ids?: Array<string | number>;
+        }>;
+      };
+      error?: { message?: string; code?: number };
+    };
+
+    if (debugRes.ok && debugData?.data) {
+      debugSucceeded = true;
+      logger.info("whatsapp_oauth.debug_token_ok", {
+        auth_strategy: candidate.label,
+      });
+      break;
+    }
+
+    lastDebugError = debugData?.error?.message || lastDebugError;
+    logger.warn("whatsapp_oauth.debug_token_failed", {
+      auth_strategy: candidate.label,
+      error: debugData,
+    });
+  }
+
+  if (!debugSucceeded || !debugData?.data) {
     logger.error("whatsapp_oauth.waba_discovery_failed", { error: debugData });
-    throw new Error(debugData?.error?.message || "WABA discovery failed (debug_token)");
+    throw new Error(lastDebugError);
   }
 
   const granularScopes = debugData?.data?.granular_scopes || [];

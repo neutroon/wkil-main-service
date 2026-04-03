@@ -1,5 +1,4 @@
 import prisma from "../../config/prisma";
-import { generateMessengerAssistantReply } from "../../config/gemini";
 import { retrieveRelevantChunks } from "../../rag/rag.service";
 import { logger } from "../../utils/logger";
 import { decryptFacebookSecret } from "../../utils/tokenCrypto";
@@ -21,7 +20,7 @@ const FALLBACK_REPLY =
   "Sorry, we can't respond right now. Please try again or contact the business directly.";
 
 const NOT_INGESTED_REPLY =
-  "We're still setting up our assistant. Please contact us directly for now — we'll be with you shortly.";
+  "We're still setting up our assistant. Please contact us directly for now - we'll be with you shortly.";
 
 const MAX_HISTORY_CHARS = 12_000;
 

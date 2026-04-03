@@ -20,6 +20,51 @@ export interface WabaAccount {
 
 // ─── Step 1: Exchange short-lived SDK code for a long-lived User Access Token ──
 
+/** Meta often returns this when redirect_uri does not match what the dialog used. */
+function looksLikeRedirectUriMismatch(message: string): boolean {
+  return /redirect_uri|verification code|validating verification/i.test(message);
+}
+
+/**
+ * WhatsApp Embedded Signup uses FB.login with response_type=code. Meta does not document a
+ * single rule: the dialog may bind the code to redirect_uri "" OR to the current page URL.
+ * Community reports (e.g. SO #77555576) and prod behavior show empty string is often required.
+ * We try "" first, then the client-provided URI when it differs, and only retry on mismatch errors.
+ *
+ * @see https://developers.facebook.com/docs/whatsapp/embedded-signup/implementation
+ */
+async function exchangeCodeForTokenOnce(
+  code: string,
+  redirectUriForRequest: string,
+  appId: string,
+  appSecret: string,
+): Promise<{ access_token: string }> {
+  const url = new URL(`${GRAPH_API}/oauth/access_token`);
+  url.searchParams.set("client_id", appId);
+  url.searchParams.set("client_secret", appSecret);
+  url.searchParams.set("code", code);
+  url.searchParams.set("redirect_uri", redirectUriForRequest);
+
+  const res = await fetch(url.toString());
+  const data = (await res.json()) as {
+    access_token?: string;
+    error?: { message?: string };
+  };
+
+  if (!res.ok || !data.access_token) {
+    const msg = data?.error?.message || "Token exchange failed";
+    logger.error("whatsapp_oauth.token_exchange_failed", {
+      status: res.status,
+      error: data,
+      redirect_uri_attempt: redirectUriForRequest === "" ? "(empty)" : redirectUriForRequest,
+      url: url.toString().replace(appSecret, "REDACTED"),
+    });
+    throw new Error(msg);
+  }
+
+  return data as { access_token: string };
+}
+
 export async function exchangeCodeForToken(code: string, redirectUri?: string): Promise<string> {
   const appId = process.env.FB_APP_ID;
   const appSecret = process.env.FB_APP_SECRET;
@@ -28,32 +73,33 @@ export async function exchangeCodeForToken(code: string, redirectUri?: string): 
     throw new Error("FB_APP_ID and FB_APP_SECRET must be set in environment");
   }
 
-  const url = new URL(`${GRAPH_API}/oauth/access_token`);
-  url.searchParams.set("client_id", appId);
-  url.searchParams.set("client_secret", appSecret);
-  url.searchParams.set("code", code);
-  
-  // Must match the URL Meta used when issuing the code (typically full page URL for FB.login).
-  if (redirectUri) {
-    url.searchParams.set("redirect_uri", redirectUri);
-  } else {
-    url.searchParams.set("redirect_uri", "");
+  const trimmed = redirectUri?.trim() ?? "";
+  const attempts: string[] = [""];
+  if (trimmed !== "") attempts.push(trimmed);
+
+  let lastError: Error | null = null;
+
+  for (let i = 0; i < attempts.length; i++) {
+    const uri = attempts[i];
+    try {
+      const data = await exchangeCodeForTokenOnce(code, uri, appId, appSecret);
+      logger.info("whatsapp_oauth.token_exchanged", {
+        redirect_uri_used: uri === "" ? "(empty)" : uri,
+      });
+      return data.access_token;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      lastError = e instanceof Error ? e : new Error(msg);
+      const canRetry =
+        i < attempts.length - 1 && looksLikeRedirectUriMismatch(msg);
+      if (!canRetry) throw lastError;
+      logger.warn("whatsapp_oauth.token_exchange_retry_next_redirect", {
+        failed_with: uri === "" ? "(empty)" : uri,
+      });
+    }
   }
 
-  const res = await fetch(url.toString());
-  const data = await res.json() as any;
-
-  if (!res.ok || !data.access_token) {
-    logger.error("whatsapp_oauth.token_exchange_failed", { 
-      status: res.status,
-      error: data,
-      url: url.toString().replace(appSecret, "REDACTED") // Log sanitized URL
-    });
-    throw new Error(data?.error?.message || "Token exchange failed");
-  }
-
-  logger.info("whatsapp_oauth.token_exchanged");
-  return data.access_token as string;
+  throw lastError ?? new Error("Token exchange failed");
 }
 
 // ─── Step 2: Discover all WABA accounts & phone numbers for this token ─────────

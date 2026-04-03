@@ -33,7 +33,9 @@ export async function exchangeCodeForToken(code: string, redirectUri?: string): 
   url.searchParams.set("client_secret", appSecret);
   url.searchParams.set("code", code);
 
-  if (redirectUri) {
+  // If using the JS SDK popup flow with config_id, redirect_uri SHOULD be omitted.
+  // We only set it if a non-empty, non-undefined string is explicitly provided.
+  if (redirectUri && redirectUri !== "undefined" && redirectUri !== "null" && redirectUri !== "") {
     url.searchParams.set("redirect_uri", redirectUri);
   }
 
@@ -41,7 +43,11 @@ export async function exchangeCodeForToken(code: string, redirectUri?: string): 
   const data = await res.json() as any;
 
   if (!res.ok || !data.access_token) {
-    logger.error("whatsapp_oauth.token_exchange_failed", { error: data });
+    logger.error("whatsapp_oauth.token_exchange_failed", { 
+      status: res.status,
+      error: data,
+      url: url.toString().replace(appSecret, "REDACTED") // Log sanitized URL
+    });
     throw new Error(data?.error?.message || "Token exchange failed");
   }
 

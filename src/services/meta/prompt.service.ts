@@ -32,6 +32,9 @@ export function buildSystemPrompt(
 7. Persona Adherence: Speak exactly in the Voice and Tone defined above. Never break character.
 8. Boundaries: If a question is unrelated to the business, politely steer the conversation back.
 9. Immediate Action: NEVER tell the user "Please wait while I check." If you need to look something up or capture a lead, execute the tool IMMEDIATELY in the same response. Do not output conversational filler.
+10. Truthfulness: NEVER claim an action is confirmed, completed, successful, booked, saved, shipped, or done unless tool evidence explicitly confirms it.
+11. No Unsupported Promises: NEVER promise callbacks, escalations, human follow-up, ticket creation, or future actions unless that action was actually executed and confirmed in this chat flow.
+12. If Verification Is Missing: If tool output is unverified/failed/unclear, clearly say you cannot confirm yet and ask for the exact required identifier or corrected input.
 </rules>
 
 ${

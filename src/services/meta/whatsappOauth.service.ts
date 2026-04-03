@@ -3,6 +3,9 @@ import { logger } from "../../utils/logger";
 import prisma from "../../config/prisma";
 
 const GRAPH_API = "https://graph.facebook.com/v25.0";
+// Meta Embedded Signup onboarding (Tech Provider) docs show token exchange using v21.0.
+// We keep other calls on `GRAPH_API` but align the token exchange endpoint version.
+const OAUTH_GRAPH_API = "https://graph.facebook.com/v21.0";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -39,7 +42,7 @@ async function exchangeCodeForTokenOnce(
   appSecret: string,
   redirectUriForRequest?: string,
 ): Promise<{ access_token: string }> {
-  const url = new URL(`${GRAPH_API}/oauth/access_token`);
+  const url = new URL(`${OAUTH_GRAPH_API}/oauth/access_token`);
   url.searchParams.set("client_id", appId);
   url.searchParams.set("client_secret", appSecret);
   url.searchParams.set("code", code);
@@ -74,7 +77,7 @@ async function exchangeCodeForTokenOnce(
   return data as { access_token: string };
 }
 
-export async function exchangeCodeForToken(code: string, redirectUri?: string): Promise<string> {
+export async function exchangeCodeForToken(code: string, _redirectUri?: string): Promise<string> {
   const appId = process.env.FB_APP_ID;
   const appSecret = process.env.FB_APP_SECRET;
 
@@ -82,28 +85,16 @@ export async function exchangeCodeForToken(code: string, redirectUri?: string): 
     throw new Error("FB_APP_ID and FB_APP_SECRET must be set in environment");
   }
 
-  const trimmed = redirectUri?.trim() ?? "";
   // Try variants in a strict order to maximize chance we match Meta's dialog-binding
   // logic for Embedded Signup (which appears to be sensitive to omit vs empty and
   // trailing slashes).
-  const attempts: Array<string | undefined> = [];
-  // 1) omit redirect_uri entirely
-  attempts.push(undefined);
-  // 2) explicitly empty string
+  // Best-practice according to Meta's Embedded Signup (Tech Provider) docs:
+  // exchange the token code server-to-server with client_id, client_secret, code.
+  // (No redirect_uri parameter.)
+  // We still keep one fallback of explicitly setting redirect_uri="" for compatibility
+  // with community workarounds, but we do not try app/staticxx redirect URIs.
+  const attempts: Array<string | undefined> = [undefined];
   attempts.push("");
-  // 3) Meta's OAuth dialog request often uses an internal "xd_arbiter" redirect_uri.
-  // If Meta ignores the hash fragment portion when validating, the base URL can match.
-  // (Derived from your popup URL: https://staticxx.facebook.com/x/connect/xd_arbiter/?version=46#... )
-  attempts.push("https://staticxx.facebook.com/x/connect/xd_arbiter/?version=46");
-  // 4) trimmed redirectUri from frontend
-  if (trimmed !== "") attempts.push(trimmed);
-  // 5) trailing slash normalized variant (only if we meaningfully changed it)
-  if (trimmed !== "") {
-    const withoutTrailingSlash = trimmed.endsWith("/") ? trimmed.slice(0, -1) : trimmed;
-    const withTrailingSlash = trimmed.endsWith("/") ? trimmed : `${trimmed}/`;
-    if (withoutTrailingSlash !== trimmed) attempts.push(withoutTrailingSlash);
-    else if (withTrailingSlash !== trimmed) attempts.push(withTrailingSlash);
-  }
 
   // Remove duplicates while keeping order.
   const seen = new Set<string>();

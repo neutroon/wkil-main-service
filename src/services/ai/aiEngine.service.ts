@@ -4,6 +4,25 @@ import { genAI, MESSENGER_SAFETY_SETTINGS } from "../../config/gemini";
 import { pushLeadToCrm } from "../crm/crm.service";
 import { executeExternalQuery } from "../external/externalData.service";
 
+function hasDeferralFiller(text: string): boolean {
+  return /(?:let me|please wait|one moment|i(?:'|’)ll check|i will check|allow me to check|جار[يى]|لحظة|ثواني|اسمح لي)/i.test(
+    text,
+  );
+}
+
+function hasConfirmationClaim(text: string): boolean {
+  return /(?:confirmed|confirmation|successfully confirmed|تم\s*التأكيد|مؤكد|اكتمل|ناجح)/i.test(
+    text,
+  );
+}
+
+function looksEmptyResult(data: unknown): boolean {
+  if (data == null) return true;
+  if (Array.isArray(data)) return data.length === 0;
+  if (typeof data === "object") return Object.keys(data as Record<string, unknown>).length === 0;
+  return false;
+}
+
 export async function runAIEngineLoop(params: {
   systemInstruction: string;
   historyTurns: { role: "user" | "model"; text?: string; parts?: any[] }[];
@@ -25,6 +44,7 @@ export async function runAIEngineLoop(params: {
 
   let turnCount = 0;
   const MAX_TURNS = 3;
+  let lastExternalQueryFailed = false;
 
   while (turnCount < MAX_TURNS) {
     turnCount++;
@@ -57,6 +77,26 @@ export async function runAIEngineLoop(params: {
     // If there's no function call, we are done
     if (functionCalls.length === 0) {
       if (!responseText) throw new Error("No reply text and no function call generated");
+
+      // Prevent "I'll check" dead-ends by forcing one more turn.
+      if (hasDeferralFiller(responseText) && turnCount < MAX_TURNS) {
+        contents.push({
+          role: "user",
+          parts: [
+            {
+              text:
+                "Do not ask the user to wait. Either execute the required tool now and then answer, or provide a direct final answer based on available data.",
+            },
+          ],
+        });
+        continue;
+      }
+
+      // Prevent unsupported "confirmed" claims when external lookup failed.
+      if (lastExternalQueryFailed && hasConfirmationClaim(responseText)) {
+        return "I could not confirm that from the latest system data. Please verify the order number and share it again exactly as provided.";
+      }
+
       return responseText;
     }
 
@@ -105,11 +145,18 @@ export async function runAIEngineLoop(params: {
         const sourceId = parseInt(call.name.split("_").pop() || "0", 10);
         logger.info("ai.executing_external_tool", { sourceId, args });
         const result = await executeExternalQuery(sourceId, args);
+        lastExternalQueryFailed = !result?.success || looksEmptyResult(result?.data);
         
         functionResponses.push({
           functionResponse: {
             name: call.name,
-            response: result,
+            response: result?.success
+              ? result
+              : {
+                  ...result,
+                  instruction:
+                    "External data lookup failed or returned no usable result. You MUST NOT claim the order is confirmed/completed. Politely explain what is missing or invalid and ask the user to re-send the exact required value.",
+                },
           }
         });
       }

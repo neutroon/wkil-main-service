@@ -123,7 +123,7 @@ export const exchangeCodeForToken = async (params: FacebookTokenParams) => {
     const requestParams = {
       client_id: process.env.FB_APP_ID,
       client_secret: process.env.FB_APP_SECRET,
-      redirect_uri: params.redirect_uri,
+      // redirect_uri: params.redirect_uri,
       code: params.code,
     };
 

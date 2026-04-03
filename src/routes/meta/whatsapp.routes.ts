@@ -22,6 +22,7 @@ whatsappRoutes.use("/conversations", conversationsRoutes);
 
 const isDev = process.env.NODE_ENV !== "production";
 const OAUTH_EXCHANGE_REF_TTL_MS = 10 * 60 * 1000;
+const OAUTH_EXCHANGE_REF_MAX_ENTRIES = 500;
 const oauthPreviewTokenCache = new Map<
   string,
   { userId: number; accessToken: string; createdAt: number }
@@ -37,6 +38,24 @@ function isProcessedWhatsAppTableMissing(error: unknown): boolean {
   return (
     msg.includes("ProcessedWhatsAppMessage") && msg.includes("does not exist")
   );
+}
+
+function pruneOauthPreviewTokenCache(now: number): void {
+  for (const [key, value] of oauthPreviewTokenCache.entries()) {
+    if (now - value.createdAt > OAUTH_EXCHANGE_REF_TTL_MS) {
+      oauthPreviewTokenCache.delete(key);
+    }
+  }
+
+  // Keep cache bounded in long-running processes.
+  if (oauthPreviewTokenCache.size <= OAUTH_EXCHANGE_REF_MAX_ENTRIES) return;
+  const overflow = oauthPreviewTokenCache.size - OAUTH_EXCHANGE_REF_MAX_ENTRIES;
+  const oldestEntries = [...oauthPreviewTokenCache.entries()]
+    .sort((a, b) => a[1].createdAt - b[1].createdAt)
+    .slice(0, overflow);
+  for (const [key] of oldestEntries) {
+    oauthPreviewTokenCache.delete(key);
+  }
 }
 
 // ─── Webhook verification (GET) ───────────────────────────────────────────────
@@ -203,6 +222,8 @@ whatsappRoutes.get(
     try {
       const userId = (req as any).user.id as number;
       const { code, redirectUri } = req.query;
+      const now = Date.now();
+      pruneOauthPreviewTokenCache(now);
       if (!code) {
         return res.status(400).json({ error: "code is required" });
       }
@@ -213,7 +234,7 @@ whatsappRoutes.get(
       oauthPreviewTokenCache.set(exchangeRef, {
         userId,
         accessToken,
-        createdAt: Date.now(),
+        createdAt: now,
       });
 
       res.json({ data: accounts, exchangeRef });
@@ -240,6 +261,8 @@ whatsappRoutes.post(
     try {
       const userId = (req as any).user.id;
       const { code, phoneNumberId, businessProfileId, redirectUri, exchangeRef } = req.body;
+      const now = Date.now();
+      pruneOauthPreviewTokenCache(now);
 
       if (!phoneNumberId || (!code && !exchangeRef)) {
         return res.status(400).json({
@@ -252,16 +275,25 @@ whatsappRoutes.post(
       if (exchangeRef && typeof exchangeRef === "string") {
         const cached = oauthPreviewTokenCache.get(exchangeRef);
         if (cached) {
-          const expired = Date.now() - cached.createdAt > OAUTH_EXCHANGE_REF_TTL_MS;
+          const expired = now - cached.createdAt > OAUTH_EXCHANGE_REF_TTL_MS;
           if (!expired && cached.userId === userId) {
             accessToken = cached.accessToken;
             oauthPreviewTokenCache.delete(exchangeRef);
+            logger.info("whatsapp.oauth.exchange_ref_reused", { userId });
           } else if (expired) {
             oauthPreviewTokenCache.delete(exchangeRef);
+            logger.warn("whatsapp.oauth.exchange_ref_expired", { userId });
+          } else {
+            logger.warn("whatsapp.oauth.exchange_ref_user_mismatch", { userId });
           }
+        } else {
+          logger.warn("whatsapp.oauth.exchange_ref_not_found", { userId });
         }
+      } else if (exchangeRef !== undefined) {
+        logger.warn("whatsapp.oauth.exchange_ref_invalid", { userId });
       }
       if (!accessToken) {
+        logger.info("whatsapp.oauth.exchange_ref_fallback_code_exchange", { userId });
         accessToken = await exchangeCodeForToken(code as string, redirectUri as string);
       }
 

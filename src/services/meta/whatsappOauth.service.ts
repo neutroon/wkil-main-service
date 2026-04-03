@@ -27,23 +27,27 @@ function looksLikeRedirectUriMismatch(message: string): boolean {
 
 /**
  * WhatsApp Embedded Signup uses FB.login with response_type=code. Meta does not document a
- * single rule: the dialog may bind the code to redirect_uri "" OR to the current page URL.
- * Community reports (e.g. SO #77555576) and prod behavior show empty string is often required.
- * We try "" first, then the client-provided URI when it differs, and only retry on mismatch errors.
+ * single rule: the dialog may bind the code to redirect_uri omitted, "", or to the current page URL.
+ * Community reports and prod behavior show Meta can be sensitive to omit-vs-empty and trailing slashes.
+ * This service tries multiple `redirect_uri` exchange variants on mismatch errors.
  *
  * @see https://developers.facebook.com/docs/whatsapp/embedded-signup/implementation
  */
 async function exchangeCodeForTokenOnce(
   code: string,
-  redirectUriForRequest: string,
   appId: string,
   appSecret: string,
+  redirectUriForRequest?: string,
 ): Promise<{ access_token: string }> {
   const url = new URL(`${GRAPH_API}/oauth/access_token`);
   url.searchParams.set("client_id", appId);
   url.searchParams.set("client_secret", appSecret);
   url.searchParams.set("code", code);
-  url.searchParams.set("redirect_uri", redirectUriForRequest);
+  // Meta's Embedded Signup redirect_uri strictness can differ depending on whether
+  // the parameter is omitted vs explicitly set to an empty string.
+  if (redirectUriForRequest !== undefined) {
+    url.searchParams.set("redirect_uri", redirectUriForRequest);
+  }
 
   const res = await fetch(url.toString());
   const data = (await res.json()) as {
@@ -56,7 +60,12 @@ async function exchangeCodeForTokenOnce(
     logger.error("whatsapp_oauth.token_exchange_failed", {
       status: res.status,
       error: data,
-      redirect_uri_attempt: redirectUriForRequest === "" ? "(empty)" : redirectUriForRequest,
+      redirect_uri_attempt:
+        redirectUriForRequest === undefined
+          ? "(omitted)"
+          : redirectUriForRequest === ""
+            ? "(empty)"
+            : redirectUriForRequest,
       url: url.toString().replace(appSecret, "REDACTED"),
     });
     throw new Error(msg);
@@ -74,27 +83,52 @@ export async function exchangeCodeForToken(code: string, redirectUri?: string): 
   }
 
   const trimmed = redirectUri?.trim() ?? "";
-  const attempts: string[] = [""];
+  // Try variants in a strict order to maximize chance we match Meta's dialog-binding
+  // logic for Embedded Signup (which appears to be sensitive to omit vs empty and
+  // trailing slashes).
+  const attempts: Array<string | undefined> = [];
+  // 1) omit redirect_uri entirely
+  attempts.push(undefined);
+  // 2) explicitly empty string
+  attempts.push("");
+  // 3) trimmed redirectUri from frontend
   if (trimmed !== "") attempts.push(trimmed);
+  // 4) trailing slash normalized variant (only if we meaningfully changed it)
+  if (trimmed !== "") {
+    const withoutTrailingSlash = trimmed.endsWith("/") ? trimmed.slice(0, -1) : trimmed;
+    const withTrailingSlash = trimmed.endsWith("/") ? trimmed : `${trimmed}/`;
+    if (withoutTrailingSlash !== trimmed) attempts.push(withoutTrailingSlash);
+    else if (withTrailingSlash !== trimmed) attempts.push(withTrailingSlash);
+  }
+
+  // Remove duplicates while keeping order.
+  const seen = new Set<string>();
+  const uniqueAttempts = attempts.filter((a) => {
+    const key = a === undefined ? "(omitted)" : a === "" ? "(empty)" : a;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 
   let lastError: Error | null = null;
 
-  for (let i = 0; i < attempts.length; i++) {
-    const uri = attempts[i];
+  for (let i = 0; i < uniqueAttempts.length; i++) {
+    const uri = uniqueAttempts[i];
     try {
-      const data = await exchangeCodeForTokenOnce(code, uri, appId, appSecret);
+      const data = await exchangeCodeForTokenOnce(code, appId, appSecret, uri);
       logger.info("whatsapp_oauth.token_exchanged", {
-        redirect_uri_used: uri === "" ? "(empty)" : uri,
+        redirect_uri_used:
+          uri === undefined ? "(omitted)" : uri === "" ? "(empty)" : uri,
       });
       return data.access_token;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       lastError = e instanceof Error ? e : new Error(msg);
       const canRetry =
-        i < attempts.length - 1 && looksLikeRedirectUriMismatch(msg);
+        i < uniqueAttempts.length - 1 && looksLikeRedirectUriMismatch(msg);
       if (!canRetry) throw lastError;
       logger.warn("whatsapp_oauth.token_exchange_retry_next_redirect", {
-        failed_with: uri === "" ? "(empty)" : uri,
+        failed_with: uri === undefined ? "(omitted)" : uri === "" ? "(empty)" : uri,
       });
     }
   }

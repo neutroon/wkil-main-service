@@ -32,6 +32,11 @@ export async function exchangeCodeForToken(code: string): Promise<string> {
   url.searchParams.set("client_id", appId);
   url.searchParams.set("client_secret", appSecret);
   url.searchParams.set("code", code);
+  
+  // CRITICAL: When exchanging a code retrieved via the Facebook JavaScript SDK (FB.login),
+  // the redirect_uri parameter MUST be present and set to an empty string. 
+  // Omission or passing the frontend URL will result in error 100 subcode 36008.
+  url.searchParams.set("redirect_uri", "");
 
   const res = await fetch(url.toString());
   const data = await res.json() as any;

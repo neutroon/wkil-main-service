@@ -186,19 +186,21 @@ whatsappRoutes.post("/webhook", async (req: Request, res: Response) => {
  * GET /v1/whatsapp/oauth/phone-numbers
  * Preview step: Given an SDK code, return available WABA accounts & phone numbers
  * so the frontend can display a picker before committing.
- * Query: { code: string }
+ * Query: { code: string, redirectUri: string }
+ * redirectUri must match Meta's JS SDK "current page" URL (origin + path + query),
+ * identical to POST /oauth — same value used when exchanging the code at Graph API.
  */
 whatsappRoutes.get(
   "/oauth/phone-numbers",
   authenticateToken,
   async (req: Request, res: Response) => {
     try {
-      const { code } = req.query;
+      const { code, redirectUri } = req.query;
       if (!code) {
         return res.status(400).json({ error: "code is required" });
       }
 
-      const accessToken = await exchangeCodeForToken(code as string);
+      const accessToken = await exchangeCodeForToken(code as string, redirectUri as string);
       const accounts = await discoverWabaAccounts(accessToken);
 
       res.json({ data: accounts });
@@ -224,14 +226,14 @@ whatsappRoutes.post(
   async (req: Request, res: Response) => {
     try {
       const userId = (req as any).user.id;
-      const { code, phoneNumberId, businessProfileId } = req.body;
+      const { code, phoneNumberId, businessProfileId, redirectUri } = req.body;
 
       if (!code || !phoneNumberId) {
         return res.status(400).json({ error: "code and phoneNumberId are required" });
       }
 
       // Step 1: Exchange SDK code for token
-      const accessToken = await exchangeCodeForToken(code as string);
+      const accessToken = await exchangeCodeForToken(code as string, redirectUri as string);
 
       // Step 2: Discover phone numbers to find the matching WABA and display name
       const accounts = await discoverWabaAccounts(accessToken);

@@ -77,7 +77,7 @@ async function exchangeCodeForTokenOnce(
   return data as { access_token: string };
 }
 
-export async function exchangeCodeForToken(code: string, _redirectUri?: string): Promise<string> {
+export async function exchangeCodeForToken(code: string, redirectUri?: string): Promise<string> {
   const appId = process.env.FB_APP_ID;
   const appSecret = process.env.FB_APP_SECRET;
 
@@ -85,15 +85,27 @@ export async function exchangeCodeForToken(code: string, _redirectUri?: string):
     throw new Error("FB_APP_ID and FB_APP_SECRET must be set in environment");
   }
 
-  // Try variants in a strict order to maximize chance we match Meta's dialog-binding
-  // logic for Embedded Signup (which appears to be sensitive to omit vs empty and
-  // trailing slashes).
-  // Best-practice according to Meta's Embedded Signup (Tech Provider) docs:
-  // exchange the token code server-to-server with client_id, client_secret, code.
-  // (No redirect_uri parameter.)
-  // We still keep one fallback of explicitly setting redirect_uri="" for compatibility
-  // with community workarounds, but we do not try app/staticxx redirect URIs.
-  const attempts: Array<string | undefined> = [undefined];
+  const trimmed = redirectUri?.trim() ?? "";
+
+  // Embedded Signup code exchange appears to be strict about redirect_uri identity.
+  // For the manual OAuth/dialog flow we control, we should send the exact redirectUri.
+  // For compatibility, we still keep omit/empty as fallback attempts.
+  const attempts: Array<string | undefined> = [];
+
+  if (trimmed !== "") {
+    // 1) exact redirectUri as provided
+    attempts.push(trimmed);
+
+    // 2) trailing-slash normalized variants
+    const withoutTrailingSlash = trimmed.endsWith("/") ? trimmed.slice(0, -1) : trimmed;
+    const withTrailingSlash = trimmed.endsWith("/") ? trimmed : `${trimmed}/`;
+    if (withoutTrailingSlash !== trimmed) attempts.push(withoutTrailingSlash);
+    if (withTrailingSlash !== trimmed) attempts.push(withTrailingSlash);
+  }
+
+  // 3) omit redirect_uri entirely
+  attempts.push(undefined);
+  // 4) explicitly empty string
   attempts.push("");
 
   // Remove duplicates while keeping order.

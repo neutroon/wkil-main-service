@@ -59,7 +59,7 @@ export const corsOptions = {
     callback(new Error("Not allowed by CORS"));
   },
   credentials: true, // Allow cookies
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
   exposedHeaders: ["Set-Cookie"],
   maxAge: 86400, // 24 hours

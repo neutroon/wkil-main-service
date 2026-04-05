@@ -1,0 +1,81 @@
+import type { Prisma } from "@prisma/client";
+import type { Tool } from "@google/genai";
+import { retrieveRelevantChunks } from "../../rag/rag.service";
+import { buildSystemPrompt } from "../meta/prompt.service";
+import {
+  buildCaptureLeadTool,
+  buildExternalQueryTools,
+} from "../../config/gemini";
+import { runAIEngineLoop } from "../ai/aiEngine.service";
+
+export const NOT_INGESTED_REPLY =
+  "We're still setting up our assistant. Please contact us directly for now - we'll be with you shortly.";
+
+export type BusinessProfileForChat = Prisma.BusinessProfileGetPayload<{
+  include: {
+    externalDataSources: true;
+    crmIntegrations: true;
+  };
+}>;
+
+/**
+ * Shared RAG + tool + AI loop used by Messenger, WhatsApp, and web widget.
+ * Does not persist messages — callers save user/model turns around this call.
+ */
+export async function computeBusinessChatReply(params: {
+  businessProfile: BusinessProfileForChat;
+  messageText: string;
+  historyTurns: { role: "user" | "model"; text: string }[];
+  channel: "messenger" | "whatsapp" | "web";
+  customerPhone?: string;
+}): Promise<string> {
+  const {
+    businessProfile,
+    messageText,
+    historyTurns,
+    channel,
+    customerPhone,
+  } = params;
+
+  if (!businessProfile.ragIngested) {
+    return NOT_INGESTED_REPLY;
+  }
+
+  const relevantChunks = await retrieveRelevantChunks(
+    businessProfile.id,
+    messageText,
+    5,
+  );
+
+  const systemInstruction = buildSystemPrompt(businessProfile as any, relevantChunks);
+
+  const captureTool =
+    businessProfile.crmIntegrations.length > 0
+      ? buildCaptureLeadTool(businessProfile.crmIntegrations[0].fieldMapping)
+      : [];
+  const externalTools = buildExternalQueryTools(
+    businessProfile.externalDataSources,
+  );
+
+  const toolBlocks: Tool[] = [];
+  if (captureTool.length > 0) toolBlocks.push(...captureTool);
+  if (externalTools.length > 0) toolBlocks.push(...externalTools);
+
+  const mergedDeclarations = toolBlocks.flatMap(
+    (t) => t.functionDeclarations ?? [],
+  );
+  const finalTools: Tool[] | undefined =
+    mergedDeclarations.length > 0
+      ? [{ functionDeclarations: mergedDeclarations }]
+      : undefined;
+
+  return runAIEngineLoop({
+    systemInstruction,
+    historyTurns,
+    customerMessage: messageText,
+    tools: finalTools,
+    businessProfileId: businessProfile.id,
+    customerPhone,
+    channel,
+  });
+}

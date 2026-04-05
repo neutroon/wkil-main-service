@@ -17,6 +17,7 @@ import {
   generalLimiter,
   messengerWebhookLimiter,
   whatsappWebhookLimiter,
+  widgetChatLimiter,
 } from "./middlewares/rateLimit.middleware";
 import authRoutes from "./routes/auth.routes";
 import dashboardRoutes from "./routes/dashboard.routes";
@@ -27,6 +28,8 @@ import messengerRoutes from "./routes/meta/messenger.routes";
 import whatsappRoutes from "./routes/meta/whatsapp.routes";
 import crmRoutes from "./routes/crm.routes";
 import externalDataSourceRoutes from "./routes/externalDataSource.routes";
+import widgetPublicRoutes from "./routes/widget.public.routes";
+import widgetRoutes from "./routes/widget.routes";
 
 const app = express();
 
@@ -44,7 +47,16 @@ if (process.env.TRUST_PROXY === "0" || process.env.TRUST_PROXY === "false") {
 
 // ── Global middleware (must come BEFORE all routes) ──────────────────────────
 app.use(securityHeaders);
-app.use(cors(corsOptions));       // ← CORS first so preflight OPTIONS always works
+
+// Public web widget: bypass global CORS; per-install allowlist in widgetInstallAndCors
+const widgetPublicApp = express.Router();
+widgetPublicApp.use(express.json({ limit: "32kb" }));
+widgetPublicApp.use(generalLimiter);
+widgetPublicApp.use(widgetChatLimiter);
+widgetPublicApp.use(widgetPublicRoutes);
+app.use("/v1/public/widget", widgetPublicApp);
+
+app.use(cors(corsOptions));       // ← CORS for dashboard / authenticated API
 app.use(cookieParser());
 app.use(sanitizeRequest);
 app.use(requestSizeLimit);
@@ -83,6 +95,7 @@ app.use("/v1/scrape", scrapeRoutes);
 app.use("/v1/business-profile", businessProfileRouts);
 app.use("/v1/crm", crmRoutes);
 app.use("/v1/external-data", externalDataSourceRoutes);
+app.use("/v1/widget", widgetRoutes);
 
 // Health check endpoint
 app.get("/v1/health", (req, res) => {

@@ -42,6 +42,7 @@ model User {
   // Business profile creation
   isBusinessProfileCreated Boolean           @default(false)
   businessProfiles         BusinessProfile[]
+  widgetInstalls           WidgetInstall[]
 }
 
 model BusinessProfile {
@@ -76,6 +77,25 @@ model BusinessProfile {
   whatsAppAccounts WhatsAppAccount[]
   crmIntegrations CrmIntegration[]
   externalDataSources ExternalDataSource[]
+  widgetInstalls    WidgetInstall[]
+}
+
+/// Embeddable web chat widget: publicSiteKey is sent from the browser; allowedOrigins is a JSON array of exact Origin strings (e.g. ["https://shop.example.com"]).
+model WidgetInstall {
+  id                Int             @id @default(autoincrement())
+  userId            Int
+  user              User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  businessProfileId Int
+  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+  publicSiteKey     String          @unique
+  allowedOrigins    Json
+  label             String?
+  isActive          Boolean         @default(true)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@index([userId])
+  @@index([businessProfileId])
 }
 
 model ExternalDataSource {
@@ -147,7 +167,7 @@ model Conversation {
   pageId            String
   senderId          String   // Facebook PSID or WhatsApp phone (raw)
   businessProfileId Int
-  /// "whatsapp" | "messenger" — null means legacy/untagged
+  /// "whatsapp" | "messenger" | "web" — null means legacy/untagged
   channel           String?
   /// Human-readable customer phone for WhatsApp conversations
   customerPhone     String?

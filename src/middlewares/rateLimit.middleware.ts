@@ -96,3 +96,26 @@ export const whatsappWebhookLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+/** Public web widget chat: keyed by IP + site key (after JSON body is parsed). */
+export const widgetChatLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 120,
+  message: {
+    error: "Widget chat rate limit exceeded",
+    code: "WIDGET_CHAT_RATE_LIMIT",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    const ip = req.ip || req.socket.remoteAddress || "unknown";
+    const sk = String(
+      req.headers["x-widget-site-key"] ??
+        (req.body && typeof req.body === "object" && "siteKey" in req.body
+          ? (req.body as { siteKey?: string }).siteKey
+          : "") ??
+        "na",
+    );
+    return `${ip}:${sk}`;
+  },
+});

@@ -145,7 +145,7 @@ export async function runAIEngineLoop(params: {
   tools?: Tool[];
   businessProfileId: number;
   customerPhone?: string; // fallback
-  channel?: "messenger" | "whatsapp";
+  channel?: "messenger" | "whatsapp" | "web";
   policy?: Partial<AiTruthfulnessPolicy>;
 }): Promise<string> {
   const policy = resolveTruthfulnessPolicy(params.policy);

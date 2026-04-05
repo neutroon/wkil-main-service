@@ -1,5 +1,4 @@
 import prisma from "../../config/prisma";
-import { retrieveRelevantChunks } from "../../rag/rag.service";
 import { logger } from "../../utils/logger";
 import { decryptFacebookSecret } from "../../utils/tokenCrypto";
 import {
@@ -7,50 +6,14 @@ import {
   getConversationHistory,
   saveMessage,
 } from "./conversation.service";
-import { buildSystemPrompt } from "./prompt.service";
-import { buildCaptureLeadTool, buildExternalQueryTools } from "../../config/gemini";
-import { runAIEngineLoop } from "../ai/aiEngine.service";
-
-interface Message {
-  role: "user" | "model";
-  content: string;
-}
+import { computeBusinessChatReply } from "../chat/businessChatReply.service";
+import {
+  historyToLlmTurns,
+  toPromptMessages,
+} from "../chat/conversationTurns";
 
 const FALLBACK_REPLY =
   "Sorry, we can't respond right now. Please try again or contact the business directly.";
-
-const NOT_INGESTED_REPLY =
-  "We're still setting up our assistant. Please contact us directly for now - we'll be with you shortly.";
-
-/** Prior turns for the LLM (token budget). */
-const MAX_HISTORY_CHARS = 12_000;
-
-/** Prisma stores `role` as String; narrow to prompt roles we persist. */
-function toPromptMessages(
-  rows: { role: string; content: string }[],
-): Message[] {
-  return rows.map((m) => ({
-    role: m.role === "model" ? "model" : "user",
-    content: m.content,
-  }));
-}
-
-function historyToLlmTurns(
-  historyIncludingLatestUser: Message[],
-): { role: "user" | "model"; text: string }[] {
-  /** Exclude the last user message — it is passed as `customerMessage`. */
-  const prior = historyIncludingLatestUser.slice(0, -1);
-  const turns: { role: "user" | "model"; text: string }[] = [];
-  let used = 0;
-  for (let i = prior.length - 1; i >= 0; i--) {
-    const m = prior[i]!;
-    const piece = m.content;
-    if (used + piece.length > MAX_HISTORY_CHARS) break;
-    turns.unshift({ role: m.role, text: piece });
-    used += piece.length;
-  }
-  return turns;
-}
 
 async function sendMessengerReply(
   recipientId: string,
@@ -93,7 +56,11 @@ async function sendMessengerAction(
       }),
     },
   ).catch((err) => {
-    logger.warn("messenger.sender_action_failed", { recipientId, action, error: String(err) });
+    logger.warn("messenger.sender_action_failed", {
+      recipientId,
+      action,
+      error: String(err),
+    });
   });
 }
 
@@ -104,13 +71,13 @@ export async function handleMessengerMessage(
 ) {
   const page = await prisma.facebookPage.findFirst({
     where: { pageId, isActive: true },
-    include: { 
+    include: {
       businessProfile: {
         include: {
           externalDataSources: { where: { isActive: true } },
-          crmIntegrations: { where: { isActive: true }, take: 1 }
-        }
-      } 
+          crmIntegrations: { where: { isActive: true }, take: 1 },
+        },
+      },
     },
   });
 
@@ -132,7 +99,6 @@ export async function handleMessengerMessage(
     return;
   }
 
-  // Mark as read and show typing indicator immediately
   void sendMessengerAction(senderId, "mark_seen", pageAccessToken);
   void sendMessengerAction(senderId, "typing_on", pageAccessToken);
 
@@ -143,6 +109,7 @@ export async function handleMessengerMessage(
       pageId,
       senderId,
       page.businessProfileId,
+      { channel: "messenger" },
     );
     const historyRows = await getConversationHistory(conversation.id);
     await saveMessage(conversation.id, "user", messageText);
@@ -151,49 +118,12 @@ export async function handleMessengerMessage(
     historyForPrompt.push({ role: "user", content: messageText });
     const historyTurns = historyToLlmTurns(historyForPrompt);
 
-    let reply: string;
-
-    if (!businessProfile.ragIngested) {
-      reply = NOT_INGESTED_REPLY;
-    } else {
-      const relevantChunks = await retrieveRelevantChunks(
-        page.businessProfileId,
-        messageText,
-        5,
-      );
-
-      const systemInstruction = buildSystemPrompt(
-        businessProfile as any,
-        relevantChunks,
-      );
-
-      const tools = [];
-      const captureTool = businessProfile.crmIntegrations.length > 0 
-        ? buildCaptureLeadTool(businessProfile.crmIntegrations[0].fieldMapping) 
-        : [];
-      const externalTools = buildExternalQueryTools(businessProfile.externalDataSources);
-
-      if (captureTool.length > 0) tools.push(...captureTool);
-      
-      let finalTools = undefined;
-      if (tools.length > 0 || externalTools.length > 0) {
-        finalTools = [{
-          functionDeclarations: [
-            ...(tools[0]?.functionDeclarations || []),
-            ...(externalTools.length > 0 && externalTools[0].functionDeclarations ? externalTools[0].functionDeclarations : [])
-          ]
-        }];
-      }
-
-      reply = await runAIEngineLoop({
-        systemInstruction,
-        historyTurns,
-        customerMessage: messageText,
-        tools: finalTools,
-        businessProfileId: businessProfile.id,
-        channel: "messenger",
-      });
-    }
+    const reply = await computeBusinessChatReply({
+      businessProfile,
+      messageText,
+      historyTurns,
+      channel: "messenger",
+    });
 
     await saveMessage(conversation.id, "model", reply);
     await sendMessengerReply(senderId, reply, pageAccessToken);

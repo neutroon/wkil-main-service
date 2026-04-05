@@ -1,5 +1,4 @@
 import prisma from "../../config/prisma";
-import { retrieveRelevantChunks } from "../../rag/rag.service";
 import { logger } from "../../utils/logger";
 import { decryptFacebookSecret } from "../../utils/tokenCrypto";
 import {
@@ -7,46 +6,14 @@ import {
   getConversationHistory,
   saveMessage,
 } from "./conversation.service";
-import { buildSystemPrompt } from "./prompt.service";
-import { buildCaptureLeadTool, buildExternalQueryTools } from "../../config/gemini";
-import { runAIEngineLoop } from "../ai/aiEngine.service";
-
-interface Message {
-  role: "user" | "model";
-  content: string;
-}
+import { computeBusinessChatReply } from "../chat/businessChatReply.service";
+import {
+  historyToLlmTurns,
+  toPromptMessages,
+} from "../chat/conversationTurns";
 
 const FALLBACK_REPLY =
   "Sorry, we can't respond right now. Please try again or contact the business directly.";
-
-const NOT_INGESTED_REPLY =
-  "We're still setting up our assistant. Please contact us directly for now - we'll be with you shortly.";
-
-const MAX_HISTORY_CHARS = 12_000;
-
-function toPromptMessages(
-  rows: { role: string; content: string }[],
-): Message[] {
-  return rows.map((m) => ({
-    role: m.role === "model" ? "model" : "user",
-    content: m.content,
-  }));
-}
-
-function historyToLlmTurns(
-  historyIncludingLatestUser: Message[],
-): { role: "user" | "model"; text: string }[] {
-  const prior = historyIncludingLatestUser.slice(0, -1);
-  const turns: { role: "user" | "model"; text: string }[] = [];
-  let used = 0;
-  for (let i = prior.length - 1; i >= 0; i--) {
-    const m = prior[i]!;
-    if (used + m.content.length > MAX_HISTORY_CHARS) break;
-    turns.unshift({ role: m.role, text: m.content });
-    used += m.content.length;
-  }
-  return turns;
-}
 
 /**
  * Send a text reply via WhatsApp Cloud API (v25.0).
@@ -76,13 +43,9 @@ export async function sendWhatsAppReply(
 
   if (!response.ok) {
     const error = (await response.json()) as unknown;
-    throw new Error(
-      `WhatsApp Cloud API error: ${JSON.stringify(error)}`,
-    );
+    throw new Error(`WhatsApp Cloud API error: ${JSON.stringify(error)}`);
   }
 }
-
-
 
 export async function sendWhatsAppAction(
   messageId: string,
@@ -101,12 +64,15 @@ export async function sendWhatsAppAction(
         messaging_product: "whatsapp",
         status: "read",
         message_id: messageId,
-        typing_indicator: { type: "text" }
+        typing_indicator: { type: "text" },
       }),
     },
   );
   if (!response.ok) {
-    logger.warn("whatsapp.sender_action_failed", { messageId, error: await response.text() });
+    logger.warn("whatsapp.sender_action_failed", {
+      messageId,
+      error: await response.text(),
+    });
   }
 }
 
@@ -118,17 +84,17 @@ export async function handleWhatsAppMessage(
   phoneNumberId: string,
   from: string,
   messageText: string,
-  wamid?: string
+  wamid?: string,
 ): Promise<void> {
   const account = await prisma.whatsAppAccount.findFirst({
     where: { phoneNumberId, isActive: true },
-    include: { 
+    include: {
       businessProfile: {
         include: {
           externalDataSources: { where: { isActive: true } },
-          crmIntegrations: { where: { isActive: true }, take: 1 }
-        }
-      } 
+          crmIntegrations: { where: { isActive: true }, take: 1 },
+        },
+      },
     },
   });
 
@@ -150,7 +116,6 @@ export async function handleWhatsAppMessage(
     return;
   }
 
-  // Mark message as read and show typing indicator
   if (wamid) {
     void sendWhatsAppAction(wamid, phoneNumberId, accessToken);
   }
@@ -158,7 +123,6 @@ export async function handleWhatsAppMessage(
   const businessProfile = account.businessProfile;
 
   try {
-    // Reuse existing Conversation infrastructure — pageId maps to phoneNumberId
     const conversation = await getOrCreateConversation(
       phoneNumberId,
       from,
@@ -172,53 +136,13 @@ export async function handleWhatsAppMessage(
     historyForPrompt.push({ role: "user", content: messageText });
     const historyTurns = historyToLlmTurns(historyForPrompt);
 
-    let reply: string;
-
-    if (!businessProfile.ragIngested) {
-      reply = NOT_INGESTED_REPLY;
-    } else {
-      const relevantChunks = await retrieveRelevantChunks(
-        account.businessProfileId,
-        messageText,
-        5,
-      );
-
-      const systemInstruction = buildSystemPrompt(
-        businessProfile as any,
-        relevantChunks,
-      );
-
-      const tools = [];
-      const captureTool = businessProfile.crmIntegrations.length > 0 
-        ? buildCaptureLeadTool(businessProfile.crmIntegrations[0].fieldMapping) 
-        : [];
-      const externalTools = buildExternalQueryTools(businessProfile.externalDataSources);
-
-      if (captureTool.length > 0) tools.push(...captureTool);
-      
-      // Combine functionDeclarations into a single Tool object to satisfy Gemini SDK if needed,
-      // or we can pass multiple Tool objects. Usually, one Tool object with an array of functionDeclarations is best.
-      let finalTools = undefined;
-      if (tools.length > 0 || externalTools.length > 0) {
-        finalTools = [{
-          functionDeclarations: [
-            ...(tools[0]?.functionDeclarations || []),
-            ...(externalTools.length > 0 && externalTools[0].functionDeclarations ? externalTools[0].functionDeclarations : [])
-          ]
-        }];
-      }
-
-      reply = await runAIEngineLoop({
-        systemInstruction,
-        historyTurns,
-        customerMessage: messageText,
-        tools: finalTools,
-        businessProfileId: businessProfile.id,
-        customerPhone: from,
-        channel: "whatsapp",
-      });
-
-    }
+    const reply = await computeBusinessChatReply({
+      businessProfile,
+      messageText,
+      historyTurns,
+      channel: "whatsapp",
+      customerPhone: from,
+    });
 
     await saveMessage(conversation.id, "model", reply);
     await sendWhatsAppReply(from, reply, phoneNumberId, accessToken);
@@ -235,7 +159,11 @@ export async function handleWhatsAppMessage(
       await sendWhatsAppReply(from, FALLBACK_REPLY, phoneNumberId, accessToken!);
     } catch (sendErr: unknown) {
       const sm = sendErr instanceof Error ? sendErr.message : String(sendErr);
-      logger.error("whatsapp.fallback_send_failed", { phoneNumberId, from, error: sm });
+      logger.error("whatsapp.fallback_send_failed", {
+        phoneNumberId,
+        from,
+        error: sm,
+      });
     }
   }
 }

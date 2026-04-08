@@ -56,9 +56,17 @@ OnboardingRouter.post(
       });
     } catch (error: any) {
       console.error("Onboarding Flow Error:", error.message);
-      res
-        .status(500)
-        .json({ error: "حدث خطأ أثناء تحليل الموقع وبناء الهوية." });
+      
+      const isAIAccessDenied = error.message?.includes("GEMINI_ACCESS_DENIED") || error.message?.includes("403") || error.message?.includes("PERMISSION_DENIED");
+      const clientError = isAIAccessDenied 
+        ? "خطأ في الاتصال بخدمة الذكاء الاصطناعي (Access Denied). يرجى التحقق من حالة الحساب في Google AI Studio."
+        : "حدث خطأ أثناء تحليل الموقع وبناء الهوية. قد يكون الموقع محميًا أو الخدمة غير متوفرة حاليًا.";
+
+      res.status(500).json({ 
+        success: false, 
+        error: clientError,
+        details: isAIAccessDenied ? "Forbidden: Project denied access." : error.message 
+      });
     }
   },
 );

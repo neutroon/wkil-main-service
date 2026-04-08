@@ -11,6 +11,7 @@ import {
   historyToLlmTurns,
   toPromptMessages,
 } from "../chat/conversationTurns";
+import { emitToBusiness, emitToConversation } from "../../utils/socket";
 
 const FALLBACK_REPLY =
   "Sorry, we can't respond right now. Please try again or contact the business directly.";
@@ -130,7 +131,14 @@ export async function handleWhatsAppMessage(
       { channel: "whatsapp", customerPhone: from },
     );
     const historyRows = await getConversationHistory(conversation.id);
-    await saveMessage(conversation.id, "user", messageText);
+    const userSaved = await saveMessage(conversation.id, "user", messageText);
+    emitToBusiness(account.businessProfileId, "new_message", {
+      conversationId: conversation.id,
+      message: userSaved,
+    });
+    emitToConversation(conversation.id, "new_message", {
+      message: userSaved,
+    });
 
     const historyForPrompt = toPromptMessages(historyRows);
     historyForPrompt.push({ role: "user", content: messageText });
@@ -144,7 +152,14 @@ export async function handleWhatsAppMessage(
       customerPhone: from,
     });
 
-    await saveMessage(conversation.id, "model", reply);
+    const modelSaved = await saveMessage(conversation.id, "model", reply);
+    emitToBusiness(account.businessProfileId, "new_message", {
+      conversationId: conversation.id,
+      message: modelSaved,
+    });
+    emitToConversation(conversation.id, "new_message", {
+      message: modelSaved,
+    });
     await sendWhatsAppReply(from, reply, phoneNumberId, accessToken);
 
     logger.info("whatsapp.reply_sent", {

@@ -10,6 +10,7 @@ export const generalLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { trustProxy: false },
 });
 
 // Strict rate limiting for authentication endpoints
@@ -22,6 +23,7 @@ export const authLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { trustProxy: false },
   skipSuccessfulRequests: true, // Don't count successful requests
 });
 
@@ -35,6 +37,7 @@ export const contentLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { trustProxy: false },
 });
 
 // Facebook API rate limiting
@@ -47,6 +50,7 @@ export const facebookLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { trustProxy: false },
 });
 
 // Admin operations rate limiting
@@ -59,6 +63,7 @@ export const adminLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { trustProxy: false },
 });
 
 // Manager operations rate limiting
@@ -71,6 +76,7 @@ export const managerLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { trustProxy: false },
 });
 
 /** Meta may burst webhook deliveries; allow a higher ceiling than general API. */
@@ -83,6 +89,7 @@ export const messengerWebhookLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { trustProxy: false },
 });
 
 /** WhatsApp Cloud API may burst webhook deliveries same as Messenger. */
@@ -95,6 +102,7 @@ export const whatsappWebhookLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { trustProxy: false },
 });
 
 /** Public web widget chat: keyed by IP + site key (after JSON body is parsed). */
@@ -107,6 +115,7 @@ export const widgetChatLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { trustProxy: false },
   keyGenerator: (req) => {
     const ip = req.ip || req.socket.remoteAddress || "unknown";
     const sk = String(

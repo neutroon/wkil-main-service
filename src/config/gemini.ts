@@ -22,14 +22,30 @@ export const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 // Use Gemini 2.5 Flash for content generation (latest available model)
 async function generateContent(prompt: string, responseMimeType?: string) {
-  const response = await genAI.models.generateContent({
-    model: "gemini-2.5-flash",
-    contents: prompt,
-    config: {
-      responseMimeType: responseMimeType || "text/plain",
-    },
-  });
-  return response.text;
+  try {
+    const response = await genAI.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: prompt,
+      config: {
+        responseMimeType: responseMimeType || "text/plain",
+      },
+    });
+    return response.text;
+  } catch (error: any) {
+    if (error?.status === 403 || error?.message?.includes("403") || error?.message?.includes("PERMISSION_DENIED")) {
+      logger.error("Gemini API Permission Denied (403): Your project has been denied access. Please check your Google AI Studio / Google Cloud project status and billing.", {
+        error: error.message,
+        model: "gemini-2.5-flash",
+        tip: "This usually means the project is suspended or the API key is restricted/invalid."
+      });
+    } else {
+      logger.error("Error generating content with Gemini:", { 
+        error: error.message,
+        status: error?.status 
+      });
+    }
+    throw error;
+  }
 }
 
 export const MESSENGER_SAFETY_SETTINGS = [
@@ -184,20 +200,30 @@ export async function generateMessengerAssistantReply(params: {
     },
   ];
 
-  const response = await genAI.models.generateContent({
-    model: "gemini-2.5-flash",
-    contents,
-    config: {
-      systemInstruction: params.systemInstruction,
-      temperature: 0.35,
-      maxOutputTokens: 512,
-      responseMimeType: "text/plain",
-      safetySettings: MESSENGER_SAFETY_SETTINGS,
-      tools: params.tools,
-    },
-  });
+  try {
+    const response = await genAI.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents,
+      config: {
+        systemInstruction: params.systemInstruction,
+        temperature: 0.35,
+        maxOutputTokens: 512,
+        responseMimeType: "text/plain",
+        safetySettings: MESSENGER_SAFETY_SETTINGS,
+        tools: params.tools,
+      },
+    });
 
-  return response;
+    return response;
+  } catch (error: any) {
+    if (error?.status === 403 || error?.message?.includes("403") || error?.message?.includes("PERMISSION_DENIED")) {
+      logger.error("Gemini Assistant Permission Denied (403): Your project has been denied access. Check project/billing status.", {
+        error: error.message,
+        tip: "Check AI Studio console for project 'gen-lang-client-0165801924' status."
+      });
+    }
+    throw error;
+  }
 }
 
 // For ingestion — used when embedding chunks

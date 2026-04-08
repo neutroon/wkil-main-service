@@ -34,13 +34,21 @@ async function discoverStrategicLinks(baseUrl: string, pageContent: string) {
     const result = await generateContent(prompt, "application/json");
 
     if (!result) {
-      throw new Error("Failed to generate content with Gemini");
+      logger.warn("ai.discoverStrategicLinks.empty_result", { baseUrl });
+      return [];
     }
     const parsedData = JSON.parse(result);
 
     return parsedData.urls || [];
-  } catch (error) {
-    console.error("Error discovering links with Gemini:", error);
+  } catch (error: any) {
+    if (error?.status === 403 || error?.message?.includes("403") || error?.message?.includes("PERMISSION_DENIED")) {
+      logger.error("AI Strategic Link Discovery Failed: Permission Denied (403).", { 
+        baseUrl,
+        message: "Check your Gemini API Project status. The project may be suspended or denied access." 
+      });
+    } else {
+      logger.error("Error discovering links with Gemini:", { error: error.message, baseUrl });
+    }
     return [];
   }
 }
@@ -87,14 +95,24 @@ async function extractBusinessIdentity(markdown: string) {
     const result = await generateContent(prompt, "application/json");
 
     if (!result) {
-      throw new Error("Failed to generate content with Gemini");
+      logger.error("ai.extractBusinessIdentity.empty_result");
+      throw new Error("Gemini returned an empty response during business identity extraction.");
     }
     const parsedData = JSON.parse(result);
 
     return parsedData;
-  } catch (error) {
-    console.error("Error analyzing markdown with Gemini:", error);
-    throw new Error("Failed to extract business identity.");
+  } catch (error: any) {
+    const isPermissionError = error?.status === 403 || error?.message?.includes("403") || error?.message?.includes("PERMISSION_DENIED");
+    
+    if (isPermissionError) {
+      logger.error("AI Business Identity Extraction Failed: PERMISSION_DENIED (403).", {
+        message: "Your Google project has been denied access to the Gemini API. Contact support or check billing/project status."
+      });
+      throw new Error("GEMINI_ACCESS_DENIED: Your project has been denied access to the AI services. Please check your Google Cloud/AI Studio billing or project status.");
+    }
+
+    logger.error("Error analyzing markdown with Gemini:", { error: error.message });
+    throw new Error(`Failed to extract business identity: ${error.message}`);
   }
 }
 

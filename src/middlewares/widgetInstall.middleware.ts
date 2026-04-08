@@ -4,7 +4,9 @@ import type { WidgetInstall } from "@prisma/client";
 
 export function parseAllowedOrigins(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
-  return value.filter((x): x is string => typeof x === "string" && x.length > 0);
+  return value.filter(
+    (x): x is string => typeof x === "string" && x.length > 0,
+  );
 }
 
 function isOriginAllowed(
@@ -20,33 +22,6 @@ function isOriginAllowed(
 }
 
 export type WidgetRequest = Request & { widgetInstall?: WidgetInstall };
-
-/**
- * Resolves WidgetInstall by X-Widget-Site-Key (POST) or optional header on OPTIONS.
- * POST always requires the site key and allowlisted Origin.
- *
- * CORS preflight: browsers send OPTIONS without custom header *values* — only
- * Access-Control-Request-Headers lists `x-widget-site-key`. We answer 204 with
- * allowed methods/headers; the follow-up POST still validates key + origin.
- */
-function sendWidgetPreflightCors(
-  res: Response,
-  origin: string | undefined,
-  isProduction: boolean,
-): void {
-  if (origin) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
-    res.setHeader("Vary", "Origin");
-  } else if (!isProduction) {
-    res.setHeader("Access-Control-Allow-Origin", "*");
-  }
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader(
-    "Access-Control-Allow-Headers",
-    "Content-Type, X-Widget-Site-Key",
-  );
-  res.setHeader("Access-Control-Max-Age", "7200");
-}
 
 async function widgetInstallAndCorsImpl(
   req: WidgetRequest,
@@ -65,22 +40,11 @@ async function widgetInstallAndCorsImpl(
       ? String((req.body as { siteKey: string }).siteKey).trim()
       : "";
 
-  const siteKey =
-    req.method === "OPTIONS"
-      ? siteKeyHeader
-      : siteKeyHeader || siteKeyBody;
-
-  if (req.method === "OPTIONS" && !siteKey) {
-    sendWidgetPreflightCors(res, origin, isProduction);
-    res.sendStatus(204);
-    return;
-  }
+  const siteKey = siteKeyHeader || siteKeyBody;
 
   if (!siteKey) {
-    res.status(400).json({
-      error:
-        "Missing site key. Send X-Widget-Site-Key on POST (and on OPTIONS only if your client sends it).",
-    });
+    if (req.method === "OPTIONS") return next(); // Already handled in app.ts
+    res.status(400).json({ error: "Missing X-Widget-Site-Key header." });
     return;
   }
 
@@ -94,21 +58,22 @@ async function widgetInstallAndCorsImpl(
   });
 
   if (!install) {
-    res.status(403).json({ error: "Invalid or inactive widget" });
+    res.status(403).json({ error: "Invalid or inactive widget site key" });
     return;
   }
 
   const allowed = parseAllowedOrigins(install.allowedOrigins);
 
-  if (!isOriginAllowed(origin, allowed, isProduction)) {
-    res.status(403).json({ error: "Origin not allowed for this widget" });
-    return;
-  }
+  // In development, automatically allow localhost
+  const isLocal =
+    origin && (origin.includes("localhost") || origin.includes("127.0.0.1"));
 
-  sendWidgetPreflightCors(res, origin, isProduction);
-
-  if (req.method === "OPTIONS") {
-    res.sendStatus(204);
+  if (!isLocal && !isOriginAllowed(origin, allowed, isProduction)) {
+    console.warn(`[CORS] Origin not allowed for widget ${siteKey}: ${origin}`);
+    res.status(403).json({
+      error:
+        "Origin not allowed for this widget. Please add it to allowed origins in settings.",
+    });
     return;
   }
 

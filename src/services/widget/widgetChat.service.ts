@@ -11,6 +11,7 @@ import {
   toPromptMessages,
 } from "../chat/conversationTurns";
 import type { WidgetInstall } from "@prisma/client";
+import { emitToConversation, emitToBusiness } from "../../utils/socket";
 
 const FALLBACK_REPLY =
   "Sorry, we can't respond right now. Please try again or contact the business directly.";
@@ -59,7 +60,13 @@ export async function processWidgetChatMessage(params: {
   });
 
   const historyRows = await getConversationHistory(conversation.id);
-  await saveMessage(conversation.id, "user", message);
+  const userMsg = await saveMessage(conversation.id, "user", message);
+
+  // Notify Admin (Dashboard) about the new visitor message
+  emitToBusiness(install.businessProfileId, "new_message", {
+    conversationId: conversation.id,
+    message: userMsg
+  });
 
   const historyForPrompt = toPromptMessages(historyRows);
   historyForPrompt.push({ role: "user", content: message });
@@ -83,7 +90,14 @@ export async function processWidgetChatMessage(params: {
     reply = FALLBACK_REPLY;
   }
 
-  await saveMessage(conversation.id, "model", reply);
+  const botMsg = await saveMessage(conversation.id, "model", reply);
+
+  // Notify Visitor (Web Widget) and Admin (Dashboard) about the AI reply
+  emitToConversation(conversation.id, "new_message", { message: botMsg });
+  emitToBusiness(install.businessProfileId, "new_message", {
+    conversationId: conversation.id,
+    message: botMsg
+  });
 
   logger.info("widget.chat.reply_sent", {
     widgetInstallId: install.id,

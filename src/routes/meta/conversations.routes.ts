@@ -10,6 +10,7 @@ import {
 } from "../../services/meta/conversation.service";
 import { sendWhatsAppReply } from "../../services/meta/whatsapp.service";
 import { decryptFacebookSecret } from "../../utils/tokenCrypto";
+import { emitToBusiness, emitToConversation } from "../../utils/socket";
 
 const conversationsRoutes = Router();
 
@@ -254,6 +255,14 @@ conversationsRoutes.post(
 
       // Persist the outbound message
       const saved = await saveMessage(conversationId, "model", text.trim());
+
+      emitToBusiness(conversation.businessProfileId, "new_message", {
+        conversationId: conversation.id,
+        message: saved,
+      });
+      emitToConversation(conversation.id, "new_message", {
+        message: saved,
+      });
 
       logger.info("whatsapp.conversations.human_sent", {
         conversationId,

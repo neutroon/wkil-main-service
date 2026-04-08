@@ -221,14 +221,16 @@ whatsappRoutes.get(
   async (req: Request, res: Response) => {
     try {
       const userId = (req as any).user.id as number;
-      const { code, redirectUri } = req.query;
+      const { code } = req.query;
+      // redirectUri is optional: omitted for FB.login SDK codes, present for manual dialog flow.
+      const redirectUri = typeof req.query.redirectUri === "string" ? req.query.redirectUri : undefined;
       const now = Date.now();
       pruneOauthPreviewTokenCache(now);
       if (!code) {
         return res.status(400).json({ error: "code is required" });
       }
 
-      const accessToken = await exchangeCodeForToken(code as string, redirectUri as string);
+      const accessToken = await exchangeCodeForToken(code as string, redirectUri);
       const accounts = await discoverWabaAccounts(accessToken);
       const exchangeRef = randomUUID();
       oauthPreviewTokenCache.set(exchangeRef, {

@@ -92,10 +92,11 @@ export async function exchangeCodeForToken(code: string, redirectUri?: string): 
 
   // Embedded Signup code exchange appears to be strict about redirect_uri identity.
   // For the manual OAuth/dialog flow we control, we should send the exact redirectUri.
-  // For compatibility, we still keep omit/empty as fallback attempts.
+  // For the FB.login SDK flow, no redirectUri is passed → we try omit first, then empty.
   const attempts: Array<string | undefined> = [];
 
   if (trimmed !== "") {
+    // Manual dialog flow: try the exact URI first, then trailing-slash variants.
     // 1) exact redirectUri as provided
     attempts.push(trimmed);
 
@@ -106,7 +107,9 @@ export async function exchangeCodeForToken(code: string, redirectUri?: string): 
     if (withTrailingSlash !== trimmed) attempts.push(withTrailingSlash);
   }
 
-  // 3) omit redirect_uri entirely
+  // For SDK flow (trimmed === "") these are the ONLY attempts.
+  // For manual flow they are fallbacks after the exact URI fails.
+  // 3) omit redirect_uri entirely (most compatible with FB.login SDK codes)
   attempts.push(undefined);
   // 4) explicitly empty string
   attempts.push("");

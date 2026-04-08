@@ -167,17 +167,43 @@ export async function runAIEngineLoop(params: {
 
   while (turnCount < MAX_TURNS) {
     turnCount++;
-    const response = await genAI.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents,
-      config: {
-        systemInstruction: params.systemInstruction,
-        temperature: 0.35,
-        maxOutputTokens: 512,
-        safetySettings: MESSENGER_SAFETY_SETTINGS,
-        tools: params.tools,
-      },
-    });
+    let response;
+    try {
+      response = await genAI.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents,
+        config: {
+          systemInstruction: params.systemInstruction,
+          temperature: 0.35,
+          maxOutputTokens: 512,
+          safetySettings: MESSENGER_SAFETY_SETTINGS,
+          tools: params.tools,
+        },
+      });
+    } catch (error: any) {
+      const isPermissionError = error?.status === 403 || error?.message?.includes("403") || error?.message?.includes("PERMISSION_DENIED");
+      const isNotFoundError = error?.status === 404 || error?.message?.includes("404") || error?.message?.includes("not found");
+      
+      if (isPermissionError) {
+        logger.error("AI Engine Loop: Permission Denied (403). Project access restricted.", {
+          businessProfileId: params.businessProfileId,
+          error: error.message,
+          tip: "Check Google AI Studio project status and billing."
+        });
+        return "I'm sorry, I'm currently having trouble accessing the AI service. Please try again in a moment.";
+      }
+
+      if (isNotFoundError) {
+        logger.error("AI Engine Loop: Model Not Found (404).", {
+          model: "gemini-2.5-flash",
+          error: error.message
+        });
+        return "I'm having trouble with my configuration. Please contact the administrator.";
+      }
+
+      logger.error("AI Engine Loop: Unexpected Error", { error: error.message });
+      throw error;
+    }
 
     const candidate = (response as any).candidates?.[0];
     if (!candidate) throw new Error("No candidate from Gemini");

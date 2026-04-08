@@ -50,6 +50,26 @@ app.use(securityHeaders);
 
 // Public web widget: bypass global CORS; per-install allowlist in widgetInstallAndCors
 const widgetPublicApp = express.Router();
+
+// Permissive CORS for the public router prefix (we handle real auth/origin check in the middleware)
+widgetPublicApp.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+  } else {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+  }
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Widget-Site-Key, Authorization, Accept, X-Requested-With");
+  res.setHeader("Access-Control-Max-Age", "7200");
+  
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+  next();
+});
+
 widgetPublicApp.use(express.json({ limit: "32kb" }));
 widgetPublicApp.use(generalLimiter);
 widgetPublicApp.use(widgetChatLimiter);

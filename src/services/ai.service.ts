@@ -1,4 +1,5 @@
 import generateContent from "../config/gemini";
+import { logger } from "../utils/logger";
 
 async function discoverStrategicLinks(baseUrl: string, pageContent: string) {
   const prompt = `

@@ -220,7 +220,24 @@ export async function handleWhatsAppMessage(
       customerPhone: from,
     });
 
-    const modelSaved = await saveMessage(conversation.id, "model", reply);
+    if (reply.action === "RESOLVE_CONVERSATION") {
+      await prisma.conversation.update({
+        where: { id: conversation.id },
+        data: { status: "RESOLVED" }
+      });
+      logger.info("whatsapp.conversation_resolved_by_ai", { conversationId: conversation.id });
+      return;
+    }
+
+    const isAutoMode = businessProfile.responseMode === "AUTO";
+    const status = reply.action === "HANDOFF_TO_HUMAN" || !isAutoMode ? "PENDING_REVIEW" : "SENT";
+
+    const modelSaved = await saveMessage(conversation.id, "model", reply.content || "", {
+      status,
+      aiReasoning: reply.reasoning,
+      handoffCategory: reply.handoffCategory
+    });
+
     emitToBusiness(account.businessProfileId, "new_message", {
       conversationId: conversation.id,
       message: modelSaved,
@@ -228,13 +245,22 @@ export async function handleWhatsAppMessage(
     emitToConversation(conversation.id, "new_message", {
       message: modelSaved,
     });
-    await sendWhatsAppReply(from, reply, phoneNumberId, accessToken);
 
-    logger.info("whatsapp.reply_sent", {
-      phoneNumberId,
-      from,
-      preview: reply.slice(0, 80),
-    });
+    if (status === "PENDING_REVIEW") {
+       emitToBusiness(account.businessProfileId, "draft_received", {
+          conversationId: conversation.id,
+          message: modelSaved
+       });
+    }
+
+    if (status === "SENT" && reply.content) {
+      await sendWhatsAppReply(from, reply.content, phoneNumberId, accessToken);
+      logger.info("whatsapp.reply_sent", {
+        phoneNumberId,
+        from,
+        preview: reply.content.substring(0, 80),
+      });
+    }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error("whatsapp.handle_failed", {

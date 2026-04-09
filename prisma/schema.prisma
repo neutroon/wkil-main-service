@@ -51,6 +51,7 @@ model BusinessProfile {
   user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   name                String
+  responseMode        String   @default("AUTO") // "AUTO", "REVIEW_ALL", "MANUAL"
   identity            String
   targetAudience      String
   voice               String   @default("Professional")
@@ -78,6 +79,7 @@ model BusinessProfile {
   crmIntegrations CrmIntegration[]
   externalDataSources ExternalDataSource[]
   widgetInstalls    WidgetInstall[]
+  conversations     Conversation[]
 }
 
 /// Embeddable web chat widget: publicSiteKey is sent from the browser; allowedOrigins is a JSON array of exact Origin strings (e.g. ["https://shop.example.com"]).
@@ -167,10 +169,12 @@ model Conversation {
   pageId            String
   senderId          String   // Facebook PSID or WhatsApp phone (raw)
   businessProfileId Int
+  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
   /// "whatsapp" | "messenger" | "web" — null means legacy/untagged
   channel           String?
   /// Human-readable customer phone for WhatsApp conversations
   customerPhone     String?
+  status            String   @default("OPEN") // "OPEN", "RESOLVED", "SNOOZED"
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -187,10 +191,29 @@ model ConversationMessage {
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   role           String // "user" | "model"
   content        String
+  status         String       @default("SENT") // "SENT", "PENDING_REVIEW", "EDITED_AND_SENT"
+  aiReasoning    String?      // Storing the AI's thought process for routing
+  handoffCategory String?     // e.g. "SALES", "SUPPORT", "ANGRY_CUSTOMER"
   createdAt      DateTime     @default(now())
+
+  aiCorrection   AiCorrection?
 
   @@index([conversationId])
   @@index([conversationId, createdAt])
+  @@index([status, createdAt])
+  @@index([handoffCategory])
+}
+
+/// Tracks corrections made by humans to AI-generated drafts
+model AiCorrection {
+  id              Int                 @id @default(autoincrement())
+  messageId       Int                 @unique
+  message         ConversationMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  originalAiText  String
+  humanEditedText String
+  createdAt       DateTime            @default(now())
+
+  @@index([messageId])
 }
 
 /// Deduplicate Meta webhook retries using message.mid

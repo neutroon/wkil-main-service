@@ -1,7 +1,6 @@
 import prisma from "../../config/prisma";
 
 const HISTORY_LIMIT = 10;
-const INACTIVITY_HOURS = 24;
 
 // ─── Core conversation helpers ────────────────────────────────────────────────
 
@@ -11,13 +10,14 @@ export async function getOrCreateConversation(
   businessProfileId: number,
   opts?: { channel?: string; customerPhone?: string },
 ) {
-  const cutoff = new Date(Date.now() - INACTIVITY_HOURS * 60 * 60 * 1000);
-
+  // Always check for the most recent conversation for this user on this channel
   const existing = await prisma.conversation.findFirst({
     where: {
       pageId,
       senderId,
-      updatedAt: { gte: cutoff },
+    },
+    orderBy: {
+      updatedAt: "desc",
     },
   });
 

@@ -62,9 +62,21 @@ export async function saveMessage(
   conversationId: number,
   role: "user" | "model",
   content: string,
+  opts?: {
+    status?: string | null;
+    aiReasoning?: string | null;
+    handoffCategory?: string | null;
+  }
 ) {
   return prisma.conversationMessage.create({
-    data: { conversationId, role, content },
+    data: { 
+      conversationId, 
+      role, 
+      content,
+      status: opts?.status || "SENT",
+      aiReasoning: opts?.aiReasoning,
+      handoffCategory: opts?.handoffCategory
+    },
   });
 }
 
@@ -177,6 +189,9 @@ export async function listConversationMessages(
         id: true,
         role: true,
         content: true,
+        status: true,
+        aiReasoning: true,
+        handoffCategory: true,
         createdAt: true,
       },
     }),

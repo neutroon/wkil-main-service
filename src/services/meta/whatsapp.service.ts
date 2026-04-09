@@ -191,13 +191,14 @@ export async function handleWhatsAppMessage(
 
   const businessProfile = account.businessProfile;
 
-  try {
-    const conversation = await getOrCreateConversation(
-      phoneNumberId,
-      from,
-      account.businessProfileId,
-      { channel: "whatsapp", customerPhone: from },
-    );
+    let conversation: any;
+    try {
+      conversation = await getOrCreateConversation(
+        phoneNumberId,
+        from,
+        account.businessProfileId,
+        { channel: "whatsapp", customerPhone: from },
+      );
     const historyRows = await getConversationHistory(conversation.id);
     const userSaved = await saveMessage(conversation.id, "user", messageText);
     emitToBusiness(account.businessProfileId, "new_message", {
@@ -253,13 +254,20 @@ export async function handleWhatsAppMessage(
        });
     }
 
-    if (status === "SENT" && reply.content) {
+    if (status === "SENT" && reply.content && reply.handoffCategory !== "SYSTEM_ERROR") {
       await sendWhatsAppReply(from, reply.content, phoneNumberId, accessToken);
       logger.info("whatsapp.reply_sent", {
         phoneNumberId,
         from,
         preview: reply.content.substring(0, 80),
       });
+    }
+
+    if (reply.handoffCategory === "SYSTEM_ERROR") {
+       emitToBusiness(account.businessProfileId, "system_critical_error", {
+          conversationId: conversation.id,
+          reason: reply.reasoning,
+       });
     }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
@@ -268,20 +276,19 @@ export async function handleWhatsAppMessage(
       from,
       error: message,
     });
-    try {
-      await sendWhatsAppReply(
-        from,
-        FALLBACK_REPLY,
-        phoneNumberId,
-        accessToken!,
-      );
-    } catch (sendErr: unknown) {
-      const sm = sendErr instanceof Error ? sendErr.message : String(sendErr);
-      logger.error("whatsapp.fallback_send_failed", {
-        phoneNumberId,
-        from,
-        error: sm,
-      });
+    
+    // Silent fail for customer, but alert the business
+    if (account?.businessProfileId && conversation) {
+       await saveMessage(conversation.id, "model", "", {
+          status: "FAILED",
+          aiReasoning: `System Exception: ${message}`,
+          handoffCategory: "SYSTEM_ERROR"
+       });
+
+       emitToBusiness(account.businessProfileId, "system_critical_error", {
+          conversationId: conversation.id,
+          reason: message,
+       });
     }
   }
 }

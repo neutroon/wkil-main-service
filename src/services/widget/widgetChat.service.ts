@@ -6,6 +6,7 @@ import {
   saveMessage,
 } from "../meta/conversation.service";
 import { computeBusinessChatReply } from "../chat/businessChatReply.service";
+import { AiRoutingDecision } from "../ai/aiEngine.service";
 import {
   historyToLlmTurns,
   toPromptMessages,
@@ -72,7 +73,7 @@ export async function processWidgetChatMessage(params: {
   historyForPrompt.push({ role: "user", content: message });
   const historyTurns = historyToLlmTurns(historyForPrompt);
 
-  let reply: string;
+  let reply: AiRoutingDecision;
   try {
     reply = await computeBusinessChatReply({
       businessProfile,
@@ -87,23 +88,54 @@ export async function processWidgetChatMessage(params: {
       conversationId: conversation.id,
       error: msg,
     });
-    reply = FALLBACK_REPLY;
+    reply = {
+      action: "REPLY_AUTO",
+      reasoning: "Fallback due to AI failure",
+      content: FALLBACK_REPLY
+    };
   }
 
-  const botMsg = await saveMessage(conversation.id, "model", reply);
+  if (reply.action === "RESOLVE_CONVERSATION") {
+    await prisma.conversation.update({
+      where: { id: conversation.id },
+      data: { status: "RESOLVED" }
+    });
+    logger.info("widget.chat.conversation_resolved_by_ai", { conversationId: conversation.id });
+    return { reply: "", conversationId: conversation.id };
+  }
 
-  // Notify Visitor (Web Widget) and Admin (Dashboard) about the AI reply
-  emitToConversation(conversation.id, "new_message", { message: botMsg });
-  emitToBusiness(install.businessProfileId, "new_message", {
-    conversationId: conversation.id,
-    message: botMsg
+  const isAutoMode = businessProfile.responseMode === "AUTO";
+  const status = reply.action === "HANDOFF_TO_HUMAN" || !isAutoMode ? "PENDING_REVIEW" : "SENT";
+
+  const botMsg = await saveMessage(conversation.id, "model", reply.content || "", {
+    status,
+    aiReasoning: reply.reasoning,
+    handoffCategory: reply.handoffCategory
   });
 
-  logger.info("widget.chat.reply_sent", {
-    widgetInstallId: install.id,
-    conversationId: conversation.id,
-    preview: reply.slice(0, 80),
-  });
+  if (status === "PENDING_REVIEW") {
+    emitToBusiness(install.businessProfileId, "draft_received", {
+      conversationId: conversation.id,
+      message: botMsg
+    });
+    return { 
+      reply: "An agent has been notified and will be with you shortly.", 
+      conversationId: conversation.id 
+    };
+  } else {
+    // Notify Visitor (Web Widget) and Admin (Dashboard) about the AI reply
+    emitToConversation(conversation.id, "new_message", { message: botMsg });
+    emitToBusiness(install.businessProfileId, "new_message", {
+      conversationId: conversation.id,
+      message: botMsg
+    });
 
-  return { reply, conversationId: conversation.id };
+    logger.info("widget.chat.reply_sent", {
+      widgetInstallId: install.id,
+      conversationId: conversation.id,
+      preview: (reply.content || "").substring(0, 80),
+    });
+
+    return { reply: reply.content || "", conversationId: conversation.id };
+  }
 }

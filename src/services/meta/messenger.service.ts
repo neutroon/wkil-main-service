@@ -177,6 +177,12 @@ export async function handleMessengerMessage(
     }
 
     if (reply.handoffCategory === "SYSTEM_ERROR") {
+       // Also ensure we send a 'new_message' pulse for the error bubble itself
+       emitToBusiness(page.businessProfileId, "new_message", {
+          conversationId: conversation.id,
+          message: modelSaved,
+       });
+
        emitToBusiness(page.businessProfileId, "system_critical_error", {
           conversationId: conversation.id,
           reason: reply.reasoning,
@@ -192,10 +198,16 @@ export async function handleMessengerMessage(
     
     // Silent fail for customer, but alert the business
     if (page?.businessProfileId && conversation) {
-       await saveMessage(conversation.id, "model", "", {
+       const errorMsg = "AI System Failure: Manual intervention required.";
+       const modelSaved = await saveMessage(conversation.id, "model", errorMsg, {
           status: "FAILED",
           aiReasoning: `System Exception: ${message}`,
           handoffCategory: "SYSTEM_ERROR"
+       });
+
+       emitToBusiness(page.businessProfileId, "new_message", {
+          conversationId: conversation.id,
+          message: modelSaved,
        });
 
        emitToBusiness(page.businessProfileId, "system_critical_error", {

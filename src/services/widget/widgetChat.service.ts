@@ -89,9 +89,10 @@ export async function processWidgetChatMessage(params: {
       error: msg,
     });
     reply = {
-      action: "REPLY_AUTO",
-      reasoning: "Fallback due to AI failure",
-      content: FALLBACK_REPLY
+      action: "HANDOFF_TO_HUMAN",
+      handoffCategory: "SYSTEM_ERROR",
+      reasoning: `Infrastructure Failure: ${msg}`,
+      content: null
     };
   }
 
@@ -118,6 +119,18 @@ export async function processWidgetChatMessage(params: {
       conversationId: conversation.id,
       message: botMsg
     });
+
+    if (reply.handoffCategory === "SYSTEM_ERROR") {
+      emitToBusiness(install.businessProfileId, "system_critical_error", {
+        conversationId: conversation.id,
+        reason: reply.reasoning
+      });
+      return { 
+        reply: "", // Silent to visitor
+        conversationId: conversation.id 
+      };
+    }
+
     return { 
       reply: "An agent has been notified and will be with you shortly.", 
       conversationId: conversation.id 

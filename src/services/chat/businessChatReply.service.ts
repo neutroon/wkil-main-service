@@ -6,10 +6,14 @@ import {
   buildCaptureLeadTool,
   buildExternalQueryTools,
 } from "../../config/gemini";
-import { runAIEngineLoop } from "../ai/aiEngine.service";
+import { runAIEngineLoop, AiRoutingDecision } from "../ai/aiEngine.service";
 
-export const NOT_INGESTED_REPLY =
-  "We're still setting up our assistant. Please contact us directly for now - we'll be with you shortly.";
+export const NOT_INGESTED_REPLY: AiRoutingDecision = {
+  action: "HANDOFF_TO_HUMAN",
+  handoffCategory: "MISSING_KNOWLEDGE",
+  reasoning: "Business profile knowledge base (RAG) is not yet ingested.",
+  content: "We're still setting up our assistant. Please contact us directly for now - we'll be with you shortly."
+};
 
 export type BusinessProfileForChat = Prisma.BusinessProfileGetPayload<{
   include: {
@@ -28,7 +32,7 @@ export async function computeBusinessChatReply(params: {
   historyTurns: { role: "user" | "model"; text: string }[];
   channel: "messenger" | "whatsapp" | "web";
   customerPhone?: string;
-}): Promise<string> {
+}): Promise<AiRoutingDecision> {
   const {
     businessProfile,
     messageText,

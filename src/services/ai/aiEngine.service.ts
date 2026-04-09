@@ -197,12 +197,12 @@ export async function runAIEngineLoop(params: {
         logger.error("AI Engine Loop: Permission Denied (403). Project access restricted.", {
           businessProfileId: params.businessProfileId,
           error: error.message,
-          tip: "Check Google AI Studio project status and billing."
         });
         return {
-          action: "REPLY_AUTO",
-          reasoning: "Permission Denied",
-          content: "I'm sorry, I'm currently having trouble accessing the AI service. Please try again in a moment."
+          action: "HANDOFF_TO_HUMAN",
+          handoffCategory: "SYSTEM_ERROR",
+          reasoning: "AI Service Permission Denied (403). Check project status/billing.",
+          content: "" // Silent to customer
         };
       }
 
@@ -212,14 +212,20 @@ export async function runAIEngineLoop(params: {
           error: error.message
         });
         return {
-          action: "REPLY_AUTO",
-          reasoning: "Model Not Found",
-          content: "I'm having trouble with my configuration. Please contact the administrator."
+          action: "HANDOFF_TO_HUMAN",
+          handoffCategory: "SYSTEM_ERROR",
+          reasoning: "AI Model Not Found (404). Check model configuration.",
+          content: "" // Silent to customer
         };
       }
 
       logger.error("AI Engine Loop: Unexpected Error", { error: error.message });
-      throw error;
+      return {
+        action: "HANDOFF_TO_HUMAN",
+        handoffCategory: "SYSTEM_ERROR",
+        reasoning: `Unexpected AI Failure: ${error.message}`,
+        content: "" // Silent to customer
+      };
     }
 
     const candidate = (response as any).candidates?.[0];

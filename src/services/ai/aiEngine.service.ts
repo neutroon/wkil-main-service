@@ -1,6 +1,6 @@
 import { Tool } from "@google/genai";
 import { logger } from "../../utils/logger";
-import { genAI, MESSENGER_SAFETY_SETTINGS } from "../../config/gemini";
+import { genAI, MESSENGER_SAFETY_SETTINGS, aiRoutingSchema } from "../../config/gemini";
 import { pushLeadToCrm } from "../crm/crm.service";
 import { executeExternalQuery } from "../external/externalData.service";
 
@@ -138,6 +138,13 @@ export function evaluateGuardrailsForReply(
   return { blocked: false };
 }
 
+export interface AiRoutingDecision {
+  action: "REPLY_AUTO" | "HANDOFF_TO_HUMAN" | "RESOLVE_CONVERSATION";
+  handoffCategory?: string | null;
+  reasoning: string;
+  content?: string | null;
+}
+
 export async function runAIEngineLoop(params: {
   systemInstruction: string;
   historyTurns: { role: "user" | "model"; text?: string; parts?: any[] }[];
@@ -147,7 +154,7 @@ export async function runAIEngineLoop(params: {
   customerPhone?: string; // fallback
   channel?: "messenger" | "whatsapp" | "web";
   policy?: Partial<AiTruthfulnessPolicy>;
-}): Promise<string> {
+}): Promise<AiRoutingDecision> {
   const policy = resolveTruthfulnessPolicy(params.policy);
   const contents = [
     ...params.historyTurns.map((t) => ({
@@ -178,6 +185,8 @@ export async function runAIEngineLoop(params: {
           maxOutputTokens: 512,
           safetySettings: MESSENGER_SAFETY_SETTINGS,
           tools: params.tools,
+          responseMimeType: "application/json",
+          responseSchema: aiRoutingSchema,
         },
       });
     } catch (error: any) {
@@ -190,7 +199,11 @@ export async function runAIEngineLoop(params: {
           error: error.message,
           tip: "Check Google AI Studio project status and billing."
         });
-        return "I'm sorry, I'm currently having trouble accessing the AI service. Please try again in a moment.";
+        return {
+          action: "REPLY_AUTO",
+          reasoning: "Permission Denied",
+          content: "I'm sorry, I'm currently having trouble accessing the AI service. Please try again in a moment."
+        };
       }
 
       if (isNotFoundError) {
@@ -198,7 +211,11 @@ export async function runAIEngineLoop(params: {
           model: "gemini-2.5-flash",
           error: error.message
         });
-        return "I'm having trouble with my configuration. Please contact the administrator.";
+        return {
+          action: "REPLY_AUTO",
+          reasoning: "Model Not Found",
+          content: "I'm having trouble with my configuration. Please contact the administrator."
+        };
       }
 
       logger.error("AI Engine Loop: Unexpected Error", { error: error.message });
@@ -222,8 +239,21 @@ export async function runAIEngineLoop(params: {
     // If there's no function call, we are done
     if (functionCalls.length === 0) {
       if (!responseText) throw new Error("No reply text and no function call generated");
+      
+      let decision: AiRoutingDecision;
+      try {
+        decision = JSON.parse(responseText);
+      } catch (err) {
+        logger.error("Failed to parse JSON from AI response", { responseText });
+        decision = {
+          action: "REPLY_AUTO",
+          reasoning: "Failed to parse JSON structure",
+          content: responseText
+        };
+      }
+
       if (hadToolExecutionInTurn) {
-        const blocked = evaluateGuardrailsForReply(evidence, responseText, policy);
+        const blocked = evaluateGuardrailsForReply(evidence, decision.content || "", policy);
         if (blocked.blocked) {
           logger.warn("ai.guardrail.blocked_response", {
             businessProfileId: params.businessProfileId,
@@ -236,10 +266,12 @@ export async function runAIEngineLoop(params: {
               unknown: evidence.unknownActions,
             },
           });
-          return blocked.safeReply;
+          decision.action = "REPLY_AUTO";
+          decision.reasoning = "Guardrail Triggered: " + blocked.ruleId;
+          decision.content = blocked.safeReply;
         }
       }
-      return responseText;
+      return decision;
     }
 
     // Add the model's turn (with its function calling request) to the contents history

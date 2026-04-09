@@ -16,7 +16,7 @@ import { emitToBusiness, emitToConversation } from "../../utils/socket";
 const FALLBACK_REPLY =
   "Sorry, we can't respond right now. Please try again or contact the business directly.";
 
-async function sendMessengerReply(
+export async function sendMessengerReply(
   recipientId: string,
   text: string,
   pageAccessToken: string,
@@ -133,7 +133,24 @@ export async function handleMessengerMessage(
       channel: "messenger",
     });
 
-    const modelSaved = await saveMessage(conversation.id, "model", reply);
+    if (reply.action === "RESOLVE_CONVERSATION") {
+      await prisma.conversation.update({
+        where: { id: conversation.id },
+        data: { status: "RESOLVED" }
+      });
+      logger.info("messenger.conversation_resolved_by_ai", { conversationId: conversation.id });
+      return;
+    }
+
+    const isAutoMode = businessProfile.responseMode === "AUTO";
+    const status = reply.action === "HANDOFF_TO_HUMAN" || !isAutoMode ? "PENDING_REVIEW" : "SENT";
+
+    const modelSaved = await saveMessage(conversation.id, "model", reply.content || "", {
+      status,
+      aiReasoning: reply.reasoning,
+      handoffCategory: reply.handoffCategory
+    });
+
     emitToBusiness(page.businessProfileId, "new_message", {
       conversationId: conversation.id,
       message: modelSaved,
@@ -141,13 +158,22 @@ export async function handleMessengerMessage(
     emitToConversation(conversation.id, "new_message", {
       message: modelSaved,
     });
-    await sendMessengerReply(senderId, reply, pageAccessToken);
 
-    logger.info("messenger.reply_sent", {
-      pageId,
-      senderId,
-      preview: reply.slice(0, 80),
-    });
+    if (status === "PENDING_REVIEW") {
+       emitToBusiness(page.businessProfileId, "draft_received", {
+          conversationId: conversation.id,
+          message: modelSaved
+       });
+    }
+
+    if (status === "SENT" && reply.content) {
+      await sendMessengerReply(senderId, reply.content, pageAccessToken);
+      logger.info("messenger.reply_sent", {
+        pageId,
+        senderId,
+        preview: reply.content.substring(0, 80),
+      });
+    }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error("messenger.handle_failed", {

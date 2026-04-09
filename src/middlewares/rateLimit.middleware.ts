@@ -1,4 +1,4 @@
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 
 // General rate limiting
 export const generalLimiter = rateLimit({
@@ -115,9 +115,12 @@ export const widgetChatLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
-  validate: { trustProxy: false },
+  validate: { 
+    trustProxy: false,
+  },
   keyGenerator: (req) => {
-    const ip = req.ip || req.socket.remoteAddress || "unknown";
+    // Using the official ipKeyGenerator helper prevents the IPv6 validation warning
+    const ip = ipKeyGenerator(req.ip || req.socket.remoteAddress || "unknown");
     const sk = String(
       req.headers["x-widget-site-key"] ??
         (req.body && typeof req.body === "object" && "siteKey" in req.body

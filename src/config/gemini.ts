@@ -3,7 +3,8 @@ import {
   HarmBlockThreshold,
   HarmCategory,
   Type,
-  Tool
+  Tool,
+  Schema
 } from "@google/genai";
 import { logger } from "../utils/logger";
 
@@ -66,6 +67,31 @@ export const MESSENGER_SAFETY_SETTINGS = [
     threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
   },
 ];
+
+export const aiRoutingSchema: Schema = {
+  type: Type.OBJECT,
+  properties: {
+    action: {
+      type: Type.STRING,
+      description: "Must be 'REPLY_AUTO', 'HANDOFF_TO_HUMAN', or 'RESOLVE_CONVERSATION'"
+    },
+    handoffCategory: {
+      type: Type.STRING,
+      description: "If action is HANDOFF_TO_HUMAN, categorise the reason. E.g., 'SALES_OPPORTUNITY', 'ANGRY_CUSTOMER', 'MISSING_KNOWLEDGE', 'COMPLEX_SUPPORT'",
+      nullable: true
+    },
+    reasoning: {
+      type: Type.STRING,
+      description: "Internal thought process explaining the action and routing decision."
+    },
+    content: {
+      type: Type.STRING,
+      description: "The actual message to send to the user (if replying directly). Required if REPLY_AUTO.",
+      nullable: true
+    }
+  },
+  required: ["action", "reasoning"]
+};
 
 /**
  * Dynamically builds a Lead Capture tool for Gemini based on custom field mappings.

@@ -241,20 +241,26 @@ conversationsRoutes.post(
       }
 
       const customerPhone = conversation.customerPhone ?? conversation.senderId;
+      const trimmedText = text.trim();
 
-      // Send via WhatsApp Cloud API
+      // 1. Send via WhatsApp Cloud API FIRST
       try {
-        await sendWhatsAppReply(customerPhone, text.trim(), account.phoneNumberId, accessToken);
+        await sendWhatsAppReply(customerPhone, trimmedText, account.phoneNumberId, accessToken);
       } catch (apiErr: any) {
         logger.error("whatsapp.conversations.send_failed", {
           conversationId,
           error: apiErr.message,
         });
-        return res.status(502).json({ error: "WhatsApp Cloud API error", detail: apiErr.message });
+        // Passing back the specific Meta error to the frontend
+        return res.status(502).json({ 
+          error: "WhatsApp Cloud API error", 
+          detail: apiErr.message,
+          code: apiErr.response?.data?.error?.code // Try to capture Meta error code if available
+        });
       }
 
-      // Persist the outbound message
-      const saved = await saveMessage(conversationId, "model", text.trim());
+      // 2. Persist ONLY if API call succeeded
+      const saved = await saveMessage(conversationId, "model", trimmedText);
 
       emitToBusiness(conversation.businessProfileId, "new_message", {
         conversationId: conversation.id,
@@ -267,12 +273,123 @@ conversationsRoutes.post(
       logger.info("whatsapp.conversations.human_sent", {
         conversationId,
         to: customerPhone,
-        preview: text.trim().slice(0, 80),
+        preview: trimmedText.slice(0, 80),
       });
 
       return res.status(201).json({ data: saved });
     } catch (error: any) {
       logger.error("whatsapp.conversations.send_error", { error: error.message });
+      return res.status(500).json({ error: error.message });
+    }
+  },
+);
+
+// ─── GET /v1/whatsapp/templates ───────────────────────────────────────────────
+/**
+ * List all approved WhatsApp templates for the authenticated user's active account.
+ */
+conversationsRoutes.get(
+  "/templates",
+  authenticateToken,
+  async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).user.id as number;
+      
+      // Get the first active WhatsApp account for this user
+      const account = await prisma.whatsAppAccount.findFirst({
+        where: { userId, isActive: true },
+        select: { wabaId: true, accessToken: true },
+      });
+
+      if (!account || !account.wabaId) {
+        return res.json({ data: [] }); // Graceful empty state
+      }
+
+      let accessToken: string;
+      try {
+        accessToken = decryptFacebookSecret(account.accessToken);
+      } catch {
+        return res.status(500).json({ error: "Failed to decrypt account credentials" });
+      }
+
+      const { listWhatsAppTemplates } = require("../../services/meta/whatsapp.service");
+      const templates = await listWhatsAppTemplates(account.wabaId, accessToken);
+      
+      return res.json({ data: templates });
+    } catch (error: any) {
+      logger.error("whatsapp.templates.list_routes_failed", { error: error.message });
+      return res.status(500).json({ error: error.message });
+    }
+  },
+);
+
+// ─── POST /v1/whatsapp/conversations/:id/template ────────────────────────────
+/**
+ * Send a specific WhatsApp template to a conversation.
+ */
+conversationsRoutes.post(
+  "/:id/template",
+  authenticateToken,
+  async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).user.id as number;
+      const conversationId = parseInt(req.params.id, 10);
+      const { templateName, languageCode, components, textPreview } = req.body;
+
+      if (!templateName || !languageCode) {
+        return res.status(400).json({ error: "templateName and languageCode are required" });
+      }
+
+      const phoneNumberIds = await getUserPhoneNumberIds(userId);
+      const conversation = await getConversationForUser(conversationId, phoneNumberIds);
+      if (!conversation) {
+        return res.status(404).json({ error: "Conversation not found" });
+      }
+
+      const account = await prisma.whatsAppAccount.findFirst({
+        where: { phoneNumberId: conversation.pageId, userId, isActive: true },
+        select: { accessToken: true, phoneNumberId: true },
+      });
+
+      if (!account) {
+        return res.status(404).json({ error: "WhatsApp account not found" });
+      }
+
+      const accessToken = decryptFacebookSecret(account.accessToken);
+      const customerPhone = conversation.customerPhone ?? conversation.senderId;
+
+      const { sendWhatsAppTemplate } = require("../../services/meta/whatsapp.service");
+      
+      // 1. Send via Meta API
+      try {
+        await sendWhatsAppTemplate(
+          customerPhone,
+          templateName,
+          languageCode,
+          components || [],
+          account.phoneNumberId,
+          accessToken,
+        );
+      } catch (apiErr: any) {
+        logger.error("whatsapp.templates.send_failed", { conversationId, error: apiErr.message });
+        return res.status(502).json({ error: "WhatsApp Template API error", detail: apiErr.message });
+      }
+
+      // 2. Persist to DB
+      // We save the textPreview (what the user saw in the UI) as the content
+      const saved = await saveMessage(conversationId, "model", textPreview || `[Template: ${templateName}]`);
+
+      emitToBusiness(conversation.businessProfileId, "new_message", {
+        conversationId: conversation.id,
+        message: saved,
+      });
+      emitToConversation(conversation.id, "new_message", {
+        message: saved,
+      });
+
+      return res.status(201).json({ data: saved });
+    } catch (error: any) {
+      logger.error("whatsapp.templates.send_route_error", { error: error.message });
       return res.status(500).json({ error: error.message });
     }
   },

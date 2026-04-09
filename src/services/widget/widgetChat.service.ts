@@ -121,6 +121,21 @@ export async function processWidgetChatMessage(params: {
     });
 
     if (reply.handoffCategory === "SYSTEM_ERROR") {
+      // Ensure we have a descriptive fallback for the admin UI
+      if (!botMsg.content) {
+        await prisma.conversationMessage.update({
+          where: { id: botMsg.id },
+          data: { content: "AI System Failure: Manual intervention required." }
+        });
+        botMsg.content = "AI System Failure: Manual intervention required.";
+      }
+
+      // Re-emit with updated content
+      emitToBusiness(install.businessProfileId, "new_message", {
+        conversationId: conversation.id,
+        message: botMsg
+      });
+
       emitToBusiness(install.businessProfileId, "system_critical_error", {
         conversationId: conversation.id,
         reason: reply.reasoning

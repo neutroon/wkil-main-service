@@ -9,6 +9,7 @@ import {
   saveMessage,
 } from "../../services/meta/conversation.service";
 import { sendWhatsAppReply } from "../../services/meta/whatsapp.service";
+import { sendMessengerReply } from "../../services/meta/messenger.service";
 import { decryptFacebookSecret } from "../../utils/tokenCrypto";
 import { emitToBusiness, emitToConversation } from "../../utils/socket";
 
@@ -393,6 +394,130 @@ conversationsRoutes.post(
       return res.status(500).json({ error: error.message });
     }
   },
+);
+
+// ============================================================================
+// HITL (Approve / Edit / Send Drafts)
+// ============================================================================
+conversationsRoutes.put(
+  "/:conversationId/messages/:messageId/approve",
+  authenticateToken,
+  async (req: Request, res: Response): Promise<any> => {
+    try {
+      const { conversationId, messageId } = req.params;
+      const { editedContent } = req.body;
+      const userId = (req as any).user.id;
+
+      if (!editedContent) {
+        return res.status(400).json({ error: "editedContent is required." });
+      }
+
+      // We verify access by loading ALL owned assets for this user (both WA and Messenger).
+      const [waAccounts, fbPages] = await Promise.all([
+        prisma.whatsAppAccount.findMany({
+          where: { userId, isActive: true },
+          select: { phoneNumberId: true },
+        }),
+        prisma.facebookPage.findMany({
+          where: { facebookAccount: { userId }, isActive: true },
+          select: { pageId: true, pageAccessToken: true, facebookAccount: { select: { accessToken: true } } },
+        })
+      ]);
+
+      const waPhoneIds = waAccounts.map(a => a.phoneNumberId);
+      const fbPageIds = fbPages.map(p => p.pageId);
+
+      const conversation = await prisma.conversation.findFirst({
+        where: {
+          id: parseInt(conversationId, 10),
+          OR: [
+            { 
+              pageId: { in: waPhoneIds }, 
+              OR: [
+                { channel: "whatsapp" },
+                { channel: null }
+              ] 
+            },
+            { pageId: { in: fbPageIds }, channel: "messenger" }
+          ]
+        }
+      });
+
+      if (!conversation) {
+        return res.status(403).json({ error: "Conversation not found or access denied." });
+      }
+
+      const message = await prisma.conversationMessage.findUnique({
+        where: { id: parseInt(messageId, 10), conversationId: conversation.id }
+      });
+
+      if (!message || message.role !== "model" || message.status !== "PENDING_REVIEW") {
+        return res.status(400).json({ error: "Message not found or is not a pending AI draft." });
+      }
+
+      const isEdited = message.content !== editedContent;
+
+      // 1. Transactionally record the correction and mark send
+      await prisma.$transaction(async (tx) => {
+        if (isEdited) {
+          await tx.aiCorrection.create({
+            data: {
+              messageId: message.id,
+              originalAiText: message.content,
+              humanEditedText: editedContent
+            }
+          });
+        }
+        await tx.conversationMessage.update({
+          where: { id: message.id },
+          data: {
+            content: editedContent,
+            status: isEdited ? "EDITED_AND_SENT" : "SENT"
+          }
+        });
+        
+        // Also ensure conversation is open
+        if (conversation.status === "RESOLVED") {
+          await tx.conversation.update({
+            where: { id: conversation.id },
+            data: { status: "OPEN" }
+          });
+        }
+      });
+
+      const updatedMsg = await prisma.conversationMessage.findUnique({ where: { id: message.id }});
+
+      // 2. Dispatch via Meta API
+      if (conversation.channel === "messenger") {
+         const page = fbPages.find(p => p.pageId === conversation.pageId);
+         if (!page) throw new Error("Missing Facebook Page Access Token for dispatch.");
+         const pageToken = decryptFacebookSecret(page.pageAccessToken);
+         await sendMessengerReply(conversation.senderId, editedContent, pageToken);
+         logger.info("messenger.hitl.approved", { messageId: message.id });
+      } else {
+         // Default to WhatsApp
+         const waAccount = await prisma.whatsAppAccount.findFirst({ where: { phoneNumberId: conversation.pageId }});
+         if (!waAccount) throw new Error("Missing WhatsApp Account for dispatch.");
+         const waToken = decryptFacebookSecret(waAccount.accessToken);
+         await sendWhatsAppReply(conversation.senderId, editedContent, conversation.pageId, waToken);
+         logger.info("whatsapp.hitl.approved", { messageId: message.id });
+      }
+
+      // 3. Notify sockets
+      emitToBusiness(conversation.businessProfileId, "message_updated", {
+        conversationId: conversation.id,
+        message: updatedMsg,
+      });
+      emitToConversation(conversation.id, "new_message", {
+        message: updatedMsg,
+      });
+
+      return res.status(200).json({ data: updatedMsg });
+    } catch (error: any) {
+      logger.error("hitl.approve_error", { error: error.message });
+      return res.status(500).json({ error: error.message });
+    }
+  }
 );
 
 export default conversationsRoutes;

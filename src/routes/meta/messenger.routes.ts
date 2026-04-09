@@ -144,8 +144,9 @@ messengerRoutes.post(
       }
 
       const pageAccessToken = decryptFacebookSecret(page.pageAccessToken);
+      const trimmedText = text.trim();
 
-      // Send via Graph API
+      // 1. Send via Graph API FIRST
       const fbRes = await fetch(
         `https://graph.facebook.com/v25.0/me/messages?access_token=${pageAccessToken}`,
         {
@@ -153,17 +154,25 @@ messengerRoutes.post(
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             recipient: { id: conversation.senderId },
-            message: { text: text.trim() },
+            message: { text: trimmedText },
           }),
         },
       );
 
       if (!fbRes.ok) {
         const error = await fbRes.json();
-        throw new Error(`Messenger API error: ${JSON.stringify(error)}`);
+        logger.error("messenger.conversations.send_failed", { 
+          conversationId, 
+          error: JSON.stringify(error) 
+        });
+        return res.status(502).json({ 
+          error: "Messenger API error", 
+          detail: error.error?.message ?? "Unknown Messenger error" 
+        });
       }
 
-      const saved = await saveMessage(conversationId, "model", text.trim());
+      // 2. Persist ONLY if API call succeeded
+      const saved = await saveMessage(conversationId, "model", trimmedText);
 
       // Emit real-time updates
       emitToBusiness(conversation.businessProfileId, "new_message", {

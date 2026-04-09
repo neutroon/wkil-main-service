@@ -198,7 +198,7 @@ export async function handleMessengerMessage(
     
     // Silent fail for customer, but alert the business
     if (page?.businessProfileId && conversation) {
-       const errorMsg = "AI System Failure: Manual intervention required.";
+        const errorMsg = `Internal Technical Failure: ${message}`;
        const modelSaved = await saveMessage(conversation.id, "model", errorMsg, {
           status: "FAILED",
           aiReasoning: `System Exception: ${message}`,

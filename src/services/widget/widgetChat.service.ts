@@ -121,6 +121,13 @@ export async function processWidgetChatMessage(params: {
     });
 
     if (reply.handoffCategory === "SYSTEM_ERROR") {
+      // Store the internal error details for admin view
+      await prisma.conversationMessage.update({
+        where: { id: botMsg.id },
+        data: { content: `Internal Technical Failure: ${reply.reasoning}` }
+      });
+      botMsg.content = `Internal Technical Failure: ${reply.reasoning}`;
+
       // Re-emit for system error visibility
       emitToBusiness(install.businessProfileId, "new_message", {
         conversationId: conversation.id,

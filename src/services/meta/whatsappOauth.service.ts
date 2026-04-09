@@ -3,12 +3,10 @@ import { logger } from "../../utils/logger";
 import prisma from "../../config/prisma";
 
 const GRAPH_API = "https://graph.facebook.com/v25.0";
-// Meta Embedded Signup onboarding (Tech Provider) docs show token exchange using v21.0.
-// We keep other calls on `GRAPH_API` but align the token exchange endpoint version.
-const OAUTH_GRAPH_API = "https://graph.facebook.com/v21.0";
-// The "discover WABA accounts + phone numbers" step relies on Graph fields/endpoints
-// that appear to differ by version; use v21.0 to match the Embedded Signup token exchange.
-const DISCOVERY_GRAPH_API = "https://graph.facebook.com/v21.0";
+// Meta Cloud API and Embedded Signup onboarding (Tech Provider) v25.0.
+const OAUTH_GRAPH_API = "https://graph.facebook.com/v25.0";
+// The "discover WABA accounts + phone numbers" step relies on Graph fields/endpoints.
+const DISCOVERY_GRAPH_API = "https://graph.facebook.com/v25.0";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

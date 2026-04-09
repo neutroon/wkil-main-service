@@ -78,6 +78,73 @@ export async function sendWhatsAppAction(
 }
 
 /**
+ * List approved WhatsApp message templates for a given WABA.
+ */
+export async function listWhatsAppTemplates(
+  wabaId: string,
+  accessToken: string,
+): Promise<any[]> {
+  const response = await fetch(
+    `https://graph.facebook.com/v20.0/${wabaId}/message_templates?status=APPROVED`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    },
+  );
+
+  if (!response.ok) {
+    const error = await response.json();
+    logger.error("whatsapp.templates.list_failed", { wabaId, error });
+    throw new Error(`WhatsApp Templates API error: ${JSON.stringify(error)}`);
+  }
+
+  const result = (await response.json()) as { data: any[] };
+  return result.data || [];
+}
+
+/**
+ * Send a pre-approved Template message.
+ */
+export async function sendWhatsAppTemplate(
+  to: string,
+  templateName: string,
+  languageCode: string,
+  components: any[],
+  phoneNumberId: string,
+  accessToken: string,
+): Promise<any> {
+  const response = await fetch(
+    `https://graph.facebook.com/v20.0/${phoneNumberId}/messages`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to,
+        type: "template",
+        template: {
+          name: templateName,
+          language: { code: languageCode },
+          components,
+        },
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(`WhatsApp Template Send error: ${JSON.stringify(error)}`);
+  }
+
+  return response.json();
+}
+
+/**
  * Core handler: look up the WhatsApp account → business profile → run RAG + AI → reply.
  * Uses the shared Conversation tables (pageId = phoneNumberId, senderId = customer phone).
  */
@@ -87,6 +154,7 @@ export async function handleWhatsAppMessage(
   messageText: string,
   wamid?: string,
 ): Promise<void> {
+  // ... existing code ...
   const account = await prisma.whatsAppAccount.findFirst({
     where: { phoneNumberId, isActive: true },
     include: {

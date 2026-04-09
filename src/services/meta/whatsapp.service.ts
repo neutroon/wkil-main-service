@@ -7,10 +7,7 @@ import {
   saveMessage,
 } from "./conversation.service";
 import { computeBusinessChatReply } from "../chat/businessChatReply.service";
-import {
-  historyToLlmTurns,
-  toPromptMessages,
-} from "../chat/conversationTurns";
+import { historyToLlmTurns, toPromptMessages } from "../chat/conversationTurns";
 import { emitToBusiness, emitToConversation } from "../../utils/socket";
 
 const FALLBACK_REPLY =
@@ -85,7 +82,7 @@ export async function listWhatsAppTemplates(
   accessToken: string,
 ): Promise<any[]> {
   const response = await fetch(
-    `https://graph.facebook.com/v20.0/${wabaId}/message_templates?status=APPROVED`,
+    `https://graph.facebook.com/v25.0/${wabaId}/message_templates?status=APPROVED`,
     {
       method: "GET",
       headers: {
@@ -116,7 +113,7 @@ export async function sendWhatsAppTemplate(
   accessToken: string,
 ): Promise<any> {
   const response = await fetch(
-    `https://graph.facebook.com/v20.0/${phoneNumberId}/messages`,
+    `https://graph.facebook.com/v25.0/${phoneNumberId}/messages`,
     {
       method: "POST",
       headers: {
@@ -181,7 +178,10 @@ export async function handleWhatsAppMessage(
     accessToken = decryptFacebookSecret(account.accessToken);
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    logger.error("whatsapp.decrypt_token_failed", { phoneNumberId, error: msg });
+    logger.error("whatsapp.decrypt_token_failed", {
+      phoneNumberId,
+      error: msg,
+    });
     return;
   }
 
@@ -237,9 +237,18 @@ export async function handleWhatsAppMessage(
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    logger.error("whatsapp.handle_failed", { phoneNumberId, from, error: message });
+    logger.error("whatsapp.handle_failed", {
+      phoneNumberId,
+      from,
+      error: message,
+    });
     try {
-      await sendWhatsAppReply(from, FALLBACK_REPLY, phoneNumberId, accessToken!);
+      await sendWhatsAppReply(
+        from,
+        FALLBACK_REPLY,
+        phoneNumberId,
+        accessToken!,
+      );
     } catch (sendErr: unknown) {
       const sm = sendErr instanceof Error ? sendErr.message : String(sendErr);
       logger.error("whatsapp.fallback_send_failed", {

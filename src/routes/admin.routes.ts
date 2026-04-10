@@ -4,6 +4,8 @@ import {
   registerAdmin,
   // logoutAdmin,
   createManager,
+  getBillingSettings,
+  updateBillingSettings,
 } from "../controllers/admin.controller";
 import {
   getUsers,

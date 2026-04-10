@@ -212,6 +212,15 @@ export async function handleWhatsAppMessage(
     const historyForPrompt = toPromptMessages(historyRows);
     historyForPrompt.push({ role: "user", content: messageText });
     const historyTurns = historyToLlmTurns(historyForPrompt);
+    
+    // 3. Early Exit if Manual Mode
+    if (businessProfile.responseMode === "MANUAL") {
+      logger.info("whatsapp.manual_mode_skip", { 
+        conversationId: conversation.id, 
+        businessProfileId: businessProfile.id 
+      });
+      return;
+    }
 
     const reply = await computeBusinessChatReply({
       businessProfile,

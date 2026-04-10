@@ -13,13 +13,13 @@ export const validatePassword = body("password")
   .withMessage("Password must be at least 8 characters long")
   .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/)
   .withMessage(
-    "Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character"
+    "Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character",
   );
 
 // Role validation
 export const validateRole = body("role")
   .optional()
-  .isIn(["user", "admin"])
+  .isIn(["user", "admin", "manager"])
   .withMessage("Role must be either 'user' or 'admin'");
 
 // User registration validation
@@ -55,7 +55,7 @@ export const validateContentGeneration = [
     .optional()
     .isIn(["casual", "professional", "funny", "exciting", "informative"])
     .withMessage(
-      "Tone must be one of: casual, professional, funny, exciting, informative"
+      "Tone must be one of: casual, professional, funny, exciting, informative",
     ),
   body("length")
     .optional()
@@ -126,7 +126,7 @@ export const validateFacebookSchedule = [
     .isNumeric()
     .isInt({ min: Math.floor(Date.now() / 1000) + 60 }) // At least 1 minute in the future
     .withMessage(
-      "Schedule time must be a valid Unix timestamp at least 1 minute in the future"
+      "Schedule time must be a valid Unix timestamp at least 1 minute in the future",
     ),
   handleValidationErrors,
 ];
@@ -135,7 +135,7 @@ export const validateFacebookSchedule = [
 export function handleValidationErrors(
   req: Request,
   res: Response,
-  next: NextFunction
+  next: NextFunction,
 ) {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {

@@ -31,6 +31,7 @@ import externalDataSourceRoutes from "./routes/externalDataSource.routes";
 import widgetPublicRoutes from "./routes/widget.public.routes";
 import widgetRoutes from "./routes/widget.routes";
 import aiAnalyticsRoutes from "./routes/aiAnalytics.routes";
+import conversationsRoutes from "./routes/meta/conversations.routes";
 
 const app = express();
 
@@ -118,6 +119,7 @@ app.use("/v1/crm", crmRoutes);
 app.use("/v1/external-data", externalDataSourceRoutes);
 app.use("/v1/widget", widgetRoutes);
 app.use("/v1/analytics", aiAnalyticsRoutes);
+app.use("/v1/meta/conversations", conversationsRoutes);
 
 // Health check endpoint
 app.get("/v1/health", (req, res) => {

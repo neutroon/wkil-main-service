@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { Request, Response } from "express";
 import { generatePostContent } from "../services/content.service";
+import { generateContentStrategy, generatePostExecution } from "../services/contentPlan.service";
 import { authenticateToken } from "../middlewares/auth.middleware";
 import { validateContentGeneration } from "../middlewares/validation.middleware";
 import { contentLimiter } from "../middlewares/rateLimit.middleware";
@@ -110,6 +111,131 @@ contentRoutes.post(
           code: "GENERATION_ERROR",
         });
       }
+    }
+  }
+);
+
+// Generate Content Strategy Plan (Phase 1)
+contentRoutes.post(
+  "/plan/generate-strategy",
+  contentLimiter,
+  authenticateToken,
+  async (req: any, res: Response) => {
+    try {
+      const { businessProfileId, startDate, endDate, goals, currentTrends } = req.body;
+      const userId = req.user.id;
+      
+      if (!startDate || !endDate) {
+        return res.status(400).json({ error: "startDate and endDate are required" });
+      }
+
+      let targetProfileId = parseInt(businessProfileId, 10);
+      if (!targetProfileId || isNaN(targetProfileId)) {
+        const defaultProfile = await prisma.businessProfile.findFirst({
+          where: { userId }
+        });
+        if (!defaultProfile) {
+          return res.status(400).json({ error: "No business profile found. Please create one first." });
+        }
+        targetProfileId = defaultProfile.id;
+      }
+
+      const plan = await generateContentStrategy({
+        businessProfileId: targetProfileId,
+        userId,
+        startDate,
+        endDate,
+        goals,
+        currentTrends
+      });
+
+      res.json(plan);
+    } catch (err: any) {
+      console.error("[ContentAPI] Strategy generation failed:", err.message);
+      res.status(500).json({ error: err.message || "Failed to generate strategy" });
+    }
+  }
+);
+
+// Generate Content Execution (Phase 2)
+contentRoutes.post(
+  "/plan/:planId/generate-post/:postId",
+  contentLimiter,
+  authenticateToken,
+  async (req: any, res: Response) => {
+    try {
+      const { postId } = req.params;
+      const userId = req.user.id;
+
+      const updatedPost = await generatePostExecution(parseInt(postId, 10), userId);
+      res.json(updatedPost);
+    } catch (err: any) {
+      console.error("[ContentAPI] Post execution failed:", err.message);
+      res.status(500).json({ error: err.message || "Failed to execute post content" });
+    }
+  }
+);
+
+// Approve Post
+contentRoutes.patch(
+  "/plan/posts/:postId/approve",
+  authenticateToken,
+  async (req: any, res: Response) => {
+    try {
+      const { postId } = req.params;
+      const { manual } = req.body; // true if approved but manual posting
+      
+      const userId = req.user.id;
+      const post = await prisma.contentPlanPost.findUnique({
+        where: { id: parseInt(postId, 10) },
+        include: { contentPlan: true }
+      });
+      
+      if (!post || post.contentPlan.userId !== userId) {
+        return res.status(403).json({ error: "Unauthorized or post not found" });
+      }
+
+      const updated = await prisma.contentPlanPost.update({
+        where: { id: parseInt(postId, 10) },
+        data: { status: manual ? "approved_manual" : "approved" }
+      });
+
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to approve post" });
+    }
+  }
+);
+
+// Fetch Content Plans
+contentRoutes.get(
+  "/plan/list/active",
+  authenticateToken,
+  async (req: any, res: Response) => {
+    try {
+      const userId = req.user.id;
+
+      // Find first profile as fallback
+      const defaultProfile = await prisma.businessProfile.findFirst({
+        where: { userId }
+      });
+
+      if (!defaultProfile) {
+         return res.json([]);
+      }
+
+      const plans = await prisma.contentPlan.findMany({
+        where: { 
+          businessProfileId: defaultProfile.id,
+          userId 
+        },
+        include: { posts: { orderBy: { scheduledAt: 'asc' } } },
+        orderBy: { createdAt: 'desc' }
+      });
+
+      res.json(plans);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to fetch plans" });
     }
   }
 );

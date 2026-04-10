@@ -22,3 +22,24 @@ export const getAiPerformanceController = async (req: Request, res: Response) =>
     });
   }
 };
+
+export const getAiCorrectionsController = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user.id;
+    const { limit, offset } = req.query;
+
+    const data = await require("../services/aiAnalytics.service").getAiCorrections(
+      userId,
+      limit ? parseInt(limit as string, 10) : 50,
+      offset ? parseInt(offset as string, 10) : 0
+    );
+
+    res.status(200).json({ data });
+  } catch (error: any) {
+    logger.error("analytics.ai_corrections.error", { error: error.message });
+    res.status(500).json({
+      error: "Failed to fetch AI correction history",
+      details: error.message,
+    });
+  }
+};

@@ -72,6 +72,18 @@ export async function processWidgetChatMessage(params: {
   const historyForPrompt = toPromptMessages(historyRows);
   historyForPrompt.push({ role: "user", content: message });
   const historyTurns = historyToLlmTurns(historyForPrompt);
+  
+  // 3. Early Exit if Manual Mode
+  if (businessProfile.responseMode === "MANUAL") {
+    logger.info("widget.chat.manual_mode_skip", { 
+      conversationId: conversation.id,
+      businessProfileId: businessProfile.id 
+    });
+    return { 
+      reply: "", // Silent to visitor
+      conversationId: conversation.id 
+    };
+  }
 
   let reply: AiRoutingDecision;
   try {

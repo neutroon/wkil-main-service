@@ -132,3 +132,50 @@ export async function getAiPerformanceStats(userIdStr: string, days = 30, busine
     dailyVolume
   };
 }
+
+export async function getAiCorrections(userIdStr: string, limit = 50, offset = 0) {
+  const userId = parseInt(userIdStr, 10);
+
+  const rows = await prisma.aiCorrection.findMany({
+    where: {
+      message: {
+        conversation: {
+          businessProfile: { userId }
+        }
+      }
+    },
+    include: {
+      message: {
+        include: {
+          conversation: true
+        }
+      }
+    },
+    orderBy: { createdAt: "desc" },
+    take: limit,
+    skip: offset
+  });
+
+  return rows.map(r => {
+    const similarity = calculateSimilarity(r.originalAiText, r.humanEditedText);
+    
+    // Normalise channel name for UI icons
+    const channel = r.message.conversation.channel === "web" ? "webchat" : (r.message.conversation.channel || "webchat");
+    
+    // Improved customer name logic
+    let customerName = r.message.conversation.customerPhone || r.message.conversation.senderId;
+    if (channel === "webchat" && !r.message.conversation.customerPhone) {
+      customerName = `Visitor #${r.message.conversation.id}`;
+    }
+
+    return {
+      id: r.id,
+      originalText: r.originalAiText,
+      editedText: r.humanEditedText,
+      similarity,
+      channel,
+      customerName,
+      createdAt: r.createdAt
+    };
+  });
+}

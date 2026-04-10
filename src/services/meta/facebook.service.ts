@@ -183,11 +183,29 @@ export const exchangeCodeForToken = async (params: FacebookTokenParams) => {
 // -------------------------------------------------------------------------------
 // Get user pages using access token
 export const getUserPages = async (
-  accessToken: string,
+  accessToken?: string,
+  userId?: number,
 ): Promise<FacebookPage[]> => {
   return callGraphApiWithRetry("get_pages", async () => {
     try {
-      const url = `${FB_API}/me/accounts?access_token=${accessToken}`;
+      let token = accessToken;
+
+      if (!token && userId) {
+        const account = await prisma.facebookAccount.findFirst({
+          where: { userId, isActive: true },
+          orderBy: { lastUsedAt: "desc" },
+          select: { accessToken: true },
+        });
+        if (account) {
+          token = decryptFacebookSecret(account.accessToken);
+        }
+      }
+
+      if (!token) {
+        throw new Error("Facebook access token not found for user");
+      }
+
+      const url = `${FB_API}/me/accounts?access_token=${token}`;
       const { data } = await axios.get(url);
       return data.data;
     } catch (error: unknown) {
@@ -198,12 +216,27 @@ export const getUserPages = async (
   });
 };
 
+// Helper to get page access token from DB
+export const getPageAccessToken = async (pageId: string): Promise<string> => {
+  const page = await prisma.facebookPage.findFirst({
+    where: { pageId, isActive: true },
+    select: { pageAccessToken: true },
+  });
+
+  if (!page) {
+    throw new Error(`Page with ID ${pageId} not found in database or is inactive.`);
+  }
+
+  return decryptFacebookSecret(page.pageAccessToken);
+};
+
 // publish post on a page
 export const createPost = async (params: FacebookPostParams) => {
   return callGraphApiWithRetry("create_post", async () => {
     try {
       let url: string;
       let postData: any;
+      const accessToken = params.accessToken || (await getPageAccessToken(params.pageId));
 
       if (params.imageUrl) {
         // Post with image using photos endpoint
@@ -211,14 +244,14 @@ export const createPost = async (params: FacebookPostParams) => {
         postData = {
           url: params.imageUrl,
           caption: params.message,
-          access_token: params.accessToken,
+          access_token: accessToken,
         };
       } else {
         // Regular text post using feed endpoint
         url = `${FB_API}/${params.pageId}/feed`;
         postData = {
           message: params.message,
-          access_token: params.accessToken,
+          access_token: accessToken,
         };
       }
 
@@ -237,12 +270,13 @@ export const schedulePost = async (
   params: FacebookScheduleParams,
 ): Promise<{ data: { id: string } }> => {
   try {
+    const accessToken = params.accessToken || (await getPageAccessToken(params.pageId));
     const url = `${FB_API}/${params.pageId}/feed`;
     const postData = {
       message: params.message,
       published: false,
       scheduled_publish_time: params.scheduleTime,
-      access_token: params.accessToken,
+      access_token: accessToken,
     };
 
     const { data } = await axios.post(url, postData);
@@ -255,10 +289,11 @@ export const schedulePost = async (
   }
 };
 
-export const getPagePosts = async (pageId: string, accessToken: string) => {
+export const getPagePosts = async (pageId: string, accessToken?: string) => {
   return callGraphApiWithRetry("get_page_posts", async () => {
     try {
-      const url = `${FB_API}/${pageId}/posts?access_token=${accessToken}`;
+      const token = accessToken || (await getPageAccessToken(pageId));
+      const url = `${FB_API}/${pageId}/posts?access_token=${token}`;
       const { data } = await axios.get(url);
       return data;
     } catch (error: unknown) {
@@ -286,9 +321,10 @@ export const getPostComments = async (postId: string, accessToken: string) => {
 export const replyToComment = async (params: FacebookCommentParams) => {
   try {
     const url = `${FB_API}/${params.commentId}/comments`;
+    const accessToken = params.accessToken || (await getPageAccessToken(params.commentId.split("_")[0])); // Fallback logic for comment reply
     const postData = {
       message: params.message,
-      access_token: params.accessToken,
+      access_token: accessToken,
     };
 
     const { data } = await axios.post(url, postData);

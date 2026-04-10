@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { createAdmin } from "../services/admin.service";
 import { createUser, updateUserRole } from "../services/user.service";
+import { getBillingMultiplier, updateBillingMultiplier } from "../services/settings.service";
 import {
   // setAdminAuthCookies,
   // clearAdminAuthCookies,
@@ -73,6 +74,30 @@ const createManager = async (req: Request, res: Response) => {
         createdAt: manager.createdAt,
       },
     });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+};
+
+// Settings management
+export const getBillingSettings = async (req: Request, res: Response) => {
+  try {
+    const multiplier = await getBillingMultiplier();
+    res.status(200).json({ data: { billing_multiplier: multiplier } });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+};
+
+export const updateBillingSettings = async (req: Request, res: Response) => {
+  try {
+    const { billing_multiplier } = req.body;
+    if (billing_multiplier === undefined) {
+      return res.status(400).json({ error: "billing_multiplier is required" });
+    }
+    
+    await updateBillingMultiplier(parseFloat(billing_multiplier));
+    res.status(200).json({ message: "Billing settings updated successfully" });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
   }

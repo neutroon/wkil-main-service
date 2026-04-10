@@ -5,10 +5,12 @@ import { logger } from "../utils/logger";
 export const getAiPerformanceController = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user.id;
+    const role = (req as any).user.role;
     const { days, businessProfileId } = req.query;
 
     const stats = await getAiPerformanceStats(
       userId,
+      role,
       days ? parseInt(days as string, 10) : 30,
       businessProfileId ? parseInt(businessProfileId as string, 10) : undefined
     );

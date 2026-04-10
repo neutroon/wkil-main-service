@@ -12,6 +12,9 @@ import { sendWhatsAppReply } from "../../services/meta/whatsapp.service";
 import { sendMessengerReply } from "../../services/meta/messenger.service";
 import { decryptFacebookSecret } from "../../utils/tokenCrypto";
 import { emitToBusiness, emitToConversation } from "../../utils/socket";
+import { computeBusinessChatReply } from "../../services/ai/aiEngine.service";
+import { toPromptMessages, historyToLlmTurns } from "../../services/chat/conversationTurns";
+import { getConversationHistory } from "../../services/meta/conversation.service";
 
 const conversationsRoutes = Router();
 
@@ -515,6 +518,148 @@ conversationsRoutes.put(
       return res.status(200).json({ data: updatedMsg });
     } catch (error: any) {
       logger.error("hitl.approve_error", { error: error.message });
+      return res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+/** DELETE /v1/meta/conversations/:id/messages/:mid — dismiss a draft */
+conversationsRoutes.delete(
+  "/:id/messages/:mid",
+  authenticateToken,
+  async (req: Request, res: Response): Promise<any> => {
+    try {
+      const userId = (req as any).user.id as number;
+      const conversationId = parseInt(req.params.id, 10);
+      const messageId = parseInt(req.params.mid, 10);
+
+      // Auth: verify access to conversation and message
+      const [waAccounts, fbPages] = await Promise.all([
+        prisma.whatsAppAccount.findMany({ where: { userId, isActive: true }, select: { phoneNumberId: true }}),
+        prisma.facebookPage.findMany({ where: { facebookAccount: { userId }, isActive: true }, select: { pageId: true }})
+      ]);
+      
+      const phoneIds = waAccounts.map(a => a.phoneNumberId);
+      const pageIds = fbPages.map(p => p.pageId);
+
+      const conversation = await prisma.conversation.findFirst({
+        where: { id: conversationId, pageId: { in: [...phoneIds, ...pageIds] }}
+      });
+
+      if (!conversation) return res.status(404).json({ error: "Not found" });
+
+      const msg = await prisma.conversationMessage.findFirst({
+        where: { id: messageId, conversationId, status: "PENDING_REVIEW" }
+      });
+
+      if (!msg) return res.status(404).json({ error: "Draft not found" });
+
+      await prisma.conversationMessage.delete({ where: { id: messageId } });
+
+      emitToBusiness(conversation.businessProfileId, "message_deleted", {
+        conversationId,
+        messageId
+      });
+
+      return res.json({ success: true });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  }
+);
+
+// ─── POST /v1/meta/conversations/:id/suggest ──────────────────────────────────
+/**
+ * Manually trigger the AI to generate a draft suggestion for this conversation.
+ * Returns the saved PENDING_REVIEW message.
+ */
+conversationsRoutes.post(
+  "/:id/suggest",
+  authenticateToken,
+  async (req: Request, res: Response): Promise<any> => {
+    try {
+      const userId = (req as any).user.id as number;
+      const conversationId = parseInt(req.params.id, 10);
+
+      if (isNaN(conversationId)) {
+        return res.status(400).json({ error: "Invalid conversation id" });
+      }
+
+      // 1. Auth: Verify conversation ownership
+      const [waAccounts, fbPages] = await Promise.all([
+        prisma.whatsAppAccount.findMany({
+          where: { userId, isActive: true },
+          select: { phoneNumberId: true },
+        }),
+        prisma.facebookPage.findMany({
+          where: { facebookAccount: { userId }, isActive: true },
+          select: { pageId: true },
+        })
+      ]);
+
+      const waPhoneIds = waAccounts.map(a => a.phoneNumberId);
+      const fbPageIds = fbPages.map(p => p.pageId);
+
+      const conversation = await prisma.conversation.findFirst({
+        where: {
+          id: conversationId,
+          pageId: { in: [...waPhoneIds, ...fbPageIds] }
+        },
+        include: { businessProfile: true }
+      });
+
+      if (!conversation) {
+        return res.status(404).json({ error: "Conversation not found or access denied." });
+      }
+
+      // 2. Fetch history and prepare prompt
+      const historyRows = await getConversationHistory(conversation.id);
+      if (historyRows.length === 0) {
+        return res.status(400).json({ error: "Cannot suggest a reply for an empty conversation." });
+      }
+
+      const lastUserMsg = historyRows[historyRows.length - 1];
+      if (lastUserMsg?.role === "model") {
+        // Technically we can still suggest even if the last message was a model,
+        // but it's most common to suggest in response to a user.
+        // We'll proceed regardless to allow "Regeneration".
+      }
+
+      const historyForPrompt = toPromptMessages(historyRows);
+      const historyTurns = historyToLlmTurns(historyForPrompt);
+
+      // 3. Compute Reply
+      const reply = await computeBusinessChatReply({
+        businessProfile: conversation.businessProfile,
+        messageText: lastUserMsg?.content || "",
+        historyTurns,
+        channel: (conversation.channel as any) || "whatsapp"
+      });
+
+      // 4. Save as PENDING_REVIEW (Draft)
+      const saved = await prisma.conversationMessage.create({
+        data: {
+          conversationId: conversation.id,
+          role: "model",
+          content: reply.content || "",
+          status: "PENDING_REVIEW",
+          aiReasoning: reply.reasoning,
+          handoffCategory: reply.handoffCategory
+        }
+      });
+
+      // 5. Notify
+      emitToBusiness(conversation.businessProfileId, "new_message", {
+        conversationId: conversation.id,
+        message: saved,
+      });
+      emitToConversation(conversation.id, "new_message", {
+        message: saved,
+      });
+
+      return res.status(201).json({ data: saved });
+    } catch (error: any) {
+      logger.error("meta.suggest_error", { error: error.message });
       return res.status(500).json({ error: error.message });
     }
   }

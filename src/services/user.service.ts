@@ -4,6 +4,8 @@ import {
   generateAccessToken,
   generateRefreshToken,
 } from "../middlewares/auth.middleware";
+import { SYSTEM_RATE_PER_TOKEN } from "../config/billing";
+import { getBillingMultiplier } from "./settings.service";
 
 export const createUser = async (
   name: string,
@@ -415,6 +417,35 @@ export const getManagerDashboard = async (managerId: number) => {
     take: 20,
   });
 
+  // Get AI usage stats for all managed users business profiles
+  const businessProfiles = await prisma.businessProfile.findMany({
+    where: { userId: { in: userIds } },
+    select: { id: true, userId: true }
+  });
+  
+  const bpIds = businessProfiles.map(bp => bp.id);
+  const aiUsage = await prisma.aiUsageStat.groupBy({
+    by: ["businessProfileId"],
+    where: { businessProfileId: { in: bpIds } },
+    _sum: { totalTokens: true }
+  });
+
+  const billingMultiplier = await getBillingMultiplier();
+
+  // Create a map for quick lookup: userId -> { tokens: number, cost: number }
+  const userAiStats: Record<number, { tokens: number, cost: number }> = {};
+  businessProfiles.forEach(bp => {
+    const usage = aiUsage.find(u => u.businessProfileId === bp.id);
+    const tokens = usage?._sum.totalTokens || 0;
+    const cost = tokens * SYSTEM_RATE_PER_TOKEN * billingMultiplier;
+    
+    if (!userAiStats[bp.userId]) {
+      userAiStats[bp.userId] = { tokens: 0, cost: 0 };
+    }
+    userAiStats[bp.userId].tokens += tokens;
+    userAiStats[bp.userId].cost += cost;
+  });
+
   return {
     totalManagedUsers,
     activeUsers,
@@ -437,6 +468,7 @@ export const getManagerDashboard = async (managerId: number) => {
         0,
       ),
       recentAnalytics: u.user.analytics.slice(0, 7), // Last 7 days
+      aiStats: userAiStats[u.user.id] || { tokens: 0, cost: 0 }
     })),
   };
 };

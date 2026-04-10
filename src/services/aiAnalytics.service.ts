@@ -1,3 +1,5 @@
+import { getBillingMultiplier } from "./settings.service";
+import { SYSTEM_RATE_PER_TOKEN } from "../config/billing";
 import prisma from "../config/prisma";
 
 export interface AiPerformanceStats {
@@ -9,6 +11,7 @@ export interface AiPerformanceStats {
   accuracyScore: number; // 0 to 100
   dailyVolume: { date: string; count: number }[];
   totalTokensConsumed: number;
+  estimatedCost: number; // In USD
 }
 
 /**
@@ -136,21 +139,28 @@ export async function getAiPerformanceStats(
     .map(([date, count]) => ({ date, count }))
     .sort((a, b) => a.date.localeCompare(b.date));
 
-  // 6. Extract token consumption (ADMINS ONLY)
-  let totalTokensConsumed = 0;
-  if (role === "admin" || role === "super_admin") {
-    const usageStats = await prisma.aiUsageStat.aggregate({
-      _sum: {
-        totalTokens: true,
-      },
-      where: {
-        businessProfile: { userId },
-        date: { gte: startDate },
-        ...(businessProfileId && { businessProfileId }),
-      },
-    });
-    totalTokensConsumed = usageStats._sum.totalTokens || 0;
-  }
+  // 6. Extract token consumption
+  const usageStats = await prisma.aiUsageStat.aggregate({
+    _sum: {
+      totalTokens: true,
+    },
+    where: {
+      businessProfile: { userId },
+      date: { gte: startDate },
+      ...(businessProfileId && { businessProfileId }),
+    },
+  });
+
+  const totalTokensConsumed = usageStats._sum.totalTokens || 0;
+
+  // 7. Calculate cost based on role
+  const multiplier =
+    role === "admin" || role === "super_admin"
+      ? 1.0
+      : await getBillingMultiplier();
+
+  const estimatedCost =
+    totalTokensConsumed * SYSTEM_RATE_PER_TOKEN * multiplier;
 
   return {
     automationRate,
@@ -161,6 +171,7 @@ export async function getAiPerformanceStats(
     accuracyScore,
     dailyVolume,
     totalTokensConsumed,
+    estimatedCost,
   };
 }
 

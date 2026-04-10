@@ -8,6 +8,10 @@ import {
   saveMessage,
 } from "../services/meta/conversation.service";
 import { emitToConversation, emitToBusiness } from "../utils/socket";
+import { computeBusinessChatReply } from "../services/ai/aiEngine.service";
+import { toPromptMessages, historyToLlmTurns } from "../services/chat/conversationTurns";
+import { getConversationHistory } from "../services/meta/conversation.service";
+import { logger } from "../utils/logger";
 
 const widgetRoutes = Router();
 
@@ -369,5 +373,226 @@ widgetRoutes.post("/conversations/:id/messages", async (req: Request, res: Respo
     return res.status(500).json({ error: msg });
   }
 });
+
+/** PUT /v1/widget/conversations/:id/messages/:mid/approve — approve a draft */
+widgetRoutes.put(
+  "/conversations/:id/messages/:mid/approve",
+  async (req: Request, res: Response): Promise<any> => {
+    try {
+      const userId = (req as any).user.id as number;
+      const conversationId = parseInt(req.params.id, 10);
+      const messageId = parseInt(req.params.mid, 10);
+      const { editedContent } = req.body as { editedContent?: string };
+
+      if (isNaN(conversationId) || isNaN(messageId)) {
+        return res.status(400).json({ error: "Invalid IDs" });
+      }
+
+      // Auth: ensure conversation belongs to a profile owned by user
+      const conversation = await prisma.conversation.findFirst({
+        where: {
+          id: conversationId,
+          businessProfile: { userId },
+          channel: "web",
+        },
+      });
+
+      if (!conversation) {
+        return res
+          .status(404)
+          .json({ error: "Conversation not found or access denied." });
+      }
+
+      const message = await prisma.conversationMessage.findUnique({
+        where: { id: messageId },
+      });
+
+      if (!message || message.conversationId !== conversationId) {
+        return res.status(404).json({ error: "Message not found." });
+      }
+
+      const finalContent = editedContent || message.content;
+      const isEdited = editedContent && editedContent !== message.content;
+
+      // Update message transactionally
+      const updatedMsg = await prisma.$transaction(async (tx) => {
+        if (isEdited) {
+          await tx.aiCorrection.create({
+            data: {
+              messageId: message.id,
+              originalAiText: message.content,
+              humanEditedText: finalContent,
+            },
+          });
+        }
+
+        // Re-open conversation if resolved
+        if (conversation.status === "RESOLVED") {
+          await tx.conversation.update({
+            where: { id: conversationId },
+            data: { status: "OPEN" },
+          });
+        }
+
+        return await tx.conversationMessage.update({
+          where: { id: messageId },
+          data: {
+            content: finalContent,
+            status: isEdited ? "EDITED_AND_SENT" : "SENT",
+          },
+        });
+      });
+
+      // Notify sockets
+      emitToBusiness(conversation.businessProfileId, "message_updated", {
+        conversationId: conversation.id,
+        message: updatedMsg,
+      });
+      emitToConversation(conversation.id, "new_message", {
+        message: updatedMsg,
+      });
+
+      return res.status(200).json({ data: updatedMsg });
+    } catch (e: any) {
+      logger.error("widget.hitl.approve_error", { error: e.message });
+      return res.status(500).json({ error: e.message });
+    }
+  }
+);
+
+/** DELETE /v1/widget/conversations/:id/messages/:mid — dismiss a draft */
+widgetRoutes.delete(
+  "/conversations/:id/messages/:mid",
+  async (req: Request, res: Response): Promise<any> => {
+    try {
+      const userId = (req as any).user.id as number;
+      const conversationId = parseInt(req.params.id, 10);
+      const messageId = parseInt(req.params.mid, 10);
+
+      const conversation = await prisma.conversation.findFirst({
+        where: { id: conversationId, businessProfile: { userId }, channel: "web" }
+      });
+
+      if (!conversation) return res.status(404).json({ error: "Not found" });
+
+      const msg = await prisma.conversationMessage.findFirst({
+        where: { id: messageId, conversationId, status: "PENDING_REVIEW" }
+      });
+
+      if (!msg) return res.status(404).json({ error: "Draft not found" });
+
+      await prisma.conversationMessage.delete({ where: { id: messageId } });
+
+      emitToBusiness(conversation.businessProfileId, "message_deleted", {
+        conversationId,
+        messageId
+      });
+
+      return res.json({ success: true });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  }
+);
+
+/** PATCH /v1/widget/conversations/:id/read — mark web chat as read */
+widgetRoutes.patch(
+  "/conversations/:id/read",
+  async (req: Request, res: Response): Promise<any> => {
+    try {
+      const userId = (req as any).user.id as number;
+      const id = parseInt(req.params.id, 10);
+
+      const conversation = await prisma.conversation.findFirst({
+        where: { id, businessProfile: { userId }, channel: "web" }
+      });
+
+      if (!conversation) return res.status(404).json({ error: "Not found" });
+
+      await prisma.conversation.update({
+        where: { id },
+        data: { updatedAt: new Date() }
+      });
+
+      return res.json({ success: true });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  }
+);
+
+/** POST /v1/widget/conversations/:id/suggest — trigger AI suggestion */
+widgetRoutes.post(
+  "/conversations/:id/suggest",
+  async (req: Request, res: Response): Promise<any> => {
+    try {
+      const userId = (req as any).user.id as number;
+      const conversationId = parseInt(req.params.id, 10);
+
+      if (isNaN(conversationId)) {
+        return res.status(400).json({ error: "Invalid IDs" });
+      }
+
+      // Auth
+      const conversation = await prisma.conversation.findFirst({
+        where: {
+          id: conversationId,
+          businessProfile: { userId },
+          channel: "web",
+        },
+        include: { businessProfile: true },
+      });
+
+      if (!conversation) {
+        return res
+          .status(404)
+          .json({ error: "Conversation not found or access denied." });
+      }
+
+      const historyRows = await getConversationHistory(conversationId);
+      if (historyRows.length === 0) {
+        return res
+          .status(400)
+          .json({ error: "No history found for suggesting." });
+      }
+
+      const lastUserMsg = historyRows[historyRows.length - 1];
+      const historyForPrompt = toPromptMessages(historyRows);
+      const historyTurns = historyToLlmTurns(historyForPrompt);
+
+      const reply = await computeBusinessChatReply({
+        businessProfile: conversation.businessProfile,
+        messageText: lastUserMsg?.content || "",
+        historyTurns,
+        channel: "web",
+      });
+
+      const saved = await prisma.conversationMessage.create({
+        data: {
+          conversationId: conversation.id,
+          role: "model",
+          content: reply.content || "",
+          status: "PENDING_REVIEW",
+          aiReasoning: reply.reasoning,
+          handoffCategory: reply.handoffCategory,
+        },
+      });
+
+      // Notify
+      emitToBusiness(conversation.businessProfileId, "new_message", {
+        conversationId: conversation.id,
+        message: saved,
+      });
+      emitToConversation(conversation.id, "new_message", {
+        message: saved,
+      });
+
+      return res.status(201).json({ data: saved });
+    } catch (e: any) {
+      logger.error("widget.suggest_error", { error: e.message });
+      return res.status(500).json({ error: e.message });
+    }
+  }
+);
 
 export default widgetRoutes;

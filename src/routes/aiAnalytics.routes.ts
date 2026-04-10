@@ -10,4 +10,10 @@ aiAnalyticsRoutes.get(
   getAiPerformanceController
 );
 
+aiAnalyticsRoutes.get(
+  "/corrections",
+  authenticateToken,
+  require("../controllers/aiAnalytics.controller").getAiCorrectionsController
+);
+
 export default aiAnalyticsRoutes;

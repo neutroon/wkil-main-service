@@ -121,12 +121,17 @@ contentRoutes.post(
   contentLimiter,
   authenticateToken,
   async (req: any, res: Response) => {
+    const { businessProfileId, startDate, endDate, goals, currentTrends } = req.body;
+    const userId = req.user.id;
+
+    // Set headers for SSE
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+
     try {
-      const { businessProfileId, startDate, endDate, goals, currentTrends } = req.body;
-      const userId = req.user.id;
-      
       if (!startDate || !endDate) {
-        return res.status(400).json({ error: "startDate and endDate are required" });
+        throw new Error("startDate and endDate are required");
       }
 
       let targetProfileId = parseInt(businessProfileId, 10);
@@ -135,12 +140,12 @@ contentRoutes.post(
           where: { userId }
         });
         if (!defaultProfile) {
-          return res.status(400).json({ error: "No business profile found. Please create one first." });
+          throw new Error("No business profile found. Please create one first.");
         }
         targetProfileId = defaultProfile.id;
       }
 
-      const plan = await generateContentStrategy({
+      const generator = (await import("../services/contentPlan.service")).generateContentStrategyStream({
         businessProfileId: targetProfileId,
         userId,
         startDate,
@@ -149,10 +154,15 @@ contentRoutes.post(
         currentTrends
       });
 
-      res.json(plan);
+      for await (const update of generator) {
+        res.write(`data: ${JSON.stringify(update)}\n\n`);
+      }
+      
+      res.end();
     } catch (err: any) {
       console.error("[ContentAPI] Strategy generation failed:", err.message);
-      res.status(500).json({ error: err.message || "Failed to generate strategy" });
+      res.write(`data: ${JSON.stringify({ type: "error", message: err.message })}\n\n`);
+      res.end();
     }
   }
 );
@@ -214,28 +224,54 @@ contentRoutes.get(
   async (req: any, res: Response) => {
     try {
       const userId = req.user.id;
+      const { businessProfileId } = req.query;
 
-      // Find first profile as fallback
-      const defaultProfile = await prisma.businessProfile.findFirst({
-        where: { userId }
-      });
-
-      if (!defaultProfile) {
-         return res.json([]);
+      const where: any = { userId };
+      
+      if (businessProfileId) {
+        where.businessProfileId = parseInt(String(businessProfileId), 10);
       }
 
       const plans = await prisma.contentPlan.findMany({
-        where: { 
-          businessProfileId: defaultProfile.id,
-          userId 
+        where,
+        include: { 
+          posts: { orderBy: { scheduledAt: 'asc' } },
+          businessProfile: { select: { name: true } }
         },
-        include: { posts: { orderBy: { scheduledAt: 'asc' } } },
         orderBy: { createdAt: 'desc' }
       });
 
       res.json(plans);
     } catch (err: any) {
       res.status(500).json({ error: err.message || "Failed to fetch plans" });
+    }
+  }
+);
+
+// Fetch Single Content Plan
+contentRoutes.get(
+  "/plan/:id",
+  authenticateToken,
+  async (req: any, res: Response) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.id;
+
+      const plan = await prisma.contentPlan.findUnique({
+        where: { id: parseInt(id, 10), userId },
+        include: { 
+          posts: { orderBy: { scheduledAt: 'asc' } },
+          businessProfile: { select: { id: true, name: true, identity: true, targetAudience: true, voice: true, tone: true } }
+        }
+      });
+
+      if (!plan) {
+        return res.status(404).json({ error: "Content plan not found" });
+      }
+
+      res.json(plan);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to fetch plan" });
     }
   }
 );

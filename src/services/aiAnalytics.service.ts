@@ -18,13 +18,18 @@ export interface AiPerformanceStats {
 function calculateSimilarity(str1: string, str2: string): number {
   const set1 = new Set(str1.toLowerCase().split(/\s+/));
   const set2 = new Set(str2.toLowerCase().split(/\s+/));
-  const intersection = new Set([...set1].filter(x => set2.has(x)));
+  const intersection = new Set([...set1].filter((x) => set2.has(x)));
   const union = new Set([...set1, ...set2]);
   if (union.size === 0) return 100;
   return (intersection.size / union.size) * 100;
 }
 
-export async function getAiPerformanceStats(userIdStr: string, role: string, days = 30, businessProfileId?: number): Promise<AiPerformanceStats> {
+export async function getAiPerformanceStats(
+  userIdStr: string,
+  role: string,
+  days = 30,
+  businessProfileId?: number,
+): Promise<AiPerformanceStats> {
   const userId = parseInt(userIdStr, 10);
   const startDate = new Date();
   startDate.setDate(startDate.getDate() - days);
@@ -35,9 +40,9 @@ export async function getAiPerformanceStats(userIdStr: string, role: string, day
     createdAt: { gte: startDate },
     conversation: {
       businessProfile: {
-        userId: userId
-      }
-    }
+        userId: userId,
+      },
+    },
   };
 
   if (businessProfileId) {
@@ -48,37 +53,42 @@ export async function getAiPerformanceStats(userIdStr: string, role: string, day
   const statusCounts = await prisma.conversationMessage.groupBy({
     by: ["status"],
     where: baseWhere,
-    _count: { _all: true }
+    _count: { _all: true },
   });
 
-  const counts: Record<string, number> = { SENT: 0, PENDING_REVIEW: 0, EDITED_AND_SENT: 0 };
-  statusCounts.forEach(c => {
+  const counts: Record<string, number> = {
+    SENT: 0,
+    PENDING_REVIEW: 0,
+    EDITED_AND_SENT: 0,
+  };
+  statusCounts.forEach((c) => {
     counts[c.status] = c._count._all;
   });
 
   const autoSentCount = counts["SENT"];
   const needsReviewCount = counts["PENDING_REVIEW"] + counts["EDITED_AND_SENT"];
   const totalAiReplies = autoSentCount + needsReviewCount;
-  const automationRate = totalAiReplies > 0 ? (autoSentCount / totalAiReplies) * 100 : 0;
+  const automationRate =
+    totalAiReplies > 0 ? (autoSentCount / totalAiReplies) * 100 : 0;
 
   // 3. Handoff Reasons
   const reasonsGroup = await prisma.conversationMessage.groupBy({
     by: ["handoffCategory"],
     where: {
       ...baseWhere,
-      handoffCategory: { not: null }
+      handoffCategory: { not: null },
     },
     _count: { _all: true },
     orderBy: {
       _count: {
-        handoffCategory: 'desc'
-      }
-    }
+        handoffCategory: "desc",
+      },
+    },
   });
 
-  const handoffReasons = reasonsGroup.map(rg => ({
+  const handoffReasons = reasonsGroup.map((rg) => ({
     category: rg.handoffCategory || "UNKNOWN",
-    count: rg._count._all
+    count: rg._count._all,
   }));
 
   // 4. Accuracy Score (Weighted average of similarity in corrections)
@@ -86,48 +96,49 @@ export async function getAiPerformanceStats(userIdStr: string, role: string, day
     where: {
       message: {
         createdAt: { gte: startDate },
-        conversation: { businessProfile: { userId } }
-      }
+        conversation: { businessProfile: { userId } },
+      },
     },
     select: {
       originalAiText: true,
-      humanEditedText: true
-    }
+      humanEditedText: true,
+    },
   });
 
   let totalSim = 0;
-  corrections.forEach(c => {
+  corrections.forEach((c) => {
     totalSim += calculateSimilarity(c.originalAiText, c.humanEditedText);
   });
 
   // If no corrections found, we assume 100% accuracy (or at least no recorded errors)
-  const accuracyScore = corrections.length > 0 ? totalSim / corrections.length : 100;
+  const accuracyScore =
+    corrections.length > 0 ? totalSim / corrections.length : 100;
 
   // 5. Daily Volume (Last 14 days)
   const volumeDate = new Date();
   volumeDate.setDate(volumeDate.getDate() - 14);
-  
+
   const dailyMessages = await prisma.conversationMessage.findMany({
     where: {
       ...baseWhere,
-      createdAt: { gte: volumeDate }
+      createdAt: { gte: volumeDate },
     },
-    select: { createdAt: true }
+    select: { createdAt: true },
   });
 
   const volumeMap: Record<string, number> = {};
-  dailyMessages.forEach(m => {
+  dailyMessages.forEach((m) => {
     const dateStr = m.createdAt.toISOString().split("T")[0];
     volumeMap[dateStr] = (volumeMap[dateStr] || 0) + 1;
   });
 
-  const dailyVolume = Object.entries(volumeMap).map(([date, count]) => ({ date, count })).sort((a,b) => a.date.localeCompare(b.date));
-
-  const dailyVolume = Object.entries(volumeMap).map(([date, count]) => ({ date, count })).sort((a,b) => a.date.localeCompare(b.date));
+  const dailyVolume = Object.entries(volumeMap)
+    .map(([date, count]) => ({ date, count }))
+    .sort((a, b) => a.date.localeCompare(b.date));
 
   // 6. Extract token consumption (ADMINS ONLY)
   let totalTokensConsumed = 0;
-  if (role === 'admin' || role === 'super_admin') {
+  if (role === "admin" || role === "super_admin") {
     const usageStats = await prisma.aiUsageStat.aggregate({
       _sum: {
         totalTokens: true,
@@ -149,41 +160,49 @@ export async function getAiPerformanceStats(userIdStr: string, role: string, day
     handoffReasons,
     accuracyScore,
     dailyVolume,
-    totalTokensConsumed
+    totalTokensConsumed,
   };
 }
 
-export async function getAiCorrections(userIdStr: string, limit = 50, offset = 0) {
+export async function getAiCorrections(
+  userIdStr: string,
+  limit = 50,
+  offset = 0,
+) {
   const userId = parseInt(userIdStr, 10);
 
   const rows = await prisma.aiCorrection.findMany({
     where: {
       message: {
         conversation: {
-          businessProfile: { userId }
-        }
-      }
+          businessProfile: { userId },
+        },
+      },
     },
     include: {
       message: {
         include: {
-          conversation: true
-        }
-      }
+          conversation: true,
+        },
+      },
     },
     orderBy: { createdAt: "desc" },
     take: limit,
-    skip: offset
+    skip: offset,
   });
 
-  return rows.map(r => {
+  return rows.map((r) => {
     const similarity = calculateSimilarity(r.originalAiText, r.humanEditedText);
-    
+
     // Normalise channel name for UI icons
-    const channel = r.message.conversation.channel === "web" ? "webchat" : (r.message.conversation.channel || "webchat");
-    
+    const channel =
+      r.message.conversation.channel === "web"
+        ? "webchat"
+        : r.message.conversation.channel || "webchat";
+
     // Improved customer name logic
-    let customerName = r.message.conversation.customerPhone || r.message.conversation.senderId;
+    let customerName =
+      r.message.conversation.customerPhone || r.message.conversation.senderId;
     if (channel === "webchat" && !r.message.conversation.customerPhone) {
       customerName = `Visitor #${r.message.conversation.id}`;
     }
@@ -195,7 +214,7 @@ export async function getAiCorrections(userIdStr: string, limit = 50, offset = 0
       similarity,
       channel,
       customerName,
-      createdAt: r.createdAt
+      createdAt: r.createdAt,
     };
   });
 }

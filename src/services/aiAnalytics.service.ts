@@ -11,7 +11,11 @@ export interface AiPerformanceStats {
   accuracyScore: number; // 0 to 100
   dailyVolume: { date: string; count: number }[];
   totalTokensConsumed: number;
-  estimatedCost: number; // In USD
+  estimatedCost: number; // For non-admins this is billed cost, for admins it is system cost or choice
+  systemCost: number;
+  revenue: number;
+  profit: number;
+  billingMultiplier: number;
 }
 
 /**
@@ -153,14 +157,15 @@ export async function getAiPerformanceStats(
 
   const totalTokensConsumed = usageStats._sum.totalTokens || 0;
 
-  // 7. Calculate cost based on role
-  const multiplier =
-    role === "admin" || role === "super_admin"
-      ? 1.0
-      : await getBillingMultiplier();
+  // 7. Calculate cost metrics
+  const multiplier = await getBillingMultiplier();
+  const systemCost = totalTokensConsumed * SYSTEM_RATE_PER_TOKEN;
+  const revenue = systemCost * multiplier;
+  const profit = revenue - systemCost;
 
-  const estimatedCost =
-    totalTokensConsumed * SYSTEM_RATE_PER_TOKEN * multiplier;
+  // For the legacy 'estimatedCost' field:
+  // Show billed cost (revenue) to users/managers, and reveal profit to admins
+  const estimatedCost = revenue;
 
   return {
     automationRate,
@@ -172,6 +177,10 @@ export async function getAiPerformanceStats(
     dailyVolume,
     totalTokensConsumed,
     estimatedCost,
+    systemCost,
+    revenue,
+    profit,
+    billingMultiplier: multiplier,
   };
 }
 

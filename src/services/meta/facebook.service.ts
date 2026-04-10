@@ -113,82 +113,124 @@ export const generateAuthUrl = (params: FacebookAuthUrlParams): string => {
   return `https://www.facebook.com/v25.0/dialog/oauth?client_id=${process.env.FB_APP_ID}&redirect_uri=${params.redirect_uri}&scope=${scope.join(",")}&response_type=code`;
 };
 
-export const exchangeCodeForToken = async (params: FacebookTokenParams) => {
-  try {
-    if (!FB_API || !process.env.FB_APP_ID || !process.env.FB_APP_SECRET) {
-      throw new Error("Missing Facebook configuration");
+/** 
+ * Helper to call Facebook Graph API with exponential backoff retries 
+ * for transient errors (Code 1, 2, or 500+ status).
+ */
+const callGraphApiWithRetry = async <T>(
+  operation: string,
+  fn: () => Promise<T>,
+  maxRetries: number = 3,
+  initialDelay: number = 1000
+): Promise<T> => {
+  let lastError: any;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error: any) {
+      lastError = error;
+      const mapped = mapFacebookGraphError(error);
+      
+      // Facebook transient codes: 1 (Unknown), 2 (Service temporarily unavailable)
+      const isTransient = 
+        mapped.code === 1 || 
+        mapped.code === 2 || 
+        (mapped.status && mapped.status >= 500);
+
+      if (isTransient && attempt < maxRetries) {
+        const delay = initialDelay * Math.pow(2, attempt);
+        logger.warn(`facebook.api.retry.${operation}`, { 
+          attempt: attempt + 1, 
+          delay, 
+          errorCode: mapped.code,
+          status: mapped.status 
+        });
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      throw error;
     }
-
-    const tokenUrl = `${FB_API}/oauth/access_token`;
-    const requestParams = {
-      client_id: process.env.FB_APP_ID,
-      client_secret: process.env.FB_APP_SECRET,
-      redirect_uri: params.redirect_uri,
-      code: params.code,
-    };
-
-    logger.debug("facebook.oauth.token_exchange", {
-      tokenUrl,
-      clientId: process.env.FB_APP_ID,
-    });
-
-    const { data } = await axios.post(tokenUrl, null, {
-      params: requestParams,
-    });
-    return data;
-  } catch (error: unknown) {
-    const mapped = mapFacebookGraphError(error);
-    logger.error("facebook.oauth.token_exchange_failed", mapped);
-    throw new Error(mapped.message);
   }
+  throw lastError;
+};
+
+export const exchangeCodeForToken = async (params: FacebookTokenParams) => {
+  return callGraphApiWithRetry("exchange_token", async () => {
+    try {
+      if (!FB_API || !process.env.FB_APP_ID || !process.env.FB_APP_SECRET) {
+        throw new Error("Missing Facebook configuration");
+      }
+
+      const tokenUrl = `${FB_API}/oauth/access_token`;
+      const requestParams = {
+        client_id: process.env.FB_APP_ID,
+        client_secret: process.env.FB_APP_SECRET,
+        redirect_uri: params.redirect_uri,
+        code: params.code,
+      };
+
+      const { data } = await axios.post(tokenUrl, null, {
+        params: requestParams,
+      });
+      return data;
+    } catch (error: unknown) {
+      const mapped = mapFacebookGraphError(error);
+      logger.error("facebook.oauth.token_exchange_failed", mapped);
+      throw new Error(mapped.message);
+    }
+  });
 };
 // -------------------------------------------------------------------------------
 // Get user pages using access token
 export const getUserPages = async (
   accessToken: string,
 ): Promise<FacebookPage[]> => {
-  try {
-    const url = `${FB_API}/me/accounts?access_token=${accessToken}`;
-    const { data } = await axios.get(url);
-    return data.data;
-  } catch (error: unknown) {
-    const mapped = mapFacebookGraphError(error);
-    logger.error("facebook.pages.fetch_failed", mapped);
-    throw new Error(mapped.message);
-  }
+  return callGraphApiWithRetry("get_pages", async () => {
+    try {
+      const url = `${FB_API}/me/accounts?access_token=${accessToken}`;
+      const { data } = await axios.get(url);
+      return data.data;
+    } catch (error: unknown) {
+      const mapped = mapFacebookGraphError(error);
+      logger.error("facebook.pages.fetch_failed", mapped);
+      throw new Error(mapped.message);
+    }
+  });
 };
 
 // publish post on a page
 export const createPost = async (params: FacebookPostParams) => {
-  try {
-    let url: string;
-    let postData: any;
+  return callGraphApiWithRetry("create_post", async () => {
+    try {
+      let url: string;
+      let postData: any;
 
-    if (params.imageUrl) {
-      // Post with image using photos endpoint
-      url = `${FB_API}/${params.pageId}/photos`;
-      postData = {
-        url: params.imageUrl,
-        caption: params.message,
-        access_token: params.accessToken,
-      };
-    } else {
-      // Regular text post using feed endpoint
-      url = `${FB_API}/${params.pageId}/feed`;
-      postData = {
-        message: params.message,
-        access_token: params.accessToken,
-      };
+      if (params.imageUrl) {
+        // Post with image using photos endpoint
+        url = `${FB_API}/${params.pageId}/photos`;
+        postData = {
+          url: params.imageUrl,
+          caption: params.message,
+          access_token: params.accessToken,
+        };
+      } else {
+        // Regular text post using feed endpoint
+        url = `${FB_API}/${params.pageId}/feed`;
+        postData = {
+          message: params.message,
+          access_token: params.accessToken,
+        };
+      }
+
+      const { data } = await axios.post(url, postData);
+      return data;
+    } catch (error: unknown) {
+      const mapped = mapFacebookGraphError(error);
+      logger.error("facebook.post.create_failed", mapped);
+      const codePart = mapped.code !== undefined ? ` (code: ${mapped.code})` : "";
+      throw new Error(`${mapped.message}${codePart}`);
     }
-
-    const { data } = await axios.post(url, postData);
-    return data;
-  } catch (error: unknown) {
-    const mapped = mapFacebookGraphError(error);
-    logger.error("facebook.post.create_failed", mapped);
-    const codePart = mapped.code !== undefined ? ` (code: ${mapped.code})` : "";
-    throw new Error(`${mapped.message}${codePart}`);
-  }
+  });
 };
 
 export const schedulePost = async (
@@ -214,27 +256,31 @@ export const schedulePost = async (
 };
 
 export const getPagePosts = async (pageId: string, accessToken: string) => {
-  try {
-    const url = `${FB_API}/${pageId}/posts?access_token=${accessToken}`;
-    const { data } = await axios.get(url);
-    return data;
-  } catch (error: unknown) {
-    const mapped = mapFacebookGraphError(error);
-    logger.error("facebook.posts.fetch_failed", mapped);
-    throw new Error(mapped.message);
-  }
+  return callGraphApiWithRetry("get_page_posts", async () => {
+    try {
+      const url = `${FB_API}/${pageId}/posts?access_token=${accessToken}`;
+      const { data } = await axios.get(url);
+      return data;
+    } catch (error: unknown) {
+      const mapped = mapFacebookGraphError(error);
+      logger.error("facebook.posts.fetch_failed", mapped);
+      throw new Error(mapped.message);
+    }
+  });
 };
 
 export const getPostComments = async (postId: string, accessToken: string) => {
-  try {
-    const url = `${FB_API}/${postId}/comments?access_token=${accessToken}&fields=id,message,from{id,name},created_time,like_count,comments{id,message,from{id,name},created_time,like_count}`;
-    const { data } = await axios.get(url);
-    return data;
-  } catch (error: unknown) {
-    const mapped = mapFacebookGraphError(error);
-    logger.error("facebook.comments.fetch_failed", mapped);
-    throw new Error(mapped.message);
-  }
+  return callGraphApiWithRetry("get_comments", async () => {
+    try {
+      const url = `${FB_API}/${postId}/comments?access_token=${accessToken}&fields=id,message,from{id,name},created_time,like_count,comments{id,message,from{id,name},created_time,like_count}`;
+      const { data } = await axios.get(url);
+      return data;
+    } catch (error: unknown) {
+      const mapped = mapFacebookGraphError(error);
+      logger.error("facebook.comments.fetch_failed", mapped);
+      throw new Error(mapped.message);
+    }
+  });
 };
 
 export const replyToComment = async (params: FacebookCommentParams) => {

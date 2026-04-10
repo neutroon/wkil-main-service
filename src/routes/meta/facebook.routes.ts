@@ -103,6 +103,7 @@ facebookRoutes.get(
 // Step 2: Get user pages and save to database
 facebookRoutes.get(
   "/pages",
+  facebookLimiter,
   authenticateToken,
   async (req: Request, res: Response) => {
     try {

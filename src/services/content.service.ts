@@ -130,11 +130,11 @@ ${
 - Agency/Business Name: ${businessProfile.name}
 - Identity/Industry: ${businessProfile.identity}
 - Target Audience: ${businessProfile.targetAudience}
-- Voice: ${businessProfile.voice}
+- Voice (REQUIRED LANGUAGE): ${businessProfile.voice}
 - Tone: ${businessProfile.tone}
 </persona>
 
-Your post must perfectly embody the Voice and Tone described above, appealing directly to the Target Audience. Ignore generic fallback tones and stick exclusively to this persona.`
+CRITICAL: All generated content (post text and hashtags) MUST be written strictly in the language and dialect specified in the "Voice" field above (e.g., if Voice is Egyptian Arabic, you MUST write in Egyptian Arabic). Do not use English unless the Voice field explicitly allows it.`
     : `<tone>\nUse a friendly, professional tone optimized for high social media engagement.\n</tone>`
 }
 

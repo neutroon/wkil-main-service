@@ -432,18 +432,22 @@ export const getManagerDashboard = async (managerId: number) => {
 
   const billingMultiplier = await getBillingMultiplier();
 
-  // Create a map for quick lookup: userId -> { tokens: number, cost: number }
-  const userAiStats: Record<number, { tokens: number, cost: number }> = {};
+  // Create a map for quick lookup: userId -> { tokens: number, cost: number, systemCost: number, profit: number }
+  const userAiStats: Record<number, { tokens: number, cost: number, systemCost: number, profit: number }> = {};
   businessProfiles.forEach(bp => {
     const usage = aiUsage.find(u => u.businessProfileId === bp.id);
     const tokens = usage?._sum.totalTokens || 0;
-    const cost = tokens * SYSTEM_RATE_PER_TOKEN * billingMultiplier;
+    const systemCost = tokens * SYSTEM_RATE_PER_TOKEN;
+    const revenue = systemCost * billingMultiplier;
+    const profit = revenue - systemCost;
     
     if (!userAiStats[bp.userId]) {
-      userAiStats[bp.userId] = { tokens: 0, cost: 0 };
+      userAiStats[bp.userId] = { tokens: 0, cost: 0, systemCost: 0, profit: 0 };
     }
     userAiStats[bp.userId].tokens += tokens;
-    userAiStats[bp.userId].cost += cost;
+    userAiStats[bp.userId].cost += revenue;
+    userAiStats[bp.userId].systemCost += systemCost;
+    userAiStats[bp.userId].profit += profit;
   });
 
   return {

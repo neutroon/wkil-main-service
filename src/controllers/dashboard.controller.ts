@@ -48,10 +48,11 @@ export const getUnifiedDashboardStatsController = async (
 ) => {
   try {
     const userId = (req as any).user.id;
+    const role = (req as any).user.role;
     const daysParam = req.query.days as string | undefined;
     const days = daysParam ? parseInt(daysParam, 10) : undefined;
 
-    const stats = await getUnifiedDashboardStats(userId, days);
+    const stats = await getUnifiedDashboardStats(userId, role, days);
     res.status(200).json({ data: stats });
   } catch (error: any) {
     res.status(500).json({

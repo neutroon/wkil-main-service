@@ -3,6 +3,7 @@ import { logger } from "../../utils/logger";
 import { genAI, MESSENGER_SAFETY_SETTINGS, aiRoutingSchema } from "../../config/gemini";
 import { pushLeadToCrm } from "../crm/crm.service";
 import { executeExternalQuery } from "../external/externalData.service";
+import prisma from "../../config/prisma";
 
 type VerificationStatus = "verified" | "unverified" | "failed";
 
@@ -357,4 +358,95 @@ export async function runAIEngineLoop(params: {
   }
 
   throw new Error("Exceeded max AI tool turns without Final Answer");
+}
+
+/**
+ * Builds a highly structured, production-grade system instruction 
+ * extracting all brand identity, products, and FAQs from the Business Profile.
+ */
+function generateSystemInstruction(profile: any, channel: string): string {
+  const faqs = profile.faqs && profile.faqs.length > 0 
+    ? profile.faqs.map((f: any) => `Q: ${f.question}\nA: ${f.answer}`).join("\n\n") 
+    : "No specific FAQs available.";
+  
+  return `
+You are the official AI representative for "${profile.name}".
+
+--- BUSINESS IDENTITY ---
+${profile.identity || "A professional business."}
+
+--- TARGET AUDIENCE ---
+${profile.targetAudience || "General customers."}
+
+--- TONE & VOICE ---
+Voice: ${profile.voice || "Professional"}
+Tone: ${profile.tone || "Friendly"}
+(Always communicate using this precise tone and voice, ensuring natural flow in the specified language.)
+
+--- PRODUCTS & SERVICES ---
+${profile.productsServices?.length ? profile.productsServices.join(", ") : "Various products and services."}
+
+--- CONTACT & HOURS ---
+Phone: ${profile.phoneNumbers?.join(", ") || "Not provided"}
+Hours: ${profile.workingHours || "Not provided"}
+Address: ${profile.address || "Not provided"}
+
+--- CORE POLICIES ---
+${profile.corePolicies || "Standard business policies apply."}
+
+--- KNOWLEDGE BASE (FAQs) ---
+${faqs}
+
+--- RULES & PROTOCOLS (CRITICAL) ---
+1. You MUST respond exclusively in JSON matching the defined routing schema.
+2. If the user asks a question covered by the Knowledge Base or context, answer confidently via REPLY_AUTO.
+3. If the user asks for something completely outside your knowledge, or is angry/complaining, or explicitly asks for a human, you MUST use HANDOFF_TO_HUMAN.
+4. Channel: ${channel}. Keep formatting suitable for this channel (e.g., WhatsApp supports *bold*, web supports standard markdown).
+5. Do not make promises that are not part of the core policies.
+6. Provide brief but accurate reasoning for your decision in the "reasoning" field.
+
+Format your entire output exactly as a JSON object matching the aiRoutingDecision schema. Do not output markdown code blocks for the JSON.
+`.trim();
+}
+
+/**
+ * The unified Coordinator function that prepares the high-end context
+ * and executes the AI engine loop.
+ */
+export async function computeBusinessChatReply(params: {
+  businessProfile: any;
+  messageText: string;
+  historyTurns: { role: "user" | "model"; text?: string; parts?: any[] }[];
+  channel: "messenger" | "whatsapp" | "webchat" | "web";
+  customerPhone?: string;
+  tools?: Tool[];
+}): Promise<AiRoutingDecision> {
+  const { businessProfile, messageText, historyTurns, channel, customerPhone, tools } = params;
+
+  // Guarantee we have full profile loaded including FAQs
+  const fullProfile = await prisma.businessProfile.findUnique({
+    where: { id: businessProfile.id },
+    include: {
+      faqs: true,
+      externalDataSources: { where: { isActive: true } },
+      crmIntegrations: { where: { isActive: true }, take: 1 }
+    }
+  });
+
+  if (!fullProfile) {
+    logger.error("computeBusinessChatReply: Business Profile not found", { id: businessProfile.id });
+    throw new Error("Business Profile not found");
+  }
+
+  const systemInstruction = generateSystemInstruction(fullProfile, channel);
+
+  return runAIEngineLoop({
+    systemInstruction,
+    historyTurns,
+    customerMessage: messageText,
+    tools: tools || [],
+    businessProfileId: businessProfile.id,
+    customerPhone,
+    channel: (channel === "web" ? "webchat" : channel) as any,
+  });
 }

@@ -146,6 +146,46 @@ export interface AiRoutingDecision {
   content?: string | null;
 }
 
+/**
+ * Normalizes daily usage stats accurately using Prisma Upsert.
+ * Executed as a fire-and-forget background operation.
+ */
+async function recordAiUsage(
+  businessProfileId: number, 
+  stats: { promptTokens: number; completionTokens: number; totalTokens: number; apiCalls: number }
+) {
+  if (stats.apiCalls === 0) return;
+  try {
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+
+    await prisma.aiUsageStat.upsert({
+      where: {
+        businessProfileId_date: {
+          businessProfileId,
+          date: today
+        }
+      },
+      create: {
+        businessProfileId,
+        date: today,
+        promptTokens: stats.promptTokens,
+        completionTokens: stats.completionTokens,
+        totalTokens: stats.totalTokens,
+        apiCalls: stats.apiCalls
+      },
+      update: {
+        promptTokens: { increment: stats.promptTokens },
+        completionTokens: { increment: stats.completionTokens },
+        totalTokens: { increment: stats.totalTokens },
+        apiCalls: { increment: stats.apiCalls }
+      }
+    });
+  } catch (err: any) {
+    logger.error("Failed to record AI token usage", { error: err.message, businessProfileId });
+  }
+}
+
 export async function runAIEngineLoop(params: {
   systemInstruction: string;
   historyTurns: { role: "user" | "model"; text?: string; parts?: any[] }[];
@@ -172,6 +212,14 @@ export async function runAIEngineLoop(params: {
   const MAX_TURNS = 3;
   const evidence = makeEmptyEvidence();
   let hadToolExecutionInTurn = false;
+
+  // Track token usage across multiple turns
+  const sessionStats = {
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: 0,
+    apiCalls: 0
+  };
 
   while (turnCount < MAX_TURNS) {
     turnCount++;
@@ -241,6 +289,15 @@ export async function runAIEngineLoop(params: {
       .join("")
       .trim();
 
+    // Sum token consumption for this API call
+    const meta = (response as any).usageMetadata;
+    if (meta) {
+      sessionStats.promptTokens += (meta.promptTokenCount || 0);
+      sessionStats.completionTokens += (meta.candidatesTokenCount || 0);
+      sessionStats.totalTokens += (meta.totalTokenCount || 0);
+      sessionStats.apiCalls += 1;
+    }
+
     const functionCalls = response.functionCalls || [];
 
     // If there's no function call, we are done
@@ -278,6 +335,10 @@ export async function runAIEngineLoop(params: {
           decision.content = blocked.safeReply;
         }
       }
+
+      // Fire and forget billing logging
+      recordAiUsage(params.businessProfileId, sessionStats).catch(console.error);
+
       return decision;
     }
 

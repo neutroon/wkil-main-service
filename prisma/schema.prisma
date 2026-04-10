@@ -80,6 +80,7 @@ model BusinessProfile {
   externalDataSources ExternalDataSource[]
   widgetInstalls    WidgetInstall[]
   conversations     Conversation[]
+  aiUsageStats      AiUsageStat[]
 }
 
 /// Embeddable web chat widget: publicSiteKey is sent from the browser; allowedOrigins is a JSON array of exact Origin strings (e.g. ["https://shop.example.com"]).
@@ -362,5 +363,25 @@ model UserAnalytics {
 
   @@unique([userId, date])
   @@index([userId])
+  @@index([date])
+}
+
+/// Tracks daily AI token consumption per Business Profile for billing and analytics
+model AiUsageStat {
+  id                Int             @id @default(autoincrement())
+  businessProfileId Int
+  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+  date              DateTime        @db.Date
+  
+  promptTokens      Int             @default(0)
+  completionTokens  Int             @default(0)
+  totalTokens       Int             @default(0)
+  apiCalls          Int             @default(0)
+  
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@unique([businessProfileId, date])
+  @@index([businessProfileId])
   @@index([date])
 }

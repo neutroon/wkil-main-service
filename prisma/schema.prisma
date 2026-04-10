@@ -43,6 +43,7 @@ model User {
   isBusinessProfileCreated Boolean           @default(false)
   businessProfiles         BusinessProfile[]
   widgetInstalls           WidgetInstall[]
+  contentPlans             ContentPlan[]
 }
 
 model BusinessProfile {
@@ -81,6 +82,7 @@ model BusinessProfile {
   widgetInstalls    WidgetInstall[]
   conversations     Conversation[]
   aiUsageStats      AiUsageStat[]
+  contentPlans      ContentPlan[]
 }
 
 /// Embeddable web chat widget: publicSiteKey is sent from the browser; allowedOrigins is a JSON array of exact Origin strings (e.g. ["https://shop.example.com"]).
@@ -393,4 +395,41 @@ model SystemSetting {
   value     String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model ContentPlan {
+  id                Int      @id @default(autoincrement())
+  businessProfileId Int
+  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id])
+  userId            Int
+  user              User     @relation(fields: [userId], references: [id])
+  startDate         DateTime
+  endDate           DateTime
+  goals             String?  // JSON or string (e.g., "Awareness, Lead Gen")
+  currentTrends     String?  // Custom context for this specific month/campaign
+  status            String   @default("draft") // draft, approved, active, completed
+  posts             ContentPlanPost[]
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model ContentPlanPost {
+  id                Int      @id @default(autoincrement())
+  contentPlanId     Int
+  contentPlan       ContentPlan @relation(fields: [contentPlanId], references: [id], onDelete: Cascade)
+  scheduledAt       DateTime
+  platform          String   // "facebook", "instagram", "linkedin"
+  pillar            String   // The content pillar (e.g. "Behind the scenes")
+  topic             String
+  format            String   // "image_post", "carousel", "reel", "story"
+  caption           String?  @db.Text
+  imagePrompt       String?  @db.Text
+  imageUrl          String?
+  reelScript        String?  @db.Text // Script for reels/video
+  carouselSlides    Json?    // Array of { slideText, slideImagePrompt } for carousels
+  status            String   @default("pending") // pending, generated, approved, approved_manual, scheduled, posted
+  postedAt          DateTime?
+  facebookPostId    String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 }

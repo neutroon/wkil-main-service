@@ -1,6 +1,7 @@
 import prisma from "../config/prisma";
 import generateContent, { generateContentStream } from "../config/gemini";
 import { logger } from "../utils/logger";
+import { retrieveRelevantChunks } from "../rag/rag.service";
 
 export interface BriefingInput {
   businessProfileId: number;
@@ -30,11 +31,25 @@ Business Persona Details:
 - Name: ${profile.name}
 - Identity: ${profile.identity}
 - Target Audience: ${profile.targetAudience}
-- Tone: ${profile.tone}
+- Voice (REQUIRED LANGUAGE & DIALECT): ${profile.voice}
+- Tone (Attitude): ${profile.tone}
 - Products/Services: ${profile.productsServices.join(", ")}
+${profile.faqs.length > 0 ? `- Frequently Asked Questions: ${profile.faqs.map(f => `Q: ${f.question} A: ${f.answer}`).join(" | ")}` : ""}
 ${briefing.goals ? `- Primary Campaign Goals: ${briefing.goals}` : ""}
 ${briefing.currentTrends ? `- Specific Topic/Trends to Focus On: ${briefing.currentTrends}` : ""}
   `.trim();
+
+  // 1b. RAG Enhancement: Retrieve relevant chunks based on goals/trends
+  let ragContext = "";
+  try {
+    const query = `${briefing.goals || ""} ${briefing.currentTrends || ""} ${profile.identity}`.trim();
+    const chunks = await retrieveRelevantChunks(profile.id, query, 5);
+    if (chunks.length > 0) {
+      ragContext = `\n--- INTERNAL BUSINESS KNOWLEDGE ---\n${chunks.map(c => `[${c.chunkType}]: ${c.content}`).join("\n\n")}\n----------------------------------\n`;
+    }
+  } catch (err) {
+    logger.warn(`[StrategyPipe] RAG retrieval failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   // 2. STAGE 1: Market Intelligence & Trend Research (STREAMED)
   yield { type: "status", message: "Stage 1/2: Researching live market trends and holidays..." };
@@ -43,11 +58,12 @@ ${briefing.currentTrends ? `- Specific Topic/Trends to Focus On: ${briefing.curr
 Your task is to research current trends, upcoming holidays, seasonal events, and industry movements relevant to the following business profile for the period between ${briefing.startDate} and ${briefing.endDate}.
 
 ${persona}
+${ragContext}
 
 Instructions:
 1. Use Google Search to find specific dates for holidays or events.
 2. Identify 3-5 trending topics.
-3. Provide a concise research summary in plain text.`;
+3. [CRITICAL] Provide a concise research summary in the language and dialect specified in the "Voice" field above (e.g., if Voice is Egyptian Arabic, you MUST write the summary in Egyptian Arabic even if sources are in English).`;
 
   let researchSummary = "";
   let isGrounded = false;
@@ -75,10 +91,15 @@ Instructions:
 Your task is to build a Content Marketing Strategy Calendar between ${briefing.startDate} and ${briefing.endDate}.
 
 ${persona}
+${ragContext}
 
 --- MARKET RESEARCH & TRENDS ---
 ${researchSummary}
 --------------------------------
+
+Instructions:
+1. Based on the Persona and Research, plan a content calendar.
+2. [CRITICAL] All user-facing strings in the JSON (topic, etc.) MUST be in the language specified in the "Voice" field.
 
 Output strictly as a JSON array of objects.
 
@@ -88,7 +109,7 @@ Schema:
     "scheduledAt": "ISO String",
     "platform": "facebook",
     "pillar": "Educational",
-    "topic": "Topic inspired by research",
+    "topic": "Topic in ${profile.voice}",
     "format": "carousel"
   }
 ]`;
@@ -159,11 +180,25 @@ Business Persona Details:
 - Name: ${profile.name}
 - Identity: ${profile.identity}
 - Target Audience: ${profile.targetAudience}
-- Tone: ${profile.tone}
+- Voice (REQUIRED LANGUAGE & DIALECT): ${profile.voice}
+- Tone (Attitude): ${profile.tone}
 - Products/Services: ${profile.productsServices.join(", ")}
+${profile.faqs.length > 0 ? `- Frequently Asked Questions: ${profile.faqs.map(f => `Q: ${f.question} A: ${f.answer}`).join(" | ")}` : ""}
 ${briefing.goals ? `- Primary Campaign Goals: ${briefing.goals}` : ""}
 ${briefing.currentTrends ? `- Specific Topic/Trends to Focus On: ${briefing.currentTrends}` : ""}
   `.trim();
+
+  // 1b. RAG Enhancement
+  let ragContext = "";
+  try {
+    const query = `${briefing.goals || ""} ${briefing.currentTrends || ""} ${profile.identity}`.trim();
+    const chunks = await retrieveRelevantChunks(profile.id, query, 5);
+    if (chunks.length > 0) {
+      ragContext = `\n--- INTERNAL BUSINESS KNOWLEDGE ---\n${chunks.map(c => `[${c.chunkType}]: ${c.content}`).join("\n\n")}\n----------------------------------\n`;
+    }
+  } catch (err) {
+    logger.warn(`[StrategyPipe] RAG retrieval failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   // 2. STAGE 1: Market Intelligence & Trend Research (with Grounding)
   console.log(`[StrategyPipe] Stage 1: Deep Researching for Profile ${profile.id}...`);
@@ -172,13 +207,15 @@ ${briefing.currentTrends ? `- Specific Topic/Trends to Focus On: ${briefing.curr
 Your task is to research current trends, upcoming holidays, seasonal events, and industry movements relevant to the following business profile for the period between ${briefing.startDate} and ${briefing.endDate}.
 
 ${persona}
+${ragContext}
 
 Instructions:
 1. Use Google Search to find specific dates for holidays or events in this period (both global and local to the business audience).
 2. Identify 3-5 trending topics or content themes that would resonate with the target audience right now.
 3. Suggest the best "Content Pillars" to focus on.
+4. [CRITICAL] Provide a concise, high-quality research summary strictly in the language and dialect specified in the "Voice" field above (e.g., if Voice is Egyptian Arabic, you MUST write the summary in Egyptian Arabic).
 
-Provide a concise, high-quality research summary in plain text.`;
+Provide the research summary in plain text.`;
 
   let researchSummary = "";
   let isGrounded = false;
@@ -203,16 +240,18 @@ Provide a concise, high-quality research summary in plain text.`;
 Your task is to build a Content Marketing Strategy Calendar between ${briefing.startDate} and ${briefing.endDate}.
 
 ${persona}
+${ragContext}
 
 --- MARKET RESEARCH & TRENDS ---
 ${researchSummary}
 --------------------------------
 
 Instructions:
-1. Based on the research above, calculate the optimal frequency and distribute posts evenly.
+1. Based on the research and business persona above, calculate the optimal frequency and distribute posts evenly.
 2. For each post, determine: 'platform' (facebook, instagram, linkedin), 'pillar', 'topic', and 'format' (image_post, carousel, reel, story).
 3. Ensure the topics directly leverage the trends and holidays found during research.
-4. Output strictly as a JSON array of objects. No markdown.
+4. [CRITICAL] All user-facing strings in the output JSON (especially 'topic') MUST be in the language specified in the "Voice" field.
+5. Output strictly as a JSON array of objects. No markdown.
 
 Schema:
 [
@@ -220,7 +259,7 @@ Schema:
     "scheduledAt": "ISO String",
     "platform": "facebook",
     "pillar": "Educational",
-    "topic": "Actual topic inspired by trends",
+    "topic": "Actual topic in ${profile.voice}",
     "format": "carousel"
   }
 ]`;
@@ -286,7 +325,11 @@ export async function generatePostExecution(postId: number, userId: number) {
     include: {
       contentPlan: {
         include: {
-          businessProfile: true,
+          businessProfile: {
+            include: {
+              faqs: true,
+            },
+          },
         },
       },
     },
@@ -305,10 +348,24 @@ export async function generatePostExecution(postId: number, userId: number) {
   // 2. Build targeted prompt depending on the format
   const persona = `
 - Brand Name: ${profile.name}
-- Tone: ${profile.tone}
+- Identity: ${profile.identity}
+- Voice (REQUIRED LANGUAGE & DIALECT): ${profile.voice}
+- Tone (Attitude): ${profile.tone}
 - Target Audience: ${profile.targetAudience}
 - Products: ${profile.productsServices.join(", ")}
+${profile.faqs && profile.faqs.length > 0 ? `- FAQs: ${profile.faqs.map((f: any) => `Q: ${f.question} A: ${f.answer}`).join(" | ")}` : ""}
   `.trim();
+
+  // 1b. RAG Context for specific post topic
+  let postKnowledge = "";
+  try {
+    const chunks = await retrieveRelevantChunks(profile.id, `${post.topic} ${post.pillar} ${profile.name}`, 3);
+    if (chunks.length > 0) {
+      postKnowledge = `\n--- SPECIFIC BUSINESS KNOWLEDGE FOR THIS TOPIC ---\n${chunks.map(c => c.content).join("\n\n")}\n------------------------------------------------\n`;
+    }
+  } catch (err) {
+    logger.warn(`[PostExec] RAG retrieval failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   let schemaInstruct = "";
   if (post.format === "carousel") {
@@ -340,9 +397,10 @@ Output strictly as JSON:
 }`;
   }
 
-  const prompt = `You are a creative copywriter executing a single piece of social media content.
+const prompt = `You are a creative copywriter executing a single piece of social media content.
 Context:
 ${persona}
+${postKnowledge}
 Campaign Goals: ${post.contentPlan.goals || "Provide value and engagement"}
 
 Task:
@@ -353,7 +411,12 @@ Format type: ${post.format}
 
 Follow this exact JSON structure:
 ${schemaInstruct}
-Do NOT include any surrounding markdown. Just the raw JSON.`;
+
+[CRITICAL INSTRUCTIONS]:
+1. Language/Dialect: You MUST write ALL content (caption, slide text, scripts) strictly in the language specified in the "Voice" field above: ${profile.voice}.
+2. Fact-Checking: Use the provided "BUSINESS KNOWLEDGE" and persona details to include specific information about products, pricing, or services. Do not be generic.
+3. Identity: Ensure the content perfectly matches the Brand Name and Tone.
+4. Output: Do NOT include any surrounding markdown. Just the raw JSON.`;
 
   console.log(`[ContentPlanService] Generating Post Execution for Post ${postId} (${post.format})...`);
   

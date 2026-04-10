@@ -126,6 +126,17 @@ export async function handleMessengerMessage(
     const historyForPrompt = toPromptMessages(historyRows);
     historyForPrompt.push({ role: "user", content: messageText });
     const historyTurns = historyToLlmTurns(historyForPrompt);
+    
+    // 3. Early Exit if Manual Mode
+    // In MANUAL mode, we don't calculate any drafted replies automatically.
+    // The agent will manually request a suggestion via the /suggest endpoint.
+    if (businessProfile.responseMode === "MANUAL") {
+      logger.info("messenger.manual_mode_skip", { 
+        conversationId: conversation.id, 
+        businessProfileId: businessProfile.id 
+      });
+      return;
+    }
 
     const reply = await computeBusinessChatReply({
       businessProfile,

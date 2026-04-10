@@ -22,14 +22,20 @@ if (!process.env.GEMINI_API_KEY) {
 export const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 // Use Gemini 2.5 Flash for content generation (latest available model)
-async function generateContent(prompt: string, responseMimeType?: string) {
+async function generateContent(prompt: string, responseMimeType?: string, enableSearch?: boolean) {
   try {
+    const config: any = {
+      responseMimeType: responseMimeType || "text/plain",
+    };
+
+    if (enableSearch) {
+      config.tools = [{ googleSearch: {} }];
+    }
+
     const response = await genAI.models.generateContent({
       model: "gemini-2.5-flash",
       contents: prompt,
-      config: {
-        responseMimeType: responseMimeType || "text/plain",
-      },
+      config,
     });
     return response.text;
   } catch (error: any) {

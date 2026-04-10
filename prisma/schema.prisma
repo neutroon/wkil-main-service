@@ -408,6 +408,8 @@ model ContentPlan {
   goals             String?  // JSON or string (e.g., "Awareness, Lead Gen")
   currentTrends     String?  // Custom context for this specific month/campaign
   status            String   @default("draft") // draft, approved, active, completed
+  isGrounded        Boolean  @default(false)
+  researchSummary   String?  @db.Text
   posts             ContentPlanPost[]
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt

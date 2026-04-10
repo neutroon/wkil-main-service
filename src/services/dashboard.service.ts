@@ -204,11 +204,12 @@ export const getDashboardStats = async (
 
 export const getUnifiedDashboardStats = async (
   userId: number,
+  role: string,
   days: number = DEFAULT_STATS_DAYS
 ): Promise<UnifiedDashboardResponse> => {
   const [socialStats, aiStats, conversations] = await Promise.all([
     getDashboardStats(userId, days),
-    getAiPerformanceStats(userId.toString(), days),
+    getAiPerformanceStats(userId.toString(), role, days),
     prisma.conversation.findMany({
       where: {
         businessProfile: { userId },

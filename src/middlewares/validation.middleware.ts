@@ -20,7 +20,7 @@ export const validatePassword = body("password")
 export const validateRole = body("role")
   .optional()
   .isIn(["user", "admin", "manager"])
-  .withMessage("Role must be either 'user' or 'admin'");
+  .withMessage("Role must be either 'user' or 'admin' or 'manager'");
 
 // User registration validation
 export const validateUserRegistration = [

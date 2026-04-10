@@ -21,38 +21,110 @@ if (!process.env.GEMINI_API_KEY) {
 // Initialize Google Generative AI
 export const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-// Use Gemini 2.5 Flash for content generation (latest available model)
-async function generateContent(prompt: string, responseMimeType?: string, enableSearch?: boolean) {
-  try {
-    const config: any = {
-      responseMimeType: responseMimeType || "text/plain",
-    };
+// Model Tier Configuration (April 2026 Production Standards)
+// Model Tier Configuration (April 2026 Production Standards)
+const MODELS = {
+  PRIMARY: "gemini-2.5-flash",      // High Intelligence Primary
+  RESERVE: "gemini-2.0-flash",      // New Stable Reserve (Deprecating June 2026)
+  STABLE: "gemini-2.5-flash-lite",  // Ultra-Resilient "Stable" Tier
+};
 
-    if (enableSearch) {
-      config.tools = [{ googleSearch: {} }];
+/**
+ * Robust execution wrapper with exponential backoff and model failover.
+ */
+async function executeWithFallback<T>(
+  operation: (model: string) => Promise<T>,
+  context: string,
+  onRetry?: (message: string) => void
+): Promise<T> {
+  const tiers = [MODELS.PRIMARY, MODELS.RESERVE, MODELS.STABLE];
+  let lastError: any;
+
+  for (let t = 0; t < tiers.length; t++) {
+    const currentModel = tiers[t];
+    let attempts = 0;
+    const maxAttempts = 2;
+
+    while (attempts < maxAttempts) {
+      try {
+        return await operation(currentModel);
+      } catch (error: any) {
+        lastError = error;
+        const isRetryable = error?.status === 503 || error?.status === 429 || error?.message?.includes("high demand");
+
+        if (isRetryable && attempts < maxAttempts - 1) {
+          attempts++;
+          const delay = Math.pow(2, attempts) * 1000;
+          const msg = `[GeminiResilience] ${context} - Model ${currentModel} hit ${error.status || 'spike'}. Retrying in ${delay}ms...`;
+          logger.warn(msg);
+          if (onRetry) onRetry(msg);
+          await new Promise(res => setTimeout(res, delay));
+          continue;
+        }
+
+        // If it's a 503/429 and we have a fallback model available, move to the next tier
+        if (isRetryable && t < tiers.length - 1) {
+          const msg = `[GeminiResilience] ${context} - Primary ${currentModel} exhausted. Scaling to Reserve Tier: ${tiers[t+1]}`;
+          logger.warn(msg);
+          if (onRetry) onRetry(msg);
+          break; // Exit attempts loop to move to next model tier
+        }
+
+        // Non-retryable error or exhausted all options
+        let errorMessage = error.message;
+        try {
+          const parsed = JSON.parse(error.message);
+          if (parsed.error?.message) errorMessage = parsed.error.message;
+        } catch (e) {}
+
+        logger.error(`[GeminiResilience] ${context} Failed on ${currentModel}:`, { error: errorMessage });
+        throw new Error(errorMessage);
+      }
     }
+  }
+  throw lastError;
+}
 
-    const response = await genAI.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: prompt,
+// Use Gemini 2.5 Flash (Primary) with 2.0/1.5 Fallbacks
+async function generateContentStream(
+  prompt: string, 
+  responseMimeType?: string, 
+  enableSearch?: boolean,
+  onRetry?: (msg: string) => void
+) {
+  const config: any = {
+    responseMimeType: enableSearch ? "text/plain" : (responseMimeType || "text/plain"),
+    tools: enableSearch ? [{ googleSearch: {} }] : undefined,
+  };
+
+  return executeWithFallback(async (model) => {
+    return await genAI.models.generateContentStream({
+      model,
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
       config,
     });
-    return response.text;
-  } catch (error: any) {
-    if (error?.status === 403 || error?.message?.includes("403") || error?.message?.includes("PERMISSION_DENIED")) {
-      logger.error("Gemini API Permission Denied (403): Your project has been denied access. Please check your Google AI Studio / Google Cloud project status and billing.", {
-        error: error.message,
-        model: "gemini-2.5-flash",
-        tip: "This usually means the project is suspended or the API key is restricted/invalid."
-      });
-    } else {
-      logger.error("Error generating content with Gemini:", { 
-        error: error.message,
-        status: error?.status 
-      });
-    }
-    throw error;
-  }
+  }, "StrategyStream", onRetry);
+}
+
+async function generateContent(
+  prompt: string, 
+  responseMimeType?: string, 
+  enableSearch?: boolean,
+  onRetry?: (msg: string) => void
+) {
+  const config: any = {
+    responseMimeType: enableSearch ? "text/plain" : (responseMimeType || "text/plain"),
+    tools: enableSearch ? [{ googleSearch: {} }] : undefined,
+  };
+
+  return executeWithFallback(async (model) => {
+    const response = await genAI.models.generateContent({
+      model,
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      config,
+    });
+    return response.text || "";
+  }, "StrategyPlanning", onRetry);
 }
 
 export const MESSENGER_SAFETY_SETTINGS = [
@@ -289,4 +361,4 @@ async function embedQuery(text: string): Promise<number[]> {
 }
 
 export default generateContent;
-export { embedTexts, embedQuery };
+export { generateContentStream, embedTexts, embedQuery };

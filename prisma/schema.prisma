@@ -385,3 +385,12 @@ model AiUsageStat {
   @@index([businessProfileId])
   @@index([date])
 }
+
+/// Global system settings for configurations like billing multipliers
+model SystemSetting {
+  id        Int      @id @default(autoincrement())
+  key       String   @unique
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

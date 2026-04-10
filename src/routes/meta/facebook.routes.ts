@@ -110,19 +110,16 @@ facebookRoutes.get(
       const { access_token, facebook_account_id } = req.query;
       const userId = (req as any).user.id;
 
-      if (!access_token) {
-        return res.status(400).json({ error: "access_token is required" });
-      }
+      // Use the provided token or find the most recent active one from DB
+      const pages = await getUserPages(access_token as string, userId);
 
-      const pages = await getUserPages(access_token as string);
+      // Identify the target account for syncing
+      let internalFacebookAccountId: number | null = null;
 
-      // If facebook_account_id is provided, save pages to database
       if (facebook_account_id) {
         const rawAccountId = String(facebook_account_id).trim();
-        let internalFacebookAccountId: number | null = null;
-
-        // Support either internal account ID (int) or Facebook user ID (string digits).
         const numericAccountId = Number(rawAccountId);
+        
         if (
           Number.isSafeInteger(numericAccountId) &&
           numericAccountId > 0 &&
@@ -132,29 +129,30 @@ facebookRoutes.get(
             where: { id: numericAccountId, userId, isActive: true },
             select: { id: true },
           });
-          if (accountById) {
-            internalFacebookAccountId = accountById.id;
-          }
+          if (accountById) internalFacebookAccountId = accountById.id;
         }
 
         if (!internalFacebookAccountId) {
-          const accountByFacebookUserId =
-            await prisma.facebookAccount.findFirst({
-              where: { facebookUserId: rawAccountId, userId, isActive: true },
-              select: { id: true },
-            });
-          if (accountByFacebookUserId) {
-            internalFacebookAccountId = accountByFacebookUserId.id;
-          }
-        }
-
-        if (!internalFacebookAccountId) {
-          return res.status(400).json({
-            error:
-              "Invalid facebook_account_id. Use your internal Facebook account id or facebook user id.",
+          const accountByFacebookUserId = await prisma.facebookAccount.findFirst({
+            where: { facebookUserId: rawAccountId, userId, isActive: true },
+            select: { id: true },
           });
+          if (accountByFacebookUserId) internalFacebookAccountId = accountByFacebookUserId.id;
         }
+      } else {
+        // Default to the most recently used/active account for this user
+        const recentAccount = await prisma.facebookAccount.findFirst({
+          where: { userId, isActive: true },
+          orderBy: { lastUsedAt: "desc" },
+          select: { id: true },
+        });
+        if (recentAccount) {
+          internalFacebookAccountId = recentAccount.id;
+        }
+      }
 
+      // Sync pages to DB if we have a valid account identifier
+      if (internalFacebookAccountId) {
         await saveFacebookPages(internalFacebookAccountId, pages);
       }
 
@@ -177,9 +175,9 @@ facebookRoutes.post(
       const { pageId, message, accessToken, imageUrl, facebookAccountId } =
         req.body;
 
-      if (!pageId || !message || !accessToken) {
+      if (!pageId || !message) {
         return res.status(400).json({
-          error: "pageId, message, and accessToken are required",
+          error: "pageId and message are required",
         });
       }
 
@@ -190,9 +188,18 @@ facebookRoutes.post(
         imageUrl,
       });
 
-      // Log activity if facebookAccountId is provided
-      if (facebookAccountId) {
-        await logFacebookActivity(parseInt(facebookAccountId), "post_created", {
+      // Log activity if facebookAccountId is provided, or find one by pageId
+      let activityAccountId = facebookAccountId ? parseInt(facebookAccountId) : null;
+      if (!activityAccountId) {
+        const page = await prisma.facebookPage.findFirst({
+          where: { pageId },
+          select: { facebookAccountId: true }
+        });
+        if (page) activityAccountId = page.facebookAccountId;
+      }
+
+      if (activityAccountId) {
+        await logFacebookActivity(activityAccountId, "post_created", {
           pageId,
           message,
           imageUrl,
@@ -216,9 +223,9 @@ facebookRoutes.post(
     try {
       const { pageId, message, accessToken, scheduleTime } = req.body;
 
-      if (!pageId || !message || !accessToken || !scheduleTime) {
+      if (!pageId || !message || !scheduleTime) {
         return res.status(400).json({
-          error: "pageId, message, accessToken, and scheduleTime are required",
+          error: "pageId, message, and scheduleTime are required",
         });
       }
 

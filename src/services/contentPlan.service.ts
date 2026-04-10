@@ -1,5 +1,6 @@
 import prisma from "../config/prisma";
-import generateContent from "../config/gemini";
+import generateContent, { generateContentStream } from "../config/gemini";
+import { logger } from "../utils/logger";
 
 export interface BriefingInput {
   businessProfileId: number;
@@ -8,6 +9,135 @@ export interface BriefingInput {
   endDate: string; // ISO format
   goals?: string;
   currentTrends?: string;
+}
+
+export async function* generateContentStrategyStream(briefing: BriefingInput) {
+  const profile = await prisma.businessProfile.findUnique({
+    where: { id: briefing.businessProfileId },
+    include: {
+      faqs: true,
+      crmIntegrations: true,
+    },
+  });
+
+  if (!profile) {
+    throw new Error("Business profile not found");
+  }
+
+  // 1. Common Persona Details
+  const persona = `
+Business Persona Details:
+- Name: ${profile.name}
+- Identity: ${profile.identity}
+- Target Audience: ${profile.targetAudience}
+- Tone: ${profile.tone}
+- Products/Services: ${profile.productsServices.join(", ")}
+${briefing.goals ? `- Primary Campaign Goals: ${briefing.goals}` : ""}
+${briefing.currentTrends ? `- Specific Topic/Trends to Focus On: ${briefing.currentTrends}` : ""}
+  `.trim();
+
+  // 2. STAGE 1: Market Intelligence & Trend Research (STREAMED)
+  yield { type: "status", message: "Stage 1/2: Researching live market trends and holidays..." };
+
+  const researchPrompt = `You are a Digital Marketing Strategist. 
+Your task is to research current trends, upcoming holidays, seasonal events, and industry movements relevant to the following business profile for the period between ${briefing.startDate} and ${briefing.endDate}.
+
+${persona}
+
+Instructions:
+1. Use Google Search to find specific dates for holidays or events.
+2. Identify 3-5 trending topics.
+3. Provide a concise research summary in plain text.`;
+
+  let researchSummary = "";
+  let isGrounded = false;
+
+  try {
+    const streamResult = await generateContentStream(researchPrompt, "text/plain", true);
+    for await (const chunk of streamResult) {
+      const chunkText = chunk.text || "";
+      researchSummary += chunkText;
+      yield { type: "research_chunk", text: chunkText };
+    }
+    isGrounded = true;
+    yield { type: "status", message: "Live research complete. Building your strategy map..." };
+  } catch (err: any) {
+    console.warn(`[StrategyPipe] Research Stream FAILED: ${err.message}`);
+    researchSummary = "Live research was unavailable. Proceeding with general marketing best practices.";
+    isGrounded = false;
+    yield { type: "status", message: "Live research failed (fallback enabled). Drafting strategy..." };
+  }
+
+  // 3. STAGE 2: Strategic Planning (JSON)
+  yield { type: "status", message: "Stage 2/2: Drafting optimal content calendar..." };
+
+  const strategyPrompt = `You are an expert Social Media Director.
+Your task is to build a Content Marketing Strategy Calendar between ${briefing.startDate} and ${briefing.endDate}.
+
+${persona}
+
+--- MARKET RESEARCH & TRENDS ---
+${researchSummary}
+--------------------------------
+
+Output strictly as a JSON array of objects.
+
+Schema:
+[
+  {
+    "scheduledAt": "ISO String",
+    "platform": "facebook",
+    "pillar": "Educational",
+    "topic": "Topic inspired by research",
+    "format": "carousel"
+  }
+]`;
+
+  const responseText = await generateContent(strategyPrompt, "application/json", false);
+  
+  if (!responseText) {
+    throw new Error("Failed to generate strategy JSON");
+  }
+
+  let parsedCalendar = [];
+  try {
+    const cleanText = responseText.replace(/```json/g, "").replace(/```/g, "").trim();
+    parsedCalendar = JSON.parse(cleanText);
+  } catch (err) {
+    throw new Error("Invalid strategic format received from AI.");
+  }
+
+  yield { type: "status", message: "Finalizing and saving to your workspace..." };
+
+  // 4. Save to Database
+  const plan = await prisma.contentPlan.create({
+    data: {
+      businessProfileId: profile.id,
+      userId: briefing.userId,
+      startDate: new Date(briefing.startDate),
+      endDate: new Date(briefing.endDate),
+      goals: briefing.goals,
+      currentTrends: briefing.currentTrends,
+      status: "draft",
+      isGrounded,
+      researchSummary,
+      posts: {
+        create: parsedCalendar.map((item: any) => ({
+          scheduledAt: new Date(item.scheduledAt),
+          platform: item.platform,
+          pillar: item.pillar,
+          topic: item.topic,
+          format: item.format,
+          status: "pending",
+        })),
+      },
+    },
+    include: {
+      posts: true,
+    },
+  });
+
+  yield { type: "result", data: plan };
 }
 
 export async function generateContentStrategy(briefing: BriefingInput) {
@@ -23,7 +153,7 @@ export async function generateContentStrategy(briefing: BriefingInput) {
     throw new Error("Business profile not found");
   }
 
-  // 1. Build the persona and context
+  // 1. Common Persona Details
   const persona = `
 Business Persona Details:
 - Name: ${profile.name}
@@ -35,36 +165,68 @@ ${briefing.goals ? `- Primary Campaign Goals: ${briefing.goals}` : ""}
 ${briefing.currentTrends ? `- Specific Topic/Trends to Focus On: ${briefing.currentTrends}` : ""}
   `.trim();
 
-  // 2. Prompt Gemini for the strategy with Google Search Grounding to check trends
-  const prompt = `You are an expert Social Media & Marketing Agency Director.
-Your task is to build an optimal Content Marketing Strategy Calendar between ${briefing.startDate} and ${briefing.endDate}.
-You have access to Google Search to look up current live trends, upcoming holidays, and industry movements relevant to this business.
+  // 2. STAGE 1: Market Intelligence & Trend Research (with Grounding)
+  console.log(`[StrategyPipe] Stage 1: Deep Researching for Profile ${profile.id}...`);
+  
+  const researchPrompt = `You are a Digital Marketing Strategist. 
+Your task is to research current trends, upcoming holidays, seasonal events, and industry movements relevant to the following business profile for the period between ${briefing.startDate} and ${briefing.endDate}.
 
 ${persona}
 
 Instructions:
-1. Calculate the optimal frequency of posts (how many posts per week).
-2. Distribute the posts evenly throughout the specified date range.
-3. For each post, determine the optimal 'platform' (facebook, instagram, linkedin), 'pillar' (e.g. Educational, Promotional, Behind the Scenes), 'topic', and 'format' (image_post, carousel, reel, story).
-4. Do NOT generate the actual deep content (no captions or scripts yet). Just high-level topics and formats.
-5. Provide your output strictly as a JSON array of objects representing the calendar, with NO markdown wrapping.
+1. Use Google Search to find specific dates for holidays or events in this period (both global and local to the business audience).
+2. Identify 3-5 trending topics or content themes that would resonate with the target audience right now.
+3. Suggest the best "Content Pillars" to focus on.
+
+Provide a concise, high-quality research summary in plain text.`;
+
+  let researchSummary = "";
+  let isGrounded = false;
+
+  try {
+    const researchRes = await generateContent(researchPrompt, "text/plain", true);
+    if (researchRes) {
+      researchSummary = researchRes;
+      isGrounded = true;
+      console.log(`[StrategyPipe] Stage 1 COMPLETE. Research gathered.`);
+    }
+  } catch (err: any) {
+    console.warn(`[StrategyPipe] Stage 1 FAILED: ${err.message}. Falling back to baseline knowledge.`);
+    researchSummary = "Live research was unavailable. Proceeding with general marketing best practices.";
+    isGrounded = false;
+  }
+
+  // 3. STAGE 2: Strategic Planning (Structured JSON)
+  console.log(`[StrategyPipe] Stage 2: Strategy Generation for Profile ${profile.id}...`);
+
+  const strategyPrompt = `You are an expert Social Media Director.
+Your task is to build a Content Marketing Strategy Calendar between ${briefing.startDate} and ${briefing.endDate}.
+
+${persona}
+
+--- MARKET RESEARCH & TRENDS ---
+${researchSummary}
+--------------------------------
+
+Instructions:
+1. Based on the research above, calculate the optimal frequency and distribute posts evenly.
+2. For each post, determine: 'platform' (facebook, instagram, linkedin), 'pillar', 'topic', and 'format' (image_post, carousel, reel, story).
+3. Ensure the topics directly leverage the trends and holidays found during research.
+4. Output strictly as a JSON array of objects. No markdown.
 
 Schema:
 [
   {
-    "scheduledAt": "ISO String (e.g. 2026-05-01T10:00:00Z)",
+    "scheduledAt": "ISO String",
     "platform": "facebook",
     "pillar": "Educational",
-    "topic": "5 ways our service saves you time",
+    "topic": "Actual topic inspired by trends",
     "format": "carousel"
   }
-]
-`;
+]`;
 
-  console.log(`[ContentPlanService] Submitting Strategy Gen to Gemini for Profile ${profile.id}...`);
-
-  // We pass `true` to enableSearch for live grounding
-  const responseText = await generateContent(prompt, "application/json", true);
+  // We use structured JSON mode here (Search is already done, so no conflict)
+  const responseText = await generateContent(strategyPrompt, "application/json", false);
   
   if (!responseText) {
     throw new Error("Failed to generate strategy from Gemini");
@@ -82,11 +244,11 @@ Schema:
     const cleanText = responseText.replace(/```json/g, "").replace(/```/g, "").trim();
     parsedCalendar = JSON.parse(cleanText);
   } catch (err) {
-    console.error("Gemini failed to output valid JSON", err);
-    throw new Error("Invalid format received from AI. Try again.");
+    console.error("Gemini failed to output valid JSON in Stage 2", err);
+    throw new Error("Invalid format received from AI in strategy phase. Try again.");
   }
 
-  // 3. Save the strategy to Database
+  // 4. Save to Database with Grounding Metadata
   const plan = await prisma.contentPlan.create({
     data: {
       businessProfileId: profile.id,
@@ -96,6 +258,8 @@ Schema:
       goals: briefing.goals,
       currentTrends: briefing.currentTrends,
       status: "draft",
+      isGrounded,
+      researchSummary,
       posts: {
         create: parsedCalendar.map((item) => ({
           scheduledAt: new Date(item.scheduledAt),

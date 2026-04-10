@@ -8,6 +8,7 @@ export interface AiPerformanceStats {
   handoffReasons: { category: string; count: number }[];
   accuracyScore: number; // 0 to 100
   dailyVolume: { date: string; count: number }[];
+  totalTokensConsumed: number;
 }
 
 /**
@@ -23,7 +24,7 @@ function calculateSimilarity(str1: string, str2: string): number {
   return (intersection.size / union.size) * 100;
 }
 
-export async function getAiPerformanceStats(userIdStr: string, days = 30, businessProfileId?: number): Promise<AiPerformanceStats> {
+export async function getAiPerformanceStats(userIdStr: string, role: string, days = 30, businessProfileId?: number): Promise<AiPerformanceStats> {
   const userId = parseInt(userIdStr, 10);
   const startDate = new Date();
   startDate.setDate(startDate.getDate() - days);
@@ -122,6 +123,24 @@ export async function getAiPerformanceStats(userIdStr: string, days = 30, busine
 
   const dailyVolume = Object.entries(volumeMap).map(([date, count]) => ({ date, count })).sort((a,b) => a.date.localeCompare(b.date));
 
+  const dailyVolume = Object.entries(volumeMap).map(([date, count]) => ({ date, count })).sort((a,b) => a.date.localeCompare(b.date));
+
+  // 6. Extract token consumption (ADMINS ONLY)
+  let totalTokensConsumed = 0;
+  if (role === 'admin' || role === 'super_admin') {
+    const usageStats = await prisma.aiUsageStat.aggregate({
+      _sum: {
+        totalTokens: true,
+      },
+      where: {
+        businessProfile: { userId },
+        date: { gte: startDate },
+        ...(businessProfileId && { businessProfileId }),
+      },
+    });
+    totalTokensConsumed = usageStats._sum.totalTokens || 0;
+  }
+
   return {
     automationRate,
     totalAiReplies,
@@ -129,7 +148,8 @@ export async function getAiPerformanceStats(userIdStr: string, days = 30, busine
     needsReviewCount,
     handoffReasons,
     accuracyScore,
-    dailyVolume
+    dailyVolume,
+    totalTokensConsumed
   };
 }
 

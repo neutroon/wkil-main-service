@@ -93,12 +93,16 @@ async function getUserPhoneNumberIds(userId: number): Promise<string[]> {
           facebookPages: true,
         },
       },
-      managedProfiles: {
+      managedUsers: {
         include: {
-          businessProfile: {
+          user: {
             include: {
-              whatsAppAccounts: true,
-              facebookPages: true,
+              businessProfiles: {
+                include: {
+                  whatsAppAccounts: true,
+                  facebookPages: true,
+                },
+              },
             },
           },
         },
@@ -111,15 +115,17 @@ async function getUserPhoneNumberIds(userId: number): Promise<string[]> {
   const ids = new Set<string>();
 
   // From own profiles
-  user.businessProfiles.forEach((bp) => {
-    bp.whatsAppAccounts.forEach((wa) => ids.add(wa.phoneNumberId));
-    bp.facebookPages.forEach((fp) => ids.add(fp.pageId));
+  user.businessProfiles.forEach((bp: any) => {
+    bp.whatsAppAccounts.forEach((wa: any) => ids.add(wa.phoneNumberId));
+    bp.facebookPages.forEach((fp: any) => ids.add(fp.pageId));
   });
 
-  // From managed profiles
-  user.managedProfiles.forEach((mp) => {
-    mp.businessProfile.whatsAppAccounts.forEach((wa) => ids.add(wa.phoneNumberId));
-    mp.businessProfile.facebookPages.forEach((fp) => ids.add(fp.pageId));
+  // From managed users' profiles
+  user.managedUsers.forEach((mgmt: any) => {
+    mgmt.user.businessProfiles.forEach((bp: any) => {
+      bp.whatsAppAccounts.forEach((wa: any) => ids.add(wa.phoneNumberId));
+      bp.facebookPages.forEach((fp: any) => ids.add(fp.pageId));
+    });
   });
 
   return Array.from(ids);

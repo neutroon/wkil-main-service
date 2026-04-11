@@ -202,6 +202,8 @@ export async function listWhatsAppConversations(
       ? {
           role: c.messages[0].role,
           content: c.messages[0].content,
+          type: c.messages[0].type,
+          mediaId: c.messages[0].mediaId,
           createdAt: c.messages[0].createdAt,
         }
       : null,
@@ -245,6 +247,9 @@ export async function listConversationMessages(
       id: true,
       role: true,
       content: true,
+      type: true,
+      mediaId: true,
+      mediaMetadata: true,
       status: true,
       aiReasoning: true,
       handoffCategory: true,
@@ -366,6 +371,8 @@ export async function listMessengerConversations(
       ? {
           role: c.messages[0].role,
           content: c.messages[0].content,
+          type: c.messages[0].type,
+          mediaId: c.messages[0].mediaId,
           createdAt: c.messages[0].createdAt,
           status: c.messages[0].status,
           handoffCategory: c.messages[0].handoffCategory,

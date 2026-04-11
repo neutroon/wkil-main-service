@@ -7,6 +7,7 @@ type MessengerJob = {
   pageId: string;
   senderId: string;
   messageText: string;
+  externalId?: string;
 };
 
 type FacebookCommentQueueJob = FacebookCommentJob & {
@@ -42,6 +43,7 @@ async function drainQueue(): Promise<void> {
           job.pageId,
           job.senderId,
           job.messageText,
+          job.externalId,
         );
       } else if (job.type === "FACEBOOK_COMMENT") {
         await handleFacebookComment(job);

@@ -4,7 +4,7 @@ import prisma from "../config/prisma";
 
 const JWT_SECRET = process.env.JWT_SECRET || "supersecret";
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || "refreshsecret";
-const ACCESS_TOKEN_EXPIRES_IN = "15m"; // Short-lived access token
+const ACCESS_TOKEN_EXPIRES_IN = "24h"; // Production stability lifespan
 const REFRESH_TOKEN_EXPIRES_IN = "7d"; // Long-lived refresh token
 
 interface AuthRequest extends Request {
@@ -51,7 +51,7 @@ export const setAuthCookies = (
     httpOnly: true,
     secure: isProduction,
     sameSite: isProduction ? "strict" : "lax",
-    maxAge: 15 * 60 * 1000, // 15 minutes
+    maxAge: 24 * 60 * 60 * 1000, // 24 hours
     path: "/",
   });
 

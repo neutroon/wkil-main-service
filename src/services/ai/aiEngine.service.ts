@@ -200,9 +200,16 @@ export async function runAIEngineLoop(params: {
       }
 
       // 2. Resolve URL and Fetch Data
-      if (accessToken && params.mediaInfo.id) {
-        const { getMetaMediaUrl } = await import("../meta/metaMedia.service");
-        const url = await getMetaMediaUrl(params.mediaInfo.id, accessToken);
+      if (accessToken && (params.mediaInfo.id || params.mediaInfo.url)) {
+        let url = params.mediaInfo.url;
+        
+        if (!url && params.mediaInfo.id) {
+          const { getMetaMediaUrl } = await import("../meta/metaMedia.service");
+          url = await getMetaMediaUrl(params.mediaInfo.id, accessToken);
+        }
+
+        if (!url) throw new Error("Could not resolve media URL");
+
         const response = await fetch(url, {
            headers: {
               Authorization: `Bearer ${accessToken}`
@@ -284,7 +291,7 @@ export async function runAIEngineLoop(params: {
           config: {
             systemInstruction: params.systemInstruction,
             temperature: 0.35,
-            maxOutputTokens: 512,
+            maxOutputTokens: 2048,
             safetySettings: MESSENGER_SAFETY_SETTINGS,
             tools: params.tools,
             responseMimeType: "application/json",

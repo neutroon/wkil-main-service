@@ -131,6 +131,10 @@ whatsappRoutes.post("/webhook", async (req: Request, res: Response) => {
               type?: string;
               text?: { body?: string };
             }>;
+            contacts?: Array<{
+              profile?: { name?: string };
+              wa_id?: string;
+            }>;
           };
           field?: string;
         }>;
@@ -155,6 +159,10 @@ whatsappRoutes.post("/webhook", async (req: Request, res: Response) => {
         const value = change.value;
         const phoneNumberId = value?.metadata?.phone_number_id;
         const messages = value?.messages;
+        const contacts = value?.contacts;
+
+        // Extract profile name if available
+        const customerName = (Array.isArray(contacts) && contacts[0]?.profile?.name) || undefined;
 
         if (!phoneNumberId || !Array.isArray(messages)) continue;
 
@@ -193,9 +201,10 @@ whatsappRoutes.post("/webhook", async (req: Request, res: Response) => {
           logger.info("whatsapp.webhook.message_enqueued", {
             phoneNumberId,
             from,
+            customerName
           });
 
-          enqueueWhatsAppJob({ phoneNumberId, from, messageText, wamid });
+          enqueueWhatsAppJob({ phoneNumberId, from, messageText, wamid, customerName });
         }
       }
     }

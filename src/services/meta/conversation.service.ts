@@ -213,38 +213,40 @@ export async function listWhatsAppConversations(
  */
 export async function listConversationMessages(
   conversationId: number,
-  page: number,
   limit: number,
+  cursor?: number,
 ) {
   limit = Math.min(limit, MAX_LIMIT);
-  const skip = (page - 1) * limit;
 
-  const [total, messages] = await Promise.all([
-    prisma.conversationMessage.count({ where: { conversationId } }),
-    prisma.conversationMessage.findMany({
-      where: { conversationId },
-      orderBy: { createdAt: "desc" },
-      skip,
-      take: limit,
-      select: {
-        id: true,
-        role: true,
-        content: true,
-        status: true,
-        aiReasoning: true,
-        handoffCategory: true,
-        createdAt: true,
-      },
-    }),
-  ]);
+  const where: any = { conversationId };
+  if (cursor) {
+    where.id = { lt: cursor };
+  }
+
+  const messages = await prisma.conversationMessage.findMany({
+    where,
+    orderBy: { id: "desc" },
+    take: limit,
+    select: {
+      id: true,
+      role: true,
+      content: true,
+      status: true,
+      aiReasoning: true,
+      handoffCategory: true,
+      createdAt: true,
+    },
+  });
+
+  const nextCursor = messages.length > 0 ? messages[messages.length - 1].id : null;
+  const hasMore = messages.length === limit;
 
   return {
     data: messages,
     meta: {
-      total,
-      page,
       limit,
-      totalPages: Math.ceil(total / limit),
+      nextCursor,
+      hasMore,
     },
   };
 }

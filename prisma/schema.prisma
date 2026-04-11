@@ -210,8 +210,11 @@ model ConversationMessage {
   id             Int          @id @default(autoincrement())
   conversationId Int
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  role           String // "user" | "model"
+  role           String // "user" | "model" | "agent"
   content        String
+  type           String       @default("text") // "text", "image", "video", "audio", "voice", "document", "sticker"
+  mediaId        String?      // Meta media_id
+  mediaMetadata  Json?        // Stores duration, filename, mimeType, size etc.
   externalId     String?      @unique // Meta message ID (wamid or mid) for status tracking
   status         String       @default("SENT") // "SENT", "DELIVERED", "READ", "PENDING_REVIEW", "EDITED_AND_SENT", "FAILED"
   aiReasoning    String?      // Storing the AI's thought process for routing

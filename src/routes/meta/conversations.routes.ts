@@ -119,12 +119,13 @@ conversationsRoutes.get(
         return res.status(404).json({ error: "Conversation not found" });
       }
 
-      const { page, limit } = parsePagination(
+      const { limit } = parsePagination(
         req.query as Record<string, unknown>,
         50,
       );
+      const cursor = req.query.cursor ? parseInt(req.query.cursor as string, 10) : undefined;
 
-      const result = await listConversationMessages(conversationId, page, limit);
+      const result = await listConversationMessages(conversationId, limit, cursor);
 
       // Enrich with conversation metadata for the UI
       const accounts = await prisma.whatsAppAccount.findMany({

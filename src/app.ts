@@ -32,6 +32,7 @@ import widgetPublicRoutes from "./routes/widget.public.routes";
 import widgetRoutes from "./routes/widget.routes";
 import aiAnalyticsRoutes from "./routes/aiAnalytics.routes";
 import conversationsRoutes from "./routes/meta/conversations.routes";
+import mediaRoutes from "./routes/meta/media.routes";
 
 const app = express();
 
@@ -109,6 +110,8 @@ app.use("/v1/content", contentRoutes);
 app.use("/v1/facebook", facebookRoutes);
 app.use("/v1/messenger", messengerRoutes);
 app.use("/v1/whatsapp", whatsappRoutes);
+app.use("/v1/meta/media", mediaRoutes);
+app.use("/v1/meta/conversations", conversationsRoutes);
 app.use("/v1/leads", leadRoutes);
 app.use("/v1/admin", adminRoutes);
 app.use("/v1/manager", managerRoutes);

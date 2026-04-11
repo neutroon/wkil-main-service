@@ -161,46 +161,50 @@ export async function handleMessengerMessage(
   let conversation: any;
 
   try {
-    // 1. Get or Create Conversation with Identity Fetch
-    let identity: { name?: string; avatar?: string } = {};
+    // 1. Get or Create Conversation with Profile Sync
+    let customerNameSet: string | undefined;
+    let customerAvatarSet: string | undefined;
+
     const existing = await prisma.conversation.findFirst({
       where: { pageId, senderId, channel: "messenger" },
       select: { customerName: true, customerAvatar: true },
     });
 
-    if (!existing || !existing.customerName) {
+    if (existing) {
+       customerNameSet = existing.customerName ?? undefined;
+       customerAvatarSet = existing.customerAvatar ?? undefined;
+    }
+
+    // PRODUCTION SYNC: If name is missing, fetch from Graph API
+    if (!customerNameSet) {
       try {
         const { getFacebookUserProfile } = await import("./facebook.service");
-        const profile = await getFacebookUserProfile(
-          senderId,
-          pageId,
-          pageAccessToken,
-        );
+        const profile = await getFacebookUserProfile(senderId, pageId, pageAccessToken);
         if (profile) {
-          identity.name = profile.name;
-          identity.avatar = profile.picture?.data?.url;
+          customerNameSet = profile.name;
+          customerAvatarSet = profile.picture?.data?.url;
+          logger.info("messenger.profile_synced", { senderId, name: customerNameSet });
         }
       } catch (e) {
         logger.warn("messenger.identity_fetch_failed", { error: String(e) });
       }
     }
 
-    conversation = await getOrCreateConversation(
-      pageId,
-      senderId,
-      page.businessProfileId,
-      {
-        channel: "messenger",
-        customerName: identity.name,
-        customerAvatar: identity.avatar,
-      },
-    );
+    conversation = await getOrCreateConversation(pageId, senderId, page.businessProfileId, {
+      channel: "messenger",
+      customerName: customerNameSet,
+      customerAvatar: customerAvatarSet,
+    });
+
+    logger.debug("messenger.processing_started", { 
+      conversationId: conversation.id, 
+      msgType: type || "text" 
+    });
 
     // 2. Save User Message turn
-    const historyRows = await getConversationHistory(conversation.id);
     const userSaved = await saveMessage(conversation.id, "user", messageText, {
       externalId,
-      type,
+      type: type || "text",
       mediaId,
       mediaMetadata,
     });
@@ -216,16 +220,14 @@ export async function handleMessengerMessage(
 
     // 3. AI Mode Check (Manual Mode Exit)
     if (businessProfile.responseMode === "MANUAL") {
-      logger.info("messenger.manual_mode_skip", {
-        conversationId: conversation.id,
-      });
+      logger.info("messenger.manual_mode_skip", { conversationId: conversation.id });
       void sendMessengerAction(senderId, "typing_off", pageAccessToken);
       return;
     }
 
     // 4. Compute AI Response
+    const historyRows = await getConversationHistory(conversation.id);
     const historyForPrompt = toPromptMessages(historyRows);
-    historyForPrompt.push({ role: "user", content: messageText });
     const historyTurns = historyToLlmTurns(historyForPrompt);
 
     const reply = await computeBusinessChatReply({

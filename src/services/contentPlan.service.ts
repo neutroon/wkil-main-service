@@ -1,5 +1,6 @@
 import prisma from "../config/prisma";
 import generateContent, { generateContentStream } from "../config/gemini";
+import { recordAiUsage } from "./billing.service";
 import { logger } from "../utils/logger";
 import { retrieveRelevantChunks } from "../rag/rag.service";
 
@@ -69,12 +70,26 @@ Instructions:
   let isGrounded = false;
 
   try {
-    const streamResult = await generateContentStream(researchPrompt, "text/plain", true);
-    for await (const chunk of streamResult) {
+    const { result, model } = await generateContentStream(researchPrompt, "text/plain", true);
+    for await (const chunk of result.stream) {
       const chunkText = chunk.text || "";
       researchSummary += chunkText;
       yield { type: "research_chunk", text: chunkText };
     }
+    
+    // Capture usage from the aggregate response at the end of the stream
+    const finalResponse = await result.response;
+    const usage = finalResponse.usageMetadata;
+    const grounding = (finalResponse as any).candidates?.[0]?.groundingMetadata?.searchEntryPoint;
+    
+    recordAiUsage({
+      businessProfileId: profile.id,
+      promptTokens: usage?.promptTokenCount || 0,
+      completionTokens: usage?.candidatesTokenCount || 0,
+      groundingCalls: grounding ? 1 : 0,
+      modelName: model
+    }).catch(console.error);
+
     isGrounded = true;
     yield { type: "status", message: "Live research complete. Building your strategy map..." };
   } catch (err: any) {
@@ -114,7 +129,14 @@ Schema:
   }
 ]`;
 
-  const responseText = await generateContent(strategyPrompt, "application/json", false);
+  // We now capture usage from generateContent
+  const { text: responseText, usage } = await generateContent(strategyPrompt, "application/json", false);
+  
+  // Log strategic generation usage
+  recordAiUsage({
+    businessProfileId: profile.id,
+    ...usage
+  }).catch(console.error);
   
   if (!responseText) {
     throw new Error("Failed to generate strategy JSON");
@@ -221,9 +243,16 @@ Provide the research summary in plain text.`;
   let isGrounded = false;
 
   try {
-    const researchRes = await generateContent(researchPrompt, "text/plain", true);
-    if (researchRes) {
-      researchSummary = researchRes;
+    const { text, usage } = await generateContent(researchPrompt, "text/plain", true);
+    
+    // Log research usage (heavy grounding)
+    recordAiUsage({
+      businessProfileId: profile.id,
+      ...usage
+    }).catch(console.error);
+
+    if (text) {
+      researchSummary = text;
       isGrounded = true;
       console.log(`[StrategyPipe] Stage 1 COMPLETE. Research gathered.`);
     }
@@ -265,7 +294,13 @@ Schema:
 ]`;
 
   // We use structured JSON mode here (Search is already done, so no conflict)
-  const responseText = await generateContent(strategyPrompt, "application/json", false);
+  const { text: responseText, usage } = await generateContent(strategyPrompt, "application/json", false);
+  
+  // Log strategy usage
+  recordAiUsage({
+    businessProfileId: profile.id,
+    ...usage
+  }).catch(console.error);
   
   if (!responseText) {
     throw new Error("Failed to generate strategy from Gemini");
@@ -420,7 +455,13 @@ ${schemaInstruct}
 
   console.log(`[ContentPlanService] Generating Post Execution for Post ${postId} (${post.format})...`);
   
-  const responseText = await generateContent(prompt, "application/json", false);
+  const { text: responseText, usage } = await generateContent(prompt, "application/json", false);
+
+  // Log post execution usage
+  recordAiUsage({
+    businessProfileId: profile.id,
+    ...usage
+  }).catch(console.error);
 
   if (!responseText) {
     throw new Error("Failed to generate post execution: No text returned from Gemini. This may be due to safety filters.");

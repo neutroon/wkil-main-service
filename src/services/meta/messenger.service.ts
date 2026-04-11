@@ -41,7 +41,7 @@ export async function sendMessengerReply(
   return response.json();
 }
 
-async function sendMessengerAction(
+export async function sendMessengerAction(
   recipientId: string,
   action: "mark_seen" | "typing_on" | "typing_off",
   pageAccessToken: string,
@@ -199,12 +199,26 @@ export async function handleMessengerMessage(
     }
 
     if (status === "SENT" && reply.content && reply.handoffCategory !== "SYSTEM_ERROR") {
-      await sendMessengerReply(senderId, reply.content, pageAccessToken);
-      logger.info("messenger.reply_sent", {
-        pageId,
-        senderId,
-        preview: reply.content.substring(0, 80),
-      });
+      try {
+        const platformRes = await sendMessengerReply(senderId, reply.content, pageAccessToken);
+        const mid = (platformRes as any)?.message_id;
+        
+        if (mid) {
+          await prisma.conversationMessage.update({
+            where: { id: modelSaved.id },
+            data: { externalId: mid }
+          });
+        }
+        
+        logger.info("messenger.reply_sent", {
+          pageId,
+          senderId,
+          mid,
+          preview: reply.content.substring(0, 80),
+        });
+      } catch (sendErr: any) {
+        logger.error("messenger.reply_send_failed", { error: sendErr.message });
+      }
     }
 
     if (reply.handoffCategory === "SYSTEM_ERROR") {
@@ -226,6 +240,11 @@ export async function handleMessengerMessage(
       senderId,
       error: message,
     });
+    
+    // Safety cleanup: ensure typing indicator is off for the customer
+    if (pageAccessToken) {
+      void sendMessengerAction(senderId, "typing_off", pageAccessToken);
+    }
     
     // Silent fail for customer, but alert the business
     if (page?.businessProfileId && conversation) {

@@ -308,10 +308,12 @@ widgetRoutes.get("/conversations/:id/messages", async (req: Request, res: Respon
       return res.status(404).json({ error: "Conversation not found" });
     }
 
+    const cursor = req.query.cursor ? parseInt(req.query.cursor as string, 10) : undefined;
+
     const messages = await listConversationMessages(
       id,
-      Number(page),
       Number(limit),
+      cursor,
     );
     return res.json(messages);
   } catch (e: unknown) {

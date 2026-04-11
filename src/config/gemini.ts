@@ -334,7 +334,7 @@ export async function generateMessengerAssistantReply(params: {
         config: {
           systemInstruction: params.systemInstruction,
           temperature: 0.35,
-          maxOutputTokens: 512,
+          maxOutputTokens: 1024,
           responseMimeType: "text/plain",
           safetySettings: MESSENGER_SAFETY_SETTINGS,
           tools: params.tools,

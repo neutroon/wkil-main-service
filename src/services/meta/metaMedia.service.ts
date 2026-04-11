@@ -11,7 +11,8 @@ const CACHE_TTL_MS = 60 * 60 * 1000; // Cache for 1 hour (Meta URLs usually last
 export async function getMetaMediaUrl(
   id: string,
   accessToken: string,
-  platform: "messenger" | "whatsapp" = "whatsapp"
+  platform: "messenger" | "whatsapp" = "whatsapp",
+  fallbackUrl?: string
 ): Promise<string> {
   const cacheKey = `${platform}:${id}`;
   const now = Date.now();
@@ -33,9 +34,12 @@ export async function getMetaMediaUrl(
       if (response.ok) {
         const data = await response.json() as any;
         url = data.attachments?.data?.[0]?.payload?.url;
+      } else {
+        const errorData = await response.json() as any;
+        logger.warn("meta.media.messenger_refresh_failed", { id, error: errorData });
       }
       
-      // Fallback for specific Messenger IDs (stickers, static assets)
+      // Fallback for specific Messenger IDs or if refresh failed
       if (!url) {
         const fallbackRes = await fetch(`https://graph.facebook.com/v25.0/${id}?access_token=${accessToken}`);
         if (fallbackRes.ok) {
@@ -53,6 +57,13 @@ export async function getMetaMediaUrl(
         const data = await response.json() as { url: string };
         url = data.url;
       }
+    }
+
+    // FINAL PRODUCTION FALLBACK:
+    // If we have a fallbackUrl from DB metadata, use it if Meta refresh failed.
+    if (!url && fallbackUrl) {
+       logger.info("meta.media.using_metadata_fallback", { platform, id });
+       url = fallbackUrl;
     }
 
     if (!url) {

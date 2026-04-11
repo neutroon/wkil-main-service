@@ -19,7 +19,6 @@ export interface MetaMessageJob {
   senderId: string;   // customer PSID or phone number
   messageText: string;
   externalId?: string;
-  msgType?: string;
   type?: string; 
   pageId?: string;
   phoneNumberId?: string;
@@ -106,9 +105,12 @@ export async function processMetaMessage(job: MetaMessageJob) {
     });
 
     // 4. Save User Message & Emit to UI
-    const userSaved = await saveMessage(conversation.id, "user", messageText, {
+    const finalType = job.type || job.msgType || "text";
+    const finalContent = messageText || "";
+
+    const userSaved = await saveMessage(conversation.id, "user", finalContent, {
       externalId,
-      type: msgType || "text",
+      type: finalType,
       mediaId,
       mediaMetadata,
     });

@@ -99,23 +99,37 @@ export async function saveMessage(
   role: "user" | "model" | "agent",
   content: string,
   opts?: {
+    externalId?: string | null;
+    type?: string;
+    mediaId?: string | null;
+    mediaMetadata?: any;
     status?: string | null;
     aiReasoning?: string | null;
     handoffCategory?: string | null;
-    externalId?: string | null;
   }
 ) {
-  return prisma.conversationMessage.create({
-    data: { 
-      conversationId, 
-      role, 
+  const msg = await prisma.conversationMessage.create({
+    data: {
+      conversationId,
+      role,
       content,
+      externalId: opts?.externalId,
+      type: opts?.type || "text",
+      mediaId: opts?.mediaId,
+      mediaMetadata: opts?.mediaMetadata,
       status: opts?.status || "SENT",
       aiReasoning: opts?.aiReasoning,
       handoffCategory: opts?.handoffCategory,
-      externalId: opts?.externalId
     },
   });
+
+  // Always bump the conversation updatedAt whenever a message is saved
+  await prisma.conversation.update({
+    where: { id: conversationId },
+    data: { updatedAt: new Date() },
+  });
+
+  return msg;
 }
 
 // ─── UI / inbox helpers ───────────────────────────────────────────────────────

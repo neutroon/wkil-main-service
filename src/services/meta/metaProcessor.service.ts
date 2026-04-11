@@ -36,7 +36,7 @@ export interface MetaMessageJob {
  * Handles the end-to-end lifecycle of an inbound message from any Meta platform.
  */
 export async function processMetaMessage(job: MetaMessageJob) {
-  const { platform, identifier, senderId, messageText, externalId, msgType, mediaId, mediaMetadata } = job;
+  const { platform, identifier, senderId, messageText, externalId, type, mediaId, mediaMetadata } = job;
 
   // 1. Resolve Account/Profile
   let businessProfileId: number;
@@ -71,7 +71,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
     return;
   }
 
-  logger.info("meta.processor.started", { platform, businessProfileId, senderId, msgType: msgType || "text" });
+  logger.info("meta.processor.started", { platform, businessProfileId, senderId, msgType: type || "text" });
 
   try {
     // 2. Resolve Customer Profile (with strict timeout for Messenger)
@@ -105,7 +105,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
     });
 
     // 4. Save User Message & Emit to UI
-    const finalType = job.type || job.msgType || "text";
+    const finalType = type || "text";
     const finalContent = messageText || "";
 
     const userSaved = await saveMessage(conversation.id, "user", finalContent, {
@@ -134,7 +134,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
       historyTurns,
       channel: platform,
       customerPhone: platform === "whatsapp" ? senderId : undefined,
-      mediaInfo: mediaId ? { id: mediaId, type: msgType || "image" } : undefined,
+      mediaInfo: mediaId ? { id: mediaId, type: type || "image" } : undefined,
     });
 
     if (reply.action === "RESOLVE_CONVERSATION") {

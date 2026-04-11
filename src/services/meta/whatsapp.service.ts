@@ -202,7 +202,6 @@ export async function handleWhatsAppMessage(
   mediaId?: string,
   mediaMetadata?: any,
 ): Promise<void> {
-  // ... existing code ...
   const account = await prisma.whatsAppAccount.findFirst({
     where: { phoneNumberId, isActive: true },
     include: {
@@ -228,40 +227,39 @@ export async function handleWhatsAppMessage(
   try {
     accessToken = decryptFacebookSecret(account.accessToken);
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
     logger.error("whatsapp.decrypt_token_failed", {
       phoneNumberId,
-      error: msg,
+      error: String(e),
     });
     return;
   }
 
-  // NOTE: We no longer send the 'read' signal immediately. 
-  // We wait until we've at least successfully started processing or finished,
-  // so that if a system crash occurs, the message remains 'Unread' for the human agent.
-
   const businessProfile = account.businessProfile;
+  let conversation: any;
 
-    let conversation: any;
-    try {
-      conversation = await getOrCreateConversation(
-        phoneNumberId,
-        from,
-        account.businessProfileId,
-        { 
-          channel: "whatsapp", 
-          customerPhone: from,
-          customerName: customerName
-        },
-      );
-    
+  try {
+    // 1. Get or Create Conversation
+    conversation = await getOrCreateConversation(
+      phoneNumberId,
+      from,
+      account.businessProfileId,
+      {
+        channel: "whatsapp",
+        customerPhone: from,
+        customerName: customerName,
+      },
+    );
+
+    // 2. Save User Message turn
     const historyRows = await getConversationHistory(conversation.id);
-    const userSaved = await saveMessage(conversation.id, "user", messageText, { 
-      externalId: wamid, 
-      type, 
-      mediaId, 
-      mediaMetadata 
+    const userSaved = await saveMessage(conversation.id, "user", messageText, {
+      externalId: wamid,
+      type,
+      mediaId,
+      mediaMetadata,
     });
+
+    // Notify UI immediately
     emitToBusiness(account.businessProfileId, "new_message", {
       conversationId: conversation.id,
       message: userSaved,
@@ -270,18 +268,18 @@ export async function handleWhatsAppMessage(
       message: userSaved,
     });
 
-    const historyForPrompt = toPromptMessages(historyRows);
-    historyForPrompt.push({ role: "user", content: messageText });
-    const historyTurns = historyToLlmTurns(historyForPrompt);
-    
-    // 3. Early Exit if Manual Mode
+    // 3. AI Mode Check (Manual Mode Exit)
     if (businessProfile.responseMode === "MANUAL") {
-      logger.info("whatsapp.manual_mode_skip", { 
-        conversationId: conversation.id, 
-        businessProfileId: businessProfile.id 
+      logger.info("whatsapp.manual_mode_skip", {
+        conversationId: conversation.id,
       });
       return;
     }
+
+    // 4. Compute AI Response
+    const historyForPrompt = toPromptMessages(historyRows);
+    historyForPrompt.push({ role: "user", content: messageText });
+    const historyTurns = historyToLlmTurns(historyForPrompt);
 
     const reply = await computeBusinessChatReply({
       businessProfile,
@@ -289,27 +287,36 @@ export async function handleWhatsAppMessage(
       historyTurns,
       channel: "whatsapp",
       customerPhone: from,
-      mediaInfo: mediaId ? { id: mediaId, type: type || "image" } : undefined
+      mediaInfo: mediaId ? { id: mediaId, type: type || "image" } : undefined,
     });
 
     if (reply.action === "RESOLVE_CONVERSATION") {
       await prisma.conversation.update({
         where: { id: conversation.id },
-        data: { status: "RESOLVED" }
+        data: { status: "RESOLVED" },
       });
-      logger.info("whatsapp.conversation_resolved_by_ai", { conversationId: conversation.id });
       return;
     }
 
     const isAutoMode = businessProfile.responseMode === "AUTO";
-    const status = reply.action === "HANDOFF_TO_HUMAN" || !isAutoMode ? "PENDING_REVIEW" : "SENT";
+    const status =
+      reply.action === "HANDOFF_TO_HUMAN" || !isAutoMode
+        ? "PENDING_REVIEW"
+        : "SENT";
 
-    const modelSaved = await saveMessage(conversation.id, "model", reply.content || "", {
-      status,
-      aiReasoning: reply.reasoning,
-      handoffCategory: reply.handoffCategory
-    });
+    // 5. Save AI turn (Draft or Sent)
+    const modelSaved = await saveMessage(
+      conversation.id,
+      "model",
+      reply.content || "",
+      {
+        status,
+        aiReasoning: reply.reasoning,
+        handoffCategory: reply.handoffCategory,
+      },
+    );
 
+    // Pulse UI
     emitToBusiness(account.businessProfileId, "new_message", {
       conversationId: conversation.id,
       message: modelSaved,
@@ -319,46 +326,44 @@ export async function handleWhatsAppMessage(
     });
 
     if (status === "PENDING_REVIEW") {
-       emitToBusiness(account.businessProfileId, "draft_received", {
-          conversationId: conversation.id,
-          message: modelSaved
-       });
+      emitToBusiness(account.businessProfileId, "draft_received", {
+        conversationId: conversation.id,
+        message: modelSaved,
+      });
     }
 
-    if (status === "SENT" && reply.content && reply.handoffCategory !== "SYSTEM_ERROR") {
+    // 6. Send API call if AUTO
+    if (
+      status === "SENT" &&
+      reply.content &&
+      reply.handoffCategory !== "SYSTEM_ERROR"
+    ) {
       try {
-        const platformRes = await sendWhatsAppReply(from, reply.content, phoneNumberId, accessToken);
-        const wamid = (platformRes as any)?.messages?.[0]?.id;
-        
-        if (wamid) {
+        const platformRes = await sendWhatsAppReply(
+          from,
+          reply.content,
+          phoneNumberId,
+          accessToken,
+        );
+        const modelWamid = (platformRes as any)?.messages?.[0]?.id;
+
+        if (modelWamid) {
           await prisma.conversationMessage.update({
             where: { id: modelSaved.id },
-            data: { externalId: wamid }
+            data: { externalId: modelWamid },
           });
         }
-        
-        logger.info("whatsapp.reply_sent", {
-          phoneNumberId,
-          from,
-          wamid,
-          preview: reply.content.substring(0, 80),
-        });
       } catch (sendErr: any) {
         logger.error("whatsapp.reply_send_failed", { error: sendErr.message });
       }
     }
 
+    // 7. Critical UI Notification for System Errors
     if (reply.handoffCategory === "SYSTEM_ERROR") {
-       // Also ensure we send a 'new_message' pulse for the error bubble itself
-       emitToBusiness(account.businessProfileId, "new_message", {
-          conversationId: conversation.id,
-          message: modelSaved,
-       });
-
-       emitToBusiness(account.businessProfileId, "system_critical_error", {
-          conversationId: conversation.id,
-          reason: reply.reasoning,
-       });
+      emitToBusiness(account.businessProfileId, "system_critical_error", {
+        conversationId: conversation.id,
+        reason: reply.reasoning,
+      });
     }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
@@ -367,25 +372,23 @@ export async function handleWhatsAppMessage(
       from,
       error: message,
     });
-    
-    // Silent fail for customer, but alert the business
-    if (account?.businessProfileId && conversation) {
-        const errorMsg = `Internal Technical Failure: ${message}`;
-       const modelSaved = await saveMessage(conversation.id, "model", errorMsg, {
-          status: "FAILED",
-          aiReasoning: `System Exception: ${message}`,
-          handoffCategory: "SYSTEM_ERROR"
-       });
 
-       emitToBusiness(account.businessProfileId, "new_message", {
-          conversationId: conversation.id,
-          message: modelSaved,
-       });
-
-       emitToBusiness(account.businessProfileId, "system_critical_error", {
-          conversationId: conversation.id,
-          reason: message,
-       });
+    // UI Failure Signal
+    if (account.businessProfileId && conversation) {
+      const errorMsg = `Internal Technical Failure: ${message}`;
+      const failMsg = await saveMessage(conversation.id, "model", errorMsg, {
+        status: "FAILED",
+        aiReasoning: message,
+        handoffCategory: "SYSTEM_ERROR",
+      });
+      emitToBusiness(account.businessProfileId, "new_message", {
+        conversationId: conversation.id,
+        message: failMsg,
+      });
+      emitToBusiness(account.businessProfileId, "system_critical_error", {
+        conversationId: conversation.id,
+        reason: message,
+      });
     }
   }
 }

@@ -150,6 +150,7 @@ export async function handleWhatsAppMessage(
   from: string,
   messageText: string,
   wamid?: string,
+  customerName?: string,
 ): Promise<void> {
   // ... existing code ...
   const account = await prisma.whatsAppAccount.findFirst({
@@ -197,7 +198,11 @@ export async function handleWhatsAppMessage(
         phoneNumberId,
         from,
         account.businessProfileId,
-        { channel: "whatsapp", customerPhone: from },
+        { 
+          channel: "whatsapp", 
+          customerPhone: from,
+          customerName: customerName
+        },
       );
     const historyRows = await getConversationHistory(conversation.id);
     const userSaved = await saveMessage(conversation.id, "user", messageText);

@@ -32,7 +32,7 @@ const MODELS = {
 /**
  * Robust execution wrapper with exponential backoff and model failover.
  */
-async function executeWithFallback<T>(
+export async function executeWithFallback<T>(
   operation: (model: string) => Promise<T>,
   context: string,
   onRetry?: (message: string) => void

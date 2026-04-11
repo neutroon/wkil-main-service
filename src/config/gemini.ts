@@ -395,6 +395,9 @@ async function embedTexts(texts: string[]): Promise<{ embeddings: number[][]; to
 
 // For querying — used when embedding user messages
 async function embedQuery(text: string): Promise<{ vector: number[]; totalTokens: number }> {
+  if (!text || text.trim().length === 0) {
+    return { vector: new Array(768).fill(0), totalTokens: 0 };
+  }
   const result = await genAI.models.embedContent({
     model: "gemini-embedding-001",
     contents: text,

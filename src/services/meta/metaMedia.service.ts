@@ -36,7 +36,7 @@ export async function getMetaMediaUrl(
         const result = (await response.json()) as { data: any[] };
         const att = result.data?.[0];
 
-        // Path Tracker: Identify which field Meta is actually using
+        // Primary resolution path
         let pathUsed = "";
         if (att?.file_url) {
           url = att.file_url;
@@ -54,22 +54,15 @@ export async function getMetaMediaUrl(
 
         if (url) {
           logger.info("meta.media.messenger_refresh_success", { id, pathUsed });
-        } else {
-          logger.info("meta.media.messenger_attachments_empty", { id, result });
         }
       } else {
         const errorData = (await response.json()) as any;
-        logger.warn("meta.media.messenger_refresh_failed", {
-          id,
-          error: errorData,
-        });
+        logger.warn("meta.media.messenger_refresh_failed", { id, error: errorData });
       }
 
-      // Fallback for specific Messenger IDs or if refresh failed
+      // Final API fallback if the specialized /attachments edge failed
       if (!url) {
-        const fallbackRes = await fetch(
-          `https://graph.facebook.com/v25.0/${id}?access_token=${accessToken}`,
-        );
+        const fallbackRes = await fetch(`https://graph.facebook.com/v25.0/${id}?access_token=${accessToken}`);
         if (fallbackRes.ok) {
           const fbData = (await fallbackRes.json()) as any;
           url = fbData.url;

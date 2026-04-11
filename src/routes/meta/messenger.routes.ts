@@ -507,7 +507,7 @@ messengerRoutes.post("/webhook", async (req: Request, res: Response) => {
 
           enqueueMetaJob({
             platform: "messenger",
-            type: "MESSENGER",
+            type: msgType,
             pageId,
             identifier: pageId,
             senderId,

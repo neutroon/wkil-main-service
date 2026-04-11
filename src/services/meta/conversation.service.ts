@@ -27,15 +27,20 @@ export async function getOrCreateConversation(
       where: { id: existing.id },
       data: {
         updatedAt: new Date(),
+        // Always update phone if provided and missing
         ...(opts?.customerPhone && !existing.customerPhone
           ? { customerPhone: opts.customerPhone }
           : {}),
-        ...(opts?.customerName && !existing.customerName
+        // Update name if provided and DIFFERENT (or missing)
+        ...(opts?.customerName && opts.customerName !== existing.customerName
           ? { customerName: opts.customerName }
           : {}),
-        ...(opts?.customerAvatar && !existing.customerAvatar
+        // Update avatar if provided and different
+        ...(opts?.customerAvatar && opts.customerAvatar !== existing.customerAvatar
           ? { customerAvatar: opts.customerAvatar }
           : {}),
+        // Sync channel if needed
+        ...(opts?.channel && !existing.channel ? { channel: opts.channel } : {}),
       },
     });
   }

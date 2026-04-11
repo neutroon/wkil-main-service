@@ -203,7 +203,11 @@ export async function runAIEngineLoop(params: {
       if (accessToken && params.mediaInfo.id) {
         const { getMetaMediaUrl } = await import("../meta/metaMedia.service");
         const url = await getMetaMediaUrl(params.mediaInfo.id, accessToken);
-        const response = await fetch(url);
+        const response = await fetch(url, {
+           headers: {
+              Authorization: `Bearer ${accessToken}`
+           }
+        });
         if (response.ok) {
           const arrayBuffer = await response.arrayBuffer();
           const buffer = Buffer.from(arrayBuffer);

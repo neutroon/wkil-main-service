@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express";
+import jwt from "jsonwebtoken";
 import { authenticateToken } from "../../middlewares/auth.middleware";
 import { logger } from "../../utils/logger";
 import prisma from "../../config/prisma";

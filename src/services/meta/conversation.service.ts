@@ -23,26 +23,32 @@ export async function getOrCreateConversation(
   });
 
   if (existing) {
-    return prisma.conversation.update({
-      where: { id: existing.id },
-      data: {
-        updatedAt: new Date(),
-        // Always update phone if provided and missing
-        ...(opts?.customerPhone && !existing.customerPhone
-          ? { customerPhone: opts.customerPhone }
-          : {}),
-        // Update name if provided and DIFFERENT (or missing)
-        ...(opts?.customerName && opts.customerName !== existing.customerName
-          ? { customerName: opts.customerName }
-          : {}),
-        // Update avatar if provided and different
-        ...(opts?.customerAvatar && opts.customerAvatar !== existing.customerAvatar
-          ? { customerAvatar: opts.customerAvatar }
-          : {}),
-        // Sync channel if needed
-        ...(opts?.channel && !existing.channel ? { channel: opts.channel } : {}),
-      },
-    });
+    const updateData: any = {};
+
+    // Always update phone if provided and missing
+    if (opts?.customerPhone && !existing.customerPhone) {
+      updateData.customerPhone = opts.customerPhone;
+    }
+    // Update name if provided and DIFFERENT (or missing)
+    if (opts?.customerName && opts.customerName !== existing.customerName) {
+      updateData.customerName = opts.customerName;
+    }
+    // Update avatar if provided and different
+    if (opts?.customerAvatar && opts.customerAvatar !== existing.customerAvatar) {
+      updateData.customerAvatar = opts.customerAvatar;
+    }
+    // Sync channel if needed
+    if (opts?.channel && !existing.channel) {
+      updateData.channel = opts.channel;
+    }
+
+    if (Object.keys(updateData).length > 0) {
+      return prisma.conversation.update({
+        where: { id: existing.id },
+        data: { ...updateData, updatedAt: new Date() },
+      });
+    }
+    return existing;
   }
 
   // 2. If creating a NEW Messenger conversation, try to link it to the most recent comment thread
@@ -73,6 +79,7 @@ export async function getOrCreateConversation(
       customerName: opts?.customerName ?? null,
       customerAvatar: opts?.customerAvatar ?? null,
       parentConversationId,
+      readAt: null,
     },
   });
 }
@@ -95,6 +102,7 @@ export async function saveMessage(
     status?: string | null;
     aiReasoning?: string | null;
     handoffCategory?: string | null;
+    externalId?: string | null;
   }
 ) {
   return prisma.conversationMessage.create({
@@ -104,7 +112,8 @@ export async function saveMessage(
       content,
       status: opts?.status || "SENT",
       aiReasoning: opts?.aiReasoning,
-      handoffCategory: opts?.handoffCategory
+      handoffCategory: opts?.handoffCategory,
+      externalId: opts?.externalId
     },
   });
 }
@@ -183,6 +192,7 @@ export async function listWhatsAppConversations(
         }
       : null,
     updatedAt: c.updatedAt,
+    readAt: c.readAt,
     createdAt: c.createdAt,
   }));
 
@@ -346,6 +356,7 @@ export async function listMessengerConversations(
         }
       : null,
     updatedAt: c.updatedAt,
+    readAt: c.readAt,
     createdAt: c.createdAt,
   }));
 

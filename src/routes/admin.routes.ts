@@ -92,6 +92,10 @@ adminRoutes.patch(
 );
 adminRoutes.delete("/users/:id", adminLimiter, permanentlyDeleteUserController);
 
+// Admin Settings management
+adminRoutes.get("/settings/billing", adminLimiter, getBillingSettings);
+adminRoutes.put("/settings/billing", adminLimiter, updateBillingSettings);
+
 // Lead management
 adminRoutes.get("/leads", adminLimiter, getLeads);
 

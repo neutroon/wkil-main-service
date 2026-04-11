@@ -288,9 +288,69 @@ messengerRoutes.post("/webhook", async (req: Request, res: Response) => {
       // 2. Handle Messaging items (Messenger/Instagram)
       if (Array.isArray(entry.messaging)) {
         for (const event of entry.messaging) {
+          const senderId = event.sender?.id;
+
+          // 2a. Handle Typing Indicators from Customer
+          if (event.sender_action) {
+             const action = event.sender_action; // "typing_on" or "typing_off"
+             const conversation = await prisma.conversation.findFirst({
+                where: { pageId, senderId, channel: "messenger" },
+                select: { id: true, businessProfileId: true }
+             });
+             if (conversation) {
+                emitToBusiness(conversation.businessProfileId, "customer_typing", {
+                   conversationId: conversation.id,
+                   typing: action === "typing_on"
+                });
+             }
+             continue;
+          }
+
+          // 2b. Handle Read Receipts from Customer
+          if (event.read) {
+             const watermark = event.read.watermark;
+             const conversation = await prisma.conversation.findFirst({
+                where: { pageId, senderId, channel: "messenger" },
+                select: { id: true, businessProfileId: true }
+             });
+             if (conversation) {
+                // Find all model messages in this conversation sent before the watermark
+                // and mark them as READ.
+                await prisma.conversationMessage.updateMany({
+                   where: { 
+                      conversationId: conversation.id, 
+                      role: "model",
+                      status: { not: "READ" },
+                      createdAt: { lte: new Date(watermark) }
+                   },
+                   data: { status: "READ" }
+                });
+
+                emitToBusiness(conversation.businessProfileId, "message_status_updated", {
+                   conversationId: conversation.id,
+                   status: "READ",
+                   watermark
+                });
+             }
+             continue;
+          }
+
+          // 2c. Handle Message Deliveries
+          if (event.delivery) {
+             const mids = event.delivery.mids;
+             if (Array.isArray(mids)) {
+                await prisma.conversationMessage.updateMany({
+                   where: { externalId: { in: mids } },
+                   data: { status: "DELIVERED" }
+                });
+                // Emit update (simplification: we'll just emit the event)
+             }
+             continue;
+          }
+
+          // 2d. Handle Inbound Messages
           if (!event.message || event.message.is_echo) continue;
 
-          const senderId = event.sender?.id;
           const messageText = event.message.text;
           const messageMid = event.message.mid;
 
@@ -329,6 +389,7 @@ messengerRoutes.post("/webhook", async (req: Request, res: Response) => {
             pageId,
             senderId,
             messageText,
+            externalId: messageMid // Pass through the ID
           });
         }
       }

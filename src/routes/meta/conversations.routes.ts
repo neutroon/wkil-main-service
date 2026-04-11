@@ -33,11 +33,20 @@ function parsePagination(
 }
 
 async function getUserPhoneNumberIds(userId: number): Promise<string[]> {
-  const accounts = await prisma.whatsAppAccount.findMany({
-    where: { userId, isActive: true },
-    select: { phoneNumberId: true },
-  });
-  return accounts.map((a) => a.phoneNumberId);
+  const [waAccounts, fbPages] = await Promise.all([
+    prisma.whatsAppAccount.findMany({
+      where: { userId, isActive: true },
+      select: { phoneNumberId: true },
+    }),
+    prisma.facebookPage.findMany({
+      where: { facebookAccount: { userId }, isActive: true },
+      select: { pageId: true },
+    }),
+  ]);
+
+  const waIds = waAccounts.map((a) => a.phoneNumberId);
+  const fbIds = fbPages.map((p) => p.pageId);
+  return [...waIds, ...fbIds];
 }
 
 // ─── GET /v1/whatsapp/conversations ──────────────────────────────────────────

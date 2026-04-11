@@ -195,6 +195,7 @@ model Conversation {
 
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
+  readAt            DateTime? // When the business team last read this conversation
 
   messages ConversationMessage[]
 
@@ -211,7 +212,8 @@ model ConversationMessage {
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   role           String // "user" | "model"
   content        String
-  status         String       @default("SENT") // "SENT", "PENDING_REVIEW", "EDITED_AND_SENT"
+  externalId     String?      @unique // Meta message ID (wamid or mid) for status tracking
+  status         String       @default("SENT") // "SENT", "DELIVERED", "READ", "PENDING_REVIEW", "EDITED_AND_SENT", "FAILED"
   aiReasoning    String?      // Storing the AI's thought process for routing
   handoffCategory String?     // e.g. "SALES", "SUPPORT", "ANGRY_CUSTOMER"
   createdAt      DateTime     @default(now())
@@ -222,6 +224,7 @@ model ConversationMessage {
   @@index([conversationId, createdAt])
   @@index([status, createdAt])
   @@index([handoffCategory])
+  @@index([externalId])
 }
 
 /// Tracks corrections made by humans to AI-generated drafts

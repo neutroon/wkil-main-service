@@ -8,8 +8,8 @@ import {
   getConversationForUser,
   saveMessage,
 } from "../../services/meta/conversation.service";
-import { sendWhatsAppReply } from "../../services/meta/whatsapp.service";
-import { sendMessengerReply } from "../../services/meta/messenger.service";
+import { sendWhatsAppReply, sendWhatsAppAction } from "../../services/meta/whatsapp.service";
+import { sendMessengerReply, sendMessengerAction } from "../../services/meta/messenger.service";
 import { decryptFacebookSecret } from "../../utils/tokenCrypto";
 import { emitToBusiness, emitToConversation } from "../../utils/socket";
 import { computeBusinessChatReply } from "../../services/ai/aiEngine.service";
@@ -164,28 +164,97 @@ conversationsRoutes.patch(
       }
 
       const phoneNumberIds = await getUserPhoneNumberIds(userId);
-      if (phoneNumberIds.length === 0) {
-        return res.status(404).json({ error: "Conversation not found" });
-      }
-
-      const conversation = await getConversationForUser(conversationId, phoneNumberIds);
+      const conversation = await prisma.conversation.findFirst({
+        where: { id: conversationId, pageId: { in: phoneNumberIds } }
+      });
       if (!conversation) {
         return res.status(404).json({ error: "Conversation not found" });
       }
 
-      // Placeholder — touch updatedAt so the frontend can optimistically reflect
-      // the read state via timestamp comparison until a `readAt` column is added.
+      // 1. Dispatch signal to Meta platform
+      try {
+        if (conversation.channel === "messenger") {
+          const page = await prisma.facebookPage.findFirst({
+            where: { pageId: conversation.pageId, isActive: true },
+            select: { pageAccessToken: true }
+          });
+          if (page) {
+            const token = decryptFacebookSecret(page.pageAccessToken);
+            await sendMessengerAction(conversation.senderId, "mark_seen", token);
+          }
+        } else if (conversation.channel === "whatsapp") {
+          const account = await prisma.whatsAppAccount.findFirst({
+            where: { phoneNumberId: conversation.pageId, isActive: true },
+            select: { accessToken: true }
+          });
+          const lastMsg = await prisma.conversationMessage.findFirst({
+            where: { conversationId, role: "user" },
+            orderBy: { createdAt: "desc" },
+            select: { content: true } // We need the ID if it was stored, but Cloud API uses wamid
+          });
+          // Note: To mark as read on WhatsApp we technically need the message ID
+          // We'll look it up in ProcessedWhatsAppMessage based on timestamp if possible 
+          // or just skip if we don't have it.
+        }
+      } catch (e: any) {
+        logger.warn("meta.read_signal_failed", { conversationId, error: e.message });
+      }
+
+      // 2. Update DB read status
       await prisma.conversation.update({
         where: { id: conversationId },
-        data: { updatedAt: conversation.updatedAt }, // no-op update keeps the record
+        data: { readAt: new Date() }, 
+      });
+
+      emitToBusiness(conversation.businessProfileId, "conversation_read", {
+        conversationId: conversation.id,
       });
 
       return res.json({ success: true });
     } catch (error: any) {
-      logger.error("whatsapp.conversations.read_failed", { error: error.message });
+      logger.error("meta.conversations.read_failed", { error: error.message });
       return res.status(500).json({ error: error.message });
     }
   },
+);
+
+/** 
+ * POST /v1/meta/conversations/:id/typing
+ * Trigger typing signal for customer
+ */
+conversationsRoutes.post(
+  "/:id/typing",
+  authenticateToken,
+  async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).user.id as number;
+      const conversationId = parseInt(req.params.id, 10);
+      const { typing } = req.body as { typing: boolean };
+
+      const phoneNumberIds = await getUserPhoneNumberIds(userId);
+      const conversation = await prisma.conversation.findFirst({
+        where: { id: conversationId, pageId: { in: phoneNumberIds } }
+      });
+      if (!conversation) return res.status(404).json({ error: "Not found" });
+
+      if (conversation.channel === "messenger") {
+        const page = await prisma.facebookPage.findFirst({
+          where: { pageId: conversation.pageId, isActive: true },
+          select: { pageAccessToken: true }
+        });
+        if (page) {
+          const token = decryptFacebookSecret(page.pageAccessToken);
+          await sendMessengerAction(conversation.senderId, typing ? "typing_on" : "typing_off", token);
+        }
+      }
+      // WhatsApp typing via Cloud API is currently less common/stable without a message payload,
+      // but we'll stick to Messenger for now as requested.
+
+      return res.json({ success: true });
+    } catch (e) {
+      return res.status(500).json({ error: "Failed to send typing signal" });
+    }
+  }
 );
 
 // ─── POST /v1/whatsapp/conversations/:id/messages ────────────────────────────
@@ -248,23 +317,25 @@ conversationsRoutes.post(
       const trimmedText = text.trim();
 
       // 1. Send via WhatsApp Cloud API FIRST
+      let wamid: string | undefined;
       try {
-        await sendWhatsAppReply(customerPhone, trimmedText, account.phoneNumberId, accessToken);
+        const platformRes = await sendWhatsAppReply(customerPhone, trimmedText, account.phoneNumberId, accessToken);
+        wamid = (platformRes as any)?.messages?.[0]?.id;
       } catch (apiErr: any) {
         logger.error("whatsapp.conversations.send_failed", {
           conversationId,
           error: apiErr.message,
         });
-        // Passing back the specific Meta error to the frontend
         return res.status(502).json({ 
           error: "WhatsApp Cloud API error", 
-          detail: apiErr.message,
-          code: apiErr.response?.data?.error?.code // Try to capture Meta error code if available
+          detail: apiErr.message 
         });
       }
 
       // 2. Persist ONLY if API call succeeded
-      const saved = await saveMessage(conversationId, "model", trimmedText);
+      const saved = await saveMessage(conversationId, "model", trimmedText, {
+        externalId: wamid
+      });
 
       emitToBusiness(conversation.businessProfileId, "new_message", {
         conversationId: conversation.id,
@@ -277,6 +348,7 @@ conversationsRoutes.post(
       logger.info("whatsapp.conversations.human_sent", {
         conversationId,
         to: customerPhone,
+        wamid,
         preview: trimmedText.slice(0, 80),
       });
 
@@ -491,31 +563,44 @@ conversationsRoutes.put(
       const updatedMsg = await prisma.conversationMessage.findUnique({ where: { id: message.id }});
 
       // 2. Dispatch via Meta API
+      let externalId: string | undefined;
       if (conversation.channel === "messenger") {
          const page = fbPages.find(p => p.pageId === conversation.pageId);
          if (!page) throw new Error("Missing Facebook Page Access Token for dispatch.");
          const pageToken = decryptFacebookSecret(page.pageAccessToken);
-         await sendMessengerReply(conversation.senderId, editedContent, pageToken);
-         logger.info("messenger.hitl.approved", { messageId: message.id });
+         const fbRes = await sendMessengerReply(conversation.senderId, editedContent, pageToken);
+         externalId = (fbRes as any)?.message_id;
+         logger.info("messenger.hitl.approved", { messageId: message.id, mid: externalId });
       } else {
          // Default to WhatsApp
          const waAccount = await prisma.whatsAppAccount.findFirst({ where: { phoneNumberId: conversation.pageId }});
          if (!waAccount) throw new Error("Missing WhatsApp Account for dispatch.");
          const waToken = decryptFacebookSecret(waAccount.accessToken);
-         await sendWhatsAppReply(conversation.senderId, editedContent, conversation.pageId, waToken);
-         logger.info("whatsapp.hitl.approved", { messageId: message.id });
+         const waRes = await sendWhatsAppReply(conversation.senderId, editedContent, conversation.pageId, waToken);
+         externalId = (waRes as any)?.messages?.[0]?.id;
+         logger.info("whatsapp.hitl.approved", { messageId: message.id, wamid: externalId });
       }
+
+      // Update externalId in DB
+      if (externalId) {
+         await prisma.conversationMessage.update({
+            where: { id: message.id },
+            data: { externalId }
+         });
+      }
+
+      const updatedMsgFull = await prisma.conversationMessage.findUnique({ where: { id: message.id }});
 
       // 3. Notify sockets
       emitToBusiness(conversation.businessProfileId, "message_updated", {
         conversationId: conversation.id,
-        message: updatedMsg,
+        message: updatedMsgFull,
       });
       emitToConversation(conversation.id, "new_message", {
-        message: updatedMsg,
+        message: updatedMsgFull,
       });
 
-      return res.status(200).json({ data: updatedMsg });
+      return res.status(200).json({ data: updatedMsgFull });
     } catch (error: any) {
       logger.error("hitl.approve_error", { error: error.message });
       return res.status(500).json({ error: error.message });

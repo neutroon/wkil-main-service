@@ -64,6 +64,10 @@ model BusinessProfile {
   workingHours        String?
   address             String?
 
+  // Facebook Comment Settings
+  facebookGreetingMode     String @default("AI") // "AI", "TEMPLATE"
+  facebookGreetingTemplate String @default("Thanks {{name}}! I've sent the full details to your inbox.")
+
   scrapedWebsiteUrl String?
   scrapedMarkdown   String?
 
@@ -173,11 +177,20 @@ model Conversation {
   senderId          String   // Facebook PSID or WhatsApp phone (raw)
   businessProfileId Int
   businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
-  /// "whatsapp" | "messenger" | "web" — null means legacy/untagged
+  /// "whatsapp" | "messenger" | "web" | "facebook_comment" — null means legacy/untagged
   channel           String?
   /// Human-readable customer phone for WhatsApp conversations
   customerPhone     String?
   status            String   @default("OPEN") // "OPEN", "RESOLVED", "SNOOZED"
+  
+  // Facebook Comments / Thread Continuity
+  externalId        String?  @unique // Facebook comment_id or similar
+  postId            String?  // The source post ID (for context header)
+  processingStatus  String   @default("COMPLETED") // "PENDING", "COMPLETED", "FAILED"
+  parentConversationId Int?
+  parentConversation   Conversation? @relation("ThreadContinuity", fields: [parentConversationId], references: [id])
+  childConversations   Conversation[] @relation("ThreadContinuity")
+
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -186,6 +199,8 @@ model Conversation {
   @@index([pageId, senderId])
   @@index([pageId, senderId, updatedAt])
   @@index([channel])
+  @@index([externalId])
+  @@index([postId])
 }
 
 model ConversationMessage {

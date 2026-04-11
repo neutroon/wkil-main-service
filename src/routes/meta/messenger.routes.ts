@@ -14,8 +14,104 @@ import {
 import { handleMessengerMessage } from "../../services/meta/messenger.service";
 import { decryptFacebookSecret } from "../../utils/tokenCrypto";
 import { emitToBusiness, emitToConversation } from "../../utils/socket";
+import multer from "multer";
+import { uploadMessengerMedia } from "../../services/meta/metaUpload.service";
+import { sendMessengerMedia } from "../../services/meta/messenger.service";
 
 const messengerRoutes = Router();
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 16 * 1024 * 1024 } }); // 16MB limit
+
+/**
+ * POST /v1/messenger/conversations/:id/media
+ * Uploads media to Meta and sends it to the customer.
+ */
+messengerRoutes.post(
+  "/conversations/:id/media",
+  authenticateToken,
+  upload.single("file"),
+  async (req: Request, res: Response): Promise<any> => {
+    try {
+      const userId = (req as any).user.id as number;
+      const conversationId = parseInt(req.params.id, 10);
+      const file = req.file;
+      const messageText = req.body.messageText || "";
+
+      if (!file) {
+        return res.status(400).json({ error: "No file uploaded" });
+      }
+
+      // 1. Ownership Check
+      const conversation = await prisma.conversation.findUnique({
+        where: { id: conversationId },
+        include: { businessProfile: true }
+      });
+
+      if (!conversation || conversation.businessProfile.userId !== userId) {
+        return res.status(403).json({ error: "Access denied or conversation not found" });
+      }
+
+      // 2. Token Resolution
+      const page = await prisma.facebookPage.findFirst({
+        where: { pageId: conversation.pageId, isActive: true },
+        select: { pageAccessToken: true }
+      });
+
+      if (!page) {
+        return res.status(404).json({ error: "Facebook Page not found" });
+      }
+
+      const pageAccessToken = decryptFacebookSecret(page.pageAccessToken);
+
+      // 3. Upload to Meta
+      const attachmentId = await uploadMessengerMedia(
+        conversation.pageId,
+        pageAccessToken,
+        file.buffer,
+        file.originalname,
+        file.mimetype
+      );
+
+      // 4. Send via Meta
+      const type = file.mimetype.startsWith("image") ? "image" : file.mimetype.startsWith("video") ? "video" : file.mimetype.startsWith("audio") ? "audio" : "file";
+      const platformRes = await sendMessengerMedia(
+        conversation.senderId,
+        attachmentId,
+        type as any,
+        pageAccessToken
+      );
+
+      const mid = (platformRes as any)?.message_id;
+
+      // 5. Save to DB
+      const sentMsg = await saveMessage(conversationId, "agent", messageText, {
+        externalId: mid,
+        type,
+        mediaId: attachmentId,
+        mediaMetadata: { 
+          mimeType: file.mimetype, 
+          filename: file.originalname, 
+          size: file.size 
+        }
+      });
+
+      // 6. Broadcast
+      emitToBusiness(conversation.businessProfileId, "new_message", {
+        conversationId,
+        message: sentMsg
+      });
+      emitToConversation(conversationId, "new_message", {
+        message: sentMsg
+      });
+
+      res.json(sentMsg);
+
+    } catch (err: any) {
+      logger.error("messenger.send_media.failed", { error: err.message });
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
 
 const isDev = process.env.NODE_ENV !== "production";
 
@@ -354,8 +450,33 @@ messengerRoutes.post("/webhook", async (req: Request, res: Response) => {
 
           const messageText = event.message.text;
           const messageMid = event.message.mid;
+          const attachments = event.message.attachments;
 
-          if (!senderId || !messageText) continue;
+          let msgType = "text";
+          let mediaId: string | undefined;
+          let mediaMetadata: any = {};
+
+          if (Array.isArray(attachments) && attachments.length > 0) {
+            const att = attachments[0];
+            msgType = att.type; // "image", "video", "audio", "file"
+            
+            // Meta usually provides a 'payload.url' for temporary access, 
+            // but for production robustness, we should use the media_id if available.
+            // Messenger doesn't always provide media_id in the webhook.
+            // If media_id is missing, we store the temporary URL as a fallback in metadata.
+            mediaId = att.payload?.sticker_id || att.payload?.url?.split("?")[0].split("/").pop(); 
+            // NOTE: Messenger media IDs are tricky in webhooks. 
+            // For now, we'll store the URL as mediaId or payload.url.
+            mediaMetadata = { url: att.payload?.url, title: att.title };
+            
+            if (msgType === "audio" && att.payload?.is_voice) {
+              msgType = "voice";
+            }
+          }
+
+          if (!senderId) continue;
+          if (msgType === "text" && !messageText) continue;
+          if (msgType !== "text" && !attachments) continue;
 
           if (messageMid) {
             try {
@@ -390,7 +511,10 @@ messengerRoutes.post("/webhook", async (req: Request, res: Response) => {
             pageId,
             senderId,
             messageText,
-            externalId: messageMid // Pass through the ID
+            externalId: messageMid,
+            msgType,
+            mediaId: mediaId?.toString(),
+            mediaMetadata
           });
         }
       }

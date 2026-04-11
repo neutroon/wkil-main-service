@@ -4,7 +4,6 @@ import {
   generateAccessToken,
   generateRefreshToken,
 } from "../middlewares/auth.middleware";
-import { SYSTEM_RATE_PER_TOKEN } from "../config/billing";
 import { getBillingMultiplier } from "./settings.service";
 
 export const createUser = async (
@@ -427,7 +426,10 @@ export const getManagerDashboard = async (managerId: number) => {
   const aiUsage = await prisma.aiUsageStat.groupBy({
     by: ["businessProfileId"],
     where: { businessProfileId: { in: bpIds } },
-    _sum: { totalTokens: true }
+    _sum: { 
+      totalTokens: true,
+      systemCost: true
+    }
   });
 
   const billingMultiplier = await getBillingMultiplier();
@@ -437,7 +439,7 @@ export const getManagerDashboard = async (managerId: number) => {
   businessProfiles.forEach(bp => {
     const usage = aiUsage.find(u => u.businessProfileId === bp.id);
     const tokens = usage?._sum.totalTokens || 0;
-    const systemCost = tokens * SYSTEM_RATE_PER_TOKEN;
+    const systemCost = usage?._sum.systemCost || 0;
     const revenue = systemCost * billingMultiplier;
     const profit = revenue - systemCost;
     

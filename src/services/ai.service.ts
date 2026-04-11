@@ -32,7 +32,7 @@ async function discoverStrategicLinks(baseUrl: string, pageContent: string) {
   `;
 
   try {
-    const result = await generateContent(prompt, "application/json");
+    const { text: result } = await generateContent(prompt, "application/json");
 
     if (!result) {
       logger.warn("ai.discoverStrategicLinks.empty_result", { baseUrl });
@@ -93,7 +93,7 @@ async function extractBusinessIdentity(markdown: string) {
   `;
 
   try {
-    const result = await generateContent(prompt, "application/json");
+    const { text: result } = await generateContent(prompt, "application/json");
 
     if (!result) {
       logger.error("ai.extractBusinessIdentity.empty_result");

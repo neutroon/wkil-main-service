@@ -20,73 +20,7 @@ import { getMetaMediaUrl, streamMetaMedia } from "../../services/meta/metaMedia.
 
 const conversationsRoutes = Router();
 
-/**
- * GET /v1/meta/conversations/:id/media/:mid
- * Proxy route for streaming Meta media (WhatsApp/Messenger) to the UI.
- * Supports Token-in-Query for browser native tags (<img>/<audio>).
- */
-conversationsRoutes.get(
-  "/:id/media/:mid",
-  async (req: Request, res: Response) => {
-    try {
-      const conversationId = parseInt(req.params.id, 10);
-      const mediaId = req.params.mid;
-
-      // 1. Unified Authentication (Header, Cookie, or Query)
-      let token = req.headers.authorization?.startsWith("Bearer ") 
-        ? req.headers.authorization.split(" ")[1] 
-        : (req.cookies?.accessToken || (req.query.token as string));
-
-      if (!token) return res.status(401).json({ error: "Access token required" });
-
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || "supersecret") as any;
-      const userId = decoded.id;
-
-      // 2. Ownership Verification
-      const phoneNumberIds = await getUserPhoneNumberIds(userId);
-      const conversation = await prisma.conversation.findFirst({
-        where: { id: conversationId, pageId: { in: phoneNumberIds } }
-      });
-      if (!conversation) return res.status(404).json({ error: "Conversation not found" });
-
-      // 3. Platform Credential Discovery
-      let accessToken = "";
-      if (conversation.channel === "whatsapp") {
-        const account = await prisma.whatsAppAccount.findFirst({
-          where: { phoneNumberId: conversation.pageId, isActive: true },
-          select: { accessToken: true }
-        });
-        if (account) accessToken = decryptFacebookSecret(account.accessToken);
-      } else {
-        const page = await prisma.facebookPage.findFirst({
-          where: { pageId: conversation.pageId, isActive: true },
-          select: { pageAccessToken: true }
-        });
-        if (page) accessToken = decryptFacebookSecret(page.pageAccessToken);
-      }
-
-      if (!accessToken) return res.status(401).json({ error: "Meta credentials missing" });
-
-      // 4. Resolve & Stream
-      const url = await getMetaMediaUrl(mediaId, accessToken);
-      const response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
-      if (!response.ok) throw new Error(`Meta binary fetch failed: ${response.status}`);
-
-      const contentType = response.headers.get("content-type");
-      if (contentType) res.setHeader("Content-Type", contentType);
-      
-      // Cache for performance
-      res.setHeader("Cache-Control", "public, max-age=3600");
-
-      const arrayBuffer = await response.arrayBuffer();
-      res.send(Buffer.from(arrayBuffer));
-
-    } catch (e: any) {
-      logger.error("meta.media_proxy_failed", { error: e.message });
-      res.status(500).json({ error: "Failed to load media" });
-    }
-  }
-);
+// ─────────────────────────────────────────────────────────────────────────────
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

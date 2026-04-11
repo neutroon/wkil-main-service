@@ -84,12 +84,26 @@ export async function handleFacebookComment(job: FacebookCommentJob) {
   }
 
   try {
-    // 2. Fetch Sender Name if missing
+    // 2. Fetch Identity info if missing
     let senderName = job.senderName;
+    let senderAvatar: string | undefined;
+
     if (!senderName) {
        const profile = await getFacebookUserProfile(senderId, pageId);
-       senderName = profile?.name || "there";
+       if (profile) {
+         senderName = profile.name;
+         senderAvatar = profile.picture?.data?.url;
+       }
     }
+
+    // Update conversation with identified info
+    await prisma.conversation.update({
+      where: { id: conversation.id },
+      data: {
+        customerName: senderName || "Facebook User",
+        customerAvatar: senderAvatar
+      }
+    });
 
     // 3. Parallel AI Response Generation
     const [privateReply, publicGreeting] = await Promise.all([

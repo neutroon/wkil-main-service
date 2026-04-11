@@ -62,7 +62,8 @@ mediaRoutes.get(
       if (!accessToken) return res.status(401).json({ error: "Meta credentials missing" });
 
       // 4. Resolve & Stream
-      const url = await getMetaMediaUrl(mediaId, accessToken);
+      const url = await getMetaMediaUrl(mediaId, accessToken, conversation.channel as any);
+
       const response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
       if (!response.ok) throw new Error(`Meta binary fetch failed: ${response.status}`);
 

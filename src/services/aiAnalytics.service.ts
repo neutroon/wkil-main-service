@@ -1,5 +1,4 @@
 import { getBillingMultiplier } from "./settings.service";
-import { SYSTEM_RATE_PER_TOKEN } from "../config/billing";
 import prisma from "../config/prisma";
 
 export interface AiPerformanceStats {
@@ -16,6 +15,8 @@ export interface AiPerformanceStats {
   revenue: number;
   profit: number;
   billingMultiplier: number;
+  groundingCalls: number;
+  embeddingTokens: number;
 }
 
 /**
@@ -143,10 +144,13 @@ export async function getAiPerformanceStats(
     .map(([date, count]) => ({ date, count }))
     .sort((a, b) => a.date.localeCompare(b.date));
 
-  // 6. Extract token consumption
+  // 6. Extract token consumption and system cost
   const usageStats = await prisma.aiUsageStat.aggregate({
     _sum: {
       totalTokens: true,
+      systemCost: true,
+      groundingCalls: true,
+      embeddingTokens: true,
     },
     where: {
       businessProfile: { userId },
@@ -156,12 +160,14 @@ export async function getAiPerformanceStats(
   });
 
   const totalTokensConsumed = usageStats._sum.totalTokens || 0;
+  const actualSystemCost = usageStats._sum.systemCost || 0;
+  const totalGroundingCalls = usageStats._sum.groundingCalls || 0;
+  const totalEmbeddingTokens = usageStats._sum.embeddingTokens || 0;
 
-  // 7. Calculate cost metrics
+  // 7. Calculate cost metrics using the stored production-grade system cost
   const multiplier = await getBillingMultiplier();
-  const systemCost = totalTokensConsumed * SYSTEM_RATE_PER_TOKEN;
-  const revenue = systemCost * multiplier;
-  const profit = revenue - systemCost;
+  const revenue = actualSystemCost * multiplier;
+  const profit = revenue - actualSystemCost;
 
   // For the legacy 'estimatedCost' field:
   // Show billed cost (revenue) to users/managers, and reveal profit to admins
@@ -177,10 +183,12 @@ export async function getAiPerformanceStats(
     dailyVolume,
     totalTokensConsumed,
     estimatedCost,
-    systemCost,
+    systemCost: actualSystemCost,
     revenue,
     profit,
     billingMultiplier: multiplier,
+    groundingCalls: totalGroundingCalls,
+    embeddingTokens: totalEmbeddingTokens,
   };
 }
 

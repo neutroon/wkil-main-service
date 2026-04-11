@@ -215,10 +215,32 @@ export async function runAIEngineLoop(params: {
             }
           });
           logger.info("ai.multimodal.media_attached", { type: params.mediaInfo.type, mimeType });
+        } else {
+           // PRODUCTION FAIL-SAFE: 
+           // If we can't fetch the media, we don't let the AI guess.
+           // We trigger a silent handoff to the sales team.
+           logger.error("ai.multimodal.fetch_failed", { 
+              status: response.status, 
+              type: params.mediaInfo.type,
+              mediaId: params.mediaInfo.id
+           });
+           
+           return {
+              action: "HANDOFF_TO_HUMAN",
+              handoffCategory: "SYSTEM_ERROR",
+              reasoning: `Could not fetch ${params.mediaInfo.type} from Meta (HTTP ${response.status}). Requiring human intervention.`,
+              content: "[MEDIA_PROCESSING_ERROR]: The AI could not retrieve this file. Please handle this message manually."
+           };
         }
       }
     } catch (e) {
-      logger.warn("ai.multimodal.attach_failed", { error: String(e) });
+      logger.error("ai.multimodal.attach_unhandled_error", { error: String(e) });
+      return {
+         action: "HANDOFF_TO_HUMAN",
+         handoffCategory: "SYSTEM_ERROR",
+         reasoning: `Unhandled error during media attachment: ${String(e)}`,
+         content: "[SYSTEM_CRITICAL_FAILURE]: Human intervention required."
+      };
     }
   }
 

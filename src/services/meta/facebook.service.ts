@@ -52,6 +52,12 @@ export interface FacebookCommentParams {
   accessToken: string;
 }
 
+export interface FacebookPrivateReplyParams {
+  commentId: string;
+  message: string;
+  accessToken: string;
+}
+
 export interface FacebookTokenData {
   access_token: string;
   token_type?: string;
@@ -336,6 +342,45 @@ export const replyToComment = async (params: FacebookCommentParams) => {
   }
 };
 
+/**
+ * Sends a private reply to a Facebook comment.
+ * Note: Each comment can only be replied to privately ONCE.
+ */
+export const sendPrivateReply = async (params: FacebookPrivateReplyParams) => {
+  try {
+    const url = `${FB_API}/${params.commentId}/private_replies`;
+    const accessToken = params.accessToken || (await getPageAccessToken(params.commentId.split("_")[0]));
+    
+    const postData = {
+      message: params.message,
+      access_token: accessToken,
+    };
+
+    const { data } = await axios.post(url, postData);
+    return data;
+  } catch (error: unknown) {
+    const mapped = mapFacebookGraphError(error);
+    logger.error("facebook.comment.private_reply_failed", mapped);
+    throw new Error(mapped.message);
+  }
+};
+
+/**
+ * Fetches user profile (name) for a given PSID/UID.
+ */
+export const getFacebookUserProfile = async (psid: string, pageId: string, accessToken?: string) => {
+  try {
+    const token = accessToken || (await getPageAccessToken(pageId));
+    const url = `${FB_API}/${psid}?fields=name,first_name,last_name&access_token=${token}`;
+    const { data } = await axios.get(url);
+    return data;
+  } catch (error: unknown) {
+    const mapped = mapFacebookGraphError(error);
+    logger.error("facebook.user_profile.fetch_failed", mapped);
+    return null; // Return null instead of throwing to allow "there" fallback
+  }
+};
+
 // New functions for token management and analytics
 
 export const saveFacebookToken = async (
@@ -483,7 +528,7 @@ export const saveFacebookPages = async (
 };
 async function subscribePageToWebhook(pageAccessToken: string, pageId: string) {
   const response = await fetch(
-    `https://graph.facebook.com/v25.0/${pageId}/subscribed_apps?access_token=${pageAccessToken}&subscribed_fields=messages,messaging_postbacks`,
+    `https://graph.facebook.com/v25.0/${pageId}/subscribed_apps?access_token=${pageAccessToken}&subscribed_fields=messages,messaging_postbacks,feed`,
     { method: "POST" },
   );
 

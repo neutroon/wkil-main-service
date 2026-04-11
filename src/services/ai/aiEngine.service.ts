@@ -205,7 +205,7 @@ export async function runAIEngineLoop(params: {
         
         if (!url && params.mediaInfo.id) {
           const { getMetaMediaUrl } = await import("../meta/metaMedia.service");
-          url = await getMetaMediaUrl(params.mediaInfo.id, accessToken);
+          url = await getMetaMediaUrl(params.mediaInfo.id, accessToken, params.channel as any);
         }
 
         if (!url) throw new Error("Could not resolve media URL");

@@ -62,7 +62,20 @@ mediaRoutes.get(
       if (!accessToken) return res.status(401).json({ error: "Meta credentials missing" });
 
       // 4. Resolve & Stream
-      const url = await getMetaMediaUrl(mediaId, accessToken, conversation.channel as any);
+      let resolveId = mediaId;
+
+      if (conversation.channel === "messenger") {
+        // For Messenger, we need the "mid" (message ID) to refresh the URL.
+        // The mediaId in the URL is usually just the filename.
+        const msg = await prisma.conversationMessage.findFirst({
+           where: { conversationId, mediaId }
+        });
+        if (msg?.externalId) {
+          resolveId = msg.externalId;
+        }
+      }
+
+      const url = await getMetaMediaUrl(resolveId, accessToken, conversation.channel as any);
 
       const response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
       if (!response.ok) throw new Error(`Meta binary fetch failed: ${response.status}`);

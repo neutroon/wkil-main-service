@@ -256,6 +256,24 @@ model ProcessedWhatsAppMessage {
   createdAt DateTime @default(now())
 }
 
+/// Durable, database-backed queue for Meta messages
+model MetaJob {
+  id              String   @id @default(uuid())
+  platform        String   // "messenger" | "whatsapp"
+  identifier      String   // pageId or phoneNumberId
+  senderId        String   // customer id
+  payload         Json     // The processed job data
+  attempts        Int      @default(0)
+  maxAttempts     Int      @default(3)
+  status          String   @default("pending") // "pending", "processing", "completed", "failed", "retrying"
+  lastError       String?
+  nextAttemptAt   DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([status, nextAttemptAt])
+}
+
 /// WhatsApp Business phone number linked to a user
 model WhatsAppAccount {
   id                  Int             @id @default(autoincrement())

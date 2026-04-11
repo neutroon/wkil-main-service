@@ -342,7 +342,7 @@ conversationsRoutes.post(
       }
 
       // 2. Persist ONLY if API call succeeded
-      const saved = await saveMessage(conversationId, "model", trimmedText, {
+      const saved = await saveMessage(conversationId, "agent", trimmedText, {
         externalId: wamid
       });
 
@@ -462,7 +462,7 @@ conversationsRoutes.post(
 
       // 2. Persist to DB
       // We save the textPreview (what the user saw in the UI) as the content
-      const saved = await saveMessage(conversationId, "model", textPreview || `[Template: ${templateName}]`);
+      const saved = await saveMessage(conversationId, "agent", textPreview || `[Template: ${templateName}]`);
 
       emitToBusiness(conversation.businessProfileId, "new_message", {
         conversationId: conversation.id,

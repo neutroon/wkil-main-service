@@ -4,9 +4,12 @@ import { logger } from "../utils/logger";
 type WhatsAppJob = {
   phoneNumberId: string;
   from: string;
-  messageText: string;
+  messageText?: string;
   wamid: string;
   customerName?: string;
+  type?: string;
+  mediaId?: string;
+  mediaMetadata?: any;
 };
 
 const queue: WhatsAppJob[] = [];
@@ -29,8 +32,12 @@ async function drainQueue(): Promise<void> {
       await handleWhatsAppMessage(
         job.phoneNumberId,
         job.from,
-        job.messageText,
-        job.wamid
+        job.messageText || "",
+        job.wamid,
+        job.customerName,
+        job.type,
+        job.mediaId,
+        job.mediaMetadata
       );
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);

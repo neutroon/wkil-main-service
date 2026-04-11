@@ -163,7 +163,16 @@ export async function runAIEngineLoop(params: {
   const policy = resolveTruthfulnessPolicy(params.policy);
 
   // Prepare User Part (Text + Optional Media)
-  const userParts: any[] = [{ text: params.customerMessage }];
+  let userText = params.customerMessage;
+  
+  // PRODUCTION GUARD: If the text is empty but media is present, 
+  // explicitly tell Gemini to acknowledge the file. This prevents generic repetitions.
+  if (!userText.trim() && params.mediaInfo) {
+    const mediaType = params.mediaInfo.type === "voice" ? "voice note" : params.mediaInfo.type;
+    userText = `[Customer sent a ${mediaType}. Please analyze it and respond based on your business identity and context.]`;
+  }
+
+  const userParts: any[] = [{ text: userText }];
 
   // If we have media, fetch its data for Gemini Multimodal
   if (params.mediaInfo && (params.mediaInfo.type === "image" || params.mediaInfo.type === "audio" || params.mediaInfo.type === "voice")) {

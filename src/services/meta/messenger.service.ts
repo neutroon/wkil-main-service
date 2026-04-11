@@ -69,7 +69,25 @@ export async function handleMessengerMessage(
   pageId: string,
   senderId: string,
   messageText: string,
+  externalId?: string,
 ) {
+  // Idempotency: prevent processing same Message ID twice (Meta retries)
+  if (externalId) {
+    try {
+      const inserted = await prisma.processedMessengerMessage.createMany({
+        data: [{ messageMid: externalId }],
+        skipDuplicates: true,
+      });
+      if (inserted.count === 0) {
+        logger.debug("messenger.duplicate_mid_skipped", { externalId });
+        return;
+      }
+    } catch (e: unknown) {
+       // creation error — skip and log
+       logger.warn("messenger.idempotency_check_error", { error: String(e) });
+    }
+  }
+
   const page = await prisma.facebookPage.findFirst({
     where: { pageId, isActive: true },
     include: {

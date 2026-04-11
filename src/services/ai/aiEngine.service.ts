@@ -1,6 +1,6 @@
 import { Tool } from "@google/genai";
 import { logger } from "../../utils/logger";
-import { genAI, MESSENGER_SAFETY_SETTINGS, aiRoutingSchema, generateContent } from "../../config/gemini";
+import generateContent, { genAI, MESSENGER_SAFETY_SETTINGS, aiRoutingSchema, executeWithFallback } from "../../config/gemini";
 import { pushLeadToCrm } from "../crm/crm.service";
 import { executeExternalQuery } from "../external/externalData.service";
 import { recordAiUsage } from "../billing.service";
@@ -147,7 +147,7 @@ export interface AiRoutingDecision {
   content?: string | null;
 }
 
-import { recordAiUsage } from "../billing.service";
+
 
 export async function runAIEngineLoop(params: {
   systemInstruction: string;
@@ -188,23 +188,25 @@ export async function runAIEngineLoop(params: {
     turnCount++;
     let responseResult;
     try {
-      // Use the wrapped generateContent to get usage and fallback support
-      const contentsStr = JSON.stringify(contents);
-      
-      const response = await genAI.models.generateContent({
-        model: sessionStats.modelName,
-        contents,
-        config: {
-          systemInstruction: params.systemInstruction,
-          temperature: 0.35,
-          maxOutputTokens: 512,
-          safetySettings: MESSENGER_SAFETY_SETTINGS,
-          tools: params.tools,
-          responseMimeType: "application/json",
-          responseSchema: aiRoutingSchema,
-        },
-      });
-      responseResult = response;
+      // Use executeWithFallback to benefit from intelligent failover (2.5 -> 2.0 -> Stable)
+      const { result, model } = await executeWithFallback(async (currentModel) => {
+        return await genAI.models.generateContent({
+          model: currentModel,
+          contents,
+          config: {
+            systemInstruction: params.systemInstruction,
+            temperature: 0.35,
+            maxOutputTokens: 512,
+            safetySettings: MESSENGER_SAFETY_SETTINGS,
+            tools: params.tools,
+            responseMimeType: "application/json",
+            responseSchema: aiRoutingSchema,
+          },
+        });
+      }, "AIEngineChatLoop");
+
+      responseResult = result;
+      sessionStats.modelName = model; // Track which model actually succeeded for billing
     } catch (error: any) {
       logger.error("AI Engine Loop: Unexpected Error", { error: error.message });
       return {

@@ -8,7 +8,7 @@ export async function getOrCreateConversation(
   pageId: string,
   senderId: string,
   businessProfileId: number,
-  opts?: { channel?: string; customerPhone?: string },
+  opts?: { channel?: string; customerPhone?: string; customerName?: string; customerAvatar?: string },
 ) {
   // 1. Try to find an existing conversation for this specific channel
   const existing = await prisma.conversation.findFirst({
@@ -29,6 +29,12 @@ export async function getOrCreateConversation(
         updatedAt: new Date(),
         ...(opts?.customerPhone && !existing.customerPhone
           ? { customerPhone: opts.customerPhone }
+          : {}),
+        ...(opts?.customerName && !existing.customerName
+          ? { customerName: opts.customerName }
+          : {}),
+        ...(opts?.customerAvatar && !existing.customerAvatar
+          ? { customerAvatar: opts.customerAvatar }
           : {}),
       },
     });
@@ -59,6 +65,8 @@ export async function getOrCreateConversation(
       businessProfileId,
       channel: opts?.channel ?? null,
       customerPhone: opts?.customerPhone ?? null,
+      customerName: opts?.customerName ?? null,
+      customerAvatar: opts?.customerAvatar ?? null,
       parentConversationId,
     },
   });
@@ -159,6 +167,8 @@ export async function listWhatsAppConversations(
     phoneNumberId: c.pageId,
     displayPhoneNumber: phoneMap[c.pageId] ?? c.pageId,
     customerPhone: c.customerPhone ?? c.senderId,
+    customerName: c.customerName,
+    customerAvatar: c.customerAvatar,
     channel: c.channel,
     lastMessage: c.messages[0]
       ? {
@@ -315,6 +325,8 @@ export async function listMessengerConversations(
     pageId: c.pageId,
     pageName: pageMap[c.pageId] ?? c.pageId,
     senderId: c.senderId,
+    customerName: c.customerName,
+    customerAvatar: c.customerAvatar,
     channel: c.channel,
     externalId: c.externalId,
     postId: c.postId,

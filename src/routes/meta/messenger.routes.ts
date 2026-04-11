@@ -485,19 +485,16 @@ messengerRoutes.post("/webhook", async (req: Request, res: Response) => {
                 skipDuplicates: true,
               });
               if (inserted.count === 0) {
-                logger.debug("messenger.webhook.duplicate_mid_skipped", {
-                  messageMid,
-                });
+                logger.debug("messenger.webhook.duplicate_mid_skipped", { messageMid });
                 continue;
               }
             } catch (e: unknown) {
-              if (isProcessedMessengerTableMissing(e)) {
-                logger.warn(
-                  "messenger.webhook.idempotency_table_missing_run_prisma_migrate",
-                );
-              } else {
-                throw e;
-              }
+              // PRODUCTION FAIL-SAFE: If the idempotency table is missing or errors, 
+              // we proceed to process the message anyway to prioritize customer experience over strict deduplication.
+              logger.warn("messenger.webhook.idempotency_check_error", { 
+                error: (e as any).message, 
+                messageMid 
+              });
             }
           }
 

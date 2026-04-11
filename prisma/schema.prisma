@@ -181,6 +181,8 @@ model Conversation {
   channel           String?
   /// Human-readable customer phone for WhatsApp conversations
   customerPhone     String?
+  customerName      String?
+  customerAvatar    String?
   status            String   @default("OPEN") // "OPEN", "RESOLVED", "SNOOZED"
   
   // Facebook Comments / Thread Continuity

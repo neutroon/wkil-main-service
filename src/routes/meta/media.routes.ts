@@ -76,10 +76,29 @@ mediaRoutes.get(
       res.setHeader("Accept-Ranges", "bytes");
       res.setHeader("Cache-Control", "public, max-age=3600");
 
-      const arrayBuffer = await response.arrayBuffer();
-      res.send(Buffer.from(arrayBuffer));
+      if (response.body) {
+        // Stream the response directly to the client
+        const readableStream = response.body as any; // node-fetch body is a Readable stream in Node
+        if (typeof readableStream.pipe === 'function') {
+          readableStream.pipe(res);
+        } else {
+          // Fallback for different fetch implementations
+          const reader = response.body.getReader();
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            res.write(value);
+          }
+          res.end();
+        }
+      } else {
+        res.status(500).json({ error: "Empty response from Meta" });
+      }
 
     } catch (e: any) {
+      if (e.name === "TokenExpiredError" || e.name === "JsonWebTokenError") {
+        return res.status(401).json({ error: "Session expired, please refresh" });
+      }
       logger.error("meta.media_proxy_failed", { error: e.message });
       res.status(500).json({ error: "Internal media proxy error" });
     }

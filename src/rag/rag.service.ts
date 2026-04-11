@@ -132,6 +132,12 @@ export async function retrieveRelevantChunks(
     options?.fetchLimit ?? Math.min(50, Math.max(topK * 5, 15));
 
   // 1. Embed the user's query
+  // Guard against empty query (e.g. voice messages without transcription)
+  if (!query || query.trim().length === 0) {
+    logger.debug("rag.retrieve.empty_query", { businessProfileId });
+    return [];
+  }
+
   const { vector: queryEmbedding, totalTokens } = await embedQuery(query);
   const vector = `[${queryEmbedding.join(",")}]`;
 

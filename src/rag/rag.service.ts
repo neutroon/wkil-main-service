@@ -1,4 +1,5 @@
 import { embedQuery, embedTexts } from "../config/gemini";
+import { recordAiUsage } from "../services/billing.service";
 import prisma from "../config/prisma";
 import { logger } from "../utils/logger";
 import { chunkBusinessProfile } from "./chunker";
@@ -45,7 +46,14 @@ export async function ingestBusinessProfile(businessProfileId: number) {
   });
 
   const chunks = chunkBusinessProfile(profile);
-  const embeddings = await embedTexts(chunks.map((c) => c.content));
+  const { embeddings, totalTokens } = await embedTexts(chunks.map((c) => c.content));
+
+  // Log embedding usage
+  recordAiUsage({
+    businessProfileId,
+    embeddingTokens: totalTokens,
+    modelName: "gemini-embedding-001"
+  }).catch(console.error);
 
   await prisma.businessProfileChunk.deleteMany({
     where: { businessProfileId },
@@ -88,7 +96,14 @@ export async function partialReIngestBusinessProfile(
     affectedChunkTypes.includes(c.chunkType),
   );
 
-  const embeddings = await embedTexts(chunksToUpdate.map((c) => c.content));
+  const { embeddings, totalTokens } = await embedTexts(chunksToUpdate.map((c) => c.content));
+
+  // Log embedding usage
+  recordAiUsage({
+    businessProfileId,
+    embeddingTokens: totalTokens,
+    modelName: "gemini-embedding-001"
+  }).catch(console.error);
 
   await prisma.businessProfileChunk.deleteMany({
     where: { businessProfileId, chunkType: { in: affectedChunkTypes } },
@@ -117,8 +132,15 @@ export async function retrieveRelevantChunks(
     options?.fetchLimit ?? Math.min(50, Math.max(topK * 5, 15));
 
   // 1. Embed the user's query
-  const queryEmbedding = await embedQuery(query);
+  const { vector: queryEmbedding, totalTokens } = await embedQuery(query);
   const vector = `[${queryEmbedding.join(",")}]`;
+
+  // Log retrieval embedding usage
+  recordAiUsage({
+    businessProfileId,
+    embeddingTokens: totalTokens,
+    modelName: "gemini-embedding-001"
+  }).catch(console.error);
 
   // 2. Cosine similarity search via pgvector (fetch extra rows, then threshold)
   const chunks = await prisma.$queryRaw<

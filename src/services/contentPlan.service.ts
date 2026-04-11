@@ -71,16 +71,15 @@ Instructions:
 
   try {
     const { result, model } = await generateContentStream(researchPrompt, "text/plain", true);
-    for await (const chunk of result.stream) {
+    for await (const chunk of result) {
       const chunkText = chunk.text || "";
       researchSummary += chunkText;
       yield { type: "research_chunk", text: chunkText };
     }
     
-    // Capture usage from the aggregate response at the end of the stream
-    const finalResponse = await result.response;
-    const usage = finalResponse.usageMetadata;
-    const grounding = (finalResponse as any).candidates?.[0]?.groundingMetadata?.searchEntryPoint;
+    // In @google/genai, the aggregate response and usage are available on the result object
+    const usage = (result as any).usageMetadata;
+    const grounding = (result as any).candidates?.[0]?.groundingMetadata?.searchEntryPoint;
     
     recordAiUsage({
       businessProfileId: profile.id,

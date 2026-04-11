@@ -158,8 +158,61 @@ export async function runAIEngineLoop(params: {
   customerPhone?: string; // fallback
   channel?: "messenger" | "whatsapp" | "web";
   policy?: Partial<AiTruthfulnessPolicy>;
+  mediaInfo?: { id: string; type: string; url?: string };
 }): Promise<AiRoutingDecision> {
   const policy = resolveTruthfulnessPolicy(params.policy);
+
+  // Prepare User Part (Text + Optional Media)
+  const userParts: any[] = [{ text: params.customerMessage }];
+
+  // If we have media, fetch its data for Gemini Multimodal
+  if (params.mediaInfo && (params.mediaInfo.type === "image" || params.mediaInfo.type === "audio" || params.mediaInfo.type === "voice")) {
+    try {
+      // 1. Resolve Token
+      let accessToken = "";
+      if (params.channel === "whatsapp") {
+          const account = await prisma.whatsAppAccount.findFirst({
+             where: { businessProfileId: params.businessProfileId, isActive: true },
+             select: { accessToken: true }
+          });
+          if (account) {
+            const { decryptFacebookSecret } = await import("../../utils/tokenCrypto");
+            accessToken = decryptFacebookSecret(account.accessToken);
+          }
+      } else if (params.channel === "messenger") {
+          const page = await prisma.facebookPage.findFirst({
+             where: { businessProfileId: params.businessProfileId, isActive: true },
+             select: { pageAccessToken: true }
+          });
+          if (page) {
+            const { decryptFacebookSecret } = await import("../../utils/tokenCrypto");
+            accessToken = decryptFacebookSecret(page.pageAccessToken);
+          }
+      }
+
+      // 2. Resolve URL and Fetch Data
+      if (accessToken && params.mediaInfo.id) {
+        const { getMetaMediaUrl } = await import("../meta/metaMedia.service");
+        const url = await getMetaMediaUrl(params.mediaInfo.id, accessToken);
+        const response = await fetch(url);
+        if (response.ok) {
+          const arrayBuffer = await response.arrayBuffer();
+          const buffer = Buffer.from(arrayBuffer);
+          const mimeType = response.headers.get("content-type") || (params.mediaInfo.type === "image" ? "image/jpeg" : "audio/ogg");
+          userParts.push({
+            inlineData: {
+              data: buffer.toString("base64"),
+              mimeType
+            }
+          });
+          logger.info("ai.multimodal.media_attached", { type: params.mediaInfo.type, mimeType });
+        }
+      }
+    } catch (e) {
+      logger.warn("ai.multimodal.attach_failed", { error: String(e) });
+    }
+  }
+
   const contents = [
     ...params.historyTurns.map((t) => ({
       role: t.role,
@@ -167,7 +220,7 @@ export async function runAIEngineLoop(params: {
     })),
     {
       role: "user" as const,
-      parts: [{ text: params.customerMessage }],
+      parts: userParts,
     },
   ];
 

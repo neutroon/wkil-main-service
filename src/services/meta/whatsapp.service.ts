@@ -47,6 +47,51 @@ export async function sendWhatsAppReply(
   return response.json();
 }
 
+/**
+ * Send a media message via WhatsApp Cloud API (v25.0).
+ */
+export async function sendWhatsAppMedia(
+  to: string,
+  mediaId: string,
+  type: string, // image, audio, video, document
+  phoneNumberId: string,
+  accessToken: string,
+  caption?: string,
+  fileName?: string,
+): Promise<any> {
+  const mediaBody: any = { id: mediaId };
+  if (caption && (type === "image" || type === "video" || type === "document")) {
+    mediaBody.caption = caption;
+  }
+  if (fileName && type === "document") {
+    mediaBody.filename = fileName;
+  }
+
+  const response = await fetch(
+    `https://graph.facebook.com/v25.0/${phoneNumberId}/messages`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to,
+        type: type,
+        [type]: mediaBody,
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    const error = (await response.json()) as unknown;
+    throw new Error(`WhatsApp Cloud API media error: ${JSON.stringify(error)}`);
+  }
+
+  return response.json();
+}
+
 export async function sendWhatsAppAction(
   messageId: string,
   phoneNumberId: string,
@@ -153,6 +198,9 @@ export async function handleWhatsAppMessage(
   messageText: string,
   wamid?: string,
   customerName?: string,
+  type?: string,
+  mediaId?: string,
+  mediaMetadata?: any,
 ): Promise<void> {
   // ... existing code ...
   const account = await prisma.whatsAppAccount.findFirst({
@@ -208,7 +256,12 @@ export async function handleWhatsAppMessage(
       );
     
     const historyRows = await getConversationHistory(conversation.id);
-    const userSaved = await saveMessage(conversation.id, "user", messageText);
+    const userSaved = await saveMessage(conversation.id, "user", messageText, { 
+      externalId: wamid, 
+      type, 
+      mediaId, 
+      mediaMetadata 
+    });
     emitToBusiness(account.businessProfileId, "new_message", {
       conversationId: conversation.id,
       message: userSaved,
@@ -236,6 +289,7 @@ export async function handleWhatsAppMessage(
       historyTurns,
       channel: "whatsapp",
       customerPhone: from,
+      mediaInfo: mediaId ? { id: mediaId, type: type || "image" } : undefined
     });
 
     if (reply.action === "RESOLVE_CONVERSATION") {

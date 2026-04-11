@@ -41,6 +41,40 @@ export async function sendMessengerReply(
   return response.json();
 }
 
+/**
+ * Send a media message via Messenger API (v25.0) using an attachment_id.
+ */
+export async function sendMessengerMedia(
+  recipientId: string,
+  attachmentId: string,
+  type: "image" | "video" | "audio" | "file",
+  pageAccessToken: string,
+) {
+  const response = await fetch(
+    `https://graph.facebook.com/v25.0/me/messages?access_token=${pageAccessToken}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        recipient: { id: recipientId },
+        message: {
+          attachment: {
+            type: type,
+            payload: { attachment_id: attachmentId }
+          }
+        },
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(`Messenger Media Send API error: ${JSON.stringify(error)}`);
+  }
+
+  return response.json();
+}
+
 export async function sendMessengerAction(
   recipientId: string,
   action: "mark_seen" | "typing_on" | "typing_off",
@@ -70,6 +104,9 @@ export async function handleMessengerMessage(
   senderId: string,
   messageText: string,
   externalId?: string,
+  type?: string,
+  mediaId?: string,
+  mediaMetadata?: any,
 ) {
   // Idempotency: prevent processing same Message ID twice (Meta retries)
   if (externalId) {
@@ -152,7 +189,12 @@ export async function handleMessengerMessage(
         },
       );
     const historyRows = await getConversationHistory(conversation.id);
-    const userSaved = await saveMessage(conversation.id, "user", messageText);
+    const userSaved = await saveMessage(conversation.id, "user", messageText, {
+      externalId,
+      type,
+      mediaId,
+      mediaMetadata
+    });
     emitToBusiness(page.businessProfileId, "new_message", {
       conversationId: conversation.id,
       message: userSaved,
@@ -181,6 +223,7 @@ export async function handleMessengerMessage(
       messageText,
       historyTurns,
       channel: "messenger",
+      mediaInfo: mediaId ? { id: mediaId, type: type || "image" } : undefined
     });
 
     if (reply.action === "RESOLVE_CONVERSATION") {

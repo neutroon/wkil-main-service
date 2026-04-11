@@ -14,6 +14,7 @@ import {
   subscribeWebhook,
   saveWhatsAppAccount,
 } from "../../services/meta/whatsappOauth.service";
+import { emitToBusiness } from "../../utils/socket";
 
 const whatsappRoutes = Router();
 
@@ -126,7 +127,7 @@ whatsappRoutes.post("/webhook", async (req: Request, res: Response) => {
             messaging_product?: string;
             metadata?: { phone_number_id?: string };
             messages?: Array<{
-              id?: string;   // wamid
+              id?: string; // wamid
               from?: string;
               type?: string;
               text?: { body?: string };
@@ -145,11 +146,13 @@ whatsappRoutes.post("/webhook", async (req: Request, res: Response) => {
       object: payload.object,
       entries: payload.entry?.length,
       // Log presence of contacts for debugging
-      hasContacts: Boolean(payload.entry?.[0]?.changes?.[0]?.value?.contacts)
+      hasContacts: Boolean(payload.entry?.[0]?.changes?.[0]?.value?.contacts),
     });
 
     if (isDev) {
-      logger.debug("whatsapp.webhook.raw_payload", { body: JSON.stringify(payload, null, 2) });
+      logger.debug("whatsapp.webhook.raw_payload", {
+        body: JSON.stringify(payload, null, 2),
+      });
     }
 
     if (
@@ -169,9 +172,53 @@ whatsappRoutes.post("/webhook", async (req: Request, res: Response) => {
         const phoneNumberId = value?.metadata?.phone_number_id;
         const messages = value?.messages;
         const contacts = value?.contacts;
+        const statuses = (value as any)?.statuses;
 
+        // 1. Handle Status Updates (Read Receipts / Delivery Ticks)
+        if (Array.isArray(statuses)) {
+          for (const status of statuses) {
+            const { id: wamid, status: newStatus } = status;
+
+            try {
+              const msg = await prisma.conversationMessage.findUnique({
+                where: { externalId: wamid },
+                select: {
+                  id: true,
+                  conversation: {
+                    select: { businessProfileId: true, id: true },
+                  },
+                },
+              });
+
+              if (msg) {
+                const updatedMsg = await prisma.conversationMessage.update({
+                  where: { id: msg.id },
+                  data: { status: newStatus.toUpperCase() },
+                });
+
+                emitToBusiness(
+                  msg.conversation.businessProfileId,
+                  "message_status_updated",
+                  {
+                    conversationId: msg.conversation.id,
+                    messageId: msg.id,
+                    status: updatedMsg.status,
+                  },
+                );
+              }
+            } catch (e) {
+              logger.warn("whatsapp.webhook.status_update_failed", {
+                wamid,
+                error: String(e),
+              });
+            }
+          }
+        }
+
+        // 2. Handle Inbound Messages
         // Extract profile name if available
-        const customerName = (Array.isArray(contacts) && contacts[0]?.profile?.name) || undefined;
+        const customerName =
+          (Array.isArray(contacts) && contacts[0]?.profile?.name) || undefined;
 
         if (!phoneNumberId || !Array.isArray(messages)) continue;
 
@@ -188,12 +235,16 @@ whatsappRoutes.post("/webhook", async (req: Request, res: Response) => {
           // Idempotency — deduplicate Meta retries by wamid
           if (wamid) {
             try {
-              const inserted = await prisma.processedWhatsAppMessage.createMany({
-                data: [{ wamid }],
-                skipDuplicates: true,
-              });
+              const inserted = await prisma.processedWhatsAppMessage.createMany(
+                {
+                  data: [{ wamid }],
+                  skipDuplicates: true,
+                },
+              );
               if (inserted.count === 0) {
-                logger.debug("whatsapp.webhook.duplicate_wamid_skipped", { wamid });
+                logger.debug("whatsapp.webhook.duplicate_wamid_skipped", {
+                  wamid,
+                });
                 continue;
               }
             } catch (e: unknown) {
@@ -210,10 +261,16 @@ whatsappRoutes.post("/webhook", async (req: Request, res: Response) => {
           logger.info("whatsapp.webhook.message_enqueued", {
             phoneNumberId,
             from,
-            customerName
+            customerName,
           });
 
-          enqueueWhatsAppJob({ phoneNumberId, from, messageText, wamid, customerName });
+          enqueueWhatsAppJob({
+            phoneNumberId,
+            from,
+            messageText,
+            wamid,
+            customerName,
+          });
         }
       }
     }
@@ -241,14 +298,20 @@ whatsappRoutes.get(
       const userId = (req as any).user.id as number;
       const { code } = req.query;
       // redirectUri is optional: omitted for FB.login SDK codes, present for manual dialog flow.
-      const redirectUri = typeof req.query.redirectUri === "string" ? req.query.redirectUri : undefined;
+      const redirectUri =
+        typeof req.query.redirectUri === "string"
+          ? req.query.redirectUri
+          : undefined;
       const now = Date.now();
       pruneOauthPreviewTokenCache(now);
       if (!code) {
         return res.status(400).json({ error: "code is required" });
       }
 
-      const accessToken = await exchangeCodeForToken(code as string, redirectUri);
+      const accessToken = await exchangeCodeForToken(
+        code as string,
+        redirectUri,
+      );
       const accounts = await discoverWabaAccounts(accessToken);
       const exchangeRef = randomUUID();
       oauthPreviewTokenCache.set(exchangeRef, {
@@ -259,7 +322,9 @@ whatsappRoutes.get(
 
       res.json({ data: accounts, exchangeRef });
     } catch (error: any) {
-      logger.error("whatsapp.oauth.phone_numbers_failed", { error: error.message });
+      logger.error("whatsapp.oauth.phone_numbers_failed", {
+        error: error.message,
+      });
       res.status(500).json({ error: error.message });
     }
   },
@@ -280,13 +345,20 @@ whatsappRoutes.post(
   async (req: Request, res: Response) => {
     try {
       const userId = (req as any).user.id;
-      const { code, phoneNumberId, businessProfileId, redirectUri, exchangeRef } = req.body;
+      const {
+        code,
+        phoneNumberId,
+        businessProfileId,
+        redirectUri,
+        exchangeRef,
+      } = req.body;
       const now = Date.now();
       pruneOauthPreviewTokenCache(now);
 
       if (!phoneNumberId || (!code && !exchangeRef)) {
         return res.status(400).json({
-          error: "phoneNumberId is required and either code or exchangeRef must be provided",
+          error:
+            "phoneNumberId is required and either code or exchangeRef must be provided",
         });
       }
 
@@ -304,7 +376,9 @@ whatsappRoutes.post(
             oauthPreviewTokenCache.delete(exchangeRef);
             logger.warn("whatsapp.oauth.exchange_ref_expired", { userId });
           } else {
-            logger.warn("whatsapp.oauth.exchange_ref_user_mismatch", { userId });
+            logger.warn("whatsapp.oauth.exchange_ref_user_mismatch", {
+              userId,
+            });
           }
         } else {
           logger.warn("whatsapp.oauth.exchange_ref_not_found", { userId });
@@ -313,8 +387,13 @@ whatsappRoutes.post(
         logger.warn("whatsapp.oauth.exchange_ref_invalid", { userId });
       }
       if (!accessToken) {
-        logger.info("whatsapp.oauth.exchange_ref_fallback_code_exchange", { userId });
-        accessToken = await exchangeCodeForToken(code as string, redirectUri as string);
+        logger.info("whatsapp.oauth.exchange_ref_fallback_code_exchange", {
+          userId,
+        });
+        accessToken = await exchangeCodeForToken(
+          code as string,
+          redirectUri as string,
+        );
       }
 
       // Step 2: Discover phone numbers to find the matching WABA and display name
@@ -347,7 +426,9 @@ whatsappRoutes.post(
         phoneNumberId,
         displayPhoneNumber,
         accessToken,
-        businessProfileId: businessProfileId ? parseInt(businessProfileId) : undefined,
+        businessProfileId: businessProfileId
+          ? parseInt(businessProfileId)
+          : undefined,
       });
 
       res.status(201).json({ success: true, account });
@@ -400,7 +481,9 @@ whatsappRoutes.post(
         },
       });
 
-      res.status(201).json({ success: true, account: sanitiseAccount(account) });
+      res
+        .status(201)
+        .json({ success: true, account: sanitiseAccount(account) });
     } catch (error: any) {
       logger.error("whatsapp.accounts.create_failed", { error: error.message });
       res.status(500).json({ error: error.message });
@@ -560,7 +643,9 @@ whatsappRoutes.delete(
 function sanitiseAccount(
   account: Record<string, unknown>,
 ): Record<string, unknown> {
-  const { accessToken: _omit, ...safe } = account as { accessToken?: string } & Record<string, unknown>;
+  const { accessToken: _omit, ...safe } = account as {
+    accessToken?: string;
+  } & Record<string, unknown>;
   return safe;
 }
 

@@ -7,10 +7,7 @@ import {
   saveMessage,
 } from "./conversation.service";
 import { computeBusinessChatReply } from "../chat/businessChatReply.service";
-import {
-  historyToLlmTurns,
-  toPromptMessages,
-} from "../chat/conversationTurns";
+import { historyToLlmTurns, toPromptMessages } from "../chat/conversationTurns";
 import { emitToBusiness, emitToConversation } from "../../utils/socket";
 
 const FALLBACK_REPLY =
@@ -60,8 +57,8 @@ export async function sendMessengerMedia(
         message: {
           attachment: {
             type: type,
-            payload: { attachment_id: attachmentId }
-          }
+            payload: { attachment_id: attachmentId },
+          },
         },
       }),
     },
@@ -120,8 +117,7 @@ export async function handleMessengerMessage(
         return;
       }
     } catch (e: unknown) {
-       // creation error — skip and log
-       logger.warn("messenger.idempotency_check_error", { error: String(e) });
+      logger.warn("messenger.idempotency_check_error", { error: String(e) });
     }
   }
 
@@ -150,51 +146,66 @@ export async function handleMessengerMessage(
   try {
     pageAccessToken = decryptFacebookSecret(page.pageAccessToken);
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    logger.error("messenger.decrypt_token_failed", { pageId, error: msg });
+    logger.error("messenger.decrypt_token_failed", {
+      pageId,
+      error: String(e),
+    });
     return;
   }
 
+  // Visual cues
   void sendMessengerAction(senderId, "mark_seen", pageAccessToken);
   void sendMessengerAction(senderId, "typing_on", pageAccessToken);
 
   const businessProfile = page.businessProfile;
+  let conversation: any;
 
-    let conversation: any;
-    try {
-      // Fetch Meta Profile if identity info is missing
-      let identity: { name?: string; avatar?: string } = {};
-      const existing = await prisma.conversation.findFirst({
-        where: { pageId, senderId, channel: "messenger" },
-        select: { customerName: true, customerAvatar: true }
-      });
+  try {
+    // 1. Get or Create Conversation with Identity Fetch
+    let identity: { name?: string; avatar?: string } = {};
+    const existing = await prisma.conversation.findFirst({
+      where: { pageId, senderId, channel: "messenger" },
+      select: { customerName: true, customerAvatar: true },
+    });
 
-      if (!existing || !existing.customerName) {
+    if (!existing || !existing.customerName) {
+      try {
         const { getFacebookUserProfile } = await import("./facebook.service");
-        const profile = await getFacebookUserProfile(senderId, pageId, pageAccessToken);
+        const profile = await getFacebookUserProfile(
+          senderId,
+          pageId,
+          pageAccessToken,
+        );
         if (profile) {
           identity.name = profile.name;
           identity.avatar = profile.picture?.data?.url;
         }
+      } catch (e) {
+        logger.warn("messenger.identity_fetch_failed", { error: String(e) });
       }
+    }
 
-      conversation = await getOrCreateConversation(
-        pageId,
-        senderId,
-        page.businessProfileId,
-        { 
-          channel: "messenger",
-          customerName: identity.name,
-          customerAvatar: identity.avatar
-        },
-      );
+    conversation = await getOrCreateConversation(
+      pageId,
+      senderId,
+      page.businessProfileId,
+      {
+        channel: "messenger",
+        customerName: identity.name,
+        customerAvatar: identity.avatar,
+      },
+    );
+
+    // 2. Save User Message turn
     const historyRows = await getConversationHistory(conversation.id);
     const userSaved = await saveMessage(conversation.id, "user", messageText, {
       externalId,
       type,
       mediaId,
-      mediaMetadata
+      mediaMetadata,
     });
+
+    // Notify UI immediately
     emitToBusiness(page.businessProfileId, "new_message", {
       conversationId: conversation.id,
       message: userSaved,
@@ -203,47 +214,56 @@ export async function handleMessengerMessage(
       message: userSaved,
     });
 
+    // 3. AI Mode Check (Manual Mode Exit)
+    if (businessProfile.responseMode === "MANUAL") {
+      logger.info("messenger.manual_mode_skip", {
+        conversationId: conversation.id,
+      });
+      void sendMessengerAction(senderId, "typing_off", pageAccessToken);
+      return;
+    }
+
+    // 4. Compute AI Response
     const historyForPrompt = toPromptMessages(historyRows);
     historyForPrompt.push({ role: "user", content: messageText });
     const historyTurns = historyToLlmTurns(historyForPrompt);
-    
-    // 3. Early Exit if Manual Mode
-    // In MANUAL mode, we don't calculate any drafted replies automatically.
-    // The agent will manually request a suggestion via the /suggest endpoint.
-    if (businessProfile.responseMode === "MANUAL") {
-      logger.info("messenger.manual_mode_skip", { 
-        conversationId: conversation.id, 
-        businessProfileId: businessProfile.id 
-      });
-      return;
-    }
 
     const reply = await computeBusinessChatReply({
       businessProfile,
       messageText,
       historyTurns,
       channel: "messenger",
-      mediaInfo: mediaId ? { id: mediaId, type: type || "image" } : undefined
+      mediaInfo: mediaId ? { id: mediaId, type: type || "image" } : undefined,
     });
 
     if (reply.action === "RESOLVE_CONVERSATION") {
       await prisma.conversation.update({
         where: { id: conversation.id },
-        data: { status: "RESOLVED" }
+        data: { status: "RESOLVED" },
       });
-      logger.info("messenger.conversation_resolved_by_ai", { conversationId: conversation.id });
+      void sendMessengerAction(senderId, "typing_off", pageAccessToken);
       return;
     }
 
     const isAutoMode = businessProfile.responseMode === "AUTO";
-    const status = reply.action === "HANDOFF_TO_HUMAN" || !isAutoMode ? "PENDING_REVIEW" : "SENT";
+    const status =
+      reply.action === "HANDOFF_TO_HUMAN" || !isAutoMode
+        ? "PENDING_REVIEW"
+        : "SENT";
 
-    const modelSaved = await saveMessage(conversation.id, "model", reply.content || "", {
-      status,
-      aiReasoning: reply.reasoning,
-      handoffCategory: reply.handoffCategory
-    });
+    // 5. Save AI turn (Draft or Sent)
+    const modelSaved = await saveMessage(
+      conversation.id,
+      "model",
+      reply.content || "",
+      {
+        status,
+        aiReasoning: reply.reasoning,
+        handoffCategory: reply.handoffCategory,
+      },
+    );
 
+    // Pulse UI
     emitToBusiness(page.businessProfileId, "new_message", {
       conversationId: conversation.id,
       message: modelSaved,
@@ -253,46 +273,43 @@ export async function handleMessengerMessage(
     });
 
     if (status === "PENDING_REVIEW") {
-       emitToBusiness(page.businessProfileId, "draft_received", {
-          conversationId: conversation.id,
-          message: modelSaved
-       });
+      emitToBusiness(page.businessProfileId, "draft_received", {
+        conversationId: conversation.id,
+        message: modelSaved,
+      });
     }
 
-    if (status === "SENT" && reply.content && reply.handoffCategory !== "SYSTEM_ERROR") {
+    // 6. Send API call if AUTO
+    if (
+      status === "SENT" &&
+      reply.content &&
+      reply.handoffCategory !== "SYSTEM_ERROR"
+    ) {
       try {
-        const platformRes = await sendMessengerReply(senderId, reply.content, pageAccessToken);
+        const platformRes = await sendMessengerReply(
+          senderId,
+          reply.content,
+          pageAccessToken,
+        );
         const mid = (platformRes as any)?.message_id;
-        
+
         if (mid) {
           await prisma.conversationMessage.update({
             where: { id: modelSaved.id },
-            data: { externalId: mid }
+            data: { externalId: mid },
           });
         }
-        
-        logger.info("messenger.reply_sent", {
-          pageId,
-          senderId,
-          mid,
-          preview: reply.content.substring(0, 80),
-        });
       } catch (sendErr: any) {
         logger.error("messenger.reply_send_failed", { error: sendErr.message });
       }
     }
 
+    // 7. Critical UI Notification for System Errors
     if (reply.handoffCategory === "SYSTEM_ERROR") {
-       // Also ensure we send a 'new_message' pulse for the error bubble itself
-       emitToBusiness(page.businessProfileId, "new_message", {
-          conversationId: conversation.id,
-          message: modelSaved,
-       });
-
-       emitToBusiness(page.businessProfileId, "system_critical_error", {
-          conversationId: conversation.id,
-          reason: reply.reasoning,
-       });
+      emitToBusiness(page.businessProfileId, "system_critical_error", {
+        conversationId: conversation.id,
+        reason: reply.reasoning,
+      });
     }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
@@ -301,30 +318,27 @@ export async function handleMessengerMessage(
       senderId,
       error: message,
     });
-    
-    // Safety cleanup: ensure typing indicator is off for the customer
+
+    // UI Failure Signal
+    if (page.businessProfileId && conversation) {
+      const errorMsg = `Internal Technical Failure: ${message}`;
+      const failMsg = await saveMessage(conversation.id, "model", errorMsg, {
+        status: "FAILED",
+        aiReasoning: message,
+        handoffCategory: "SYSTEM_ERROR",
+      });
+      emitToBusiness(page.businessProfileId, "new_message", {
+        conversationId: conversation.id,
+        message: failMsg,
+      });
+      emitToBusiness(page.businessProfileId, "system_critical_error", {
+        conversationId: conversation.id,
+        reason: message,
+      });
+    }
+  } finally {
     if (pageAccessToken) {
       void sendMessengerAction(senderId, "typing_off", pageAccessToken);
-    }
-    
-    // Silent fail for customer, but alert the business
-    if (page?.businessProfileId && conversation) {
-        const errorMsg = `Internal Technical Failure: ${message}`;
-       const modelSaved = await saveMessage(conversation.id, "model", errorMsg, {
-          status: "FAILED",
-          aiReasoning: `System Exception: ${message}`,
-          handoffCategory: "SYSTEM_ERROR"
-       });
-
-       emitToBusiness(page.businessProfileId, "new_message", {
-          conversationId: conversation.id,
-          message: modelSaved,
-       });
-
-       emitToBusiness(page.businessProfileId, "system_critical_error", {
-          conversationId: conversation.id,
-          reason: message,
-       });
     }
   }
 }

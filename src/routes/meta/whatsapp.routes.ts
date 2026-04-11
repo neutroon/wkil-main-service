@@ -141,7 +141,16 @@ whatsappRoutes.post("/webhook", async (req: Request, res: Response) => {
       }>;
     };
 
-    logger.info("whatsapp.webhook.event_received");
+    logger.info("whatsapp.webhook.event_received", {
+      object: payload.object,
+      entries: payload.entry?.length,
+      // Log presence of contacts for debugging
+      hasContacts: Boolean(payload.entry?.[0]?.changes?.[0]?.value?.contacts)
+    });
+
+    if (isDev) {
+      logger.debug("whatsapp.webhook.raw_payload", { body: JSON.stringify(payload, null, 2) });
+    }
 
     if (
       payload.object !== "whatsapp_business_account" ||

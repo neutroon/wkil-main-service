@@ -1,8 +1,8 @@
 import { Router, Request, Response } from "express";
-import { authenticateToken } from "../../middlewares/auth.middleware";
+import jwt from "jsonwebtoken";
 import prisma from "../../config/prisma";
 import { decryptFacebookSecret } from "../../utils/tokenCrypto";
-import { getMetaMediaUrl, streamMetaMedia } from "../../services/meta/metaMedia.service";
+import { getMetaMediaUrl } from "../../services/meta/metaMedia.service";
 import { logger } from "../../utils/logger";
 
 const mediaRoutes = Router();
@@ -10,14 +10,12 @@ const mediaRoutes = Router();
 /**
  * GET /v1/meta/media/:conversationId/:mediaId
  * Securely fetches and streams media from Meta.
- * Ownership check: Ensure the requesting user owns the business profile associated with the conversation.
+ * Supports token-based query authentication for browser tags.
  */
 mediaRoutes.get(
   "/:conversationId/:mediaId",
-  authenticateToken,
-  async (req: Request, res: Response): Promise<any> => {
+  async (req: Request, res: Response) => {
     try {
-      const userId = (req as any).user.id as number;
       const conversationId = parseInt(req.params.conversationId, 10);
       const mediaId = req.params.mediaId;
 
@@ -25,52 +23,106 @@ mediaRoutes.get(
         return res.status(400).json({ error: "Invalid parameters" });
       }
 
-      // 1. Ownership & Channel Check
-      const conversation = await prisma.conversation.findUnique({
-        where: { id: conversationId },
-        include: {
-          businessProfile: {
-            select: { userId: true },
-          },
-        },
+      // 1. Unified Authentication (Header, Cookie, or Query)
+      let token = req.headers.authorization?.startsWith("Bearer ") 
+        ? req.headers.authorization.split(" ")[1] 
+        : (req.cookies?.accessToken || (req.query.token as string));
+
+      if (!token) return res.status(401).json({ error: "Access token required" });
+
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || "supersecret") as any;
+      const userId = decoded.id;
+
+      // 2. Ownership Verification
+      const phoneNumberIds = await getUserPhoneNumberIds(userId);
+      const conversation = await prisma.conversation.findFirst({
+        where: { id: conversationId, pageId: { in: phoneNumberIds } }
       });
 
-      if (!conversation || conversation.businessProfile.userId !== userId) {
-        return res.status(403).json({ error: "Access denied or media not found" });
+      if (!conversation) {
+        return res.status(404).json({ error: "Access denied or media not found" });
       }
 
-      // 2. Fetch appropriate token based on channel
+      // 3. Platform Credential Discovery
       let accessToken = "";
       if (conversation.channel === "whatsapp") {
         const account = await prisma.whatsAppAccount.findFirst({
-           where: { phoneNumberId: conversation.pageId },
-           select: { accessToken: true }
+          where: { phoneNumberId: conversation.pageId, isActive: true },
+          select: { accessToken: true }
         });
         if (account) accessToken = decryptFacebookSecret(account.accessToken);
-      } else if (conversation.channel === "messenger" || conversation.channel === "facebook_comment") {
+      } else {
         const page = await prisma.facebookPage.findFirst({
-           where: { pageId: conversation.pageId },
-           select: { pageAccessToken: true }
+          where: { pageId: conversation.pageId, isActive: true },
+          select: { pageAccessToken: true }
         });
         if (page) accessToken = decryptFacebookSecret(page.pageAccessToken);
       }
 
-      if (!accessToken) {
-        return res.status(404).json({ error: "Linked account token not found" });
-      }
+      if (!accessToken) return res.status(401).json({ error: "Meta credentials missing" });
 
-      // 3. Resolve and Stream
-      const metaUrl = await getMetaMediaUrl(mediaId, accessToken);
-      await streamMetaMedia(metaUrl, res);
+      // 4. Resolve & Stream
+      const url = await getMetaMediaUrl(mediaId, accessToken);
+      const response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+      if (!response.ok) throw new Error(`Meta binary fetch failed: ${response.status}`);
 
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      logger.error("media_proxy.failed", { error: msg });
-      if (!res.headersSent) {
-        res.status(500).json({ error: "Internal media proxy error" });
-      }
+      const contentType = response.headers.get("content-type");
+      if (contentType) res.setHeader("Content-Type", contentType);
+      
+      // Cache for performance
+      res.setHeader("Cache-Control", "public, max-age=3600");
+
+      const arrayBuffer = await response.arrayBuffer();
+      res.send(Buffer.from(arrayBuffer));
+
+    } catch (e: any) {
+      logger.error("meta.media_proxy_failed", { error: e.message });
+      res.status(500).json({ error: "Internal media proxy error" });
     }
   }
 );
+
+// Helper function to get phone number IDs the user identifies with
+async function getUserPhoneNumberIds(userId: number): Promise<string[]> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    include: {
+      businessProfiles: {
+        include: {
+          whatsAppAccounts: true,
+          facebookPages: true,
+        },
+      },
+      managedProfiles: {
+        include: {
+          businessProfile: {
+            include: {
+              whatsAppAccounts: true,
+              facebookPages: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  if (!user) return [];
+
+  const ids = new Set<string>();
+
+  // From own profiles
+  user.businessProfiles.forEach((bp) => {
+    bp.whatsAppAccounts.forEach((wa) => ids.add(wa.phoneNumberId));
+    bp.facebookPages.forEach((fp) => ids.add(fp.pageId));
+  });
+
+  // From managed profiles
+  user.managedProfiles.forEach((mp) => {
+    mp.businessProfile.whatsAppAccounts.forEach((wa) => ids.add(wa.phoneNumberId));
+    mp.businessProfile.facebookPages.forEach((fp) => ids.add(fp.pageId));
+  });
+
+  return Array.from(ids);
+}
 
 export default mediaRoutes;

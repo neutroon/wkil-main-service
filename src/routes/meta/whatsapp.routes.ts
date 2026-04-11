@@ -14,12 +14,112 @@ import {
   subscribeWebhook,
   saveWhatsAppAccount,
 } from "../../services/meta/whatsappOauth.service";
-import { emitToBusiness } from "../../utils/socket";
+import { emitToBusiness, emitToConversation } from "../../utils/socket";
+import multer from "multer";
+import { uploadWhatsAppMedia } from "../../services/meta/metaUpload.service";
+import { sendWhatsAppMedia } from "../../services/meta/whatsapp.service";
+import { decryptFacebookSecret } from "../../utils/tokenCrypto";
+import { saveMessage } from "../../services/meta/conversation.service";
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 16 * 1024 * 1024 } }); // 16MB limit
 
 const whatsappRoutes = Router();
 
 // ─── Sub-routers ──────────────────────────────────────────────────────────────
 whatsappRoutes.use("/conversations", conversationsRoutes);
+
+/**
+ * POST /v1/whatsapp/conversations/:id/media
+ * Uploads media to Meta and sends it to the customer.
+ */
+whatsappRoutes.post(
+  "/conversations/:id/media",
+  authenticateToken,
+  upload.single("file"),
+  async (req: Request, res: Response): Promise<any> => {
+    try {
+      const userId = (req as any).user.id as number;
+      const conversationId = parseInt(req.params.id, 10);
+      const file = req.file;
+      const messageText = req.body.messageText || "";
+
+      if (!file) {
+        return res.status(400).json({ error: "No file uploaded" });
+      }
+
+      // 1. Ownership Check
+      const conversation = await prisma.conversation.findUnique({
+        where: { id: conversationId },
+        include: { businessProfile: true }
+      });
+
+      if (!conversation || conversation.businessProfile.userId !== userId) {
+        return res.status(403).json({ error: "Access denied or conversation not found" });
+      }
+
+      // 2. Token Resolution
+      const account = await prisma.whatsAppAccount.findFirst({
+        where: { phoneNumberId: conversation.pageId, isActive: true },
+      });
+
+      if (!account) {
+        return res.status(404).json({ error: "WhatsApp account not found" });
+      }
+
+      const accessToken = decryptFacebookSecret(account.accessToken);
+
+      // 3. Upload to Meta
+      const mediaId = await uploadWhatsAppMedia(
+        conversation.pageId,
+        accessToken,
+        file.buffer,
+        file.originalname,
+        file.mimetype
+      );
+
+      // 4. Send via Meta
+      const type = file.mimetype.split("/")[0] === "application" ? "document" : file.mimetype.split("/")[0];
+      const platformRes = await sendWhatsAppMedia(
+        conversation.senderId,
+        mediaId,
+        type,
+        conversation.pageId,
+        accessToken,
+        messageText,
+        file.originalname
+      );
+
+      const wamid = (platformRes as any)?.messages?.[0]?.id;
+
+      // 5. Save to DB
+      const sentMsg = await saveMessage(conversationId, "agent", messageText, {
+        externalId: wamid,
+        type,
+        mediaId,
+        mediaMetadata: { 
+          mimeType: file.mimetype, 
+          filename: file.originalname, 
+          size: file.size 
+        }
+      });
+
+      // 6. Broadcast
+      emitToBusiness(conversation.businessProfileId, "new_message", {
+        conversationId,
+        message: sentMsg
+      });
+      emitToConversation(conversationId, "new_message", {
+        message: sentMsg
+      });
+
+      res.json(sentMsg);
+
+    } catch (err: any) {
+      logger.error("whatsapp.send_media.failed", { error: err.message });
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
 
 const isDev = process.env.NODE_ENV !== "production";
 const OAUTH_EXCHANGE_REF_TTL_MS = 10 * 60 * 1000;
@@ -222,15 +322,36 @@ whatsappRoutes.post("/webhook", async (req: Request, res: Response) => {
 
         if (!phoneNumberId || !Array.isArray(messages)) continue;
 
-        for (const msg of messages) {
-          // Only handle inbound text messages
-          if (msg.type !== "text") continue;
-
+        for (const msgData of messages) {
+          const msg = msgData as any;
           const wamid = msg.id;
           const from = msg.from;
-          const messageText = msg.text?.body;
+          const type = msg.type;
+          
+          let messageText = msg.text?.body;
+          let mediaId: string | undefined;
+          let mediaMetadata: any = {};
 
-          if (!wamid || !from || !messageText) continue;
+          if (type === "image") {
+            mediaId = msg.image?.id;
+            messageText = msg.image?.caption || "";
+            mediaMetadata = { mimeType: msg.image?.mime_type, sha256: msg.image?.sha256 };
+          } else if (type === "video") {
+            mediaId = msg.video?.id;
+            messageText = msg.video?.caption || "";
+            mediaMetadata = { mimeType: msg.video?.mime_type, sha256: msg.video?.sha256 };
+          } else if (type === "audio" || type === "voice") {
+            mediaId = (msg as any).audio?.id || (msg as any).voice?.id;
+            mediaMetadata = { mimeType: (msg as any).audio?.mime_type || (msg as any).voice?.mime_type };
+          } else if (type === "document") {
+            mediaId = msg.document?.id;
+            messageText = msg.document?.caption || msg.document?.filename || "";
+            mediaMetadata = { mimeType: msg.document?.mime_type, filename: msg.document?.filename };
+          }
+
+          if (!wamid || !from) continue;
+          if (type === "text" && !messageText) continue;
+          if (type !== "text" && !mediaId) continue;
 
           // Idempotency — deduplicate Meta retries by wamid
           if (wamid) {
@@ -270,6 +391,9 @@ whatsappRoutes.post("/webhook", async (req: Request, res: Response) => {
             messageText,
             wamid,
             customerName,
+            type,
+            mediaId,
+            mediaMetadata,
           });
         }
       }

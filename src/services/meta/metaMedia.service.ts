@@ -12,7 +12,7 @@ export async function getMetaMediaUrl(
   id: string,
   accessToken: string,
   platform: "messenger" | "whatsapp" = "whatsapp",
-  fallbackUrl?: string
+  fallbackUrl?: string,
 ): Promise<string> {
   const cacheKey = `${platform}:${id}`;
   const now = Date.now();
@@ -26,24 +26,52 @@ export async function getMetaMediaUrl(
     let url = "";
 
     if (platform === "messenger") {
-      // Messenger-Specific: Refresh via Message Attachments API
+      // DEFINITIVE PRODUCTION PATH: Query the /attachments edge specifically.
+      // v21.0 is the recommended stable version for this endpoint in 2024/2025.
       const response = await fetch(
-        `https://graph.facebook.com/v25.0/${id}?fields=attachments&access_token=${accessToken}`
+        `https://graph.facebook.com/v25.0/${id}/attachments?access_token=${accessToken}`,
       );
-      
+
       if (response.ok) {
-        const data = await response.json() as any;
-        url = data.attachments?.data?.[0]?.payload?.url;
+        const result = (await response.json()) as { data: any[] };
+        const att = result.data?.[0];
+
+        // Path Tracker: Identify which field Meta is actually using
+        let pathUsed = "";
+        if (att?.file_url) {
+          url = att.file_url;
+          pathUsed = "file_url";
+        } else if (att?.image_data?.url) {
+          url = att.image_data.url;
+          pathUsed = "image_data";
+        } else if (att?.video_data?.url) {
+          url = att.video_data.url;
+          pathUsed = "video_data";
+        } else if (att?.payload?.url) {
+          url = att.payload.url;
+          pathUsed = "payload";
+        }
+
+        if (url) {
+          logger.info("meta.media.messenger_refresh_success", { id, pathUsed });
+        } else {
+          logger.info("meta.media.messenger_attachments_empty", { id, result });
+        }
       } else {
-        const errorData = await response.json() as any;
-        logger.warn("meta.media.messenger_refresh_failed", { id, error: errorData });
+        const errorData = (await response.json()) as any;
+        logger.warn("meta.media.messenger_refresh_failed", {
+          id,
+          error: errorData,
+        });
       }
-      
+
       // Fallback for specific Messenger IDs or if refresh failed
       if (!url) {
-        const fallbackRes = await fetch(`https://graph.facebook.com/v25.0/${id}?access_token=${accessToken}`);
+        const fallbackRes = await fetch(
+          `https://graph.facebook.com/v25.0/${id}?access_token=${accessToken}`,
+        );
         if (fallbackRes.ok) {
-          const fbData = await fallbackRes.json() as any;
+          const fbData = (await fallbackRes.json()) as any;
           url = fbData.url;
         }
       }
@@ -54,7 +82,7 @@ export async function getMetaMediaUrl(
       });
 
       if (response.ok) {
-        const data = await response.json() as { url: string };
+        const data = (await response.json()) as { url: string };
         url = data.url;
       }
     }
@@ -62,8 +90,8 @@ export async function getMetaMediaUrl(
     // FINAL PRODUCTION FALLBACK:
     // If we have a fallbackUrl from DB metadata, use it if Meta refresh failed.
     if (!url && fallbackUrl) {
-       logger.info("meta.media.using_metadata_fallback", { platform, id });
-       url = fallbackUrl;
+      logger.info("meta.media.using_metadata_fallback", { platform, id });
+      url = fallbackUrl;
     }
 
     if (!url) {
@@ -109,7 +137,10 @@ export async function streamMetaMedia(
       throw new Error("Empty response body from Meta");
     }
   } catch (err: unknown) {
-    logger.error("meta.media.stream_failed", { url: metaUrl, error: String(err) });
+    logger.error("meta.media.stream_failed", {
+      url: metaUrl,
+      error: String(err),
+    });
     res.status(500).send("Failed to stream media");
   }
 }

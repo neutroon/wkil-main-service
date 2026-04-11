@@ -303,11 +303,21 @@ export async function runAIEngineLoop(params: {
       try {
         decision = JSON.parse(responseText);
       } catch (err) {
-        logger.error("Failed to parse JSON from AI response", { responseText });
+        logger.error("ai.engine.parsing_failed", { 
+           responseText,
+           error: (err as any).message,
+           inputLength: params.customerMessage?.length || 0,
+           hasMedia: !!params.mediaInfo
+        });
+        
+        // PRODUCTION FAIL-SAFE: 
+        // 1. Send NOTHING to the customer (silent failure)
+        // 2. Alert the Sales Team via SYSTEM_ERROR handoff
         decision = {
-          action: "REPLY_AUTO",
-          reasoning: "Failed to parse JSON structure",
-          content: responseText
+          action: "HANDOFF_TO_HUMAN",
+          handoffCategory: "SYSTEM_ERROR",
+          reasoning: "AI Response parsing failed (potential mid-stream truncation). Failing silently to customer.",
+          content: "" 
         };
       }
 

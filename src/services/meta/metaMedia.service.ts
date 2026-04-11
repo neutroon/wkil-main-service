@@ -1,4 +1,4 @@
-import fetch from "node-fetch";
+import { Readable } from "stream";
 import { logger } from "../../utils/logger";
 
 const MEDIA_URL_CACHE = new Map<string, { url: string; expiresAt: number }>();
@@ -70,8 +70,12 @@ export async function streamMetaMedia(
     const contentType = response.headers.get("content-type");
     if (contentType) res.setHeader("Content-Type", contentType);
 
-    // Pipe the response body to the client
-    response.body.pipe(res);
+    // Pipe the response body (Web ReadableStream) to the client (Node WritableStream)
+    if (response.body) {
+      Readable.fromWeb(response.body as any).pipe(res);
+    } else {
+      throw new Error("Empty response body from Meta");
+    }
   } catch (err: unknown) {
     logger.error("meta.media.stream_failed", { url: metaUrl, error: String(err) });
     res.status(500).send("Failed to stream media");

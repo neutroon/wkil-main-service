@@ -6,8 +6,11 @@ type MessengerJob = {
   type: "MESSENGER";
   pageId: string;
   senderId: string;
-  messageText: string;
+  messageText?: string;
   externalId?: string;
+  msgType?: string;
+  mediaId?: string;
+  mediaMetadata?: any;
 };
 
 type FacebookCommentQueueJob = FacebookCommentJob & {
@@ -42,8 +45,11 @@ async function drainQueue(): Promise<void> {
         await handleMessengerMessage(
           job.pageId,
           job.senderId,
-          job.messageText,
+          job.messageText || "",
           job.externalId,
+          job.msgType,
+          job.mediaId,
+          job.mediaMetadata
         );
       } else if (job.type === "FACEBOOK_COMMENT") {
         await handleFacebookComment(job);

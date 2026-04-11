@@ -11,7 +11,7 @@ export function toPromptMessages(
   rows: { role: string; content: string }[],
 ): Message[] {
   return rows.map((m) => ({
-    role: m.role === "model" ? "model" : "user",
+    role: (m.role === "model" || m.role === "agent") ? "model" : "user",
     content: m.content,
   }));
 }

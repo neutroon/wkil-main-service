@@ -218,7 +218,13 @@ export async function runAIEngineLoop(params: {
         if (response.ok) {
           const arrayBuffer = await response.arrayBuffer();
           const buffer = Buffer.from(arrayBuffer);
-          const mimeType = response.headers.get("content-type") || (params.mediaInfo.type === "image" ? "image/jpeg" : "audio/ogg");
+          let mimeType = response.headers.get("content-type") || (params.mediaInfo.type === "image" ? "image/jpeg" : "audio/ogg");
+          
+          // PRODUCTION GUARD: Messenger often sends voice/audio in .mp4 containers.
+          // Gemini fails if it sees 'video/mp4' but there are no video frames.
+          if ((params.mediaInfo.type === "audio" || params.mediaInfo.type === "voice") && mimeType === "video/mp4") {
+            mimeType = "audio/mp4";
+          }
           userParts.push({
             inlineData: {
               data: buffer.toString("base64"),

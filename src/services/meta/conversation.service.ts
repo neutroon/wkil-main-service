@@ -223,7 +223,7 @@ export async function listConversationMessages(
     prisma.conversationMessage.count({ where: { conversationId } }),
     prisma.conversationMessage.findMany({
       where: { conversationId },
-      orderBy: { createdAt: "asc" },
+      orderBy: { createdAt: "desc" },
       skip,
       take: limit,
       select: {

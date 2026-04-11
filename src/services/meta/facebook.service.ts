@@ -371,7 +371,7 @@ export const sendPrivateReply = async (params: FacebookPrivateReplyParams) => {
 export const getFacebookUserProfile = async (psid: string, pageId: string, accessToken?: string) => {
   try {
     const token = accessToken || (await getPageAccessToken(pageId));
-    const url = `${FB_API}/${psid}?fields=name,first_name,last_name&access_token=${token}`;
+    const url = `${FB_API}/${psid}?fields=name,first_name,last_name,picture&access_token=${token}`;
     const { data } = await axios.get(url);
     return data;
   } catch (error: unknown) {

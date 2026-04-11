@@ -48,7 +48,9 @@ export interface UnifiedDashboardResponse extends DashboardStatsResponse {
   aiAutomationRate: number;
   aiAccuracyScore: number;
   leadVelocity: number;
-  avgResponseTime: number; // In minutes
+  avgResponseTime: number; // Total Average
+  aiAvgResponseTime: number; // AI-only Average
+  humanAvgResponseTime: number; // Human-only Average
   channelHealth: {
     facebook: boolean;
     whatsapp: boolean;
@@ -207,20 +209,87 @@ export const getUnifiedDashboardStats = async (
   role: string,
   days: number = DEFAULT_STATS_DAYS
 ): Promise<UnifiedDashboardResponse> => {
-  const [socialStats, aiStats, conversations] = await Promise.all([
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() - (days || 30));
+
+  const [socialStats, aiStats, conversations, messages] = await Promise.all([
     getDashboardStats(userId, days),
     getAiPerformanceStats(userId.toString(), role, days),
     prisma.conversation.findMany({
       where: {
         businessProfile: { userId },
-        createdAt: { gte: new Date(Date.now() - (days || 30) * 24 * 60 * 60 * 1000) }
+        createdAt: { gte: startDate }
       },
       select: { createdAt: true }
+    }),
+    prisma.conversationMessage.findMany({
+      where: {
+        conversation: {
+          businessProfile: { userId }
+        },
+        createdAt: { gte: startDate },
+        // We only care about user and sent model messages for response time
+        OR: [
+          { role: "user" },
+          { role: "model", status: { in: ["SENT", "EDITED_AND_SENT"] } }
+        ]
+      },
+      select: {
+        conversationId: true,
+        role: true,
+        status: true,
+        createdAt: true
+      },
+      orderBy: { createdAt: "asc" }
     })
   ]);
 
   // Lead Velocity = Count of new conversations in the period
   const leadVelocity = conversations.length;
+
+  // --- Start Response Time Analysis ---
+  const userStartTimes = new Map<number, Date>();
+  const aiSamples: number[] = [];
+  const humanSamples: number[] = [];
+
+  for (const msg of messages) {
+    const cid = msg.conversationId;
+    if (msg.role === "user") {
+      // If we're already tracking a wait start for this conversation, don't update it
+      // (Industry practice: measure from the FIRST message in a sequence)
+      if (!userStartTimes.has(cid)) {
+        userStartTimes.set(cid, msg.createdAt);
+      }
+    } else if (msg.role === "model") {
+      const startTime = userStartTimes.get(cid);
+      if (startTime) {
+        const diffMinutes = Math.max(0, (msg.createdAt.getTime() - startTime.getTime()) / (1000 * 60));
+
+        if (msg.status === "SENT") {
+          aiSamples.push(diffMinutes);
+        } else if (msg.status === "EDITED_AND_SENT") {
+          humanSamples.push(diffMinutes);
+        }
+        
+        // Reset after a response is recorded
+        userStartTimes.delete(cid);
+      }
+    }
+  }
+
+  const aiAvg = aiSamples.length > 0 
+    ? aiSamples.reduce((a, b) => a + b, 0) / aiSamples.length 
+    : 0;
+  
+  const humanAvg = humanSamples.length > 0 
+    ? humanSamples.reduce((a, b) => a + b, 0) / humanSamples.length 
+    : 0;
+
+  const totalSamples = [...aiSamples, ...humanSamples];
+  const overallAvg = totalSamples.length > 0 
+    ? totalSamples.reduce((a, b) => a + b, 0) / totalSamples.length 
+    : 0;
+  // --- End Response Time Analysis ---
 
   // Simple channel health check
   const accounts = await prisma.facebookAccount.findFirst({ where: { userId, isActive: true } });
@@ -231,7 +300,9 @@ export const getUnifiedDashboardStats = async (
     aiAutomationRate: aiStats.automationRate,
     aiAccuracyScore: aiStats.accuracyScore,
     leadVelocity,
-    avgResponseTime: 1.5, // Placeholder for now - high-end default
+    avgResponseTime: parseFloat(overallAvg.toFixed(2)),
+    aiAvgResponseTime: parseFloat(aiAvg.toFixed(2)),
+    humanAvgResponseTime: parseFloat(humanAvg.toFixed(2)),
     channelHealth: {
       facebook: !!accounts,
       whatsapp: !!waAccounts,

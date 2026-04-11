@@ -21,7 +21,7 @@ export async function sendWhatsAppReply(
   text: string,
   phoneNumberId: string,
   accessToken: string,
-): Promise<void> {
+): Promise<any> {
   const response = await fetch(
     `https://graph.facebook.com/v25.0/${phoneNumberId}/messages`,
     {
@@ -43,6 +43,8 @@ export async function sendWhatsAppReply(
     const error = (await response.json()) as unknown;
     throw new Error(`WhatsApp Cloud API error: ${JSON.stringify(error)}`);
   }
+
+  return response.json();
 }
 
 export async function sendWhatsAppAction(
@@ -186,9 +188,9 @@ export async function handleWhatsAppMessage(
     return;
   }
 
-  if (wamid) {
-    void sendWhatsAppAction(wamid, phoneNumberId, accessToken);
-  }
+  // NOTE: We no longer send the 'read' signal immediately. 
+  // We wait until we've at least successfully started processing or finished,
+  // so that if a system crash occurs, the message remains 'Unread' for the human agent.
 
   const businessProfile = account.businessProfile;
 
@@ -204,6 +206,7 @@ export async function handleWhatsAppMessage(
           customerName: customerName
         },
       );
+    
     const historyRows = await getConversationHistory(conversation.id);
     const userSaved = await saveMessage(conversation.id, "user", messageText);
     emitToBusiness(account.businessProfileId, "new_message", {
@@ -269,12 +272,26 @@ export async function handleWhatsAppMessage(
     }
 
     if (status === "SENT" && reply.content && reply.handoffCategory !== "SYSTEM_ERROR") {
-      await sendWhatsAppReply(from, reply.content, phoneNumberId, accessToken);
-      logger.info("whatsapp.reply_sent", {
-        phoneNumberId,
-        from,
-        preview: reply.content.substring(0, 80),
-      });
+      try {
+        const platformRes = await sendWhatsAppReply(from, reply.content, phoneNumberId, accessToken);
+        const wamid = (platformRes as any)?.messages?.[0]?.id;
+        
+        if (wamid) {
+          await prisma.conversationMessage.update({
+            where: { id: modelSaved.id },
+            data: { externalId: wamid }
+          });
+        }
+        
+        logger.info("whatsapp.reply_sent", {
+          phoneNumberId,
+          from,
+          wamid,
+          preview: reply.content.substring(0, 80),
+        });
+      } catch (sendErr: any) {
+        logger.error("whatsapp.reply_send_failed", { error: sendErr.message });
+      }
     }
 
     if (reply.handoffCategory === "SYSTEM_ERROR") {

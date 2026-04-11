@@ -1,23 +1,46 @@
 import { MetaMessageJob, processMetaMessage } from "../services/meta/metaProcessor.service";
 import { logger } from "../utils/logger";
+import prisma from "../config/prisma";
 
-const queue: MetaMessageJob[] = [];
+const CONCURRENCY = 3;
+const JOB_TIMEOUT_MS = 60000; // 60s
+const RETRY_INTERVALS = [5, 30, 300]; // seconds (5s, 30s, 5m)
+
 let draining = false;
 
 /**
- * Unified, Resilient FIFO Queue for Meta Platforms (Messenger & WhatsApp).
+ * Unified, Industrial-Grade Durable Queue for Meta Platforms.
  * 
- * DESIGN GOAL: Zero Blocking.
- * If one job hangs or crashes, the processor MUST reset and pick up the next job.
+ * FEATURES:
+ * 1. Database-First: Jobs are persisted before processing (Zero Message Loss).
+ * 2. Exponential Backoff: Failsafe retries for transient errors.
+ * 3. Parallel Execution: Concurrency of 3 parallel workers.
+ * 4. Recovery: Resets "hanging" jobs on startup.
  */
-export function enqueueMetaJob(job: MetaMessageJob): void {
-  queue.push(job);
-  if (!draining) void drainQueue();
+
+export async function enqueueMetaJob(job: MetaMessageJob): Promise<void> {
+  try {
+    await prisma.metaJob.create({
+      data: {
+        platform: job.platform,
+        identifier: job.identifier,
+        senderId: job.senderId,
+        payload: job as any,
+        status: "pending",
+      }
+    });
+    
+    // Kick off worker (non-blocking)
+    if (!draining) void drainQueue();
+  } catch (err: any) {
+    logger.error("meta.queue.enqueue_failed", { error: err.message, platform: job.platform });
+    throw err;
+  }
 }
 
-/** Legacy alias to support existing WhatsApp route code if needed */
-export function enqueueWhatsAppJob(job: any): void {
-  enqueueMetaJob({ 
+/** Legacy aliases */
+export async function enqueueWhatsAppJob(job: any): Promise<void> {
+  await enqueueMetaJob({ 
     ...job, 
     platform: "whatsapp", 
     identifier: job.phoneNumberId, 
@@ -25,9 +48,8 @@ export function enqueueWhatsAppJob(job: any): void {
   });
 }
 
-/** Legacy alias to support existing Messenger route code */
-export function enqueueMessengerJob(job: any): void {
-  enqueueMetaJob({ 
+export async function enqueueMessengerJob(job: any): Promise<void> {
+  await enqueueMetaJob({ 
     ...job, 
     platform: "messenger", 
     identifier: job.pageId, 
@@ -36,51 +58,123 @@ export function enqueueMessengerJob(job: any): void {
 }
 
 async function drainQueue(): Promise<void> {
-  // ATOMIC LOCK
   if (draining) return;
   draining = true;
 
   try {
-    while (queue.length > 0) {
-      const job = queue.shift();
-      if (!job) break;
+    while (true) {
+      // 1. Fetch available jobs
+      const pendingJobs = await prisma.metaJob.findMany({
+        where: {
+          status: { in: ["pending", "retrying"] },
+          nextAttemptAt: { lte: new Date() },
+        },
+        orderBy: { createdAt: "asc" },
+        take: CONCURRENCY,
+      });
 
-      try {
-        logger.info("meta.queue.processing_job", { 
-          platform: job.platform, 
-          senderId: job.senderId, 
-          queueRemaining: queue.length 
+      if (pendingJobs.length === 0) break;
+
+      // 2. Run batch in parallel
+      await Promise.all(pendingJobs.map(async (jobRecord) => {
+        // Mark as processing to avoid double pickup
+        await prisma.metaJob.update({
+          where: { id: jobRecord.id },
+          data: { status: "processing" }
         });
 
-        // SAFETY: Job-level timeout of 60 seconds.
-        // If an operation takes longer than 60s, we "abandon" it to keep the queue moving.
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error("Job Processing Timeout (60s)")), 60000)
-        );
+        const jobData = jobRecord.payload as unknown as MetaMessageJob;
 
-        await Promise.race([
-          processMetaMessage(job),
-          timeoutPromise
-        ]);
+        try {
+          logger.info("meta.queue.processing_job", { 
+            id: jobRecord.id,
+            platform: jobData.platform, 
+            senderId: jobData.senderId,
+            attempt: jobRecord.attempts + 1
+          });
 
-      } catch (jobErr: any) {
-        logger.error("meta.queue.individual_job_failed", { 
-          platform: job.platform, 
-          senderId: job.senderId, 
-          error: jobErr.message 
-        });
-        // We do NOT stop the loop. We move to the next job.
-      }
+          // SAFETY: Job-level timeout
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error("Job Processing Timeout (60s)")), JOB_TIMEOUT_MS)
+          );
+
+          await Promise.race([
+            processMetaMessage(jobData),
+            timeoutPromise
+          ]);
+
+          // MARK SUCCESS
+          await prisma.metaJob.update({
+            where: { id: jobRecord.id },
+            data: { status: "completed" }
+          });
+
+        } catch (jobErr: any) {
+          const nextAttempt = jobRecord.attempts + 1;
+          const maxAttempts = jobRecord.maxAttempts;
+
+          if (nextAttempt < maxAttempts) {
+            const backoffSec = RETRY_INTERVALS[nextAttempt - 1] || 300;
+            logger.warn("meta.queue.job_retrying", { 
+              id: jobRecord.id, 
+              error: jobErr.message, 
+              nextAttempt,
+              delaySec: backoffSec
+            });
+
+            await prisma.metaJob.update({
+              where: { id: jobRecord.id },
+              data: {
+                status: "retrying",
+                attempts: nextAttempt,
+                lastError: jobErr.message.slice(0, 1000),
+                nextAttemptAt: new Date(Date.now() + backoffSec * 1000)
+              }
+            });
+          } else {
+            logger.error("meta.queue.job_permanently_failed", { 
+              id: jobRecord.id, 
+              error: jobErr.message 
+            });
+
+            await prisma.metaJob.update({
+              where: { id: jobRecord.id },
+              data: { 
+                status: "failed", 
+                lastError: jobErr.message.slice(0, 1000), 
+                attempts: nextAttempt 
+              }
+            });
+          }
+        }
+      }));
     }
   } catch (criticalErr: any) {
     logger.error("meta.queue.critical_worker_error", { error: criticalErr.message });
   } finally {
-    // CRITICAL: Always reset the lock so the worker can restart on the next enqueue.
     draining = false;
     
-    // Safety check: if things were added while we were in finally or if loop broke unexpectedly
-    if (queue.length > 0) {
-       void drainQueue();
-    }
+    // Check if new jobs arrived while finishing the last batch
+    const hasMore = await prisma.metaJob.count({
+      where: {
+        status: { in: ["pending", "retrying"] },
+        nextAttemptAt: { lte: new Date() },
+      }
+    });
+    if (hasMore > 0) void drainQueue();
+  }
+}
+
+/**
+ * STARTUP RECOVERY: Resets any jobs that were abandoned in "processing" state.
+ */
+export async function bootstrapMetaQueue() {
+  const reset = await prisma.metaJob.updateMany({
+    where: { status: "processing" },
+    data: { status: "pending" }
+  });
+  if (reset.count > 0) {
+    logger.info("meta.queue.recovery_bootstrapped", { count: reset.count });
+    void drainQueue();
   }
 }

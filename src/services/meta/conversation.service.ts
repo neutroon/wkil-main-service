@@ -10,11 +10,12 @@ export async function getOrCreateConversation(
   businessProfileId: number,
   opts?: { channel?: string; customerPhone?: string },
 ) {
-  // Always check for the most recent conversation for this user on this channel
+  // 1. Try to find an existing conversation for this specific channel
   const existing = await prisma.conversation.findFirst({
     where: {
       pageId,
       senderId,
+      channel: opts?.channel ?? null,
     },
     orderBy: {
       updatedAt: "desc",
@@ -26,10 +27,6 @@ export async function getOrCreateConversation(
       where: { id: existing.id },
       data: {
         updatedAt: new Date(),
-        // Backfill channel/phone if they were missing on an older record
-        ...(opts?.channel && !existing.channel
-          ? { channel: opts.channel }
-          : {}),
         ...(opts?.customerPhone && !existing.customerPhone
           ? { customerPhone: opts.customerPhone }
           : {}),
@@ -37,6 +34,24 @@ export async function getOrCreateConversation(
     });
   }
 
+  // 2. If creating a NEW Messenger conversation, try to link it to the most recent comment thread
+  let parentConversationId: number | null = null;
+  if (opts?.channel === "messenger") {
+    const lastCommentThread = await prisma.conversation.findFirst({
+      where: {
+        pageId,
+        senderId,
+        channel: "facebook_comment"
+      },
+      orderBy: { updatedAt: "desc" },
+      select: { id: true }
+    });
+    if (lastCommentThread) {
+      parentConversationId = lastCommentThread.id;
+    }
+  }
+
+  // 3. Create a brand new conversation
   return prisma.conversation.create({
     data: {
       pageId,
@@ -44,6 +59,7 @@ export async function getOrCreateConversation(
       businessProfileId,
       channel: opts?.channel ?? null,
       customerPhone: opts?.customerPhone ?? null,
+      parentConversationId,
     },
   });
 }
@@ -236,7 +252,7 @@ export async function getMessengerConversationForUser(
     where: {
       id: conversationId,
       pageId: { in: pageIds },
-      channel: "messenger",
+      channel: { in: ["messenger", "facebook_comment"] },
     },
   });
 }
@@ -273,13 +289,13 @@ export async function listMessengerConversations(
     prisma.conversation.count({
       where: {
         pageId: { in: pageIds },
-        channel: "messenger",
+        channel: { in: ["messenger", "facebook_comment"] },
       },
     }),
     prisma.conversation.findMany({
       where: {
         pageId: { in: pageIds },
-        channel: "messenger",
+        channel: { in: ["messenger", "facebook_comment"] },
       },
       orderBy: { updatedAt: "desc" },
       skip,
@@ -300,11 +316,16 @@ export async function listMessengerConversations(
     pageName: pageMap[c.pageId] ?? c.pageId,
     senderId: c.senderId,
     channel: c.channel,
+    externalId: c.externalId,
+    postId: c.postId,
+    processingStatus: c.processingStatus,
     lastMessage: c.messages[0]
       ? {
           role: c.messages[0].role,
           content: c.messages[0].content,
           createdAt: c.messages[0].createdAt,
+          status: c.messages[0].status,
+          handoffCategory: c.messages[0].handoffCategory,
         }
       : null,
     updatedAt: c.updatedAt,

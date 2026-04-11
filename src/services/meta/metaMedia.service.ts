@@ -5,13 +5,15 @@ const MEDIA_URL_CACHE = new Map<string, { url: string; expiresAt: number }>();
 const CACHE_TTL_MS = 60 * 60 * 1000; // Cache for 1 hour (Meta URLs usually last 5 mins to 24 hours)
 
 /**
- * Fetches a fresh binary download URL from Meta using a mediaId.
+ * Unified "Smart Resolver" for Meta Media.
+ * Automatically handles platform differences (WhatsApp IDs vs Messenger MIDs).
  */
 export async function getMetaMediaUrl(
-  mediaId: string,
+  id: string,
   accessToken: string,
+  platform: "messenger" | "whatsapp" = "whatsapp"
 ): Promise<string> {
-  const cacheKey = `${mediaId}`;
+  const cacheKey = `${platform}:${id}`;
   const now = Date.now();
   const cached = MEDIA_URL_CACHE.get(cacheKey);
 
@@ -20,34 +22,53 @@ export async function getMetaMediaUrl(
   }
 
   try {
-    const response = await fetch(`https://graph.facebook.com/v25.0/${mediaId}`, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
-    });
+    let url = "";
 
-    if (!response.ok) {
-      const err = await response.json();
-      logger.error("meta.media.fetch_url_failed", { mediaId, error: err });
-      throw new Error("Failed to fetch media URL from Meta");
+    if (platform === "messenger") {
+      // Messenger-Specific: Refresh via Message Attachments API
+      const response = await fetch(
+        `https://graph.facebook.com/v25.0/${id}?fields=attachments&access_token=${accessToken}`
+      );
+      
+      if (response.ok) {
+        const data = await response.json() as any;
+        url = data.attachments?.data?.[0]?.payload?.url;
+      }
+      
+      // Fallback for specific Messenger IDs (stickers, static assets)
+      if (!url) {
+        const fallbackRes = await fetch(`https://graph.facebook.com/v25.0/${id}?access_token=${accessToken}`);
+        if (fallbackRes.ok) {
+          const fbData = await fallbackRes.json() as any;
+          url = fbData.url;
+        }
+      }
+    } else {
+      // WhatsApp-Specific: Resolve Media Object ID
+      const response = await fetch(`https://graph.facebook.com/v25.0/${id}`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+
+      if (response.ok) {
+        const data = await response.json() as { url: string };
+        url = data.url;
+      }
     }
 
-    const data = (await response.json()) as { url: string };
-    if (!data.url) {
-      throw new Error("Meta response did not contain a media URL");
+    if (!url) {
+      throw new Error(`Failed to resolve ${platform} media URL for ID: ${id}`);
     }
 
-    // Cache the resolved URL
+    // Cache the resolved URL (Production standard: 1 hour)
     MEDIA_URL_CACHE.set(cacheKey, {
-      url: data.url,
+      url,
       expiresAt: now + CACHE_TTL_MS,
     });
 
-    return data.url;
+    return url;
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    logger.error("meta.media.resolve_failed", { mediaId, error: msg });
+    logger.error("meta.media.resolve_failed", { platform, id, error: msg });
     throw err;
   }
 }

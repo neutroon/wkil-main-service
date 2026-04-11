@@ -69,7 +69,11 @@ mediaRoutes.get(
       const contentType = response.headers.get("content-type");
       if (contentType) res.setHeader("Content-Type", contentType);
       
-      // Cache for performance
+      // PRODUCTION HEADERS: Support Cross-Origin and Streaming
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Vary", "Origin");
+      res.setHeader("Content-Disposition", "inline");
+      res.setHeader("Accept-Ranges", "bytes");
       res.setHeader("Cache-Control", "public, max-age=3600");
 
       const arrayBuffer = await response.arrayBuffer();

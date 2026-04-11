@@ -341,8 +341,12 @@ whatsappRoutes.post("/webhook", async (req: Request, res: Response) => {
             messageText = msg.video?.caption || "";
             mediaMetadata = { mimeType: msg.video?.mime_type, sha256: msg.video?.sha256 };
           } else if (type === "audio" || type === "voice") {
-            mediaId = (msg as any).audio?.id || (msg as any).voice?.id;
-            mediaMetadata = { mimeType: (msg as any).audio?.mime_type || (msg as any).voice?.mime_type };
+            const audioData = (msg as any).audio || (msg as any).voice;
+            mediaId = audioData?.id;
+            mediaMetadata = { 
+              mimeType: audioData?.mime_type,
+              duration: audioData?.duration // Native WhatsApp field in seconds
+            };
           } else if (type === "document") {
             mediaId = msg.document?.id;
             messageText = msg.document?.caption || msg.document?.filename || "";

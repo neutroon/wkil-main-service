@@ -1,8 +1,9 @@
 import { Tool } from "@google/genai";
 import { logger } from "../../utils/logger";
-import { genAI, MESSENGER_SAFETY_SETTINGS, aiRoutingSchema } from "../../config/gemini";
+import { genAI, MESSENGER_SAFETY_SETTINGS, aiRoutingSchema, generateContent } from "../../config/gemini";
 import { pushLeadToCrm } from "../crm/crm.service";
 import { executeExternalQuery } from "../external/externalData.service";
+import { recordAiUsage } from "../billing.service";
 import prisma from "../../config/prisma";
 
 type VerificationStatus = "verified" | "unverified" | "failed";
@@ -146,45 +147,7 @@ export interface AiRoutingDecision {
   content?: string | null;
 }
 
-/**
- * Normalizes daily usage stats accurately using Prisma Upsert.
- * Executed as a fire-and-forget background operation.
- */
-async function recordAiUsage(
-  businessProfileId: number, 
-  stats: { promptTokens: number; completionTokens: number; totalTokens: number; apiCalls: number }
-) {
-  if (stats.apiCalls === 0) return;
-  try {
-    const today = new Date();
-    today.setUTCHours(0, 0, 0, 0);
-
-    await prisma.aiUsageStat.upsert({
-      where: {
-        businessProfileId_date: {
-          businessProfileId,
-          date: today
-        }
-      },
-      create: {
-        businessProfileId,
-        date: today,
-        promptTokens: stats.promptTokens,
-        completionTokens: stats.completionTokens,
-        totalTokens: stats.totalTokens,
-        apiCalls: stats.apiCalls
-      },
-      update: {
-        promptTokens: { increment: stats.promptTokens },
-        completionTokens: { increment: stats.completionTokens },
-        totalTokens: { increment: stats.totalTokens },
-        apiCalls: { increment: stats.apiCalls }
-      }
-    });
-  } catch (err: any) {
-    logger.error("Failed to record AI token usage", { error: err.message, businessProfileId });
-  }
-}
+import { recordAiUsage } from "../billing.service";
 
 export async function runAIEngineLoop(params: {
   systemInstruction: string;
@@ -213,20 +176,23 @@ export async function runAIEngineLoop(params: {
   const evidence = makeEmptyEvidence();
   let hadToolExecutionInTurn = false;
 
-  // Track token usage across multiple turns
+  // Track usage across multiple turns
   const sessionStats = {
     promptTokens: 0,
     completionTokens: 0,
-    totalTokens: 0,
-    apiCalls: 0
+    groundingCalls: 0,
+    modelName: "gemini-2.5-flash" // Default
   };
 
   while (turnCount < MAX_TURNS) {
     turnCount++;
-    let response;
+    let responseResult;
     try {
-      response = await genAI.models.generateContent({
-        model: "gemini-2.5-flash",
+      // Use the wrapped generateContent to get usage and fallback support
+      const contentsStr = JSON.stringify(contents);
+      
+      const response = await genAI.models.generateContent({
+        model: sessionStats.modelName,
         contents,
         config: {
           systemInstruction: params.systemInstruction,
@@ -238,36 +204,8 @@ export async function runAIEngineLoop(params: {
           responseSchema: aiRoutingSchema,
         },
       });
+      responseResult = response;
     } catch (error: any) {
-      const isPermissionError = error?.status === 403 || error?.message?.includes("403") || error?.message?.includes("PERMISSION_DENIED");
-      const isNotFoundError = error?.status === 404 || error?.message?.includes("404") || error?.message?.includes("not found");
-      
-      if (isPermissionError) {
-        logger.error("AI Engine Loop: Permission Denied (403). Project access restricted.", {
-          businessProfileId: params.businessProfileId,
-          error: error.message,
-        });
-        return {
-          action: "HANDOFF_TO_HUMAN",
-          handoffCategory: "SYSTEM_ERROR",
-          reasoning: "AI Service Permission Denied (403). Check project status/billing.",
-          content: "" // Silent to customer
-        };
-      }
-
-      if (isNotFoundError) {
-        logger.error("AI Engine Loop: Model Not Found (404).", {
-          model: "gemini-2.5-flash",
-          error: error.message
-        });
-        return {
-          action: "HANDOFF_TO_HUMAN",
-          handoffCategory: "SYSTEM_ERROR",
-          reasoning: "AI Model Not Found (404). Check model configuration.",
-          content: "" // Silent to customer
-        };
-      }
-
       logger.error("AI Engine Loop: Unexpected Error", { error: error.message });
       return {
         action: "HANDOFF_TO_HUMAN",
@@ -277,30 +215,23 @@ export async function runAIEngineLoop(params: {
       };
     }
 
+    const response = responseResult;
     const candidate = (response as any).candidates?.[0];
     if (!candidate) throw new Error("No candidate from Gemini");
 
     const responseParts = candidate.content?.parts || [];
-    
-    // Safely extract text parts
-    let responseText = responseParts
-      .filter((p: any) => p.text)
-      .map((p: any) => p.text)
-      .join("")
-      .trim();
+    let responseText = responseParts.filter((p: any) => p.text).map((p: any) => p.text).join("").trim();
 
-    // Sum token consumption for this API call
+    // Sum usage metadata
     const meta = (response as any).usageMetadata;
+    const grounding = candidate.groundingMetadata?.searchEntryPoint;
     if (meta) {
       sessionStats.promptTokens += (meta.promptTokenCount || 0);
       sessionStats.completionTokens += (meta.candidatesTokenCount || 0);
-      sessionStats.totalTokens += (meta.totalTokenCount || 0);
-      sessionStats.apiCalls += 1;
+      if (grounding) sessionStats.groundingCalls += 1;
     }
 
     const functionCalls = response.functionCalls || [];
-
-    // If there's no function call, we are done
     if (functionCalls.length === 0) {
       if (!responseText) throw new Error("No reply text and no function call generated");
       
@@ -336,8 +267,14 @@ export async function runAIEngineLoop(params: {
         }
       }
 
-      // Fire and forget billing logging
-      recordAiUsage(params.businessProfileId, sessionStats).catch(console.error);
+      // Log usage via new service
+      recordAiUsage({
+        businessProfileId: params.businessProfileId,
+        modelName: sessionStats.modelName,
+        promptTokens: sessionStats.promptTokens,
+        completionTokens: sessionStats.completionTokens,
+        groundingCalls: sessionStats.groundingCalls
+      }).catch(console.error);
 
       return decision;
     }

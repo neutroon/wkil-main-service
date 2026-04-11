@@ -36,7 +36,7 @@ async function executeWithFallback<T>(
   operation: (model: string) => Promise<T>,
   context: string,
   onRetry?: (message: string) => void
-): Promise<T> {
+): Promise<{ result: T; model: string }> {
   const tiers = [MODELS.PRIMARY, MODELS.RESERVE, MODELS.STABLE];
   let lastError: any;
 
@@ -47,7 +47,8 @@ async function executeWithFallback<T>(
 
     while (attempts < maxAttempts) {
       try {
-        return await operation(currentModel);
+        const result = await operation(currentModel);
+        return { result, model: currentModel };
       } catch (error: any) {
         lastError = error;
         const isRetryable = error?.status === 503 || error?.status === 429 || error?.message?.includes("high demand");
@@ -85,6 +86,14 @@ async function executeWithFallback<T>(
   throw lastError;
 }
 
+export type AiUsageMetadata = {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  groundingCalls: number;
+  model: string;
+};
+
 // Use Gemini 2.5 Flash (Primary) with 2.0/1.5 Fallbacks
 async function generateContentStream(
   prompt: string, 
@@ -111,20 +120,33 @@ async function generateContent(
   responseMimeType?: string, 
   enableSearch?: boolean,
   onRetry?: (msg: string) => void
-) {
+): Promise<{ text: string; usage: AiUsageMetadata }> {
   const config: any = {
     responseMimeType: enableSearch ? "text/plain" : (responseMimeType || "text/plain"),
     tools: enableSearch ? [{ googleSearch: {} }] : undefined,
   };
 
-  return executeWithFallback(async (model) => {
-    const response = await genAI.models.generateContent({
+  const { result: response, model } = await executeWithFallback(async (model) => {
+    return await genAI.models.generateContent({
       model,
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       config,
     });
-    return response.text || "";
   }, "StrategyPlanning", onRetry);
+
+  const usage = response.usageMetadata;
+  const grounding = (response as any).candidates?.[0]?.groundingMetadata?.searchEntryPoint;
+
+  return {
+    text: response.text || "",
+    usage: {
+      promptTokens: usage?.promptTokenCount || 0,
+      completionTokens: usage?.candidatesTokenCount || 0,
+      totalTokens: usage?.totalTokenCount || 0,
+      groundingCalls: grounding ? 1 : 0,
+      model
+    }
+  };
 }
 
 export const MESSENGER_SAFETY_SETTINGS = [
@@ -292,7 +314,7 @@ export async function generateMessengerAssistantReply(params: {
   historyTurns: { role: "user" | "model"; text?: string; parts?: any[] }[];
   customerMessage: string;
   tools?: Tool[];
-}): Promise<any> {
+}): Promise<{ response: any; usage: AiUsageMetadata }> {
   const contents = [
     ...params.historyTurns.map((t) => ({
       role: t.role,
@@ -305,20 +327,34 @@ export async function generateMessengerAssistantReply(params: {
   ];
 
   try {
-    const response = await genAI.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents,
-      config: {
-        systemInstruction: params.systemInstruction,
-        temperature: 0.35,
-        maxOutputTokens: 512,
-        responseMimeType: "text/plain",
-        safetySettings: MESSENGER_SAFETY_SETTINGS,
-        tools: params.tools,
-      },
-    });
+    const { result: response, model } = await executeWithFallback(async (model) => {
+      return await genAI.models.generateContent({
+        model,
+        contents,
+        config: {
+          systemInstruction: params.systemInstruction,
+          temperature: 0.35,
+          maxOutputTokens: 512,
+          responseMimeType: "text/plain",
+          safetySettings: MESSENGER_SAFETY_SETTINGS,
+          tools: params.tools,
+        },
+      });
+    }, "MessengerAssistant");
 
-    return response;
+    const usage = response.usageMetadata;
+    const grounding = (response as any).candidates?.[0]?.groundingMetadata?.searchEntryPoint;
+
+    return {
+      response,
+      usage: {
+        promptTokens: usage?.promptTokenCount || 0,
+        completionTokens: usage?.candidatesTokenCount || 0,
+        totalTokens: usage?.totalTokenCount || 0,
+        groundingCalls: grounding ? 1 : 0,
+        model
+      }
+    };
   } catch (error: any) {
     if (error?.status === 403 || error?.message?.includes("403") || error?.message?.includes("PERMISSION_DENIED")) {
       logger.error("Gemini Assistant Permission Denied (403): Your project has been denied access. Check project/billing status.", {
@@ -331,24 +367,34 @@ export async function generateMessengerAssistantReply(params: {
 }
 
 // For ingestion — used when embedding chunks
-async function embedTexts(texts: string[]): Promise<number[][]> {
+async function embedTexts(texts: string[]): Promise<{ embeddings: number[][]; totalTokens: number }> {
+  let totalTokens = 0;
   const result = await Promise.all(
-    texts.map((t) =>
-      genAI.models.embedContent({
+    texts.map(async (t) => {
+      const res = await genAI.models.embedContent({
         model: "gemini-embedding-001",
         contents: t,
         config: {
           taskType: "RETRIEVAL_DOCUMENT", // ← explicit
           outputDimensionality: 768,
         },
-      }),
-    ),
+      });
+      // Estimate embedding tokens based on character count if API doesn't provide it clearly, 
+      // but usually gemini-embedding counts are straightforward.
+      // For now we estimate 1 token per 4 chars as fallback or use the response metadata if present.
+      // (Gemini embedding API doesn't return usageMetadata in the same way as generateContent)
+      totalTokens += Math.ceil(t.length / 4); 
+      return res;
+    }),
   );
-  return result.map((r) => r.embeddings![0].values!);
+  return {
+    embeddings: result.map((r) => r.embeddings![0].values!),
+    totalTokens
+  };
 }
 
 // For querying — used when embedding user messages
-async function embedQuery(text: string): Promise<number[]> {
+async function embedQuery(text: string): Promise<{ vector: number[]; totalTokens: number }> {
   const result = await genAI.models.embedContent({
     model: "gemini-embedding-001",
     contents: text,
@@ -357,7 +403,10 @@ async function embedQuery(text: string): Promise<number[]> {
       outputDimensionality: 768,
     },
   });
-  return result.embeddings![0].values!;
+  return {
+    vector: result.embeddings![0].values!,
+    totalTokens: Math.ceil(text.length / 4)
+  };
 }
 
 export default generateContent;

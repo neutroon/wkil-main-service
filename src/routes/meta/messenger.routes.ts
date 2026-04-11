@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import { Prisma } from "@prisma/client";
 import prisma from "../../config/prisma";
-import { enqueueMessengerJob } from "../../queues/messenger.queue";
+import { enqueueMetaJob } from "../../queues/messenger.queue";
 import { logger } from "../../utils/logger";
 import { verifyMetaWebhookSignature } from "../../utils/metaWebhook";
 import { authenticateToken } from "../../middlewares/auth.middleware";
@@ -246,50 +246,91 @@ messengerRoutes.post("/webhook", async (req: Request, res: Response) => {
 
     logger.info("messenger.webhook.event_received");
 
-    if (body.object !== "page" || !Array.isArray(body.entry)) return;
-
     for (const entry of body.entry) {
       const pageId = entry.id;
-      if (!pageId || !Array.isArray(entry.messaging)) continue;
 
-      for (const event of entry.messaging) {
-        if (!event.message || event.message.is_echo) continue;
+      // 1. Handle Feed changes (Facebook Comments)
+      if (Array.isArray(entry.changes)) {
+        for (const change of entry.changes) {
+          if (change.field === "feed") {
+            const value = change.value;
+            // PRODUCTION GUARD: Handle only new comment additions.
+            // Ignore edits, deletes, and self-comments by the page admin.
+            if (value.item === "comment" && value.verb === "add") {
+              const senderId = value.from?.id;
+              if (senderId === pageId) {
+                logger.debug("facebook.webhook.self_comment_ignored", { pageId, commentId: value.comment_id });
+                continue;
+              }
 
-        const senderId = event.sender?.id;
-        const messageText = event.message.text;
-        const messageMid = event.message.mid;
+              const messageText = value.message;
+              const commentId = value.comment_id;
+              const postId = value.post_id;
+              const senderName = value.from?.name;
 
-        if (!senderId || !messageText) continue;
-
-        if (messageMid) {
-          try {
-            const inserted = await prisma.processedMessengerMessage.createMany({
-              data: [{ messageMid }],
-              skipDuplicates: true,
-            });
-            if (inserted.count === 0) {
-              logger.debug("messenger.webhook.duplicate_mid_skipped", {
-                messageMid,
-              });
-              continue;
-            }
-          } catch (e: unknown) {
-            if (isProcessedMessengerTableMissing(e)) {
-              logger.warn(
-                "messenger.webhook.idempotency_table_missing_run_prisma_migrate",
-              );
-            } else {
-              throw e;
+              if (senderId && messageText && commentId) {
+                logger.info("facebook.webhook.comment_enqueued", { pageId, senderId, commentId });
+                enqueueMetaJob({
+                  type: "FACEBOOK_COMMENT",
+                  pageId,
+                  senderId,
+                  commentId,
+                  postId,
+                  messageText,
+                  senderName,
+                });
+              }
             }
           }
         }
+      }
 
-        logger.info("messenger.webhook.message_enqueued", {
-          pageId,
-          senderId,
-        });
+      // 2. Handle Messaging items (Messenger/Instagram)
+      if (Array.isArray(entry.messaging)) {
+        for (const event of entry.messaging) {
+          if (!event.message || event.message.is_echo) continue;
 
-        enqueueMessengerJob({ pageId, senderId, messageText });
+          const senderId = event.sender?.id;
+          const messageText = event.message.text;
+          const messageMid = event.message.mid;
+
+          if (!senderId || !messageText) continue;
+
+          if (messageMid) {
+            try {
+              const inserted = await prisma.processedMessengerMessage.createMany({
+                data: [{ messageMid }],
+                skipDuplicates: true,
+              });
+              if (inserted.count === 0) {
+                logger.debug("messenger.webhook.duplicate_mid_skipped", {
+                  messageMid,
+                });
+                continue;
+              }
+            } catch (e: unknown) {
+              if (isProcessedMessengerTableMissing(e)) {
+                logger.warn(
+                  "messenger.webhook.idempotency_table_missing_run_prisma_migrate",
+                );
+              } else {
+                throw e;
+              }
+            }
+          }
+
+          logger.info("messenger.webhook.message_enqueued", {
+            pageId,
+            senderId,
+          });
+
+          enqueueMetaJob({
+            type: "MESSENGER",
+            pageId,
+            senderId,
+            messageText,
+          });
+        }
       }
     }
   } catch (error: any) {

@@ -368,22 +368,27 @@ model UserAnalytics {
   @@index([date])
 }
 
-/// Tracks daily AI token consumption per Business Profile for billing and analytics
 model AiUsageStat {
   id                Int             @id @default(autoincrement())
   businessProfileId Int
   businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
   date              DateTime        @db.Date
+  modelName         String          @default("gemini-2.0-flash")
   
   promptTokens      Int             @default(0)
   completionTokens  Int             @default(0)
   totalTokens       Int             @default(0)
   apiCalls          Int             @default(0)
   
+  // Production-grade additions
+  groundingCalls    Int             @default(0) 
+  embeddingTokens   Int             @default(0)
+  systemCost        Float           @default(0) // Locked-in cost at time of usage
+
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 
-  @@unique([businessProfileId, date])
+  @@unique([businessProfileId, date, modelName])
   @@index([businessProfileId])
   @@index([date])
 }

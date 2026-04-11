@@ -15,8 +15,67 @@ import { emitToBusiness, emitToConversation } from "../../utils/socket";
 import { computeBusinessChatReply } from "../../services/ai/aiEngine.service";
 import { toPromptMessages, historyToLlmTurns } from "../../services/chat/conversationTurns";
 import { getConversationHistory } from "../../services/meta/conversation.service";
+import { getMetaMediaUrl, streamMetaMedia } from "../../services/meta/metaMedia.service";
 
 const conversationsRoutes = Router();
+
+/**
+ * GET /v1/meta/conversations/:id/media/:mid
+ * Proxy route for streaming Meta media (WhatsApp/Messenger) to the UI.
+ * This is necessary to handle authentication (401 fix) and CORS.
+ */
+conversationsRoutes.get(
+  "/:id/media/:mid",
+  authenticateToken,
+  async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).user.id as number;
+      const conversationId = parseInt(req.params.id, 10);
+      const mediaId = req.params.mid;
+
+      // 1. Ownership & Auth
+      const phoneNumberIds = await getUserPhoneNumberIds(userId);
+      const conversation = await prisma.conversation.findFirst({
+        where: { id: conversationId, pageId: { in: phoneNumberIds } }
+      });
+      if (!conversation) return res.status(404).json({ error: "Not found" });
+
+      // 2. Token Discovery
+      let accessToken = "";
+      if (conversation.channel === "whatsapp") {
+        const account = await prisma.whatsAppAccount.findFirst({
+          where: { phoneNumberId: conversation.pageId, isActive: true },
+          select: { accessToken: true }
+        });
+        if (account) accessToken = decryptFacebookSecret(account.accessToken);
+      } else {
+        const page = await prisma.facebookPage.findFirst({
+          where: { pageId: conversation.pageId, isActive: true },
+          select: { pageAccessToken: true }
+        });
+        if (page) accessToken = decryptFacebookSecret(page.pageAccessToken);
+      }
+
+      if (!accessToken) return res.status(401).json({ error: "Meta credentials missing" });
+
+      // 3. Resolve & Stream
+      const url = await getMetaMediaUrl(mediaId, accessToken);
+      // We pass accessToken again to streamMetaMedia to satisfy the binary download 401 requirement
+      const response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+      if (!response.ok) throw new Error(`Meta binary fetch failed: ${response.status}`);
+
+      const contentType = response.headers.get("content-type");
+      if (contentType) res.setHeader("Content-Type", contentType);
+
+      const arrayBuffer = await response.arrayBuffer();
+      res.send(Buffer.from(arrayBuffer));
+
+    } catch (e: any) {
+      logger.error("meta.media_proxy_failed", { error: e.message });
+      res.status(500).json({ error: "Failed to load media" });
+    }
+  }
+);
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

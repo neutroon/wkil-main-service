@@ -22,25 +22,33 @@ const conversationsRoutes = Router();
 /**
  * GET /v1/meta/conversations/:id/media/:mid
  * Proxy route for streaming Meta media (WhatsApp/Messenger) to the UI.
- * This is necessary to handle authentication (401 fix) and CORS.
+ * Supports Token-in-Query for browser native tags (<img>/<audio>).
  */
 conversationsRoutes.get(
   "/:id/media/:mid",
-  authenticateToken,
   async (req: Request, res: Response) => {
     try {
-      const userId = (req as any).user.id as number;
       const conversationId = parseInt(req.params.id, 10);
       const mediaId = req.params.mid;
 
-      // 1. Ownership & Auth
+      // 1. Unified Authentication (Header, Cookie, or Query)
+      let token = req.headers.authorization?.startsWith("Bearer ") 
+        ? req.headers.authorization.split(" ")[1] 
+        : (req.cookies?.accessToken || (req.query.token as string));
+
+      if (!token) return res.status(401).json({ error: "Access token required" });
+
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || "supersecret") as any;
+      const userId = decoded.id;
+
+      // 2. Ownership Verification
       const phoneNumberIds = await getUserPhoneNumberIds(userId);
       const conversation = await prisma.conversation.findFirst({
         where: { id: conversationId, pageId: { in: phoneNumberIds } }
       });
-      if (!conversation) return res.status(404).json({ error: "Not found" });
+      if (!conversation) return res.status(404).json({ error: "Conversation not found" });
 
-      // 2. Token Discovery
+      // 3. Platform Credential Discovery
       let accessToken = "";
       if (conversation.channel === "whatsapp") {
         const account = await prisma.whatsAppAccount.findFirst({
@@ -58,14 +66,16 @@ conversationsRoutes.get(
 
       if (!accessToken) return res.status(401).json({ error: "Meta credentials missing" });
 
-      // 3. Resolve & Stream
+      // 4. Resolve & Stream
       const url = await getMetaMediaUrl(mediaId, accessToken);
-      // We pass accessToken again to streamMetaMedia to satisfy the binary download 401 requirement
       const response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
       if (!response.ok) throw new Error(`Meta binary fetch failed: ${response.status}`);
 
       const contentType = response.headers.get("content-type");
       if (contentType) res.setHeader("Content-Type", contentType);
+      
+      // Cache for performance
+      res.setHeader("Cache-Control", "public, max-age=3600");
 
       const arrayBuffer = await response.arrayBuffer();
       res.send(Buffer.from(arrayBuffer));

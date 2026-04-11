@@ -130,7 +130,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
 
     const reply = await computeBusinessChatReply({
       businessProfile,
-      messageText,
+      messageText: finalContent,
       historyTurns,
       channel: platform,
       customerPhone: platform === "whatsapp" ? senderId : undefined,

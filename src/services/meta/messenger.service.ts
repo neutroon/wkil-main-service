@@ -107,11 +107,31 @@ export async function handleMessengerMessage(
 
     let conversation: any;
     try {
+      // Fetch Meta Profile if identity info is missing
+      let identity: { name?: string; avatar?: string } = {};
+      const existing = await prisma.conversation.findFirst({
+        where: { pageId, senderId, channel: "messenger" },
+        select: { customerName: true, customerAvatar: true }
+      });
+
+      if (!existing || !existing.customerName) {
+        const { getFacebookUserProfile } = await import("./facebook.service");
+        const profile = await getFacebookUserProfile(senderId, pageId, pageAccessToken);
+        if (profile) {
+          identity.name = profile.name;
+          identity.avatar = profile.picture?.data?.url;
+        }
+      }
+
       conversation = await getOrCreateConversation(
         pageId,
         senderId,
         page.businessProfileId,
-        { channel: "messenger" },
+        { 
+          channel: "messenger",
+          customerName: identity.name,
+          customerAvatar: identity.avatar
+        },
       );
     const historyRows = await getConversationHistory(conversation.id);
     const userSaved = await saveMessage(conversation.id, "user", messageText);

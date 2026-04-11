@@ -32,6 +32,7 @@ export async function computeBusinessChatReply(params: {
   historyTurns: { role: "user" | "model"; text: string }[];
   channel: "messenger" | "whatsapp" | "web";
   customerPhone?: string;
+  mediaInfo?: { id: string; type: string; url?: string };
 }): Promise<AiRoutingDecision> {
   const {
     businessProfile,
@@ -81,5 +82,6 @@ export async function computeBusinessChatReply(params: {
     businessProfileId: businessProfile.id,
     customerPhone,
     channel,
+    mediaInfo: params.mediaInfo,
   });
 }

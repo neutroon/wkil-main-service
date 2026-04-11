@@ -96,7 +96,7 @@ export async function getConversationHistory(conversationId: number) {
 
 export async function saveMessage(
   conversationId: number,
-  role: "user" | "model",
+  role: "user" | "model" | "agent",
   content: string,
   opts?: {
     status?: string | null;

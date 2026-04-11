@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import { Prisma } from "@prisma/client";
 import prisma from "../../config/prisma";
-import { enqueueMetaJob } from "../../queues/messenger.queue";
+import { enqueueMetaJob } from "../../queues/meta.queue";
 import { logger } from "../../utils/logger";
 import { verifyMetaWebhookSignature } from "../../utils/metaWebhook";
 import { authenticateToken } from "../../middlewares/auth.middleware";
@@ -368,14 +368,16 @@ messengerRoutes.post("/webhook", async (req: Request, res: Response) => {
               if (senderId && messageText && commentId) {
                 logger.info("facebook.webhook.comment_enqueued", { pageId, senderId, commentId });
                 enqueueMetaJob({
+                  platform: "messenger",
                   type: "FACEBOOK_COMMENT",
                   pageId,
+                  identifier: pageId,
                   senderId,
                   commentId,
                   postId,
                   messageText,
                   senderName,
-                });
+                } as any);
               }
             }
           }
@@ -504,15 +506,17 @@ messengerRoutes.post("/webhook", async (req: Request, res: Response) => {
           });
 
           enqueueMetaJob({
+            platform: "messenger",
             type: "MESSENGER",
             pageId,
+            identifier: pageId,
             senderId,
             messageText,
             externalId: messageMid,
             msgType,
             mediaId: mediaId?.toString(),
             mediaMetadata
-          });
+          } as any);
         }
       }
     }

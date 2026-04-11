@@ -64,17 +64,15 @@ mediaRoutes.get(
       // 4. Resolve & Stream
       let resolveId = mediaId;
 
-      // Primary Lookup: Find the message in DB to get externalId and metadata
+      // Primary Lookup: Find the message in DB to get externalId and metadata fallback
       const msg = await prisma.conversationMessage.findFirst({
         where: { conversationId, mediaId }
       });
 
-      if (conversation.channel === "messenger") {
-        // For Messenger, we need the "mid" (message ID) to refresh the URL.
-        if (msg?.externalId) {
-          resolveId = msg.externalId;
-        }
+      if (conversation.channel === "messenger" && msg?.externalId) {
+        resolveId = msg.externalId;
       }
+    
 
       const url = await getMetaMediaUrl(
         resolveId, 

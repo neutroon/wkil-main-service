@@ -134,7 +134,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
       historyTurns,
       channel: platform,
       customerPhone: platform === "whatsapp" ? senderId : undefined,
-      mediaInfo: mediaId ? { id: mediaId, type: type || "image" } : undefined,
+      mediaInfo: mediaId ? { id: mediaId, type: type || "image", url: mediaMetadata?.url } : undefined,
     });
 
     if (reply.action === "RESOLVE_CONVERSATION") {

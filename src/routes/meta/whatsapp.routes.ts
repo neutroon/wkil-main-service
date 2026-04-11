@@ -2,7 +2,7 @@ import { Router, Request, Response } from "express";
 import { randomUUID } from "crypto";
 import { Prisma } from "@prisma/client";
 import prisma from "../../config/prisma";
-import { enqueueWhatsAppJob } from "../../queues/whatsapp.queue";
+import { enqueueMetaJob } from "../../queues/meta.queue";
 import { logger } from "../../utils/logger";
 import { verifyMetaWebhookSignature } from "../../utils/metaWebhook";
 import { authenticateToken } from "../../middlewares/auth.middleware";
@@ -389,16 +389,21 @@ whatsappRoutes.post("/webhook", async (req: Request, res: Response) => {
             customerName,
           });
 
-          enqueueWhatsAppJob({
+          enqueueMetaJob({
+            platform: "whatsapp",
             phoneNumberId,
+            identifier: phoneNumberId,
             from,
+            senderId: from,
             messageText,
             wamid,
+            externalId: wamid,
             customerName,
             type,
+            msgType: type,
             mediaId,
             mediaMetadata,
-          });
+          } as any);
         }
       }
     }

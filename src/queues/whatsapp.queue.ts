@@ -6,6 +6,7 @@ type WhatsAppJob = {
   from: string;
   messageText: string;
   wamid: string;
+  customerName?: string;
 };
 
 const queue: WhatsAppJob[] = [];

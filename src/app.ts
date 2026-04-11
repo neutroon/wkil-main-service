@@ -122,7 +122,6 @@ app.use("/v1/crm", crmRoutes);
 app.use("/v1/external-data", externalDataSourceRoutes);
 app.use("/v1/widget", widgetRoutes);
 app.use("/v1/analytics", aiAnalyticsRoutes);
-app.use("/v1/meta/conversations", conversationsRoutes);
 
 // Health check endpoint
 app.get("/v1/health", (req, res) => {

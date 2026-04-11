@@ -133,10 +133,12 @@ export async function retrieveRelevantChunks(
 
   // 1. Embed the user's query
   // Guard against empty query (e.g. voice messages without transcription)
-  if (!query || query.trim().length === 0) {
-    logger.debug("rag.retrieve.empty_query", { businessProfileId });
-    return [];
-  }
+    // If the query is empty but we're in a multimodal context (media attached),
+    // we should return the "Global Identity" chunks so the AI knows who it is.
+    if (!query || query.trim().length === 0) {
+      logger.debug("rag.retrieve.empty_query_using_identity", { businessProfileId });
+      return await getIdentityContext(businessProfileId);
+    }
 
   const { vector: queryEmbedding, totalTokens } = await embedQuery(query);
   const vector = `[${queryEmbedding.join(",")}]`;
@@ -176,4 +178,30 @@ export async function retrieveRelevantChunks(
   });
 
   return filtered;
+}
+
+/**
+ * Fetches the core business identity chunks (identity, voice, tone, mission).
+ * Used as a fallback when the user sends media (image/audio) without text.
+ */
+export async function getIdentityContext(businessProfileId: number): Promise<{ chunkType: string; content: string; similarity: number }[]> {
+  try {
+     const chunks = await prisma.businessProfileChunk.findMany({
+        where: { 
+          businessProfileId, 
+          chunkType: { in: ["identity", "product", "contact", "faq", "intents"] } 
+        },
+        take: 5,
+        orderBy: { createdAt: "asc" }
+     });
+
+     return chunks.map(c => ({
+        chunkType: c.chunkType,
+        content: c.content,
+        similarity: 1.0 // Identity chunks are always considered relevant fallbacks
+     }));
+  } catch (error) {
+     logger.error("rag.identity_fetch_failed", { businessProfileId, error: String(error) });
+     return [];
+  }
 }

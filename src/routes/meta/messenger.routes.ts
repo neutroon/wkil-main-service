@@ -172,7 +172,7 @@ messengerRoutes.post(
       }
 
       // 2. Persist ONLY if API call succeeded
-      const saved = await saveMessage(conversationId, "model", trimmedText);
+      const saved = await saveMessage(conversationId, "agent", trimmedText);
 
       // Emit real-time updates
       emitToBusiness(conversation.businessProfileId, "new_message", {

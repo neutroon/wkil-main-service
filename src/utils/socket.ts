@@ -1,5 +1,7 @@
 import { Server as SocketIOServer } from "socket.io";
 import { Server as HTTPServer } from "http";
+import { createAdapter } from "@socket.io/redis-adapter";
+import Redis from "ioredis";
 import { logger } from "./logger";
 
 let io: SocketIOServer | null = null;
@@ -7,10 +9,27 @@ let io: SocketIOServer | null = null;
 export function initSocket(server: HTTPServer): SocketIOServer {
   io = new SocketIOServer(server, {
     cors: {
-      origin: "*", // We handle specific security via Rooms and auth later
+      origin: "*", 
       methods: ["GET", "POST"]
     }
   });
+
+  // PRODUCTION-GRADE: Multi-Instance Synchronization via Redis
+  const redisUrl = process.env.REDIS_URL;
+  if (redisUrl) {
+    try {
+      const pubClient = new Redis(redisUrl, {
+        maxRetriesPerRequest: null,
+        enableReadyCheck: false,
+      });
+      const subClient = pubClient.duplicate();
+      
+      io.adapter(createAdapter(pubClient, subClient));
+      logger.info("socket.redis_adapter_ready", { url: redisUrl.split("@")[1] }); // Log host only for security
+    } catch (err: any) {
+      logger.error("socket.redis_adapter_failed", { error: err.message });
+    }
+  }
 
   io.on("connection", (socket) => {
     logger.info("socket.connected", { id: socket.id });

@@ -224,7 +224,7 @@ contentRoutes.get(
   async (req: any, res: Response) => {
     try {
       const userId = req.user.id;
-      const { businessProfileId } = req.query;
+      const { businessProfileId, limit = 10, offset = 0 } = req.query;
 
       const where: any = { userId };
       
@@ -232,16 +232,28 @@ contentRoutes.get(
         where.businessProfileId = parseInt(String(businessProfileId), 10);
       }
 
-      const plans = await prisma.contentPlan.findMany({
-        where,
-        include: { 
-          posts: { orderBy: { scheduledAt: 'asc' } },
-          businessProfile: { select: { name: true } }
-        },
-        orderBy: { createdAt: 'desc' }
-      });
+      const take = parseInt(String(limit), 10);
+      const skip = parseInt(String(offset), 10);
 
-      res.json(plans);
+      const [plans, total] = await Promise.all([
+        prisma.contentPlan.findMany({
+          where,
+          include: { 
+            posts: { orderBy: { scheduledAt: 'asc' } },
+            businessProfile: { select: { name: true } }
+          },
+          orderBy: { createdAt: 'desc' },
+          take,
+          skip,
+        }),
+        prisma.contentPlan.count({ where })
+      ]);
+
+      res.json({
+        plans,
+        total,
+        hasMore: skip + take < total
+      });
     } catch (err: any) {
       res.status(500).json({ error: err.message || "Failed to fetch plans" });
     }

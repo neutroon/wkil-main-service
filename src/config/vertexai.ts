@@ -45,7 +45,7 @@ const location = process.env.GOOGLE_CLOUD_LOCATION || "us-central1";
 const vertexAI = new VertexAI({ project: projectId, location });
 
 // Export both text and image models
-const textModel = vertexAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+const textModel = vertexAI.getGenerativeModel({ model: "gemini-3.1-flash" });
 const imageModel = vertexAI.getGenerativeModel({
   model: "imagen-3.0-generate-001",
 });

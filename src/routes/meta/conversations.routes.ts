@@ -271,6 +271,58 @@ conversationsRoutes.post(
   }
 );
 
+/**
+ * PATCH /v1/meta/conversations/:id/ai-toggle
+ * Globally pause or resume AI for this specific thread.
+ * Syncs across all agent dashboards via Sockets.
+ */
+conversationsRoutes.patch(
+  "/:id/ai-toggle",
+  authenticateToken,
+  async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).user.id as number;
+      const conversationId = parseInt(req.params.id, 10);
+      const { enabled } = req.body as { enabled: boolean };
+
+      if (typeof enabled !== "boolean") {
+        return res.status(400).json({ error: "enabled (boolean) is required" });
+      }
+
+      const phoneNumberIds = await getUserPhoneNumberIds(userId);
+      const conversation = await prisma.conversation.findFirst({
+        where: { id: conversationId, pageId: { in: phoneNumberIds } }
+      });
+
+      if (!conversation) {
+        return res.status(404).json({ error: "Conversation not found" });
+      }
+
+      const updated = await prisma.conversation.update({
+        where: { id: conversationId },
+        data: { aiEnabled: enabled }
+      });
+
+      // Notify all connected agents of the state change
+      emitToBusiness(conversation.businessProfileId, "ai_toggle_updated", {
+        conversationId: updated.id,
+        aiEnabled: updated.aiEnabled
+      });
+
+      logger.info("meta.conversation.ai_toggle", { 
+        conversationId, 
+        enabled, 
+        userId 
+      });
+
+      return res.json({ data: updated });
+    } catch (error: any) {
+      logger.error("meta.conversations.ai_toggle_failed", { error: error.message });
+      return res.status(500).json({ error: "Failed to toggle AI for conversation" });
+    }
+  }
+);
+
 // ─── POST /v1/whatsapp/conversations/:id/messages ────────────────────────────
 /**
  * Send a human-initiated outbound message from the dashboard.

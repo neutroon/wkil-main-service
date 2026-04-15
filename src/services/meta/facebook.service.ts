@@ -425,6 +425,23 @@ export const replyToComment = async (params: FacebookCommentParams) => {
 };
 
 /**
+ * Fetches the permalink_url for a Facebook post.
+ */
+export const getFacebookPostUrl = async (postId: string, accessToken?: string): Promise<string | null> => {
+  return callGraphApiWithRetry("get_post_url", async () => {
+    try {
+      const token = accessToken || (await getPageAccessToken(postId.split("_")[0]));
+      const url = `${FB_API}/${postId}?fields=permalink_url&access_token=${token}`;
+      const { data } = await axios.get(url);
+      return data.permalink_url;
+    } catch (error: any) {
+      logger.error("facebook.post_url.fetch_failed", { postId, error: error.message });
+      return null;
+    }
+  });
+};
+
+/**
  * Delete a post from a Facebook page
  */
 export const deleteFacebookPost = async (

@@ -218,6 +218,12 @@ export const aiRoutingSchema: Schema = {
       description:
         "Must be 'REPLY_AUTO', 'HANDOFF_TO_HUMAN', or 'RESOLVE_CONVERSATION'",
     },
+    intent: {
+      type: Type.STRING,
+      description:
+        "Specifically for Facebook Comments: 'SALES_DM' (wants info), 'GREET_ONLY' (just praise/thanks), or 'IGNORE' (spam). Use 'NONE' for direct chats.",
+      nullable: true,
+    },
     handoffCategory: {
       type: Type.STRING,
       description:
@@ -232,7 +238,19 @@ export const aiRoutingSchema: Schema = {
     content: {
       type: Type.STRING,
       description:
-        "The actual message to send to the user (if replying directly). Required if REPLY_AUTO.",
+        "Standard response content. Used as fallback or for direct chats.",
+      nullable: true,
+    },
+    publicContent: {
+      type: Type.STRING,
+      description:
+        "Short, friendly greeting for a public post. Tailored to user's comment.",
+      nullable: true,
+    },
+    privateContent: {
+      type: Type.STRING,
+      description:
+        "Detailed, value-heavy response for a private DM. Prices, details, links.",
       nullable: true,
     },
   },

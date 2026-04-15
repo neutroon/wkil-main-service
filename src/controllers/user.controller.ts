@@ -97,8 +97,8 @@ export const getUserByIdController = async (req: Request, res: Response) => {
 export const updateUser = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { role, name, email } = req.body;
-    const user = await updateUserRole(parseInt(id), role, name, email);
+    const { role, name, email, plan } = req.body;
+    const user = await updateUserRole(parseInt(id), role, name, email, plan);
     res.status(200).json({
       message: "User updated successfully",
       user,

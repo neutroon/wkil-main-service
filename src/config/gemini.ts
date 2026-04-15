@@ -309,7 +309,9 @@ export const buildDynamicProperties = (mapping: any): Record<string, any> => {
   return props;
 };
 
-export function buildCaptureLeadTool(fieldMapping: any): Tool[] {
+export const DEFAULT_LEAD_CAPTURE_INSTRUCTIONS = "Captures a prospective lead's information. Trigger this ONLY when the user explicitly expresses strong buying intent, asks for a callback, tells you their contact details, or wants to proceed with an action.";
+
+export function buildCaptureLeadTool(fieldMapping: any, customInstructions?: string): Tool[] {
   const properties: Record<string, any> = {};
   const required: string[] = [];
 
@@ -351,8 +353,7 @@ export function buildCaptureLeadTool(fieldMapping: any): Tool[] {
       functionDeclarations: [
         {
           name: "capture_lead",
-          description:
-            "Captures a prospective lead's information. Trigger this ONLY when the user explicitly expresses strong buying intent, asks for a callback, tells you their contact details, or wants to proceed with an action.",
+          description: customInstructions || DEFAULT_LEAD_CAPTURE_INSTRUCTIONS,
           parameters: {
             type: Type.OBJECT,
             properties,

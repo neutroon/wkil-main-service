@@ -190,6 +190,7 @@ model Conversation {
   customerName      String?
   customerAvatar    String?
   status            String   @default("OPEN") // "OPEN", "RESOLVED", "SNOOZED"
+  aiEnabled         Boolean  @default(true)   // Toggle automation for this specific thread
   
   // Facebook Comments / Thread Continuity
   externalId        String?  @unique // Facebook comment_id or similar

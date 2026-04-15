@@ -1,7 +1,10 @@
 import { generateContent } from "../config/gemini";
 import { logger } from "../utils/logger";
+import { assertQuotaAvailable, recordAiUsage } from "./billing.service";
 
-async function discoverStrategicLinks(baseUrl: string, pageContent: string) {
+async function discoverStrategicLinks(businessProfileId: number, baseUrl: string, pageContent: string) {
+  // Pre-flight quota check
+  await assertQuotaAvailable(businessProfileId);
   const prompt = `
     أنت مساعد ذكي متخصص في تحليل هيكل المواقع الإلكترونية (Web Navigation Expert).
     مهمتك هي قراءة المحتوى المستخرج من الصفحة الرئيسية لموقع العميل، واستخراج أهم الروابط (URLs) التي تحتوي على معلومات تفصيلية نحتاجها لبناء "هوية البيزنس".
@@ -32,12 +35,22 @@ async function discoverStrategicLinks(baseUrl: string, pageContent: string) {
   `;
 
   try {
-    const { text: result } = await generateContent(prompt, "application/json");
+    const { text: result, usage } = await generateContent(prompt, "application/json");
 
     if (!result) {
       logger.warn("ai.discoverStrategicLinks.empty_result", { baseUrl });
       return [];
     }
+    
+    // Record ACTUAL usage
+    await recordAiUsage({
+      businessProfileId,
+      modelName: usage.model,
+      operation: "discover_strategic_links",
+      promptTokens: usage.promptTokens,
+      completionTokens: usage.completionTokens
+    });
+
     const parsedData = JSON.parse(result);
 
     return parsedData.urls || [];
@@ -54,7 +67,9 @@ async function discoverStrategicLinks(baseUrl: string, pageContent: string) {
   }
 }
 
-async function extractBusinessIdentity(markdown: string) {
+async function extractBusinessIdentity(businessProfileId: number, markdown: string) {
+  // Pre-flight quota check
+  await assertQuotaAvailable(businessProfileId);
   const prompt = `
     أنت خبير استراتيجي في بناء العلامات التجارية وتحليل الأعمال.
     مهمتك هي تحليل نص مستخرج من موقع إلكتروني (أو PDF) لعميل، وتحويله إلى بيانات منظمة تمثل "هوية البيزنس" لبناء مساعد ذكي (AI Agent) يمثله.
@@ -93,12 +108,22 @@ async function extractBusinessIdentity(markdown: string) {
   `;
 
   try {
-    const { text: result } = await generateContent(prompt, "application/json");
+    const { text: result, usage } = await generateContent(prompt, "application/json");
 
     if (!result) {
       logger.error("ai.extractBusinessIdentity.empty_result");
       throw new Error("Gemini returned an empty response during business identity extraction.");
     }
+
+    // Record ACTUAL usage
+    await recordAiUsage({
+      businessProfileId,
+      modelName: usage.model,
+      operation: "extract_business_identity",
+      promptTokens: usage.promptTokens,
+      completionTokens: usage.completionTokens
+    });
+
     const parsedData = JSON.parse(result);
 
     return parsedData;

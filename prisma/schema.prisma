@@ -359,6 +359,8 @@ model FacebookPage {
   pageName        String
   pageAccessToken String
   category        String?
+  pictureUrl      String?
+  followersCount  Int       @default(0)
   isActive        Boolean   @default(true)
   lastUsedAt      DateTime?
   createdAt       DateTime  @default(now())

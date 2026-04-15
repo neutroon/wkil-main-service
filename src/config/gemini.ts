@@ -4,7 +4,7 @@ import {
   HarmCategory,
   Type,
   Tool,
-  Schema
+  Schema,
 } from "@google/genai";
 import { logger } from "../utils/logger";
 
@@ -21,12 +21,31 @@ if (!process.env.GEMINI_API_KEY) {
 // Initialize Google Generative AI
 export const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
+/**
+ * Types for precise token usage and billing tracking (Gemini Production Standard).
+ * These extend the base SDK types to include missing metadata properties.
+ */
+export interface UsageMetadata {
+  promptTokenCount: number;
+  candidatesTokenCount?: number;
+  totalTokenCount: number;
+}
+
+/**
+ * Extended response interface to access runtime usage data for embeddings.
+ * Includes common metadata fields discovered at runtime for Gemini-3 series.
+ */
+export interface EmbedResponseWithUsage {
+  embeddings?: { values: number[] }[];
+  usageMetadata?: UsageMetadata;
+}
+
 // Model Tier Configuration (April 2026 Production Standards)
 // Model Tier Configuration (April 2026 Production Standards)
 const MODELS = {
-  PRIMARY: "gemini-2.5-flash",      // High Intelligence Primary
-  RESERVE: "gemini-2.0-flash",      // New Stable Reserve (Deprecating June 2026)
-  STABLE: "gemini-2.5-flash-lite",  // Ultra-Resilient "Stable" Tier
+  PRIMARY: "gemini-3.1-flash", // Current best price/performance
+  RESERVE: "gemini-3-flash", // Stable fallback
+  STABLE: "gemini-3.1-flash-lite", // Ultra-cheap high-volume
 };
 
 /**
@@ -35,7 +54,7 @@ const MODELS = {
 export async function executeWithFallback<T>(
   operation: (model: string) => Promise<T>,
   context: string,
-  onRetry?: (message: string) => void
+  onRetry?: (message: string) => void,
 ): Promise<{ result: T; model: string }> {
   const tiers = [MODELS.PRIMARY, MODELS.RESERVE, MODELS.STABLE];
   let lastError: any;
@@ -51,21 +70,27 @@ export async function executeWithFallback<T>(
         return { result, model: currentModel };
       } catch (error: any) {
         lastError = error;
-        const isRetryable = error?.status === 503 || error?.status === 429 || error?.message?.includes("high demand");
+        const isRetryable =
+          error?.status === 503 ||
+          error?.status === 429 ||
+          error?.message?.includes("high demand");
 
         if (isRetryable && attempts < maxAttempts - 1) {
           attempts++;
-          const delay = Math.pow(2, attempts) * 1000;
-          const msg = `[GeminiResilience] ${context} - Model ${currentModel} hit ${error.status || 'spike'}. Retrying in ${delay}ms...`;
+          // Exponential backoff with jitter (best practice for production resilience)
+          const delay = Math.pow(2, attempts) * 1000 + Math.random() * 1000;
+          const msg = `[GeminiResilience] ${context} - Model ${currentModel} hit ${error.status || "spike"}. Retrying in ${Math.round(delay)}ms...`;
           logger.warn(msg);
           if (onRetry) onRetry(msg);
-          await new Promise(res => setTimeout(res, delay));
+          await new Promise((res) => setTimeout(res, delay));
           continue;
         }
 
-        // If it's a 503/429 and we have a fallback model available, move to the next tier
-        if (isRetryable && t < tiers.length - 1) {
-          const msg = `[GeminiResilience] ${context} - Primary ${currentModel} exhausted. Scaling to Reserve Tier: ${tiers[t+1]}`;
+        // Scale to NEXT tier if available (for both retryable exhaustion and non-retryable errors)
+        if (t < tiers.length - 1) {
+          const msg = isRetryable
+            ? `[GeminiResilience] ${context} - Primary ${currentModel} exhausted. Scaling to Reserve Tier: ${tiers[t + 1]}`
+            : `[GeminiResilience] ${context} - Non-retryable error on ${currentModel}. Scaling to next tier: ${tiers[t + 1]}`;
           logger.warn(msg);
           if (onRetry) onRetry(msg);
           break; // Exit attempts loop to move to next model tier
@@ -74,11 +99,15 @@ export async function executeWithFallback<T>(
         // Non-retryable error or exhausted all options
         let errorMessage = error.message;
         try {
+          // Gemini sometimes wraps error messages as JSON strings; try to extract the clean message
           const parsed = JSON.parse(error.message);
           if (parsed.error?.message) errorMessage = parsed.error.message;
         } catch (e) {}
 
-        logger.error(`[GeminiResilience] ${context} Failed on ${currentModel}:`, { error: errorMessage });
+        logger.error(
+          `[GeminiResilience] ${context} Final failure on last tier (${currentModel}):`,
+          { error: errorMessage },
+        );
         throw new Error(errorMessage);
       }
     }
@@ -94,48 +123,61 @@ export type AiUsageMetadata = {
   model: string;
 };
 
-// Use Gemini 2.5 Flash (Primary) with 2.0/1.5 Fallbacks
+// Use Gemini 3.1 Flash (Primary) with 3.0 Fallbacks
 async function generateContentStream(
-  prompt: string, 
-  responseMimeType?: string, 
+  prompt: string,
+  responseMimeType?: string,
   enableSearch?: boolean,
-  onRetry?: (msg: string) => void
+  onRetry?: (msg: string) => void,
 ) {
   const config: any = {
-    responseMimeType: enableSearch ? "text/plain" : (responseMimeType || "text/plain"),
+    responseMimeType: enableSearch
+      ? "text/plain"
+      : responseMimeType || "text/plain",
     tools: enableSearch ? [{ googleSearch: {} }] : undefined,
   };
 
-  return executeWithFallback(async (model) => {
-    return await genAI.models.generateContentStream({
-      model,
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      config,
-    });
-  }, "StrategyStream", onRetry);
+  return executeWithFallback(
+    async (model) => {
+      return await genAI.models.generateContentStream({
+        model,
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        config,
+      });
+    },
+    "StrategyStream",
+    onRetry,
+  );
 }
 
 async function generateContent(
-  prompt: string, 
-  responseMimeType?: string, 
+  prompt: string,
+  responseMimeType?: string,
   enableSearch?: boolean,
-  onRetry?: (msg: string) => void
+  onRetry?: (msg: string) => void,
 ): Promise<{ text: string; usage: AiUsageMetadata }> {
   const config: any = {
-    responseMimeType: enableSearch ? "text/plain" : (responseMimeType || "text/plain"),
+    responseMimeType: enableSearch
+      ? "text/plain"
+      : responseMimeType || "text/plain",
     tools: enableSearch ? [{ googleSearch: {} }] : undefined,
   };
 
-  const { result: response, model } = await executeWithFallback(async (model) => {
-    return await genAI.models.generateContent({
-      model,
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      config,
-    });
-  }, "StrategyPlanning", onRetry);
+  const { result: response, model } = await executeWithFallback(
+    async (model) => {
+      return await genAI.models.generateContent({
+        model,
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        config,
+      });
+    },
+    "StrategyPlanning",
+    onRetry,
+  );
 
   const usage = response.usageMetadata;
-  const grounding = (response as any).candidates?.[0]?.groundingMetadata?.searchEntryPoint;
+  const grounding = (response as any).candidates?.[0]?.groundingMetadata
+    ?.searchEntryPoint;
 
   return {
     text: response.text || "",
@@ -144,8 +186,8 @@ async function generateContent(
       completionTokens: usage?.candidatesTokenCount || 0,
       totalTokens: usage?.totalTokenCount || 0,
       groundingCalls: grounding ? 1 : 0,
-      model
-    }
+      model,
+    },
   };
 }
 
@@ -173,24 +215,28 @@ export const aiRoutingSchema: Schema = {
   properties: {
     action: {
       type: Type.STRING,
-      description: "Must be 'REPLY_AUTO', 'HANDOFF_TO_HUMAN', or 'RESOLVE_CONVERSATION'"
+      description:
+        "Must be 'REPLY_AUTO', 'HANDOFF_TO_HUMAN', or 'RESOLVE_CONVERSATION'",
     },
     handoffCategory: {
       type: Type.STRING,
-      description: "If action is HANDOFF_TO_HUMAN, categorise the reason. E.g., 'SALES_OPPORTUNITY', 'ANGRY_CUSTOMER', 'MISSING_KNOWLEDGE', 'COMPLEX_SUPPORT'",
-      nullable: true
+      description:
+        "If action is HANDOFF_TO_HUMAN, categorise the reason. E.g., 'SALES_OPPORTUNITY', 'ANGRY_CUSTOMER', 'MISSING_KNOWLEDGE', 'COMPLEX_SUPPORT'",
+      nullable: true,
     },
     reasoning: {
       type: Type.STRING,
-      description: "Internal thought process explaining the action and routing decision."
+      description:
+        "Internal thought process explaining the action and routing decision.",
     },
     content: {
       type: Type.STRING,
-      description: "The actual message to send to the user (if replying directly). Required if REPLY_AUTO.",
-      nullable: true
-    }
+      description:
+        "The actual message to send to the user (if replying directly). Required if REPLY_AUTO.",
+      nullable: true,
+    },
   },
-  required: ["action", "reasoning"]
+  required: ["action", "reasoning"],
 };
 
 /**
@@ -202,36 +248,38 @@ export const buildDynamicProperties = (mapping: any): Record<string, any> => {
   const props: Record<string, any> = {};
   for (const [key, value] of Object.entries(mapping)) {
     if (typeof value === "object" && value !== null) {
-      
       const mappedType = String((value as any).type).toUpperCase();
-      
+
       if (mappedType === "ARRAY") {
-         props[key] = {
-           type: Type.ARRAY,
-           description: (value as any).description || `List of ${key}`,
-           items: {
-             type: Type.OBJECT,
-             properties: buildDynamicProperties((value as any).items || {})
-           }
-         };
+        props[key] = {
+          type: Type.ARRAY,
+          description: (value as any).description || `List of ${key}`,
+          items: {
+            type: Type.OBJECT,
+            properties: buildDynamicProperties((value as any).items || {}),
+          },
+        };
       } else if (mappedType === "NUMBER" || mappedType === "INTEGER") {
-         props[key] = {
-           type: mappedType === "INTEGER" ? Type.INTEGER : Type.NUMBER,
-           description: (value as any).description || `Numeric value for ${key}`
-         };
+        props[key] = {
+          type: mappedType === "INTEGER" ? Type.INTEGER : Type.NUMBER,
+          description: (value as any).description || `Numeric value for ${key}`,
+        };
       } else if (mappedType === "BOOLEAN") {
-         props[key] = {
-           type: Type.BOOLEAN,
-           description: (value as any).description || `True/false flag for ${key}`
-         };
+        props[key] = {
+          type: Type.BOOLEAN,
+          description:
+            (value as any).description || `True/false flag for ${key}`,
+        };
       } else {
-         const nestedProps = buildDynamicProperties((value as any).properties || value);
-         props[key] = {
-           type: Type.OBJECT,
-           description: (value as any).description || `Details for ${key}`,
-           properties: nestedProps, 
-           required: Object.keys(nestedProps)
-         };
+        const nestedProps = buildDynamicProperties(
+          (value as any).properties || value,
+        );
+        props[key] = {
+          type: Type.OBJECT,
+          description: (value as any).description || `Details for ${key}`,
+          properties: nestedProps,
+          required: Object.keys(nestedProps),
+        };
       }
     } else {
       props[key] = {
@@ -247,18 +295,36 @@ export function buildCaptureLeadTool(fieldMapping: any): Tool[] {
   const properties: Record<string, any> = {};
   const required: string[] = [];
 
-  if (fieldMapping && typeof fieldMapping === "object" && Object.keys(fieldMapping).length > 0) {
+  if (
+    fieldMapping &&
+    typeof fieldMapping === "object" &&
+    Object.keys(fieldMapping).length > 0
+  ) {
     // Dynamically build properties based on user configuration
-    for (const [key, propConfig] of Object.entries(buildDynamicProperties(fieldMapping))) {
+    for (const [key, propConfig] of Object.entries(
+      buildDynamicProperties(fieldMapping),
+    )) {
       properties[key] = propConfig;
       required.push(key);
     }
   } else {
     // Default Schema Standard
-    properties["name"] = { type: Type.STRING, description: "The full name of the prospect." };
-    properties["email"] = { type: Type.STRING, description: "The email address of the prospect." };
-    properties["phone"] = { type: Type.STRING, description: "The phone number of the prospect." };
-    properties["notes"] = { type: Type.STRING, description: "A summary of the prospect's intent." };
+    properties["name"] = {
+      type: Type.STRING,
+      description: "The full name of the prospect.",
+    };
+    properties["email"] = {
+      type: Type.STRING,
+      description: "The email address of the prospect.",
+    };
+    properties["phone"] = {
+      type: Type.STRING,
+      description: "The phone number of the prospect.",
+    };
+    properties["notes"] = {
+      type: Type.STRING,
+      description: "A summary of the prospect's intent.",
+    };
     required.push("name");
   }
 
@@ -282,22 +348,30 @@ export function buildCaptureLeadTool(fieldMapping: any): Tool[] {
 
 export function buildExternalQueryTools(dataSources: any[]): Tool[] {
   if (!dataSources || dataSources.length === 0) return [];
-  
+
   const functionDeclarations = dataSources.map((ds) => {
     let properties: any = {};
     let required: string[] = [];
 
-    if (ds.expectedParamsSchema && typeof ds.expectedParamsSchema === "object") {
+    if (
+      ds.expectedParamsSchema &&
+      typeof ds.expectedParamsSchema === "object"
+    ) {
       properties = buildDynamicProperties(ds.expectedParamsSchema);
       required = Object.keys(properties);
     }
 
     return {
       name: `query_external_api_${ds.id}`,
-      description: ds.description || `Fetch data from ${ds.name}. Ask user for required fields if missing.`,
+      description:
+        ds.description ||
+        `Fetch data from ${ds.name}. Ask user for required fields if missing.`,
       parameters: {
         type: Type.OBJECT,
-        properties: Object.keys(properties).length > 0 ? properties : { q: { type: Type.STRING, description: "Optional search term" } },
+        properties:
+          Object.keys(properties).length > 0
+            ? properties
+            : { q: { type: Type.STRING, description: "Optional search term" } },
       },
     };
   });
@@ -306,7 +380,10 @@ export function buildExternalQueryTools(dataSources: any[]): Tool[] {
 }
 
 /**
- * Structured generation for Messenger: system instruction + explicit turns (better than one concatenated blob).
+ * Structured generation for Messenger: system instruction + explicit turns.
+ * ⚠️ If tools are passed, check response.candidates[0].content.parts
+ * for functionCall parts and handle the tool execution loop externally.
+ * This function does NOT auto-execute tool calls.
  */
 export async function generateMessengerAssistantReply(params: {
   systemInstruction: string;
@@ -327,23 +404,27 @@ export async function generateMessengerAssistantReply(params: {
   ];
 
   try {
-    const { result: response, model } = await executeWithFallback(async (model) => {
-      return await genAI.models.generateContent({
-        model,
-        contents,
-        config: {
-          systemInstruction: params.systemInstruction,
-          temperature: 0.35,
-          maxOutputTokens: 1024,
-          responseMimeType: "text/plain",
-          safetySettings: MESSENGER_SAFETY_SETTINGS,
-          tools: params.tools,
-        },
-      });
-    }, "MessengerAssistant");
+    const { result: response, model } = await executeWithFallback(
+      async (model) => {
+        return await genAI.models.generateContent({
+          model,
+          contents,
+          config: {
+            systemInstruction: params.systemInstruction,
+            temperature: 0.35,
+            maxOutputTokens: 1024,
+            responseMimeType: "text/plain",
+            safetySettings: MESSENGER_SAFETY_SETTINGS,
+            tools: params.tools,
+          },
+        });
+      },
+      "MessengerAssistant",
+    );
 
     const usage = response.usageMetadata;
-    const grounding = (response as any).candidates?.[0]?.groundingMetadata?.searchEntryPoint;
+    const grounding = (response as any).candidates?.[0]?.groundingMetadata
+      ?.searchEntryPoint;
 
     return {
       response,
@@ -352,65 +433,84 @@ export async function generateMessengerAssistantReply(params: {
         completionTokens: usage?.candidatesTokenCount || 0,
         totalTokens: usage?.totalTokenCount || 0,
         groundingCalls: grounding ? 1 : 0,
-        model
-      }
+        model,
+      },
     };
   } catch (error: any) {
-    if (error?.status === 403 || error?.message?.includes("403") || error?.message?.includes("PERMISSION_DENIED")) {
-      logger.error("Gemini Assistant Permission Denied (403): Your project has been denied access. Check project/billing status.", {
-        error: error.message,
-        tip: "Check AI Studio console for project 'gen-lang-client-0165801924' status."
-      });
+    if (
+      error?.status === 403 ||
+      error?.message?.includes("403") ||
+      error?.message?.includes("PERMISSION_DENIED")
+    ) {
+      logger.error(
+        "Gemini Assistant Permission Denied (403): Your project has been denied access. Check project/billing status.",
+        {
+          error: error.message,
+          tip: "Check AI Studio console for project 'gen-lang-client-0165801924' status.",
+        },
+      );
     }
     throw error;
   }
 }
 
 // For ingestion — used when embedding chunks
-async function embedTexts(texts: string[]): Promise<{ embeddings: number[][]; totalTokens: number }> {
+async function embedTexts(
+  texts: string[],
+): Promise<{ embeddings: number[][]; totalTokens: number }> {
   let totalTokens = 0;
   const result = await Promise.all(
     texts.map(async (t) => {
-      const res = await genAI.models.embedContent({
+      const res = (await genAI.models.embedContent({
         model: "gemini-embedding-001",
         contents: t,
         config: {
-          taskType: "RETRIEVAL_DOCUMENT", // ← explicit
+          taskType: "RETRIEVAL_DOCUMENT",
           outputDimensionality: 768,
         },
-      });
-      // Estimate embedding tokens based on character count if API doesn't provide it clearly, 
-      // but usually gemini-embedding counts are straightforward.
-      // For now we estimate 1 token per 4 chars as fallback or use the response metadata if present.
-      // (Gemini embedding API doesn't return usageMetadata in the same way as generateContent)
-      totalTokens += Math.ceil(t.length / 4); 
+      })) as EmbedResponseWithUsage;
+
+      const tokens = res.usageMetadata?.totalTokenCount ?? 0;
+      if (!tokens) {
+        logger.warn(
+          `[GeminiBilling] No usageMetadata returned for embedding model. Fallover to 0. Check API version.`,
+        );
+      } else {
+        logger.debug(`[GeminiBilling] Embedding tokens captured: ${tokens}`);
+      }
+
+      totalTokens += tokens;
       return res;
     }),
   );
   return {
     embeddings: result.map((r) => r.embeddings![0].values!),
-    totalTokens
+    totalTokens,
   };
 }
 
 // For querying — used when embedding user messages
-async function embedQuery(text: string): Promise<{ vector: number[]; totalTokens: number }> {
+async function embedQuery(
+  text: string,
+): Promise<{ vector: number[]; totalTokens: number }> {
   if (!text || text.trim().length === 0) {
     return { vector: new Array(768).fill(0), totalTokens: 0 };
   }
-  const result = await genAI.models.embedContent({
+  const result = (await genAI.models.embedContent({
     model: "gemini-embedding-001",
     contents: text,
     config: {
-      taskType: "RETRIEVAL_QUERY", // ← different task type
+      taskType: "RETRIEVAL_QUERY",
       outputDimensionality: 768,
     },
-  });
+  })) as EmbedResponseWithUsage;
+
+  const tokens = result.usageMetadata?.totalTokenCount ?? 0;
+
   return {
     vector: result.embeddings![0].values!,
-    totalTokens: Math.ceil(text.length / 4)
+    totalTokens: tokens,
   };
 }
 
-export default generateContent;
-export { generateContentStream, embedTexts, embedQuery };
+export { generateContent, generateContentStream, embedTexts, embedQuery };

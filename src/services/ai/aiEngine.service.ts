@@ -142,9 +142,12 @@ export function evaluateGuardrailsForReply(
 
 export interface AiRoutingDecision {
   action: "REPLY_AUTO" | "HANDOFF_TO_HUMAN" | "RESOLVE_CONVERSATION";
+  intent?: "SALES_DM" | "GREET_ONLY" | "IGNORE" | "NONE";
   handoffCategory?: string | null;
   reasoning: string;
   content?: string | null;
+  publicContent?: string | null;
+  privateContent?: string | null;
 }
 
 
@@ -515,6 +518,17 @@ ${faqs}
 4. Channel: ${channel}. Keep formatting suitable for this channel (e.g., WhatsApp supports *bold*, web supports standard markdown).
 5. Do not make promises that are not part of the core policies.
 6. Provide brief but accurate reasoning for your decision in the "reasoning" field. IMPORTANT: This text is visible to human agents. It MUST follow the business tone and voice, and MUST be written in the SAME LANGUAGE as the conversation (e.g., if the user speaks Arabic, the reasoning must be in Arabic).
+
+--- FACEBOOK DUAL-CHANNEL PROTOCOL (CRITICAL) ---
+If the channel context indicates this is a Facebook Comment:
+1. Identify Intent:
+   - SALES_DM: User asks for price, info, details, location, or shows buying interest.
+   - GREET_ONLY: User gives general praise ("Nice!", "Wow"), says "Thanks", or leaves emojis.
+   - IGNORE: User is spamming, insulting, or completely irrelevant.
+2. Generate Content:
+   - If SALES_DM: Write 'publicContent' (friendly acknowledgment + promise of DM) AND 'privateContent' (full detailed answer).
+   - If GREET_ONLY: Write ONLY 'publicContent' (friendly acknowledgment). Set intent to GREET_ONLY. Leave 'privateContent' empty.
+   - For both: Ensure 'publicContent' is concise (1-2 sentences) and professional.
 
 Format your entire output exactly as a JSON object matching the aiRoutingDecision schema. Do not output markdown code blocks for the JSON.
 `.trim();

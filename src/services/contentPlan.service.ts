@@ -1,6 +1,5 @@
-import prisma from "../config/prisma";
 import { generateContent, generateContentStream } from "../config/gemini";
-import { recordAiUsage } from "./billing.service";
+import { recordAiUsage, assertQuotaAvailable } from "./billing.service";
 import { logger } from "../utils/logger";
 import { retrieveRelevantChunks } from "../rag/rag.service";
 
@@ -25,6 +24,9 @@ export async function* generateContentStrategyStream(briefing: BriefingInput) {
   if (!profile) {
     throw new Error("Business profile not found");
   }
+
+  // Pre-flight quota check
+  await assertQuotaAvailable(briefing.businessProfileId);
 
   // 1. Common Persona Details
   const persona = `
@@ -200,6 +202,9 @@ export async function generateContentStrategy(briefing: BriefingInput) {
   if (!profile) {
     throw new Error("Business profile not found");
   }
+
+  // Pre-flight quota check
+  await assertQuotaAvailable(briefing.businessProfileId);
 
   // 1. Common Persona Details
   const persona = `
@@ -378,6 +383,9 @@ export async function generatePostExecution(postId: number, userId: number) {
   if (!post) {
     throw new Error("Post not found");
   }
+
+  // Pre-flight quota check
+  await assertQuotaAvailable(post.contentPlan.businessProfile.id);
 
   if (post.contentPlan.userId !== userId) {
     throw new Error("Unauthorized");

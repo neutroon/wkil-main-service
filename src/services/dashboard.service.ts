@@ -225,7 +225,8 @@ export const getUnifiedDashboardStats = async (
     prisma.conversationMessage.findMany({
       where: {
         conversation: {
-          businessProfile: { userId }
+          businessProfile: { userId },
+          NOT: { channel: "facebook_comment" }
         },
         createdAt: { gte: startDate },
         // We only care about user and sent model messages for response time

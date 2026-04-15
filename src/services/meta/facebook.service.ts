@@ -30,6 +30,12 @@ export interface FacebookPage {
   name: string;
   id: string;
   tasks: string[];
+  followers_count?: number;
+  picture?: {
+    data: {
+      url: string;
+    };
+  };
 }
 
 export interface FacebookPostParams {
@@ -211,7 +217,7 @@ export const getUserPages = async (
         throw new Error("Facebook access token not found for user");
       }
 
-      const url = `${FB_API}/me/accounts?access_token=${token}`;
+      const url = `${FB_API}/me/accounts?access_token=${token}&fields=id,name,access_token,category,followers_count,picture`;
       const { data } = await axios.get(url);
       return data.data;
     } catch (error: unknown) {
@@ -310,6 +316,27 @@ export const getPagePosts = async (pageId: string, accessToken?: string) => {
   });
 };
 
+/**
+ * Get specific page details (proxy)
+ */
+export const getPageDetails = async (
+  pageId: string,
+  accessToken?: string,
+): Promise<FacebookPage> => {
+  return callGraphApiWithRetry("get_page_details", async () => {
+    try {
+      const token = accessToken || (await getPageAccessToken(pageId));
+      const url = `${FB_API}/${pageId}?access_token=${token}&fields=id,name,category,followers_count,picture`;
+      const { data } = await axios.get(url);
+      return data;
+    } catch (error: unknown) {
+      const mapped = mapFacebookGraphError(error);
+      logger.error("facebook.page.fetch_details_failed", mapped);
+      throw new Error(mapped.message);
+    }
+  });
+};
+
 export const getPostComments = async (postId: string, accessToken: string) => {
   return callGraphApiWithRetry("get_comments", async () => {
     try {
@@ -339,6 +366,50 @@ export const replyToComment = async (params: FacebookCommentParams) => {
     const mapped = mapFacebookGraphError(error);
     logger.error("facebook.comment.reply_failed", mapped);
     throw new Error(mapped.message);
+  }
+};
+
+/**
+ * Delete a post from a Facebook page
+ */
+export const deleteFacebookPost = async (
+  postId: string,
+  accessToken?: string,
+): Promise<boolean> => {
+  return callGraphApiWithRetry("delete_post", async () => {
+    try {
+      // If we don't have an access token, we try to extract pageId from postId (pageId_postId format)
+      let token = accessToken;
+      if (!token && postId.includes("_")) {
+        const pageId = postId.split("_")[0];
+        token = await getPageAccessToken(pageId);
+      }
+
+      if (!token) {
+        throw new Error("Access token required for post deletion");
+      }
+
+      const url = `${FB_API}/${postId}?access_token=${token}`;
+      await axios.delete(url);
+      return true;
+    } catch (error: unknown) {
+      const mapped = mapFacebookGraphError(error);
+      logger.error("facebook.post.delete_failed", mapped);
+      return false;
+    }
+  });
+};
+
+/**
+ * Validate an access token
+ */
+export const validateAccessToken = async (accessToken: string): Promise<boolean> => {
+  try {
+    const url = `${FB_API}/me?access_token=${accessToken}&fields=id`;
+    await axios.get(url);
+    return true;
+  } catch (error: unknown) {
+    return false;
   }
 };
 
@@ -496,6 +567,9 @@ export const saveFacebookPages = async (
           update: {
             pageName: page.name,
             pageAccessToken: encryptFacebookSecret(page.access_token),
+            category: page.category || null,
+            pictureUrl: page.picture?.data?.url || null,
+            followersCount: page.followers_count || 0,
             isActive: true,
             lastUsedAt: new Date(),
           },
@@ -504,6 +578,9 @@ export const saveFacebookPages = async (
             pageId: page.id,
             pageName: page.name,
             pageAccessToken: encryptFacebookSecret(page.access_token),
+            category: page.category || null,
+            pictureUrl: page.picture?.data?.url || null,
+            followersCount: page.followers_count || 0,
           },
         });
         await subscribePageToWebhook(page.access_token, page.id);
@@ -798,6 +875,31 @@ export const deactivateFacebookAccount = async (facebookAccountId: number) => {
     logger.error("facebook.account.deactivate_failed", {
       error: error instanceof Error ? error.message : String(error),
     });
-    throw new Error("Failed to deactivate account");
+    throw new Error("Failed to deactivate Facebook account");
+  }
+};
+
+export const deactivateFacebookPage = async (pageId: string, userId: number) => {
+  try {
+    const page = await prisma.facebookPage.findFirst({
+      where: { pageId, facebookAccount: { userId } },
+      select: { id: true, facebookAccountId: true },
+    });
+
+    if (!page) {
+      throw new Error("Page not found or unauthorized");
+    }
+
+    await prisma.facebookPage.update({
+      where: { id: page.id },
+      data: { isActive: false },
+    });
+
+    await logFacebookActivity(page.facebookAccountId, "page_disconnected", { pageId });
+  } catch (error: unknown) {
+    logger.error("facebook.page.deactivate_failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw new Error("Failed to disconnect Facebook page");
   }
 };

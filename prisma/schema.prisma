@@ -194,6 +194,7 @@ model Conversation {
   // Facebook Comments / Thread Continuity
   externalId        String?  @unique // Facebook comment_id or similar
   postId            String?  // The source post ID (for context header)
+  postUrl           String?  // Clickable link to original FB post
   processingStatus  String   @default("COMPLETED") // "PENDING", "COMPLETED", "FAILED"
   parentConversationId Int?
   parentConversation   Conversation? @relation("ThreadContinuity", fields: [parentConversationId], references: [id])
@@ -225,6 +226,7 @@ model ConversationMessage {
   status         String       @default("SENT") // "SENT", "DELIVERED", "READ", "PENDING_REVIEW", "EDITED_AND_SENT", "FAILED"
   aiReasoning    String?      // Storing the AI's thought process for routing
   handoffCategory String?     // e.g. "SALES", "SUPPORT", "ANGRY_CUSTOMER"
+  intent         String?      // AI-detected intent (e.g. "SALES_DM", "GREET_ONLY")
   createdAt      DateTime     @default(now())
 
   aiCorrection   AiCorrection?
@@ -375,6 +377,12 @@ model FacebookPage {
   isTokenValid    Boolean   @default(true)
   lastValidatedAt DateTime?
   lastUsedAt      DateTime?
+
+  // Per-Page Automation Overrides
+  responseMode          String   @default("AUTO") // "AUTO", "REVIEW_ALL", "MANUAL"
+  commentAutoDmEnabled  Boolean  @default(false)  // Automatic private DM to commenters
+  commentPublicGreeting String   @default("Thanks {{name}}! I've sent the details to your inbox.")
+
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 

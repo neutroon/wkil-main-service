@@ -1,5 +1,5 @@
 import prisma from "../config/prisma";
-import generateContent, { generateContentStream } from "../config/gemini";
+import { generateContent, generateContentStream } from "../config/gemini";
 import { recordAiUsage } from "./billing.service";
 import { logger } from "../utils/logger";
 import { retrieveRelevantChunks } from "../rag/rag.service";
@@ -69,22 +69,28 @@ Instructions:
   let researchSummary = "";
   let isGrounded = false;
 
+  let streamUsage: any = null;
   try {
     const { result, model } = await generateContentStream(researchPrompt, "text/plain", true);
     for await (const chunk of result) {
       const chunkText = chunk.text || "";
       researchSummary += chunkText;
+      
+      // Capture exact usage from the final chunk (Gemini best practice)
+      if (chunk.usageMetadata) {
+        streamUsage = chunk.usageMetadata;
+      }
+      
       yield { type: "research_chunk", text: chunkText };
     }
     
-    // In @google/genai, the aggregate response and usage are available on the result object
-    const usage = (result as any).usageMetadata;
+    const usage = streamUsage;
     const grounding = (result as any).candidates?.[0]?.groundingMetadata?.searchEntryPoint;
     
     recordAiUsage({
       businessProfileId: profile.id,
-      promptTokens: usage?.promptTokenCount || 0,
-      completionTokens: usage?.candidatesTokenCount || 0,
+      promptTokens: usage?.promptTokenCount || usage?.promptTokens || 0,
+      completionTokens: usage?.candidatesTokenCount || usage?.completionTokens || 0,
       groundingCalls: grounding ? 1 : 0,
       modelName: model
     }).catch(console.error);

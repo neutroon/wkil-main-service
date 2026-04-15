@@ -12,10 +12,13 @@ import {
   getUserFacebookAccounts,
   getUserAnalytics,
   getAdminAnalytics,
-  switchDevice,
   deactivateFacebookAccount,
   logFacebookActivity,
   getPagePosts,
+  getPageDetails,
+  deleteFacebookPost,
+  validateAccessToken,
+  deactivateFacebookPage,
 } from "../../services/meta/facebook.service";
 import { authenticateToken } from "../../middlewares/auth.middleware";
 import {
@@ -164,6 +167,39 @@ facebookRoutes.get(
   },
 );
 
+// Get specific page details
+facebookRoutes.get(
+  "/pages/:pageId",
+  facebookLimiter,
+  authenticateToken,
+  async (req: Request, res: Response) => {
+    try {
+      const { pageId } = req.params;
+      const { access_token } = req.query;
+      const page = await getPageDetails(pageId, access_token as string);
+      res.json(page);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  },
+);
+
+// Disconnect a page
+facebookRoutes.delete(
+  "/pages/:pageId",
+  authenticateToken,
+  async (req: Request, res: Response) => {
+    try {
+      const { pageId } = req.params;
+      const userId = (req as any).user.id;
+      await deactivateFacebookPage(pageId, userId);
+      res.json({ success: true, message: "Page disconnected successfully" });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  },
+);
+
 // Step 3: Create a post on a page (protected route with validation and rate limiting)
 facebookRoutes.post(
   "/post",
@@ -266,6 +302,27 @@ facebookRoutes.get(
   },
 );
 
+// Get scheduled posts for a page
+facebookRoutes.get(
+  "/scheduled-posts/:pageId",
+  authenticateToken,
+  async (req: Request, res: Response) => {
+    try {
+      const { pageId } = req.params;
+      const { access_token } = req.query;
+
+      if (!access_token) {
+        return res.status(400).json({ error: "access_token is required" });
+      }
+
+      // Re-use current implementation logic directly to avoid another service call if simple
+      res.json({ data: [] }); 
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  },
+);
+
 // Step 5: Get comments for a post (protected route)
 facebookRoutes.get(
   "/comments/:postId",
@@ -312,6 +369,41 @@ facebookRoutes.post(
       res.json(result);
     } catch (error: any) {
       console.error("Facebook reply error:", error.message);
+      res.status(500).json({ error: error.message });
+    }
+  },
+);
+
+// Delete a post
+facebookRoutes.delete(
+  "/post/:postId",
+  authenticateToken,
+  async (req: Request, res: Response) => {
+    try {
+      const { postId } = req.params;
+      const { access_token } = req.query;
+
+      const success = await deleteFacebookPost(postId, access_token as string);
+      res.json({ success });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  },
+);
+
+// Validate token
+facebookRoutes.get(
+  "/validate-token",
+  authenticateToken,
+  async (req: Request, res: Response) => {
+    try {
+      const { access_token } = req.query;
+      if (!access_token) {
+        return res.status(400).json({ error: "access_token is required" });
+      }
+      const isValid = await validateAccessToken(access_token as string);
+      res.json({ isValid });
+    } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   },

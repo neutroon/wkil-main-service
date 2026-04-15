@@ -1,4 +1,4 @@
-import generateContent from "../config/gemini";
+import { generateContent } from "../config/gemini";
 import { imageModel } from "../config/vertexai";
 import cloudinary from "../config/cloudinary";
 

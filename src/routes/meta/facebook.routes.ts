@@ -642,4 +642,40 @@ facebookRoutes.delete(
   },
 );
 
+// Step 7: Update Page Settings (Automation, Modes, etc.)
+facebookRoutes.patch(
+  "/pages/:pageId/settings",
+  authenticateToken,
+  async (req: Request, res: Response) => {
+    try {
+      const userId = (req as AuthRequest).user.id;
+      const { pageId } = req.params;
+      const { responseMode, commentAutoDmEnabled, commentPublicGreeting } = req.body;
+
+      // Verify the page belongs to this user
+      const page = await prisma.facebookPage.findFirst({
+        where: { pageId, facebookAccount: { userId } },
+      });
+
+      if (!page) {
+        return res.status(404).json({ error: "Page not found" });
+      }
+
+      const updated = await prisma.facebookPage.update({
+        where: { id: page.id },
+        data: {
+          responseMode: responseMode !== undefined ? responseMode : page.responseMode,
+          commentAutoDmEnabled: commentAutoDmEnabled !== undefined ? commentAutoDmEnabled : page.commentAutoDmEnabled,
+          commentPublicGreeting: commentPublicGreeting !== undefined ? commentPublicGreeting : page.commentPublicGreeting,
+        },
+      });
+
+      res.json({ success: true, page: updated });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: message });
+    }
+  },
+);
+
 export default facebookRoutes;

@@ -1,6 +1,13 @@
 import { Tool } from "@google/genai";
 import { logger } from "../../utils/logger";
-import { generateContent, genAI, MESSENGER_SAFETY_SETTINGS, aiRoutingSchema, executeWithFallback } from "../../config/gemini";
+import {
+  generateContent,
+  genAI,
+  MESSENGER_SAFETY_SETTINGS,
+  aiRoutingSchema,
+  executeWithFallback,
+  buildCaptureLeadTool,
+} from "../../config/gemini";
 import { pushLeadToCrm } from "../crm/crm.service";
 import { executeExternalQuery } from "../external/externalData.service";
 import { recordAiUsage } from "../billing.service";
@@ -74,9 +81,7 @@ function resolveTruthfulnessPolicy(
 function isVerificationStatus(
   value: unknown,
 ): value is "verified" | "unverified" | "failed" {
-  return (
-    value === "verified" || value === "unverified" || value === "failed"
-  );
+  return value === "verified" || value === "unverified" || value === "failed";
 }
 
 function updateEvidenceFromEnvelope(
@@ -150,8 +155,6 @@ export interface AiRoutingDecision {
   privateContent?: string | null;
 }
 
-
-
 export async function runAIEngineLoop(params: {
   systemInstruction: string;
   historyTurns: { role: "user" | "model"; text?: string; parts?: any[] }[];
@@ -167,99 +170,129 @@ export async function runAIEngineLoop(params: {
 
   // Prepare User Part (Text + Optional Media)
   let userText = params.customerMessage;
-  
-  // PRODUCTION GUARD: If the text is empty but media is present, 
+
+  // PRODUCTION GUARD: If the text is empty but media is present,
   // explicitly tell Gemini to acknowledge the file. This prevents generic repetitions.
   if (!userText.trim() && params.mediaInfo) {
-    const mediaType = params.mediaInfo.type === "voice" ? "voice note" : params.mediaInfo.type;
+    const mediaType =
+      params.mediaInfo.type === "voice" ? "voice note" : params.mediaInfo.type;
     userText = `[Customer sent a ${mediaType}. Please analyze it and respond based on your business identity and context.]`;
   }
 
   const userParts: any[] = [{ text: userText }];
 
   // If we have media, fetch its data for Gemini Multimodal
-  if (params.mediaInfo && (params.mediaInfo.type === "image" || params.mediaInfo.type === "audio" || params.mediaInfo.type === "voice")) {
+  if (
+    params.mediaInfo &&
+    (params.mediaInfo.type === "image" ||
+      params.mediaInfo.type === "audio" ||
+      params.mediaInfo.type === "voice")
+  ) {
     try {
       // 1. Resolve Token
       let accessToken = "";
       if (params.channel === "whatsapp") {
-          const account = await prisma.whatsAppAccount.findFirst({
-             where: { businessProfileId: params.businessProfileId, isActive: true },
-             select: { accessToken: true }
-          });
-          if (account) {
-            const { decryptFacebookSecret } = await import("../../utils/tokenCrypto");
-            accessToken = decryptFacebookSecret(account.accessToken);
-          }
+        const account = await prisma.whatsAppAccount.findFirst({
+          where: {
+            businessProfileId: params.businessProfileId,
+            isActive: true,
+          },
+          select: { accessToken: true },
+        });
+        if (account) {
+          const { decryptFacebookSecret } =
+            await import("../../utils/tokenCrypto");
+          accessToken = decryptFacebookSecret(account.accessToken);
+        }
       } else if (params.channel === "messenger") {
-          const page = await prisma.facebookPage.findFirst({
-             where: { businessProfileId: params.businessProfileId, isActive: true },
-             select: { pageAccessToken: true }
-          });
-          if (page) {
-            const { decryptFacebookSecret } = await import("../../utils/tokenCrypto");
-            accessToken = decryptFacebookSecret(page.pageAccessToken);
-          }
+        const page = await prisma.facebookPage.findFirst({
+          where: {
+            businessProfileId: params.businessProfileId,
+            isActive: true,
+          },
+          select: { pageAccessToken: true },
+        });
+        if (page) {
+          const { decryptFacebookSecret } =
+            await import("../../utils/tokenCrypto");
+          accessToken = decryptFacebookSecret(page.pageAccessToken);
+        }
       }
 
       // 2. Resolve URL and Fetch Data
       if (accessToken && (params.mediaInfo.id || params.mediaInfo.url)) {
         let url = params.mediaInfo.url;
-        
+
         if (!url && params.mediaInfo.id) {
           const { getMetaMediaUrl } = await import("../meta/metaMedia.service");
-          url = await getMetaMediaUrl(params.mediaInfo.id, accessToken, params.channel as any);
+          url = await getMetaMediaUrl(
+            params.mediaInfo.id,
+            accessToken,
+            params.channel as any,
+          );
         }
 
         if (!url) throw new Error("Could not resolve media URL");
 
         const response = await fetch(url, {
-           headers: {
-              Authorization: `Bearer ${accessToken}`
-           }
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
         });
         if (response.ok) {
           const arrayBuffer = await response.arrayBuffer();
           const buffer = Buffer.from(arrayBuffer);
-          let mimeType = response.headers.get("content-type") || (params.mediaInfo.type === "image" ? "image/jpeg" : "audio/ogg");
-          
+          let mimeType =
+            response.headers.get("content-type") ||
+            (params.mediaInfo.type === "image" ? "image/jpeg" : "audio/ogg");
+
           // PRODUCTION GUARD: Messenger often sends voice/audio in .mp4 containers.
           // Gemini fails if it sees 'video/mp4' but there are no video frames.
-          if ((params.mediaInfo.type === "audio" || params.mediaInfo.type === "voice") && mimeType === "video/mp4") {
+          if (
+            (params.mediaInfo.type === "audio" ||
+              params.mediaInfo.type === "voice") &&
+            mimeType === "video/mp4"
+          ) {
             mimeType = "audio/mp4";
           }
           userParts.push({
             inlineData: {
               data: buffer.toString("base64"),
-              mimeType
-            }
+              mimeType,
+            },
           });
-          logger.info("ai.multimodal.media_attached", { type: params.mediaInfo.type, mimeType });
+          logger.info("ai.multimodal.media_attached", {
+            type: params.mediaInfo.type,
+            mimeType,
+          });
         } else {
-           // PRODUCTION FAIL-SAFE: 
-           // If we can't fetch the media, we don't let the AI guess.
-           // We trigger a silent handoff to the sales team.
-           logger.error("ai.multimodal.fetch_failed", { 
-              status: response.status, 
-              type: params.mediaInfo.type,
-              mediaId: params.mediaInfo.id
-           });
-           
-           return {
-              action: "HANDOFF_TO_HUMAN",
-              handoffCategory: "SYSTEM_ERROR",
-              reasoning: `Could not fetch ${params.mediaInfo.type} from Meta (HTTP ${response.status}). Requiring human intervention.`,
-              content: "[MEDIA_PROCESSING_ERROR]: The AI could not retrieve this file. Please handle this message manually."
-           };
+          // PRODUCTION FAIL-SAFE:
+          // If we can't fetch the media, we don't let the AI guess.
+          // We trigger a silent handoff to the sales team.
+          logger.error("ai.multimodal.fetch_failed", {
+            status: response.status,
+            type: params.mediaInfo.type,
+            mediaId: params.mediaInfo.id,
+          });
+
+          return {
+            action: "HANDOFF_TO_HUMAN",
+            handoffCategory: "SYSTEM_ERROR",
+            reasoning: `Could not fetch ${params.mediaInfo.type} from Meta (HTTP ${response.status}). Requiring human intervention.`,
+            content:
+              "[MEDIA_PROCESSING_ERROR]: The AI could not retrieve this file. Please handle this message manually.",
+          };
         }
       }
     } catch (e) {
-      logger.error("ai.multimodal.attach_unhandled_error", { error: String(e) });
+      logger.error("ai.multimodal.attach_unhandled_error", {
+        error: String(e),
+      });
       return {
-         action: "HANDOFF_TO_HUMAN",
-         handoffCategory: "SYSTEM_ERROR",
-         reasoning: `Unhandled error during media attachment: ${String(e)}`,
-         content: "[SYSTEM_CRITICAL_FAILURE]: Human intervention required."
+        action: "HANDOFF_TO_HUMAN",
+        handoffCategory: "SYSTEM_ERROR",
+        reasoning: `Unhandled error during media attachment: ${String(e)}`,
+        content: "[SYSTEM_CRITICAL_FAILURE]: Human intervention required.",
       };
     }
   }
@@ -285,7 +318,7 @@ export async function runAIEngineLoop(params: {
     promptTokens: 0,
     completionTokens: 0,
     groundingCalls: 0,
-    modelName: "gemini-3.1-flash" // Default
+    modelName: "gemini-3.1-flash", // Default
   };
 
   while (turnCount < MAX_TURNS) {
@@ -293,31 +326,36 @@ export async function runAIEngineLoop(params: {
     let responseResult;
     try {
       // Use executeWithFallback to benefit from intelligent failover (2.5 -> 2.0 -> Stable)
-      const { result, model } = await executeWithFallback(async (currentModel) => {
-        return await genAI.models.generateContent({
-          model: currentModel,
-          contents,
-          config: {
-            systemInstruction: params.systemInstruction,
-            temperature: 0.35,
-            maxOutputTokens: 2048,
-            safetySettings: MESSENGER_SAFETY_SETTINGS,
-            tools: params.tools,
-            responseMimeType: "application/json",
-            responseSchema: aiRoutingSchema,
-          },
-        });
-      }, "AIEngineChatLoop");
+      const { result, model } = await executeWithFallback(
+        async (currentModel) => {
+          return await genAI.models.generateContent({
+            model: currentModel,
+            contents,
+            config: {
+              systemInstruction: params.systemInstruction,
+              temperature: 0.35,
+              maxOutputTokens: 2048,
+              safetySettings: MESSENGER_SAFETY_SETTINGS,
+              tools: params.tools,
+              responseMimeType: "application/json",
+              responseSchema: aiRoutingSchema,
+            },
+          });
+        },
+        "AIEngineChatLoop",
+      );
 
       responseResult = result;
       sessionStats.modelName = model; // Track which model actually succeeded for billing
     } catch (error: any) {
-      logger.error("AI Engine Loop: Unexpected Error", { error: error.message });
+      logger.error("AI Engine Loop: Unexpected Error", {
+        error: error.message,
+      });
       return {
         action: "HANDOFF_TO_HUMAN",
         handoffCategory: "SYSTEM_ERROR",
         reasoning: `Unexpected AI Failure: ${error.message}`,
-        content: "" // Silent to customer
+        content: "", // Silent to customer
       };
     }
 
@@ -326,45 +364,55 @@ export async function runAIEngineLoop(params: {
     if (!candidate) throw new Error("No candidate from Gemini");
 
     const responseParts = candidate.content?.parts || [];
-    let responseText = responseParts.filter((p: any) => p.text).map((p: any) => p.text).join("").trim();
+    let responseText = responseParts
+      .filter((p: any) => p.text)
+      .map((p: any) => p.text)
+      .join("")
+      .trim();
 
     // Sum usage metadata
     const meta = (response as any).usageMetadata;
     const grounding = candidate.groundingMetadata?.searchEntryPoint;
     if (meta) {
-      sessionStats.promptTokens += (meta.promptTokenCount || 0);
-      sessionStats.completionTokens += (meta.candidatesTokenCount || 0);
+      sessionStats.promptTokens += meta.promptTokenCount || 0;
+      sessionStats.completionTokens += meta.candidatesTokenCount || 0;
       if (grounding) sessionStats.groundingCalls += 1;
     }
 
     const functionCalls = response.functionCalls || [];
     if (functionCalls.length === 0) {
-      if (!responseText) throw new Error("No reply text and no function call generated");
-      
+      if (!responseText)
+        throw new Error("No reply text and no function call generated");
+
       let decision: AiRoutingDecision;
       try {
         decision = JSON.parse(responseText);
       } catch (err) {
-        logger.error("ai.engine.parsing_failed", { 
-           responseText,
-           error: (err as any).message,
-           inputLength: params.customerMessage?.length || 0,
-           hasMedia: !!params.mediaInfo
+        logger.error("ai.engine.parsing_failed", {
+          responseText,
+          error: (err as any).message,
+          inputLength: params.customerMessage?.length || 0,
+          hasMedia: !!params.mediaInfo,
         });
-        
-        // PRODUCTION FAIL-SAFE: 
+
+        // PRODUCTION FAIL-SAFE:
         // 1. Send NOTHING to the customer (silent failure)
         // 2. Alert the Sales Team via SYSTEM_ERROR handoff
         decision = {
           action: "HANDOFF_TO_HUMAN",
           handoffCategory: "SYSTEM_ERROR",
-          reasoning: "AI Response parsing failed (potential mid-stream truncation). Failing silently to customer.",
-          content: "" 
+          reasoning:
+            "AI Response parsing failed (potential mid-stream truncation). Failing silently to customer.",
+          content: "",
         };
       }
 
       if (hadToolExecutionInTurn) {
-        const blocked = evaluateGuardrailsForReply(evidence, decision.content || "", policy);
+        const blocked = evaluateGuardrailsForReply(
+          evidence,
+          decision.content || "",
+          policy,
+        );
         if (blocked.blocked) {
           logger.warn("ai.guardrail.blocked_response", {
             businessProfileId: params.businessProfileId,
@@ -389,7 +437,7 @@ export async function runAIEngineLoop(params: {
         modelName: sessionStats.modelName,
         promptTokens: sessionStats.promptTokens,
         completionTokens: sessionStats.completionTokens,
-        groundingCalls: sessionStats.groundingCalls
+        groundingCalls: sessionStats.groundingCalls,
       }).catch(console.error);
 
       return decision;
@@ -406,7 +454,7 @@ export async function runAIEngineLoop(params: {
     for (const call of functionCalls) {
       if (!call.name) continue; // Skip empty function calls to fix linter warning
       hadToolExecutionInTurn = true;
-      
+
       const args = call.args as any;
 
       if (call.name === "capture_lead") {
@@ -414,7 +462,7 @@ export async function runAIEngineLoop(params: {
           ...args,
           phone: args.phone || params.customerPhone,
         });
-        
+
         if (crmResult.success) {
           const envelope: ToolResultEnvelope = {
             success: true,
@@ -428,7 +476,7 @@ export async function runAIEngineLoop(params: {
             functionResponse: {
               name: call.name,
               response: envelope,
-            }
+            },
           });
         } else {
           logger.warn("ai.crm_validation_kickback", { error: crmResult.error });
@@ -444,20 +492,24 @@ export async function runAIEngineLoop(params: {
             functionResponse: {
               name: call.name,
               response: envelope,
-            }
+            },
           });
         }
       } else if (call.name.startsWith("query_external_api_")) {
         const sourceId = parseInt(call.name.split("_").pop() || "0", 10);
         logger.info("ai.executing_external_tool", { sourceId, args });
         const envelope = await executeExternalQuery(sourceId, args);
-        updateEvidenceFromEnvelope(evidence, envelope, `external_query_${sourceId}`);
-        
+        updateEvidenceFromEnvelope(
+          evidence,
+          envelope,
+          `external_query_${sourceId}`,
+        );
+
         functionResponses.push({
           functionResponse: {
             name: call.name,
             response: envelope,
-          }
+          },
         });
       }
     }
@@ -474,104 +526,3 @@ export async function runAIEngineLoop(params: {
   throw new Error("Exceeded max AI tool turns without Final Answer");
 }
 
-/**
- * Builds a highly structured, production-grade system instruction 
- * extracting all brand identity, products, and FAQs from the Business Profile.
- */
-function generateSystemInstruction(profile: any, channel: string): string {
-  const faqs = profile.faqs && profile.faqs.length > 0 
-    ? profile.faqs.map((f: any) => `Q: ${f.question}\nA: ${f.answer}`).join("\n\n") 
-    : "No specific FAQs available.";
-  
-  return `
-You are the official AI representative for "${profile.name}".
-
---- BUSINESS IDENTITY ---
-${profile.identity || "A professional business."}
-
---- TARGET AUDIENCE ---
-${profile.targetAudience || "General customers."}
-
---- TONE & VOICE ---
-Voice: ${profile.voice || "Professional"}
-Tone: ${profile.tone || "Friendly"}
-(Always communicate using this precise tone and voice, ensuring natural flow in the specified language.)
-
---- PRODUCTS & SERVICES ---
-${profile.productsServices?.length ? profile.productsServices.join(", ") : "Various products and services."}
-
---- CONTACT & HOURS ---
-Phone: ${profile.phoneNumbers?.join(", ") || "Not provided"}
-Hours: ${profile.workingHours || "Not provided"}
-Address: ${profile.address || "Not provided"}
-
---- CORE POLICIES ---
-${profile.corePolicies || "Standard business policies apply."}
-
---- KNOWLEDGE BASE (FAQs) ---
-${faqs}
-
---- RULES & PROTOCOLS (CRITICAL) ---
-1. You MUST respond exclusively in JSON matching the defined routing schema.
-2. If the user asks a question covered by the Knowledge Base or context, answer confidently via REPLY_AUTO.
-3. If the user asks for something completely outside your knowledge, or is angry/complaining, or explicitly asks for a human, you MUST use HANDOFF_TO_HUMAN.
-4. Channel: ${channel}. Keep formatting suitable for this channel (e.g., WhatsApp supports *bold*, web supports standard markdown).
-5. Do not make promises that are not part of the core policies.
-6. Provide brief but accurate reasoning for your decision in the "reasoning" field. IMPORTANT: This text is visible to human agents. It MUST follow the business tone and voice, and MUST be written in the SAME LANGUAGE as the conversation (e.g., if the user speaks Arabic, the reasoning must be in Arabic).
-
---- FACEBOOK DUAL-CHANNEL PROTOCOL (CRITICAL) ---
-If the channel context indicates this is a Facebook Comment:
-1. Identify Intent:
-   - SALES_DM: User asks for price, info, details, location, or shows buying interest.
-   - GREET_ONLY: User gives general praise ("Nice!", "Wow"), says "Thanks", or leaves emojis.
-   - IGNORE: User is spamming, insulting, or completely irrelevant.
-2. Generate Content:
-   - If SALES_DM: Write 'publicContent' (friendly acknowledgment + promise of DM) AND 'privateContent' (full detailed answer).
-   - If GREET_ONLY: Write ONLY 'publicContent' (friendly acknowledgment). Set intent to GREET_ONLY. Leave 'privateContent' empty.
-   - For both: Ensure 'publicContent' is concise (1-2 sentences) and professional.
-
-Format your entire output exactly as a JSON object matching the aiRoutingDecision schema. Do not output markdown code blocks for the JSON.
-`.trim();
-}
-
-/**
- * The unified Coordinator function that prepares the high-end context
- * and executes the AI engine loop.
- */
-export async function computeBusinessChatReply(params: {
-  businessProfile: any;
-  messageText: string;
-  historyTurns: { role: "user" | "model"; text?: string; parts?: any[] }[];
-  channel: "messenger" | "whatsapp" | "webchat" | "web";
-  customerPhone?: string;
-  tools?: Tool[];
-}): Promise<AiRoutingDecision> {
-  const { businessProfile, messageText, historyTurns, channel, customerPhone, tools } = params;
-
-  // Guarantee we have full profile loaded including FAQs
-  const fullProfile = await prisma.businessProfile.findUnique({
-    where: { id: businessProfile.id },
-    include: {
-      faqs: true,
-      externalDataSources: { where: { isActive: true } },
-      crmIntegrations: { where: { isActive: true }, take: 1 }
-    }
-  });
-
-  if (!fullProfile) {
-    logger.error("computeBusinessChatReply: Business Profile not found", { id: businessProfile.id });
-    throw new Error("Business Profile not found");
-  }
-
-  const systemInstruction = generateSystemInstruction(fullProfile, channel);
-
-  return runAIEngineLoop({
-    systemInstruction,
-    historyTurns,
-    customerMessage: messageText,
-    tools: tools || [],
-    businessProfileId: businessProfile.id,
-    customerPhone,
-    channel: (channel === "web" ? "webchat" : channel) as any,
-  });
-}

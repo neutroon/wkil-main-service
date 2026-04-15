@@ -1,6 +1,6 @@
 import { Tool } from "@google/genai";
 import { logger } from "../../utils/logger";
-import generateContent, { genAI, MESSENGER_SAFETY_SETTINGS, aiRoutingSchema, executeWithFallback } from "../../config/gemini";
+import { generateContent, genAI, MESSENGER_SAFETY_SETTINGS, aiRoutingSchema, executeWithFallback } from "../../config/gemini";
 import { pushLeadToCrm } from "../crm/crm.service";
 import { executeExternalQuery } from "../external/externalData.service";
 import { recordAiUsage } from "../billing.service";
@@ -282,7 +282,7 @@ export async function runAIEngineLoop(params: {
     promptTokens: 0,
     completionTokens: 0,
     groundingCalls: 0,
-    modelName: "gemini-2.5-flash" // Default
+    modelName: "gemini-3.1-flash" // Default
   };
 
   while (turnCount < MAX_TURNS) {

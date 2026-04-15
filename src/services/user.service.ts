@@ -5,6 +5,7 @@ import {
   generateRefreshToken,
 } from "../middlewares/auth.middleware";
 import { getBillingMultiplier } from "./settings.service";
+import { clearQuotaCache } from "./billing.service";
 
 export const createUser = async (
   name: string,
@@ -119,6 +120,7 @@ export const getAllUsers = async (includeInactive: boolean = false) => {
       email: true,
       role: true,
       isActive: true,
+      isBusinessProfileCreated: true,
       deletedAt: true,
       createdAt: true,
       updatedAt: true,
@@ -132,23 +134,50 @@ export const updateUserRole = async (
   role: string,
   name: string,
   email: string,
+  plan?: string,
 ) => {
-  return prisma.user.update({
-    where: { id },
-    data: {
-      role: role as "user" | "admin" | "manager" | "super_admin",
-      name,
-      email,
-    },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      facebookAccounts: true,
-      analytics: true,
-      role: true,
-      updatedAt: true,
-    },
+  return await prisma.$transaction(async (tx) => {
+    // 1. Update User basic info
+    const user = await tx.user.update({
+      where: { id },
+      data: {
+        role: role as "user" | "admin" | "manager" | "super_admin",
+        name,
+        email,
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        facebookAccounts: true,
+        analytics: true,
+        role: true,
+        isBusinessProfileCreated: true,
+        updatedAt: true,
+        businessProfiles: {
+          select: { id: true }
+        }
+      },
+    });
+
+    // 2. Update Plan if provided (updates all profiles for this user, usually just one)
+    if (plan) {
+      const profiles = await tx.businessProfile.findMany({
+        where: { userId: id }
+      });
+
+      for (const profile of profiles) {
+        await tx.businessProfile.update({
+          where: { id: profile.id },
+          data: { plan }
+        });
+        
+        // Clear cache for each profile
+        await clearQuotaCache(profile.id);
+      }
+    }
+
+    return user;
   });
 };
 

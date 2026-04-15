@@ -52,11 +52,25 @@ export async function computeBusinessChatReply(params: {
     5,
   );
 
-  const systemInstruction = buildSystemPrompt(businessProfile as any, relevantChunks);
+  const systemInstruction = buildSystemPrompt({
+    businessProfile: {
+      name: businessProfile.name,
+      identity: businessProfile.identity || "",
+      voice: businessProfile.voice || "Professional",
+      tone: businessProfile.tone || "Friendly",
+      leadCaptureInstructions: businessProfile.leadCaptureInstructions || undefined,
+    },
+    context: relevantChunks,
+    channel,
+    customerPhone,
+  });
 
   const captureTool =
     businessProfile.crmIntegrations.length > 0
-      ? buildCaptureLeadTool(businessProfile.crmIntegrations[0].fieldMapping)
+      ? buildCaptureLeadTool(
+          businessProfile.crmIntegrations[0].fieldMapping,
+          businessProfile.leadCaptureInstructions || undefined
+        )
       : [];
   const externalTools = buildExternalQueryTools(
     businessProfile.externalDataSources,

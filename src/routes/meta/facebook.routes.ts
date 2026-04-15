@@ -19,6 +19,7 @@ import {
   deleteFacebookPost,
   validateAccessToken,
   deactivateFacebookPage,
+  switchDevice,
 } from "../../services/meta/facebook.service";
 import { authenticateToken } from "../../middlewares/auth.middleware";
 import {
@@ -27,6 +28,14 @@ import {
 } from "../../middlewares/validation.middleware";
 import { facebookLimiter } from "../../middlewares/rateLimit.middleware";
 import prisma from "../../config/prisma";
+
+interface AuthRequest extends Request {
+  user: {
+    id: number;
+    email: string;
+    role: string;
+  };
+}
 
 const facebookRoutes = Router();
 
@@ -53,7 +62,7 @@ facebookRoutes.get(
   async (req: Request, res: Response) => {
     try {
       const { code, redirect_uri } = req.query;
-      const userId = (req as any).user.id;
+      const userId = (req as AuthRequest).user.id;
 
       if (!code || !redirect_uri) {
         return res
@@ -94,10 +103,11 @@ facebookRoutes.get(
         facebookAccount,
         tokenData,
       });
-    } catch (error: any) {
-      console.error("Facebook callback error:", error.message);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("Facebook callback error:", message);
       res.status(500).json({
-        error: error.message,
+        error: message,
       });
     }
   },
@@ -111,7 +121,7 @@ facebookRoutes.get(
   async (req: Request, res: Response) => {
     try {
       const { access_token, facebook_account_id } = req.query;
-      const userId = (req as any).user.id;
+      const userId = (req as AuthRequest).user.id;
 
       // Use the provided token or find the most recent active one from DB
       const pages = await getUserPages(access_token as string, userId);
@@ -122,7 +132,7 @@ facebookRoutes.get(
       if (facebook_account_id) {
         const rawAccountId = String(facebook_account_id).trim();
         const numericAccountId = Number(rawAccountId);
-        
+
         if (
           Number.isSafeInteger(numericAccountId) &&
           numericAccountId > 0 &&
@@ -136,11 +146,13 @@ facebookRoutes.get(
         }
 
         if (!internalFacebookAccountId) {
-          const accountByFacebookUserId = await prisma.facebookAccount.findFirst({
-            where: { facebookUserId: rawAccountId, userId, isActive: true },
-            select: { id: true },
-          });
-          if (accountByFacebookUserId) internalFacebookAccountId = accountByFacebookUserId.id;
+          const accountByFacebookUserId =
+            await prisma.facebookAccount.findFirst({
+              where: { facebookUserId: rawAccountId, userId, isActive: true },
+              select: { id: true },
+            });
+          if (accountByFacebookUserId)
+            internalFacebookAccountId = accountByFacebookUserId.id;
         }
       } else {
         // Default to the most recently used/active account for this user
@@ -160,9 +172,10 @@ facebookRoutes.get(
       }
 
       res.json({ data: pages });
-    } catch (error: any) {
-      console.error("Facebook pages error:", error.message);
-      res.status(500).json({ error: error.message });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("Facebook pages error:", message);
+      res.status(500).json({ error: message });
     }
   },
 );
@@ -191,11 +204,12 @@ facebookRoutes.delete(
   async (req: Request, res: Response) => {
     try {
       const { pageId } = req.params;
-      const userId = (req as any).user.id;
+      const userId = (req as AuthRequest).user.id;
       await deactivateFacebookPage(pageId, userId);
       res.json({ success: true, message: "Page disconnected successfully" });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: message });
     }
   },
 );
@@ -225,11 +239,13 @@ facebookRoutes.post(
       });
 
       // Log activity if facebookAccountId is provided, or find one by pageId
-      let activityAccountId = facebookAccountId ? parseInt(facebookAccountId) : null;
+      let activityAccountId = facebookAccountId
+        ? parseInt(facebookAccountId)
+        : null;
       if (!activityAccountId) {
         const page = await prisma.facebookPage.findFirst({
           where: { pageId },
-          select: { facebookAccountId: true }
+          select: { facebookAccountId: true },
         });
         if (page) activityAccountId = page.facebookAccountId;
       }
@@ -244,9 +260,10 @@ facebookRoutes.post(
       }
 
       res.json(result);
-    } catch (error: any) {
-      console.error("Facebook post error:", error.message);
-      res.status(500).json({ error: error.message });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("Facebook post error:", message);
+      res.status(500).json({ error: message });
     }
   },
 );
@@ -295,9 +312,10 @@ facebookRoutes.get(
 
       const result = await getPagePosts(pageId, access_token as string);
       res.json(result);
-    } catch (error: any) {
-      console.error("Facebook page posts error:", error.message);
-      res.status(500).json({ error: error.message });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("Facebook page posts error:", message);
+      res.status(500).json({ error: message });
     }
   },
 );
@@ -316,9 +334,10 @@ facebookRoutes.get(
       }
 
       // Re-use current implementation logic directly to avoid another service call if simple
-      res.json({ data: [] }); 
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      res.json({ data: [] });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: message });
     }
   },
 );
@@ -338,9 +357,10 @@ facebookRoutes.get(
 
       const result = await getPostComments(postId, access_token as string);
       res.json(result);
-    } catch (error: any) {
-      console.error("Facebook comments error:", error.message);
-      res.status(500).json({ error: error.message });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("Facebook comments error:", message);
+      res.status(500).json({ error: message });
     }
   },
 );
@@ -367,9 +387,10 @@ facebookRoutes.post(
       });
 
       res.json(result);
-    } catch (error: any) {
-      console.error("Facebook reply error:", error.message);
-      res.status(500).json({ error: error.message });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("Facebook reply error:", message);
+      res.status(500).json({ error: message });
     }
   },
 );
@@ -385,8 +406,9 @@ facebookRoutes.delete(
 
       const success = await deleteFacebookPost(postId, access_token as string);
       res.json({ success });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: message });
     }
   },
 );
@@ -403,8 +425,9 @@ facebookRoutes.get(
       }
       const isValid = await validateAccessToken(access_token as string);
       res.json({ isValid });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: message });
     }
   },
 );
@@ -417,12 +440,13 @@ facebookRoutes.get(
   authenticateToken,
   async (req: Request, res: Response) => {
     try {
-      const userId = (req as any).user.id;
+      const userId = (req as AuthRequest).user.id;
       const accounts = await getUserFacebookAccounts(userId);
       res.json({ data: accounts });
-    } catch (error: any) {
-      console.error("Get Facebook accounts error:", error.message);
-      res.status(500).json({ error: error.message });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("Get Facebook accounts error:", message);
+      res.status(500).json({ error: message });
     }
   },
 );
@@ -433,16 +457,17 @@ facebookRoutes.get(
   authenticateToken,
   async (req: Request, res: Response) => {
     try {
-      const userId = (req as any).user.id;
+      const userId = (req as AuthRequest).user.id;
       const { days = 30 } = req.query;
       const analytics = await getUserAnalytics(
         userId,
         parseInt(days as string),
       );
       res.json({ data: analytics });
-    } catch (error: any) {
-      console.error("Get user analytics error:", error.message);
-      res.status(500).json({ error: error.message });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("Get user analytics error:", message);
+      res.status(500).json({ error: message });
     }
   },
 );
@@ -454,7 +479,7 @@ facebookRoutes.post(
   async (req: Request, res: Response) => {
     try {
       const { facebookAccountId, deviceInfo } = req.body;
-      const userId = (req as any).user.id;
+      const userId = (req as AuthRequest).user.id;
 
       if (!facebookAccountId || !deviceInfo) {
         return res.status(400).json({
@@ -477,9 +502,10 @@ facebookRoutes.post(
         deviceInfo,
       );
       res.json({ data: updatedAccount });
-    } catch (error: any) {
-      console.error("Switch device error:", error.message);
-      res.status(500).json({ error: error.message });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("Switch device error:", message);
+      res.status(500).json({ error: message });
     }
   },
 );
@@ -491,7 +517,7 @@ facebookRoutes.delete(
   async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
-      const userId = (req as any).user.id;
+      const userId = (req as AuthRequest).user.id;
 
       // Verify the account belongs to the user
       const account = await getUserFacebookAccounts(userId);
@@ -503,9 +529,10 @@ facebookRoutes.delete(
 
       await deactivateFacebookAccount(parseInt(id));
       res.json({ success: true, message: "Account deactivated successfully" });
-    } catch (error: any) {
-      console.error("Deactivate account error:", error.message);
-      res.status(500).json({ error: error.message });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("Deactivate account error:", message);
+      res.status(500).json({ error: message });
     }
   },
 );
@@ -516,7 +543,7 @@ facebookRoutes.get(
   authenticateToken,
   async (req: Request, res: Response) => {
     try {
-      const user = (req as any).user;
+      const user = (req as AuthRequest).user;
 
       if (user.role !== "admin") {
         return res.status(403).json({ error: "Admin access required" });
@@ -525,9 +552,10 @@ facebookRoutes.get(
       const { days = 30 } = req.query;
       const analytics = await getAdminAnalytics(parseInt(days as string));
       res.json({ data: analytics });
-    } catch (error: any) {
-      console.error("Get admin analytics error:", error.message);
-      res.status(500).json({ error: error.message });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("Get admin analytics error:", message);
+      res.status(500).json({ error: message });
     }
   },
 );
@@ -538,7 +566,7 @@ facebookRoutes.post(
   authenticateToken,
   async (req: Request, res: Response) => {
     try {
-      const userId = (req as any).user.id;
+      const userId = (req as AuthRequest).user.id;
       const { pageId } = req.params;
       const { businessProfileId } = req.body;
 
@@ -570,8 +598,9 @@ facebookRoutes.post(
       });
 
       res.json({ success: true, page: updated });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: message });
     }
   },
 );
@@ -582,7 +611,7 @@ facebookRoutes.delete(
   authenticateToken,
   async (req: Request, res: Response) => {
     try {
-      const userId = (req as any).user.id;
+      const userId = (req as AuthRequest).user.id;
       const { pageId } = req.params;
 
       // Verify the page belongs to this user
@@ -606,8 +635,9 @@ facebookRoutes.delete(
       });
 
       res.json({ success: true, page: updated });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: message });
     }
   },
 );

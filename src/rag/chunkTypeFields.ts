@@ -7,4 +7,5 @@ export const CHUNK_TYPE_FIELDS: Record<string, string[]> = {
   faq: ["faqs"],
   intents: ["expectedUserIntents", "corePolicies"],
   raw_content: ["scrapedMarkdown"],
+  custom_section: ["knowledgeSections"],
 };

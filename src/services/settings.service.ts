@@ -3,13 +3,14 @@ import { logger } from "../utils/logger";
 
 import { DEFAULT_BILLING_MULTIPLIER } from "../config/billing";
 
-const SETTINGS_CACHE: Record<string, any> = {};
+const SETTINGS_CACHE: Record<string, { value: string; expiresAt: number }> = {};
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 export const getSystemSetting = async (key: string, defaultValue: string): Promise<string> => {
   try {
-    // Return from cache if available
-    if (SETTINGS_CACHE[key]) {
-      return SETTINGS_CACHE[key];
+    const cached = SETTINGS_CACHE[key];
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.value;
     }
 
     const setting = await prisma.systemSetting.findUnique({
@@ -17,7 +18,13 @@ export const getSystemSetting = async (key: string, defaultValue: string): Promi
     });
 
     const value = setting ? setting.value : defaultValue;
-    SETTINGS_CACHE[key] = value;
+    
+    // Update cache with TTL
+    SETTINGS_CACHE[key] = {
+      value,
+      expiresAt: Date.now() + CACHE_TTL_MS
+    };
+    
     return value;
   } catch (error: any) {
     logger.error(`Failed to fetch system setting: ${key}`, { error: error.message });
@@ -33,8 +40,11 @@ export const updateSystemSetting = async (key: string, value: string): Promise<v
       create: { key, value }
     });
 
-    // Update cache
-    SETTINGS_CACHE[key] = value;
+    // Update cache with TTL
+    SETTINGS_CACHE[key] = {
+      value,
+      expiresAt: Date.now() + CACHE_TTL_MS
+    };
     logger.info(`System setting updated: ${key}=${value}`);
   } catch (error: any) {
     logger.error(`Failed to update system setting: ${key}`, { error: error.message });

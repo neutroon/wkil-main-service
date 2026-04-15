@@ -6,6 +6,8 @@ import {
   createManager,
   getBillingSettings,
   updateBillingSettings,
+  resetBusinessUsage,
+  updateBusinessUsage,
 } from "../controllers/admin.controller";
 import {
   getUsers,
@@ -95,6 +97,10 @@ adminRoutes.delete("/users/:id", adminLimiter, permanentlyDeleteUserController);
 // Admin Settings management
 adminRoutes.get("/settings/billing", adminLimiter, getBillingSettings);
 adminRoutes.post("/settings/billing", adminLimiter, updateBillingSettings);
+
+// Business Profile Billing Management
+adminRoutes.post("/billing/profiles/:id/reset", adminLimiter, resetBusinessUsage);
+adminRoutes.patch("/billing/profiles/:id/usage", adminLimiter, updateBusinessUsage);
 
 // Lead management
 adminRoutes.get("/leads", adminLimiter, getLeads);

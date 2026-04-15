@@ -87,6 +87,61 @@ export interface DeviceInfo {
 
 export { mapFacebookGraphError } from "../../utils/facebookGraphError";
 
+/**
+ * Validates the health of a Meta Access Token using the /debug_token endpoint.
+ * This ensures the token hasn't been revoked or expired.
+ */
+export async function validateTokenHealth(accessToken: string): Promise<{
+  isValid: boolean;
+  expiresAt?: Date;
+  scopes?: string[];
+  error?: string;
+}> {
+  try {
+    const appAccessToken = `${process.env.FB_APP_ID}|${process.env.FB_APP_SECRET}`;
+    const response = await axios.get(`${FB_API}/debug_token`, {
+      params: {
+        input_token: accessToken,
+        access_token: appAccessToken,
+      },
+    });
+
+    const { data } = response.data;
+    return {
+      isValid: data.is_valid,
+      expiresAt: data.data_access_expires_at 
+        ? new Date(data.data_access_expires_at * 1000) 
+        : undefined,
+      scopes: data.scopes,
+    };
+  } catch (error: any) {
+    logger.error("meta.validate_token_failed", { error: error.message });
+    return { isValid: false, error: error.message };
+  }
+}
+
+/**
+ * Updates the validation status of a FacebookAccount, FacebookPage, or WhatsAppAccount.
+ */
+export async function updateTokenStatus(params: {
+  type: "account" | "page" | "whatsapp";
+  id: number;
+  isValid: boolean;
+}) {
+  const data = {
+    isTokenValid: params.isValid,
+    lastValidatedAt: new Date(),
+  };
+
+  if (params.type === "account") {
+    return prisma.facebookAccount.update({ where: { id: params.id }, data });
+  } else if (params.type === "page") {
+    return prisma.facebookPage.update({ where: { id: params.id }, data });
+  } else {
+    return prisma.whatsAppAccount.update({ where: { id: params.id }, data });
+  }
+}
+
 function decryptFacebookAccountForResponse<
   T extends { accessToken: string; refreshToken: string | null },
 >(acc: T): T {

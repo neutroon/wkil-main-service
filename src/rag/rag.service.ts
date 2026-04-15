@@ -1,5 +1,5 @@
 import { embedQuery, embedTexts } from "../config/gemini";
-import { recordAiUsage } from "../services/billing.service";
+import { recordAiUsage, assertQuotaAvailable } from "../services/billing.service";
 import prisma from "../config/prisma";
 import { logger } from "../utils/logger";
 import { chunkBusinessProfile } from "./chunker";
@@ -40,6 +40,9 @@ async function insertChunks(
 
 // ─── Full Ingest (on create + manual trigger) ────────────────────────────────
 export async function ingestBusinessProfile(businessProfileId: number) {
+  // Pre-flight quota check
+  await assertQuotaAvailable(businessProfileId);
+
   const profile = await prisma.businessProfile.findUniqueOrThrow({
     where: { id: businessProfileId },
     include: { faqs: true },
@@ -75,6 +78,9 @@ export async function partialReIngestBusinessProfile(
   businessProfileId: number,
   updatedFields: string[],
 ) {
+  // Pre-flight quota check
+  await assertQuotaAvailable(businessProfileId);
+
   const affectedChunkTypes = Object.entries(CHUNK_TYPE_FIELDS)
     .filter(([_, fields]) => fields.some((f) => updatedFields.includes(f)))
     .map(([chunkType]) => chunkType);

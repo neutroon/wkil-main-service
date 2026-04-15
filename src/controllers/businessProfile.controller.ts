@@ -12,6 +12,12 @@ interface Faq {
   answer: string;
 }
 
+interface KnowledgeSection {
+  id?: number;
+  title: string;
+  content: string;
+}
+
 interface BusinessProfileBody {
   name: string;
   identity: string;
@@ -20,11 +26,12 @@ interface BusinessProfileBody {
   tone: string;
   productsServices: string[];
   expectedUserIntents: string[];
-  corePolicies: string;
+  corePolicies?: string;
   phoneNumbers: string[];
   workingHours?: string;
   address?: string;
   faqs?: Faq[];
+  knowledgeSections?: KnowledgeSection[];
   leadCaptureInstructions?: string;
 }
 
@@ -43,6 +50,7 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
       workingHours,
       address,
       faqs,
+      knowledgeSections,
       leadCaptureInstructions,
     }: BusinessProfileBody = req.body;
 
@@ -76,9 +84,19 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
               })),
             },
           }),
+        ...(knowledgeSections &&
+          knowledgeSections.length > 0 && {
+            knowledgeSections: {
+              create: knowledgeSections.map((ks) => ({
+                title: ks.title,
+                content: ks.content,
+              })),
+            },
+          }),
       },
       include: {
         faqs: true,
+        knowledgeSections: true,
       },
     });
 
@@ -183,6 +201,7 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
       workingHours,
       address,
       faqs,
+      knowledgeSections,
       leadCaptureInstructions,
     }: BusinessProfileBody = req.body;
 
@@ -220,9 +239,19 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
             })),
           },
         }),
+        ...(knowledgeSections && {
+          knowledgeSections: {
+            deleteMany: {},
+            create: knowledgeSections.map((ks) => ({
+              title: ks.title,
+              content: ks.content,
+            })),
+          },
+        }),
       },
       include: {
         faqs: true,
+        knowledgeSections: true,
         facebookPages: {
           select: {
             pageId: true,

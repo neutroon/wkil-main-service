@@ -25,6 +25,7 @@ interface BusinessProfileBody {
   workingHours?: string;
   address?: string;
   faqs?: Faq[];
+  leadCaptureInstructions?: string;
 }
 
 export const createBusinessProfile = async (req: Request, res: Response) => {
@@ -42,6 +43,7 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
       workingHours,
       address,
       faqs,
+      leadCaptureInstructions,
     }: BusinessProfileBody = req.body;
 
     const userId = (req as any).user.id;
@@ -64,6 +66,7 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
         phoneNumbers,
         workingHours,
         address,
+        leadCaptureInstructions,
         ...(faqs &&
           faqs.length > 0 && {
             faqs: {
@@ -180,6 +183,7 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
       workingHours,
       address,
       faqs,
+      leadCaptureInstructions,
     }: BusinessProfileBody = req.body;
 
     // Verify the profile exists AND belongs to this user
@@ -205,6 +209,7 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
         phoneNumbers,
         workingHours,
         address,
+        leadCaptureInstructions,
         // Delete existing FAQs and recreate — avoids needing IDs in the payload
         ...(faqs && {
           faqs: {

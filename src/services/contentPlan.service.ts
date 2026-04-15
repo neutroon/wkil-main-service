@@ -2,6 +2,7 @@ import { generateContent, generateContentStream } from "../config/gemini";
 import { recordAiUsage, assertQuotaAvailable } from "./billing.service";
 import { logger } from "../utils/logger";
 import { retrieveRelevantChunks } from "../rag/rag.service";
+import prisma from "../config/prisma";
 
 export interface BriefingInput {
   businessProfileId: number;
@@ -37,7 +38,7 @@ Business Persona Details:
 - Voice (REQUIRED LANGUAGE & DIALECT): ${profile.voice}
 - Tone (Attitude): ${profile.tone}
 - Products/Services: ${profile.productsServices.join(", ")}
-${profile.faqs.length > 0 ? `- Frequently Asked Questions: ${profile.faqs.map(f => `Q: ${f.question} A: ${f.answer}`).join(" | ")}` : ""}
+${profile.faqs.length > 0 ? `- Frequently Asked Questions: ${profile.faqs.map((f) => `Q: ${f.question} A: ${f.answer}`).join(" | ")}` : ""}
 ${briefing.goals ? `- Primary Campaign Goals: ${briefing.goals}` : ""}
 ${briefing.currentTrends ? `- Specific Topic/Trends to Focus On: ${briefing.currentTrends}` : ""}
   `.trim();
@@ -45,17 +46,23 @@ ${briefing.currentTrends ? `- Specific Topic/Trends to Focus On: ${briefing.curr
   // 1b. RAG Enhancement: Retrieve relevant chunks based on goals/trends
   let ragContext = "";
   try {
-    const query = `${briefing.goals || ""} ${briefing.currentTrends || ""} ${profile.identity}`.trim();
+    const query =
+      `${briefing.goals || ""} ${briefing.currentTrends || ""} ${profile.identity}`.trim();
     const chunks = await retrieveRelevantChunks(profile.id, query, 5);
     if (chunks.length > 0) {
-      ragContext = `\n--- INTERNAL BUSINESS KNOWLEDGE ---\n${chunks.map(c => `[${c.chunkType}]: ${c.content}`).join("\n\n")}\n----------------------------------\n`;
+      ragContext = `\n--- INTERNAL BUSINESS KNOWLEDGE ---\n${chunks.map((c) => `[${c.chunkType}]: ${c.content}`).join("\n\n")}\n----------------------------------\n`;
     }
   } catch (err) {
-    logger.warn(`[StrategyPipe] RAG retrieval failed: ${err instanceof Error ? err.message : String(err)}`);
+    logger.warn(
+      `[StrategyPipe] RAG retrieval failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 
   // 2. STAGE 1: Market Intelligence & Trend Research (STREAMED)
-  yield { type: "status", message: "Stage 1/2: Researching live market trends and holidays..." };
+  yield {
+    type: "status",
+    message: "Stage 1/2: Researching live market trends and holidays...",
+  };
 
   const researchPrompt = `You are a Digital Marketing Strategist. 
 Your task is to research current trends, upcoming holidays, seasonal events, and industry movements relevant to the following business profile for the period between ${briefing.startDate} and ${briefing.endDate}.
@@ -73,41 +80,57 @@ Instructions:
 
   let streamUsage: any = null;
   try {
-    const { result, model } = await generateContentStream(researchPrompt, "text/plain", true);
+    const { result, model } = await generateContentStream(
+      researchPrompt,
+      "text/plain",
+      true,
+    );
     for await (const chunk of result) {
       const chunkText = chunk.text || "";
       researchSummary += chunkText;
-      
+
       // Capture exact usage from the final chunk (Gemini best practice)
       if (chunk.usageMetadata) {
         streamUsage = chunk.usageMetadata;
       }
-      
+
       yield { type: "research_chunk", text: chunkText };
     }
-    
+
     const usage = streamUsage;
-    const grounding = (result as any).candidates?.[0]?.groundingMetadata?.searchEntryPoint;
-    
+    const grounding = (result as any).candidates?.[0]?.groundingMetadata
+      ?.searchEntryPoint;
+
     recordAiUsage({
       businessProfileId: profile.id,
       promptTokens: usage?.promptTokenCount || usage?.promptTokens || 0,
-      completionTokens: usage?.candidatesTokenCount || usage?.completionTokens || 0,
+      completionTokens:
+        usage?.candidatesTokenCount || usage?.completionTokens || 0,
       groundingCalls: grounding ? 1 : 0,
-      modelName: model
+      modelName: model,
     }).catch(console.error);
 
     isGrounded = true;
-    yield { type: "status", message: "Live research complete. Building your strategy map..." };
+    yield {
+      type: "status",
+      message: "Live research complete. Building your strategy map...",
+    };
   } catch (err: any) {
     console.warn(`[StrategyPipe] Research Stream FAILED: ${err.message}`);
-    researchSummary = "Live research was unavailable. Proceeding with general marketing best practices.";
+    researchSummary =
+      "Live research was unavailable. Proceeding with general marketing best practices.";
     isGrounded = false;
-    yield { type: "status", message: "Live research failed (fallback enabled). Drafting strategy..." };
+    yield {
+      type: "status",
+      message: "Live research failed (fallback enabled). Drafting strategy...",
+    };
   }
 
   // 3. STAGE 2: Strategic Planning (JSON)
-  yield { type: "status", message: "Stage 2/2: Drafting optimal content calendar..." };
+  yield {
+    type: "status",
+    message: "Stage 2/2: Drafting optimal content calendar...",
+  };
 
   const strategyPrompt = `You are an expert Social Media Director.
 Your task is to build a Content Marketing Strategy Calendar between ${briefing.startDate} and ${briefing.endDate}.
@@ -137,27 +160,37 @@ Schema:
 ]`;
 
   // We now capture usage from generateContent
-  const { text: responseText, usage } = await generateContent(strategyPrompt, "application/json", false);
-  
+  const { text: responseText, usage } = await generateContent(
+    strategyPrompt,
+    "application/json",
+    false,
+  );
+
   // Log strategic generation usage
   recordAiUsage({
     businessProfileId: profile.id,
-    ...usage
+    ...usage,
   }).catch(console.error);
-  
+
   if (!responseText) {
     throw new Error("Failed to generate strategy JSON");
   }
 
   let parsedCalendar = [];
   try {
-    const cleanText = responseText.replace(/```json/g, "").replace(/```/g, "").trim();
+    const cleanText = responseText
+      .replace(/```json/g, "")
+      .replace(/```/g, "")
+      .trim();
     parsedCalendar = JSON.parse(cleanText);
   } catch (err) {
     throw new Error("Invalid strategic format received from AI.");
   }
 
-  yield { type: "status", message: "Finalizing and saving to your workspace..." };
+  yield {
+    type: "status",
+    message: "Finalizing and saving to your workspace...",
+  };
 
   // 4. Save to Database
   const plan = await prisma.contentPlan.create({
@@ -215,7 +248,7 @@ Business Persona Details:
 - Voice (REQUIRED LANGUAGE & DIALECT): ${profile.voice}
 - Tone (Attitude): ${profile.tone}
 - Products/Services: ${profile.productsServices.join(", ")}
-${profile.faqs.length > 0 ? `- Frequently Asked Questions: ${profile.faqs.map(f => `Q: ${f.question} A: ${f.answer}`).join(" | ")}` : ""}
+${profile.faqs.length > 0 ? `- Frequently Asked Questions: ${profile.faqs.map((f) => `Q: ${f.question} A: ${f.answer}`).join(" | ")}` : ""}
 ${briefing.goals ? `- Primary Campaign Goals: ${briefing.goals}` : ""}
 ${briefing.currentTrends ? `- Specific Topic/Trends to Focus On: ${briefing.currentTrends}` : ""}
   `.trim();
@@ -223,18 +256,23 @@ ${briefing.currentTrends ? `- Specific Topic/Trends to Focus On: ${briefing.curr
   // 1b. RAG Enhancement
   let ragContext = "";
   try {
-    const query = `${briefing.goals || ""} ${briefing.currentTrends || ""} ${profile.identity}`.trim();
+    const query =
+      `${briefing.goals || ""} ${briefing.currentTrends || ""} ${profile.identity}`.trim();
     const chunks = await retrieveRelevantChunks(profile.id, query, 5);
     if (chunks.length > 0) {
-      ragContext = `\n--- INTERNAL BUSINESS KNOWLEDGE ---\n${chunks.map(c => `[${c.chunkType}]: ${c.content}`).join("\n\n")}\n----------------------------------\n`;
+      ragContext = `\n--- INTERNAL BUSINESS KNOWLEDGE ---\n${chunks.map((c) => `[${c.chunkType}]: ${c.content}`).join("\n\n")}\n----------------------------------\n`;
     }
   } catch (err) {
-    logger.warn(`[StrategyPipe] RAG retrieval failed: ${err instanceof Error ? err.message : String(err)}`);
+    logger.warn(
+      `[StrategyPipe] RAG retrieval failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 
   // 2. STAGE 1: Market Intelligence & Trend Research (with Grounding)
-  console.log(`[StrategyPipe] Stage 1: Deep Researching for Profile ${profile.id}...`);
-  
+  console.log(
+    `[StrategyPipe] Stage 1: Deep Researching for Profile ${profile.id}...`,
+  );
+
   const researchPrompt = `You are a Digital Marketing Strategist. 
 Your task is to research current trends, upcoming holidays, seasonal events, and industry movements relevant to the following business profile for the period between ${briefing.startDate} and ${briefing.endDate}.
 
@@ -253,12 +291,16 @@ Provide the research summary in plain text.`;
   let isGrounded = false;
 
   try {
-    const { text, usage } = await generateContent(researchPrompt, "text/plain", true);
-    
+    const { text, usage } = await generateContent(
+      researchPrompt,
+      "text/plain",
+      true,
+    );
+
     // Log research usage (heavy grounding)
     recordAiUsage({
       businessProfileId: profile.id,
-      ...usage
+      ...usage,
     }).catch(console.error);
 
     if (text) {
@@ -267,13 +309,18 @@ Provide the research summary in plain text.`;
       console.log(`[StrategyPipe] Stage 1 COMPLETE. Research gathered.`);
     }
   } catch (err: any) {
-    console.warn(`[StrategyPipe] Stage 1 FAILED: ${err.message}. Falling back to baseline knowledge.`);
-    researchSummary = "Live research was unavailable. Proceeding with general marketing best practices.";
+    console.warn(
+      `[StrategyPipe] Stage 1 FAILED: ${err.message}. Falling back to baseline knowledge.`,
+    );
+    researchSummary =
+      "Live research was unavailable. Proceeding with general marketing best practices.";
     isGrounded = false;
   }
 
   // 3. STAGE 2: Strategic Planning (Structured JSON)
-  console.log(`[StrategyPipe] Stage 2: Strategy Generation for Profile ${profile.id}...`);
+  console.log(
+    `[StrategyPipe] Stage 2: Strategy Generation for Profile ${profile.id}...`,
+  );
 
   const strategyPrompt = `You are an expert Social Media Director.
 Your task is to build a Content Marketing Strategy Calendar between ${briefing.startDate} and ${briefing.endDate}.
@@ -304,14 +351,18 @@ Schema:
 ]`;
 
   // We use structured JSON mode here (Search is already done, so no conflict)
-  const { text: responseText, usage } = await generateContent(strategyPrompt, "application/json", false);
-  
+  const { text: responseText, usage } = await generateContent(
+    strategyPrompt,
+    "application/json",
+    false,
+  );
+
   // Log strategy usage
   recordAiUsage({
     businessProfileId: profile.id,
-    ...usage
+    ...usage,
   }).catch(console.error);
-  
+
   if (!responseText) {
     throw new Error("Failed to generate strategy from Gemini");
   }
@@ -325,11 +376,16 @@ Schema:
   }> = [];
 
   try {
-    const cleanText = responseText.replace(/```json/g, "").replace(/```/g, "").trim();
+    const cleanText = responseText
+      .replace(/```json/g, "")
+      .replace(/```/g, "")
+      .trim();
     parsedCalendar = JSON.parse(cleanText);
   } catch (err) {
     console.error("Gemini failed to output valid JSON in Stage 2", err);
-    throw new Error("Invalid format received from AI in strategy phase. Try again.");
+    throw new Error(
+      "Invalid format received from AI in strategy phase. Try again.",
+    );
   }
 
   // 4. Save to Database with Grounding Metadata
@@ -407,12 +463,18 @@ ${profile.faqs && profile.faqs.length > 0 ? `- FAQs: ${profile.faqs.map((f: any)
   // 1b. RAG Context for specific post topic
   let postKnowledge = "";
   try {
-    const chunks = await retrieveRelevantChunks(profile.id, `${post.topic} ${post.pillar} ${profile.name}`, 3);
+    const chunks = await retrieveRelevantChunks(
+      profile.id,
+      `${post.topic} ${post.pillar} ${profile.name}`,
+      3,
+    );
     if (chunks.length > 0) {
-      postKnowledge = `\n--- SPECIFIC BUSINESS KNOWLEDGE FOR THIS TOPIC ---\n${chunks.map(c => c.content).join("\n\n")}\n------------------------------------------------\n`;
+      postKnowledge = `\n--- SPECIFIC BUSINESS KNOWLEDGE FOR THIS TOPIC ---\n${chunks.map((c) => c.content).join("\n\n")}\n------------------------------------------------\n`;
     }
   } catch (err) {
-    logger.warn(`[PostExec] RAG retrieval failed: ${err instanceof Error ? err.message : String(err)}`);
+    logger.warn(
+      `[PostExec] RAG retrieval failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 
   let schemaInstruct = "";
@@ -445,7 +507,7 @@ Output strictly as JSON:
 }`;
   }
 
-const prompt = `You are a creative copywriter executing a single piece of social media content.
+  const prompt = `You are a creative copywriter executing a single piece of social media content.
 Context:
 ${persona}
 ${postKnowledge}
@@ -466,22 +528,33 @@ ${schemaInstruct}
 3. Identity: Ensure the content perfectly matches the Brand Name and Tone.
 4. Output: Do NOT include any surrounding markdown. Just the raw JSON.`;
 
-  console.log(`[ContentPlanService] Generating Post Execution for Post ${postId} (${post.format})...`);
-  
-  const { text: responseText, usage } = await generateContent(prompt, "application/json", false);
+  console.log(
+    `[ContentPlanService] Generating Post Execution for Post ${postId} (${post.format})...`,
+  );
+
+  const { text: responseText, usage } = await generateContent(
+    prompt,
+    "application/json",
+    false,
+  );
 
   // Log post execution usage
   recordAiUsage({
     businessProfileId: profile.id,
-    ...usage
+    ...usage,
   }).catch(console.error);
 
   if (!responseText) {
-    throw new Error("Failed to generate post execution: No text returned from Gemini. This may be due to safety filters.");
+    throw new Error(
+      "Failed to generate post execution: No text returned from Gemini. This may be due to safety filters.",
+    );
   }
 
   try {
-    const cleanText = responseText.replace(/```json/g, "").replace(/```/g, "").trim();
+    const cleanText = responseText
+      .replace(/```json/g, "")
+      .replace(/```/g, "")
+      .trim();
     const result = JSON.parse(cleanText);
 
     // Save back to DB

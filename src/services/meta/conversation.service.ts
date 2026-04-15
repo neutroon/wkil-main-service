@@ -106,6 +106,7 @@ export async function saveMessage(
     status?: string | null;
     aiReasoning?: string | null;
     handoffCategory?: string | null;
+    intent?: string | null;
   }
 ) {
   const msg = await prisma.conversationMessage.create({
@@ -120,6 +121,7 @@ export async function saveMessage(
       status: opts?.status || "SENT",
       aiReasoning: opts?.aiReasoning,
       handoffCategory: opts?.handoffCategory,
+      intent: opts?.intent,
     },
   });
 
@@ -253,6 +255,7 @@ export async function listConversationMessages(
       status: true,
       aiReasoning: true,
       handoffCategory: true,
+      intent: true,
       createdAt: true,
     },
   });
@@ -366,6 +369,7 @@ export async function listMessengerConversations(
     channel: c.channel,
     externalId: c.externalId,
     postId: c.postId,
+    postUrl: c.postUrl,
     processingStatus: c.processingStatus,
     lastMessage: c.messages[0]
       ? {
@@ -376,6 +380,7 @@ export async function listMessengerConversations(
           createdAt: c.messages[0].createdAt,
           status: c.messages[0].status,
           handoffCategory: c.messages[0].handoffCategory,
+          intent: c.messages[0].intent,
         }
       : null,
     updatedAt: c.updatedAt,

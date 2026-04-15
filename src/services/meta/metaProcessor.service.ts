@@ -9,7 +9,7 @@ import {
 import { computeBusinessChatReply } from "../chat/businessChatReply.service";
 import { historyToLlmTurns, toPromptMessages } from "../chat/conversationTurns";
 import { emitToBusiness, emitToConversation } from "../../utils/socket";
-import { getFacebookUserProfile } from "./facebook.service";
+import { getFacebookUserProfile, getFacebookPostUrl } from "./facebook.service";
 
 export type MetaPlatform = "messenger" | "whatsapp";
 
@@ -54,7 +54,15 @@ export async function processMetaMessage(job: MetaMessageJob) {
       businessProfileId = page.businessProfileId;
       businessProfile = page.businessProfile!;
       accessToken = decryptFacebookSecret(page.pageAccessToken);
-      responseMode = page.businessProfile!.responseMode as any;
+      
+      // Page-level mode overrides global profile mode
+      responseMode = (page.responseMode || page.businessProfile!.responseMode) as any;
+      
+      // Store settings for later use in automation loops
+      (job as any).pageSettings = {
+        commentAutoDmEnabled: page.commentAutoDmEnabled,
+        commentPublicGreeting: page.commentPublicGreeting
+      };
     } else {
       const account = await prisma.whatsAppAccount.findFirst({
         where: { phoneNumberId: identifier, isActive: true },
@@ -118,9 +126,16 @@ export async function processMetaMessage(job: MetaMessageJob) {
     emitToBusiness(businessProfileId, "new_message", { conversationId: conversation.id, message: userSaved });
     emitToConversation(conversation.id, "new_message", { message: userSaved });
 
-    // 5. Manual Mode Guard
+    // 5. Response Mode & AI Toggle Guards
     if (responseMode === "MANUAL") {
       logger.info("meta.processor.manual_mode_hold", { conversationId: conversation.id });
+      return;
+    }
+
+    if (!(conversation as any).aiEnabled) {
+      logger.info("meta.processor.ai_disabled_for_conversation", { conversationId: conversation.id });
+      // If AI is disabled for this specific thread, we stop here. 
+      // This allows sales agents to take 100% manual control.
       return;
     }
 
@@ -128,11 +143,18 @@ export async function processMetaMessage(job: MetaMessageJob) {
     const historyRows = await getConversationHistory(conversation.id);
     const historyTurns = historyToLlmTurns(toPromptMessages(historyRows));
 
+    const isComment = !!job.commentId;
+    
+    // Inject Channel context so AI knows if it's on a public stage
+    const contextualMessage = isComment 
+      ? `[CHANNEL_CONTEXT: FACEBOOK_PUBLIC_COMMENT] ${finalContent}`
+      : finalContent;
+
     const reply = await computeBusinessChatReply({
       businessProfile,
-      messageText: finalContent,
+      messageText: contextualMessage,
       historyTurns,
-      channel: platform,
+      channel: isComment ? "facebook_comment" : platform as any,
       customerPhone: platform === "whatsapp" ? senderId : undefined,
       mediaInfo: mediaId ? { id: mediaId, type: type || "image", url: mediaMetadata?.url } : undefined,
     });
@@ -146,29 +168,118 @@ export async function processMetaMessage(job: MetaMessageJob) {
     const isAutoMode = responseMode === "AUTO";
     const status = (reply.action === "HANDOFF_TO_HUMAN" || !isAutoMode) ? "PENDING_REVIEW" : "SENT";
 
-    const modelSaved = await saveMessage(conversation.id, "model", reply.content || "", {
+    // Standard fallback logic for general chat
+    const mainContent = reply.privateContent || reply.content || "";
+    
+    // If it's a comment, we might have dual content
+    const pageSettings = (job as any).pageSettings; 
+
+    // A. The "Core" Response (Usually the Private DM or standard reply)
+    const modelSaved = await saveMessage(conversation.id, "model", mainContent, {
       status,
       aiReasoning: reply.reasoning,
-      handoffCategory: reply.handoffCategory,
+      handoffCategory: isComment && reply.intent === "SALES_DM" ? "PRIVATE_DM_REPLY" : reply.handoffCategory,
+      intent: reply.intent, // Persist detected intent
     });
 
     emitToBusiness(businessProfileId, "new_message", { conversationId: conversation.id, message: modelSaved });
     emitToConversation(conversation.id, "new_message", { message: modelSaved });
+
+    // B. The "Public" Greeting (Only for comments)
+    let publicSaved: any = null;
+    if (isComment && (reply.publicContent || pageSettings?.commentPublicGreeting)) {
+      const publicTxt = reply.publicContent || (pageSettings?.commentPublicGreeting || "Thanks {{name}}! Check your DMs.")
+        .replace("{{name}}", customerNameSet || "there");
+        
+      publicSaved = await saveMessage(conversation.id, "model", publicTxt, {
+        status, // Should match main status
+        handoffCategory: "PUBLIC_COMMENT_REPLY",
+        intent: reply.intent, // Tag with same intent
+      });
+      
+      emitToBusiness(businessProfileId, "new_message", { conversationId: conversation.id, message: publicSaved });
+      emitToConversation(conversation.id, "new_message", { message: publicSaved });
+    }
+
+    // C. Resolve Post URL if missing (New Contextual Header requirement)
+    if (isComment && job.postId && !conversation.postUrl) {
+      try {
+        const postUrl = await getFacebookPostUrl(job.postId, accessToken);
+        if (postUrl) {
+          await prisma.conversation.update({
+            where: { id: conversation.id },
+            data: { postUrl }
+          });
+          // Update local conversation object for subsequent emits if needed
+          conversation.postUrl = postUrl;
+        }
+      } catch (err: any) {
+        logger.warn("facebook.processor.post_url_resolve_failed", { error: err.message });
+      }
+    }
 
     if (status === "PENDING_REVIEW") {
        emitToBusiness(businessProfileId, "draft_received", { conversationId: conversation.id, message: modelSaved });
     }
 
     // 8. Platform Delivery (if AUTO)
-    if (status === "SENT" && reply.content && reply.handoffCategory !== "SYSTEM_ERROR") {
+    if (status === "SENT" && reply.handoffCategory !== "SYSTEM_ERROR") {
       try {
         if (platform === "messenger") {
           const { sendMessengerReply } = await import("./messenger.service");
-          const fbRes: any = await sendMessengerReply(senderId, reply.content, accessToken);
-          if (fbRes?.message_id) await prisma.conversationMessage.update({ where: { id: modelSaved.id }, data: { externalId: fbRes.message_id } });
-        } else {
+          const { sendPrivateReply, replyToComment } = await import("./facebook.service");
+
+          if (isComment) {
+            // INTENT-AWARE DELIVERY
+            const intent = reply.intent || "SALES_DM"; // Default to SALES_DM for backward compatibility
+            
+            if (intent === "IGNORE") {
+              logger.info("meta.processor.ignore_intent", { commentId: job.commentId });
+              return;
+            }
+
+            // 1. Sending Public Greeting (Contextual AI answer OR Template Fallback)
+            const publicText = publicSaved?.content || "Thanks! Check your DMs.";
+            // Humanized Jitter for public engagement
+            const delay = 10000 + Math.random() * 20000; 
+            setTimeout(async () => {
+              try {
+                await replyToComment({
+                  commentId: job.commentId!,
+                  message: publicText,
+                  accessToken
+                });
+                logger.info("meta.processor.public_greeting_sent", { commentId: job.commentId });
+              } catch (e: any) {
+                logger.error("meta.processor.public_greeting_failed", { error: e.message });
+              }
+            }, delay);
+
+            // 2. Sending Private DM ONLY if intent is SALES_DM
+            if (intent === "SALES_DM" && mainContent) {
+              const dmRes: any = await sendPrivateReply({ 
+                commentId: job.commentId!, 
+                message: mainContent, 
+                accessToken 
+              });
+              
+              if (dmRes?.id) {
+                await prisma.conversationMessage.update({ 
+                  where: { id: modelSaved.id }, 
+                  data: { externalId: dmRes.id } 
+                });
+              }
+              logger.info("meta.processor.private_dm_sent", { senderId, commentId: job.commentId });
+            }
+
+          } else if (mainContent) {
+            // Standard Messenger Reply (Direct Message)
+            const fbRes: any = await sendMessengerReply(senderId, mainContent, accessToken);
+            if (fbRes?.message_id) await prisma.conversationMessage.update({ where: { id: modelSaved.id }, data: { externalId: fbRes.message_id } });
+          }
+        } else if (mainContent) {
           const { sendWhatsAppReply } = await import("./whatsapp.service");
-          const waRes: any = await sendWhatsAppReply(senderId, reply.content, identifier, accessToken);
+          const waRes: any = await sendWhatsAppReply(senderId, mainContent, identifier, accessToken);
           const mid = waRes?.messages?.[0]?.id;
           if (mid) await prisma.conversationMessage.update({ where: { id: modelSaved.id }, data: { externalId: mid } });
         }

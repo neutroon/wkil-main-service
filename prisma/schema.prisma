@@ -59,7 +59,7 @@ model BusinessProfile {
   tone                String   @default("Friendly")
   productsServices    String[]
   expectedUserIntents String[]
-  corePolicies        String
+  corePolicies        String?
   phoneNumbers        String[]
   workingHours        String?
   address             String?
@@ -94,6 +94,7 @@ model BusinessProfile {
   aiCallLogs        AiCallLog[]
   billingFailureLogs BillingFailureLog[]
   contentPlans      ContentPlan[]
+  knowledgeSections BusinessProfileKnowledgeSection[]
 }
 
 /// Embeddable web chat widget: publicSiteKey is sent from the browser; allowedOrigins is a JSON array of exact Origin strings (e.g. ["https://shop.example.com"]).
@@ -143,6 +144,20 @@ model BusinessProfileFaq {
 
   question String
   answer   String
+
+  @@index([businessId])
+}
+
+model BusinessProfileKnowledgeSection {
+  id         Int             @id @default(autoincrement())
+  businessId Int
+  business   BusinessProfile @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  title   String
+  content String @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([businessId])
 }

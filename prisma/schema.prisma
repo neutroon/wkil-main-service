@@ -74,6 +74,10 @@ model BusinessProfile {
   ragIngested   Boolean   @default(false)
   ragIngestedAt DateTime?
 
+  plan                String    @default("FREE") // "FREE", "PRO", "ENTERPRISE"
+  monthlyTokensUsed   Int       @default(0)     // Rolling monthly usage for quota checks
+  autoResetEnabled    Boolean   @default(false) // Whether usage resets automatically at month-start
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -86,6 +90,8 @@ model BusinessProfile {
   widgetInstalls    WidgetInstall[]
   conversations     Conversation[]
   aiUsageStats      AiUsageStat[]
+  aiCallLogs        AiCallLog[]
+  billingFailureLogs BillingFailureLog[]
   contentPlans      ContentPlan[]
 }
 
@@ -286,6 +292,8 @@ model WhatsAppAccount {
   businessProfileId   Int?
   businessProfile     BusinessProfile? @relation(fields: [businessProfileId], references: [id], onDelete: SetNull)
   isActive            Boolean         @default(true)
+  isTokenValid        Boolean         @default(true)  // Result of the last /debug_token check
+  lastValidatedAt     DateTime?       // When the token was last checked for health
   createdAt           DateTime        @default(now())
   updatedAt           DateTime        @updatedAt
 
@@ -337,6 +345,8 @@ model FacebookAccount {
   refreshToken   String?
   scope          String?
   isActive       Boolean   @default(true)
+  isTokenValid   Boolean   @default(true)
+  lastValidatedAt DateTime?
   lastUsedAt     DateTime?
   deviceInfo     String? // Store device/browser info for device management
   createdAt      DateTime  @default(now())
@@ -362,6 +372,8 @@ model FacebookPage {
   pictureUrl      String?
   followersCount  Int       @default(0)
   isActive        Boolean   @default(true)
+  isTokenValid    Boolean   @default(true)
+  lastValidatedAt DateTime?
   lastUsedAt      DateTime?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
@@ -426,7 +438,9 @@ model AiUsageStat {
   // Production-grade additions
   groundingCalls    Int             @default(0) 
   embeddingTokens   Int             @default(0)
-  systemCost        Float           @default(0) // Locked-in cost at time of usage
+  systemCost        Float           @default(0) // Locked-in cost at time of usage (your cost)
+  customerCost      Float           @default(0) // What you charged the workspace
+  multiplier        Float           @default(1.0) // Snapshot of the multiplier at record time
 
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
@@ -434,6 +448,50 @@ model AiUsageStat {
   @@unique([businessProfileId, date, modelName])
   @@index([businessProfileId])
   @@index([date])
+}
+
+model AiCallLog {
+  id                String   @id @default(cuid())
+  businessProfileId Int
+  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+  
+  conversationId    String?
+  modelName         String
+  operation         String   // "messenger_reply", "whatsapp_reply", "rag_embedding", "crm_enrichment"
+  
+  promptTokens      Int      @default(0)
+  completionTokens  Int      @default(0)
+  embeddingTokens   Int      @default(0)
+  groundingCalls    Int      @default(0)
+  
+  systemCost        Float    @default(0)
+  customerCost      Float    @default(0)
+  multiplier        Float    @default(0)
+  
+  createdAt         DateTime @default(now())
+
+  @@index([businessProfileId, createdAt])
+  @@index([conversationId])
+}
+
+model BillingFailureLog {
+  id                Int      @id @default(autoincrement())
+  businessProfileId Int
+  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+  
+  modelName         String?
+  promptTokens      Int?
+  completionTokens  Int?
+  embeddingTokens   Int?
+  groundingCalls    Int?
+  
+  error             String
+  operation         String?
+  
+  createdAt         DateTime @default(now())
+
+  @@index([businessProfileId])
+  @@index([createdAt])
 }
 
 /// Global system settings for configurations like billing multipliers

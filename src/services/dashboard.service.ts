@@ -48,9 +48,7 @@ export interface UnifiedDashboardResponse extends DashboardStatsResponse {
   aiAutomationRate: number;
   aiAccuracyScore: number;
   leadVelocity: number;
-  avgResponseTime: number; // Total Average
-  aiAvgResponseTime: number; // AI-only Average
-  humanAvgResponseTime: number; // Human-only Average
+  avgResponseTime: number; // AI-only Average in minutes
   channelHealth: {
     facebook: boolean;
     whatsapp: boolean;
@@ -248,10 +246,9 @@ export const getUnifiedDashboardStats = async (
   // Lead Velocity = Count of new conversations in the period
   const leadVelocity = conversations.length;
 
-  // --- Start Response Time Analysis ---
+  // --- Start AI Response Time Analysis ---
   const userStartTimes = new Map<number, Date>();
   const aiSamples: number[] = [];
-  const humanSamples: number[] = [];
 
   for (const msg of messages) {
     const cid = msg.conversationId;
@@ -266,31 +263,26 @@ export const getUnifiedDashboardStats = async (
       if (startTime) {
         const diffMinutes = Math.max(0, (msg.createdAt.getTime() - startTime.getTime()) / (1000 * 60));
 
+        // Industry standard: Only count fully autonomous responses in AI Speed metrics
         if (msg.status === "SENT") {
           aiSamples.push(diffMinutes);
-        } else if (msg.status === "EDITED_AND_SENT") {
-          humanSamples.push(diffMinutes);
         }
         
-        // Reset after a response is recorded
+        // Always reset after any AI interaction (sent or draft) 
+        // to keep the benchmark clean for the next interaction
         userStartTimes.delete(cid);
       }
+    } else if (msg.role === "agent") {
+      // If a human agent steps in, clear the timer. 
+      // The AI's next speed sample will start from the user's next message.
+      userStartTimes.delete(cid);
     }
   }
 
   const aiAvg = aiSamples.length > 0 
     ? aiSamples.reduce((a, b) => a + b, 0) / aiSamples.length 
     : 0;
-  
-  const humanAvg = humanSamples.length > 0 
-    ? humanSamples.reduce((a, b) => a + b, 0) / humanSamples.length 
-    : 0;
-
-  const totalSamples = [...aiSamples, ...humanSamples];
-  const overallAvg = totalSamples.length > 0 
-    ? totalSamples.reduce((a, b) => a + b, 0) / totalSamples.length 
-    : 0;
-  // --- End Response Time Analysis ---
+  // --- End AI Response Time Analysis ---
 
   // Simple channel health check
   const accounts = await prisma.facebookAccount.findFirst({ where: { userId, isActive: true } });
@@ -301,9 +293,7 @@ export const getUnifiedDashboardStats = async (
     aiAutomationRate: aiStats.automationRate,
     aiAccuracyScore: aiStats.accuracyScore,
     leadVelocity,
-    avgResponseTime: parseFloat(overallAvg.toFixed(2)),
-    aiAvgResponseTime: parseFloat(aiAvg.toFixed(2)),
-    humanAvgResponseTime: parseFloat(humanAvg.toFixed(2)),
+    avgResponseTime: parseFloat(aiAvg.toFixed(2)),
     channelHealth: {
       facebook: !!accounts,
       whatsapp: !!waAccounts,

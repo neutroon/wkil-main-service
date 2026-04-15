@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 
 type BusinessProfileWithFaqs = Prisma.BusinessProfileGetPayload<{
-  include: { faqs: true };
+  include: { faqs: true; knowledgeSections: true };
 }>;
 
 export function chunkBusinessProfile(profile: BusinessProfileWithFaqs) {
@@ -29,14 +29,16 @@ export function chunkBusinessProfile(profile: BusinessProfileWithFaqs) {
     });
   });
 
-  // contact
-  chunks.push({
-    chunkType: "contact",
-    chunkIndex: index++,
-    content: `Phone: ${profile.phoneNumbers.join(", ")}
-  Address: ${profile.address ?? "N/A"}
-  Working Hours: ${profile.workingHours ?? "N/A"}`,
-  });
+  // contact (legacy/structured fallback)
+  if (profile.phoneNumbers.length > 0 || profile.address || profile.workingHours) {
+    chunks.push({
+      chunkType: "contact",
+      chunkIndex: index++,
+      content: `Phone: ${profile.phoneNumbers.join(", ")}
+    Address: ${profile.address ?? "N/A"}
+    Working Hours: ${profile.workingHours ?? "N/A"}`,
+    });
+  }
 
   // faqs — one chunk per FAQ
   profile.faqs.forEach((faq) => {
@@ -47,12 +49,23 @@ export function chunkBusinessProfile(profile: BusinessProfileWithFaqs) {
     });
   });
 
-  // intents + policies
-  chunks.push({
-    chunkType: "intents",
-    chunkIndex: index++,
-    content: `Expected Intents: ${profile.expectedUserIntents.join(", ")}
-  Core Policies: ${profile.corePolicies}`,
+  // intents + policies (legacy fallback)
+  if (profile.expectedUserIntents.length > 0 || profile.corePolicies) {
+    chunks.push({
+      chunkType: "intents",
+      chunkIndex: index++,
+      content: `Expected Intents: ${profile.expectedUserIntents.join(", ")}
+    Core Policies: ${profile.corePolicies || "N/A"}`,
+    });
+  }
+
+  // custom knowledge sections
+  profile.knowledgeSections.forEach((section) => {
+    chunks.push({
+      chunkType: "custom_section",
+      chunkIndex: index++,
+      content: `[KNOWLEDGE]: ${section.title}\n${section.content}`,
+    });
   });
 
   // raw scraped content (only if exists)

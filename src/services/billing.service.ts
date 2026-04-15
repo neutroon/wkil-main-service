@@ -16,7 +16,7 @@ export function calculateSystemCost(params: {
 
   // 1. Generation Cost (Model specific)
   if (params.modelName && (params.promptTokens || params.completionTokens)) {
-    const rates = MODEL_PRICING[params.modelName] || MODEL_PRICING["gemini-2.0-flash"]; // Default fallback
+    const rates = MODEL_PRICING[params.modelName] || MODEL_PRICING["gemini-3-flash"]; // Default fallback
     cost += (params.promptTokens || 0) * (rates.prompt / 1_000_000);
     cost += (params.completionTokens || 0) * (rates.completion / 1_000_000);
   }
@@ -48,7 +48,7 @@ export async function recordAiUsage(params: {
 }) {
   const { 
     businessProfileId, 
-    modelName = "gemini-2.0-flash", 
+    modelName = "gemini-3-flash", 
     promptTokens = 0, 
     completionTokens = 0, 
     embeddingTokens = 0, 

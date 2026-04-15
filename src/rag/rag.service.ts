@@ -45,7 +45,7 @@ export async function ingestBusinessProfile(businessProfileId: number) {
 
   const profile = await prisma.businessProfile.findUniqueOrThrow({
     where: { id: businessProfileId },
-    include: { faqs: true },
+    include: { faqs: true, knowledgeSections: true },
   });
 
   const chunks = chunkBusinessProfile(profile);
@@ -94,7 +94,7 @@ export async function partialReIngestBusinessProfile(
 
   const profile = await prisma.businessProfile.findUniqueOrThrow({
     where: { id: businessProfileId },
-    include: { faqs: true },
+    include: { faqs: true, knowledgeSections: true },
   });
 
   const allChunks = chunkBusinessProfile(profile);

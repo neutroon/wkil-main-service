@@ -47,6 +47,7 @@ model User {
   aiUsageStats             AiUsageStat[]
   aiCallLogs               AiCallLog[]
   billingFailureLogs       BillingFailureLog[]
+  mediaAssets              BusinessProfileMedia[]
 
   // User-Centric Billing (Production Grade)
   plan                String    @default("FREE") // "FREE", "PRO", "ENTERPRISE"
@@ -104,6 +105,7 @@ model BusinessProfile {
   billingFailureLogs BillingFailureLog[]
   contentPlans      ContentPlan[]
   knowledgeSections BusinessProfileKnowledgeSection[]
+  mediaAssets       BusinessProfileMedia[]
 }
 
 /// Embeddable web chat widget: publicSiteKey is sent from the browser; allowedOrigins is a JSON array of exact Origin strings (e.g. ["https://shop.example.com"]).
@@ -583,4 +585,45 @@ model ContentPlanPost {
   facebookPostId    String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
+}
+
+/// AI-sendable media assets uploaded by users, stored on Cloudflare R2
+model BusinessProfileMedia {
+  id                    Int             @id @default(autoincrement())
+  businessProfileId     Int
+  businessProfile       BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+  userId                Int
+  user                  User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Human-facing & AI metadata
+  name                  String          // e.g. "2025 Product Catalog"
+  instructions          String          @db.Text // e.g. "Send when customer asks for pricing"
+  mediaType             String          // "image" | "document" | "video"
+  mimeType              String          // e.g. "application/pdf", "image/jpeg"
+  fileSizeBytes         Int
+
+  // Storage: Cloudflare R2
+  r2Key                 String          // e.g. "media/bp_42/uuid_filename.pdf"
+  publicUrl             String          // Public URL for Web Widget delivery
+
+  // Storage: Meta Platform IDs (populated by background job)
+  whatsappMediaId       String?
+  whatsappMediaExpiresAt DateTime?       // WhatsApp IDs expire after ~30 days
+  messengerAttachmentId String?         // Reusable — does not expire
+
+  // Sync status per platform
+  whatsappSyncStatus    String          @default("PENDING") // PENDING | SYNCED | FAILED | EXPIRED
+  messengerSyncStatus   String          @default("PENDING")
+
+  // Lifecycle (soft-delete — never hard-delete to preserve historical messages)
+  isActive              Boolean         @default(true)
+  deletedAt             DateTime?
+
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+
+  @@index([businessProfileId])
+  @@index([userId])
+  @@index([isActive, businessProfileId])
+  @@index([whatsappMediaExpiresAt]) // For the refresh scheduler
 }

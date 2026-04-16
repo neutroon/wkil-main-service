@@ -166,6 +166,16 @@ export async function runAIEngineLoop(params: {
   policy?: Partial<AiTruthfulnessPolicy>;
   mediaInfo?: { id: string; type: string; url?: string };
 }): Promise<AiRoutingDecision> {
+  const profile = await prisma.businessProfile.findUnique({
+    where: { id: params.businessProfileId },
+    select: { userId: true },
+  });
+
+  if (!profile) {
+    throw new Error("Business profile not found");
+  }
+
+  const userId = profile.userId;
   const policy = resolveTruthfulnessPolicy(params.policy);
 
   // Prepare User Part (Text + Optional Media)
@@ -433,11 +443,13 @@ export async function runAIEngineLoop(params: {
 
       // Log usage via new service
       recordAiUsage({
+        userId,
         businessProfileId: params.businessProfileId,
         modelName: sessionStats.modelName,
         promptTokens: sessionStats.promptTokens,
         completionTokens: sessionStats.completionTokens,
         groundingCalls: sessionStats.groundingCalls,
+        operation: `chat_${params.channel || "direct"}`,
       }).catch(console.error);
 
       return decision;

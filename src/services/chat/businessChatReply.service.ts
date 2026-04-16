@@ -6,7 +6,8 @@ import {
   buildCaptureLeadTool,
   buildExternalQueryTools,
 } from "../../config/gemini";
-import { runAIEngineLoop, AiRoutingDecision } from "../ai/aiEngine.service";
+import { runAIEngineLoop, type AiRoutingDecision } from "../ai/aiEngine.service";
+export type { AiRoutingDecision };
 
 export const NOT_INGESTED_REPLY: AiRoutingDecision = {
   action: "HANDOFF_TO_HUMAN",

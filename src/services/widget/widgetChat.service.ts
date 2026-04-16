@@ -73,14 +73,14 @@ export async function processWidgetChatMessage(params: {
   historyForPrompt.push({ role: "user", content: message });
   const historyTurns = historyToLlmTurns(historyForPrompt);
   
-  // 3. Early Exit if Manual Mode
-  if (businessProfile.responseMode === "MANUAL") {
-    logger.info("widget.chat.manual_mode_skip", { 
+  // 3. Early Exit if Manual Mode or AI Disabled for this thread
+  if (businessProfile.responseMode === "MANUAL" || conversation.aiEnabled === false) {
+    logger.info("widget.chat.automation_skip", { 
       conversationId: conversation.id,
-      businessProfileId: businessProfile.id 
+      reason: conversation.aiEnabled === false ? "AI_TOGGLE_OFF" : "MANUAL_MODE"
     });
     return { 
-      reply: "", // Silent to visitor
+      reply: "", 
       conversationId: conversation.id 
     };
   }

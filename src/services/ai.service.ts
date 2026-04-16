@@ -2,9 +2,14 @@ import { generateContent } from "../config/gemini";
 import { logger } from "../utils/logger";
 import { assertQuotaAvailable, recordAiUsage } from "./billing.service";
 
-async function discoverStrategicLinks(businessProfileId: number, baseUrl: string, pageContent: string) {
+async function discoverStrategicLinks(
+  userId: number,
+  businessProfileId: number | null,
+  baseUrl: string,
+  pageContent: string,
+) {
   // Pre-flight quota check
-  await assertQuotaAvailable(businessProfileId);
+  await assertQuotaAvailable(userId, businessProfileId);
   const prompt = `
     أنت مساعد ذكي متخصص في تحليل هيكل المواقع الإلكترونية (Web Navigation Expert).
     مهمتك هي قراءة المحتوى المستخرج من الصفحة الرئيسية لموقع العميل، واستخراج أهم الروابط (URLs) التي تحتوي على معلومات تفصيلية نحتاجها لبناء "هوية البيزنس".
@@ -44,11 +49,12 @@ async function discoverStrategicLinks(businessProfileId: number, baseUrl: string
     
     // Record ACTUAL usage
     await recordAiUsage({
+      userId,
       businessProfileId,
       modelName: usage.model,
       operation: "discover_strategic_links",
       promptTokens: usage.promptTokens,
-      completionTokens: usage.completionTokens
+      completionTokens: usage.completionTokens,
     });
 
     const parsedData = JSON.parse(result);
@@ -67,9 +73,13 @@ async function discoverStrategicLinks(businessProfileId: number, baseUrl: string
   }
 }
 
-async function extractBusinessIdentity(businessProfileId: number, markdown: string) {
+async function extractBusinessIdentity(
+  userId: number,
+  businessProfileId: number | null,
+  markdown: string,
+) {
   // Pre-flight quota check
-  await assertQuotaAvailable(businessProfileId);
+  await assertQuotaAvailable(userId, businessProfileId);
   const prompt = `
     أنت خبير استراتيجي في بناء العلامات التجارية وتحليل الأعمال.
     مهمتك هي تحليل نص مستخرج من موقع إلكتروني (أو PDF) لعميل، وتحويله إلى بيانات منظمة تمثل "هوية البيزنس" لبناء مساعد ذكي (AI Agent) يمثله.
@@ -117,11 +127,12 @@ async function extractBusinessIdentity(businessProfileId: number, markdown: stri
 
     // Record ACTUAL usage
     await recordAiUsage({
+      userId,
       businessProfileId,
       modelName: usage.model,
       operation: "extract_business_identity",
       promptTokens: usage.promptTokens,
-      completionTokens: usage.completionTokens
+      completionTokens: usage.completionTokens,
     });
 
     const parsedData = JSON.parse(result);

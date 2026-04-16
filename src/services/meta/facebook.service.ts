@@ -799,25 +799,32 @@ export const updateUserAnalytics = async (
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const analyticsData: any = {
+    const updateData: any = {};
+    const createData: any = {
       userId: account.userId,
       date: today,
     };
 
     switch (activityType) {
       case "post_created":
-        analyticsData.postsCreated = { increment: 1 };
-        analyticsData.totalEngagement = { increment: 1 };
+        updateData.postsCreated = { increment: 1 };
+        updateData.totalEngagement = { increment: 1 };
+        createData.postsCreated = 1;
+        createData.totalEngagement = 1;
         break;
       case "post_scheduled":
-        analyticsData.postsScheduled = { increment: 1 };
+        updateData.postsScheduled = { increment: 1 };
+        createData.postsScheduled = 1;
         break;
       case "comment_replied":
-        analyticsData.commentsReplied = { increment: 1 };
-        analyticsData.totalEngagement = { increment: 1 };
+        updateData.commentsReplied = { increment: 1 };
+        updateData.totalEngagement = { increment: 1 };
+        createData.commentsReplied = 1;
+        createData.totalEngagement = 1;
         break;
       case "pages_connected":
-        analyticsData.pagesConnected = { increment: 1 };
+        updateData.pagesConnected = { increment: 1 };
+        createData.pagesConnected = 1;
         break;
     }
 
@@ -828,8 +835,8 @@ export const updateUserAnalytics = async (
           date: today,
         },
       },
-      update: analyticsData,
-      create: analyticsData,
+      update: updateData,
+      create: createData,
     });
   } catch (error: unknown) {
     logger.error("facebook.analytics.update_failed", {

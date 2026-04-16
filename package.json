@@ -18,10 +18,13 @@
     "prisma:migrate:status": "prisma migrate status"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1030.0",
+    "@aws-sdk/s3-request-presigner": "^3.1030.0",
     "@google-cloud/vertexai": "^1.10.0",
     "@google/genai": "^1.46.0",
     "@prisma/client": "^6.16.2",
     "@socket.io/redis-adapter": "^8.3.0",
+    "@types/node-cron": "^3.0.11",
     "axios": "^1.12.2",
     "bcrypt": "^6.0.0",
     "cloudinary": "^1.41.3",
@@ -31,11 +34,13 @@
     "express": "^5.1.0",
     "express-rate-limit": "^8.1.0",
     "express-validator": "^7.2.1",
+    "form-data": "^4.0.5",
     "helmet": "^8.1.0",
     "ioredis": "^5.10.1",
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.0.2",
     "multer-storage-cloudinary": "^4.0.0",
+    "node-cron": "^4.2.1",
     "os": "^0.1.2",
     "socket.io": "^4.8.3"
   },

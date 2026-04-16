@@ -1,46 +1,33 @@
-/**
- * Minimal structured logger for production (JSON lines to stdout).
- * Replace with pino/winston later if we need transports.
- */
+type LogLevel = "info" | "warn" | "error" | "debug";
 
-type LogLevel = "debug" | "info" | "warn" | "error";
+class Logger {
+  private formatMessage(level: LogLevel, message: string, meta?: any) {
+    const timestamp = new Date().toISOString();
+    return JSON.stringify({
+      ts: timestamp,
+      level,
+      msg: message,
+      ...meta,
+    });
+  }
 
-const LEVEL_ORDER: Record<LogLevel, number> = {
-  debug: 10,
-  info: 20,
-  warn: 30,
-  error: 40,
-};
+  info(message: string, meta?: any) {
+    console.log(this.formatMessage("info", message, meta));
+  }
 
-function envLevel(): LogLevel {
-  const l = (process.env.LOG_LEVEL || "").toLowerCase();
-  if (l === "debug" || l === "info" || l === "warn" || l === "error") return l;
-  return process.env.NODE_ENV === "production" ? "info" : "debug";
+  warn(message: string, meta?: any) {
+    console.warn(this.formatMessage("warn", message, meta));
+  }
+
+  error(message: string, meta?: any) {
+    console.error(this.formatMessage("error", message, meta));
+  }
+
+  debug(message: string, meta?: any) {
+    if (process.env.NODE_ENV !== "production") {
+      console.log(this.formatMessage("debug", message, meta));
+    }
+  }
 }
 
-function shouldLog(level: LogLevel): boolean {
-  return LEVEL_ORDER[level] >= LEVEL_ORDER[envLevel()];
-}
-
-function write(level: LogLevel, msg: string, meta?: Record<string, unknown>) {
-  if (!shouldLog(level)) return;
-  const line = JSON.stringify({
-    ts: new Date().toISOString(),
-    level,
-    msg,
-    ...meta,
-  });
-  if (level === "error") console.error(line);
-  else console.log(line);
-}
-
-export const logger = {
-  debug: (msg: string, meta?: Record<string, unknown>) =>
-    write("debug", msg, meta),
-  info: (msg: string, meta?: Record<string, unknown>) =>
-    write("info", msg, meta),
-  warn: (msg: string, meta?: Record<string, unknown>) =>
-    write("warn", msg, meta),
-  error: (msg: string, meta?: Record<string, unknown>) =>
-    write("error", msg, meta),
-};
+export const logger = new Logger();

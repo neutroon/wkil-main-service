@@ -6,7 +6,7 @@ import {
   sendPrivateReply,
   getPageAccessToken
 } from "./facebook.service";
-import { computeBusinessChatReply, AiRoutingDecision } from "../ai/aiEngine.service";
+import { computeBusinessChatReply, AiRoutingDecision } from "../chat/businessChatReply.service";
 import { saveMessage, getOrCreateConversation } from "./conversation.service";
 import { emitToBusiness, emitToConversation } from "../../utils/socket";
 
@@ -39,7 +39,14 @@ export async function handleFacebookComment(job: FacebookCommentJob) {
   // We use the commentId as externalId to ensure we only process this comment once.
   const page = await prisma.facebookPage.findFirst({
     where: { pageId, isActive: true },
-    include: { businessProfile: true }
+    include: { 
+      businessProfile: {
+        include: {
+          externalDataSources: { where: { isActive: true } },
+          crmIntegrations: { where: { isActive: true }, take: 1 },
+        }
+      } 
+    }
   });
 
   if (!page || !page.businessProfileId || !page.businessProfile) {

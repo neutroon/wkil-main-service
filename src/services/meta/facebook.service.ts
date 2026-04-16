@@ -152,7 +152,7 @@ export async function updateTokenStatus(params: {
 }
 
 function decryptFacebookAccountForResponse<
-  T extends { accessToken: string; refreshToken: string | null; name: string | null; pictureUrl: string | null },
+  T extends { accessToken: string; refreshToken: string | null; name?: string | null; pictureUrl?: string | null },
 >(acc: T): T {
   return {
     ...acc,

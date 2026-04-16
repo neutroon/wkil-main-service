@@ -42,10 +42,16 @@ export interface EmbedResponseWithUsage {
 
 // Model Tier Configuration (April 2026 Production Standards)
 // Model Tier Configuration (April 2026 Production Standards)
+// const MODELS = {
+// PRIMARY: "gemini-3.1-flash", // Current best price/performance
+// RESERVE: "gemini-3-flash", // Stable fallback
+// STABLE: "gemini-3.1-flash-lite", // Ultra-cheap high-volume
+//};
+
 const MODELS = {
-  PRIMARY: "gemini-3.1-flash", // Current best price/performance
-  RESERVE: "gemini-3-flash", // Stable fallback
-  STABLE: "gemini-3.1-flash-lite", // Ultra-cheap high-volume
+  PRIMARY: "gemini-3-flash-preview",        // Best quality
+  RESERVE: "gemini-3.1-flash-lite-preview", // Cheaper/faster preview
+  STABLE:  "gemini-2.5-flash",              // Non-preview, always available
 };
 
 /**

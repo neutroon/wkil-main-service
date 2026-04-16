@@ -77,7 +77,7 @@ facebookRoutes.get(
 
       // Get user info from Facebook
       const userInfoResponse = await fetch(
-        `https://graph.facebook.com/me?access_token=${tokenData.access_token}&fields=id,name,email`,
+        `https://graph.facebook.com/me?access_token=${tokenData.access_token}&fields=id,name,email,picture`,
       );
       const userInfo = await userInfoResponse.json();
       console.log("User info:", userInfo);

@@ -153,6 +153,7 @@ export interface AiRoutingDecision {
   content?: string | null;
   publicContent?: string | null;
   privateContent?: string | null;
+  attachment?: { assetName: string; caption?: string | null } | null;
 }
 
 export async function runAIEngineLoop(params: {

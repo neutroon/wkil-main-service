@@ -188,8 +188,8 @@ export async function processMetaMessage(job: MetaMessageJob) {
     // B. The "Public" Greeting (Only for comments)
     let publicSaved: any = null;
     if (isComment && (reply.publicContent || pageSettings?.commentPublicGreeting)) {
-      const publicTxt = reply.publicContent || (pageSettings?.commentPublicGreeting || "Thanks {{name}}! Check your DMs.")
-        .replace("{{name}}", customerNameSet || "there");
+      const publicTxt = reply.publicContent || (pageSettings?.commentPublicGreeting || "Thanks {name}! Check your DMs.")
+        .replace(/{name}|{{name}}/g, customerNameSet || "there");
         
       publicSaved = await saveMessage(conversation.id, "model", publicTxt, {
         status, // Should match main status

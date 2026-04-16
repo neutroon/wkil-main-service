@@ -4,6 +4,7 @@ import dotenv from "dotenv";
 import { initSocket } from "./utils/socket";
 
 import { bootstrapMetaQueue } from "./queues/meta.queue";
+import { startMediaRefreshJob } from "./jobs/mediaRefresh.job";
 
 dotenv.config();
 
@@ -17,4 +18,6 @@ httpServer.listen(PORT, "0.0.0.0", async () => {
   
   // High-Resilience Recovery: Pick up where we left off
   void bootstrapMetaQueue();
+  // Daily WhatsApp media ID refresh (expires after 30 days)
+  startMediaRefreshJob();
 });

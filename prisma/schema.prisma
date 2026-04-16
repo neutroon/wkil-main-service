@@ -369,6 +369,8 @@ model FacebookAccount {
   userId         Int
   user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   facebookUserId String    @unique
+  name           String?
+  pictureUrl     String?
   accessToken    String
   tokenType      String    @default("bearer")
   expiresAt      DateTime?

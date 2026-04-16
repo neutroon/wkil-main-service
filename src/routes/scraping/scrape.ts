@@ -26,7 +26,8 @@ OnboardingRouter.post(
       const homeMarkdown = homeScrapeRes.data.content.markdown;
 
       // 2. AI choose the important links
-      const strategicLinks = await discoverStrategicLinks(url, homeMarkdown);
+      const userId = (req as any).user.id;
+      const strategicLinks = await discoverStrategicLinks(userId, null, url, homeMarkdown);
 
       let finalCombinedMarkdown = homeMarkdown;
 
@@ -46,6 +47,8 @@ OnboardingRouter.post(
 
       // 4. AI extract the final business identity
       const businessProfile = await extractBusinessIdentity(
+        userId,
+        null,
         finalCombinedMarkdown,
       );
 

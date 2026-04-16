@@ -36,6 +36,10 @@ export interface FacebookPage {
       url: string;
     };
   };
+  // Automation settings from our DB
+  responseMode?: string;
+  commentAutoDmEnabled?: boolean;
+  commentPublicGreeting?: string;
 }
 
 export interface FacebookPostParams {
@@ -274,7 +278,38 @@ export const getUserPages = async (
 
       const url = `${FB_API}/me/accounts?access_token=${token}&fields=id,name,access_token,category,followers_count,picture`;
       const { data } = await axios.get(url);
-      return data.data;
+      const graphPages: FacebookPage[] = data.data;
+
+      // If we have a userId, merge database settings (automation mode, etc.)
+      if (userId && graphPages.length > 0) {
+        const storedPages = await prisma.facebookPage.findMany({
+          where: {
+            pageId: { in: graphPages.map(p => p.id) },
+            facebookAccount: { userId }
+          },
+          select: {
+            pageId: true,
+            responseMode: true,
+            commentAutoDmEnabled: true,
+            commentPublicGreeting: true,
+          }
+        });
+
+        // Map for fast lookup
+        const settingsMap = new Map(storedPages.map(sp => [sp.pageId, sp]));
+
+        return graphPages.map(gp => {
+          const settings = settingsMap.get(gp.id);
+          return {
+            ...gp,
+            responseMode: settings?.responseMode,
+            commentAutoDmEnabled: settings?.commentAutoDmEnabled,
+            commentPublicGreeting: settings?.commentPublicGreeting,
+          };
+        });
+      }
+
+      return graphPages;
     } catch (error: unknown) {
       const mapped = mapFacebookGraphError(error);
       logger.error("facebook.pages.fetch_failed", mapped);
@@ -383,7 +418,28 @@ export const getPageDetails = async (
       const token = accessToken || (await getPageAccessToken(pageId));
       const url = `${FB_API}/${pageId}?access_token=${token}&fields=id,name,category,followers_count,picture`;
       const { data } = await axios.get(url);
-      return data;
+      const graphPage: FacebookPage = data;
+
+      // Try to find stored settings in our DB
+      const storedPage = await prisma.facebookPage.findFirst({
+        where: { pageId },
+        select: {
+          responseMode: true,
+          commentAutoDmEnabled: true,
+          commentPublicGreeting: true,
+        }
+      });
+
+      if (storedPage) {
+        return {
+          ...graphPage,
+          responseMode: storedPage.responseMode,
+          commentAutoDmEnabled: storedPage.commentAutoDmEnabled,
+          commentPublicGreeting: storedPage.commentPublicGreeting,
+        };
+      }
+
+      return graphPage;
     } catch (error: unknown) {
       const mapped = mapFacebookGraphError(error);
       logger.error("facebook.page.fetch_details_failed", mapped);

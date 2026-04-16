@@ -34,6 +34,9 @@ import aiAnalyticsRoutes from "./routes/aiAnalytics.routes";
 import conversationsRoutes from "./routes/meta/conversations.routes";
 import mediaRoutes from "./routes/meta/media.routes";
 import mediaLibraryRoutes from "./routes/media.routes";
+import { errorHandler } from "./middlewares/errorHandler.middleware";
+import prisma from "./config/prisma";
+import { logger } from "./utils/logger";
 
 const app = express();
 
@@ -126,15 +129,26 @@ app.use("/v1/analytics", aiAnalyticsRoutes);
 app.use("/v1/media", mediaLibraryRoutes);
 
 // Health check endpoint
-app.get("/v1/health", (req, res) => {
-  res.status(200).json({
-    status: "OK",
+app.get("/v1/health", async (req, res) => {
+  let dbStatus = "UP";
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+  } catch (err) {
+    dbStatus = "DOWN";
+    logger.error("Health check: Database connection failed", { error: err });
+  }
+
+  res.status(dbStatus === "UP" ? 200 : 503).json({
+    status: dbStatus === "UP" ? "OK" : "PARTIAL_OUTAGE",
+    database: dbStatus,
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     memoryUsage: process.memoryUsage(),
     cpuLoad: os.loadavg(),
-    os: os.platform(),
   });
 });
+
+// Global Error Handler (must be last middleware)
+app.use(errorHandler);
 
 export default app;

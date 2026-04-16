@@ -102,12 +102,14 @@ Instructions:
       ?.searchEntryPoint;
 
     recordAiUsage({
+      userId: profile.userId,
       businessProfileId: profile.id,
       promptTokens: usage?.promptTokenCount || usage?.promptTokens || 0,
       completionTokens:
         usage?.candidatesTokenCount || usage?.completionTokens || 0,
       groundingCalls: grounding ? 1 : 0,
       modelName: model,
+      operation: "content_plan_research",
     }).catch(console.error);
 
     isGrounded = true;
@@ -168,8 +170,10 @@ Schema:
 
   // Log strategic generation usage
   recordAiUsage({
+    userId: profile.userId,
     businessProfileId: profile.id,
     ...usage,
+    operation: "content_plan_strategy_generation",
   }).catch(console.error);
 
   if (!responseText) {
@@ -299,8 +303,10 @@ Provide the research summary in plain text.`;
 
     // Log research usage (heavy grounding)
     recordAiUsage({
+      userId: profile.userId,
       businessProfileId: profile.id,
       ...usage,
+      operation: "content_plan_research_sync",
     }).catch(console.error);
 
     if (text) {
@@ -359,8 +365,10 @@ Schema:
 
   // Log strategy usage
   recordAiUsage({
+    userId: profile.userId,
     businessProfileId: profile.id,
     ...usage,
+    operation: "content_plan_strategy_sync",
   }).catch(console.error);
 
   if (!responseText) {
@@ -540,8 +548,10 @@ ${schemaInstruct}
 
   // Log post execution usage
   recordAiUsage({
+    userId: profile.userId,
     businessProfileId: profile.id,
     ...usage,
+    operation: "content_plan_post_execution",
   }).catch(console.error);
 
   if (!responseText) {

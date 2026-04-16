@@ -8,7 +8,7 @@ import {
   saveMessage,
 } from "../services/meta/conversation.service";
 import { emitToConversation, emitToBusiness } from "../utils/socket";
-import { computeBusinessChatReply } from "../services/ai/aiEngine.service";
+import { computeBusinessChatReply } from "../services/chat/businessChatReply.service";
 import { toPromptMessages, historyToLlmTurns } from "../services/chat/conversationTurns";
 import { getConversationHistory } from "../services/meta/conversation.service";
 import { logger } from "../utils/logger";
@@ -542,7 +542,14 @@ widgetRoutes.post(
           businessProfile: { userId },
           channel: "web",
         },
-        include: { businessProfile: true },
+        include: { 
+          businessProfile: {
+            include: {
+              externalDataSources: { where: { isActive: true } },
+              crmIntegrations: { where: { isActive: true }, take: 1 },
+            }
+          } 
+        },
       });
 
       if (!conversation) {

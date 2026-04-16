@@ -44,6 +44,15 @@ model User {
   businessProfiles         BusinessProfile[]
   widgetInstalls           WidgetInstall[]
   contentPlans             ContentPlan[]
+  aiUsageStats             AiUsageStat[]
+  aiCallLogs               AiCallLog[]
+  billingFailureLogs       BillingFailureLog[]
+
+  // User-Centric Billing (Production Grade)
+  plan                String    @default("FREE") // "FREE", "PRO", "ENTERPRISE"
+  monthlyTokensUsed   Int       @default(0)     // Aggregated usage across all businesses
+  monthlyQuota        Int?                      // Individual hard-ceiling override from Admin
+  autoResetEnabled    Boolean   @default(true)  // Resets tokens at start of month
 }
 
 model BusinessProfile {
@@ -450,8 +459,10 @@ model UserAnalytics {
 
 model AiUsageStat {
   id                Int             @id @default(autoincrement())
-  businessProfileId Int
-  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+  userId            Int
+  user              User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  businessProfileId Int             @default(0)
+  businessProfile   BusinessProfile? @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
   date              DateTime        @db.Date
   modelName         String          @default("gemini-2.0-flash")
   
@@ -470,15 +481,18 @@ model AiUsageStat {
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 
-  @@unique([businessProfileId, date, modelName])
+  @@unique([userId, businessProfileId, date, modelName])
+  @@index([userId])
   @@index([businessProfileId])
   @@index([date])
 }
 
 model AiCallLog {
   id                String   @id @default(cuid())
-  businessProfileId Int
-  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+  userId            Int
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  businessProfileId Int      @default(0)
+  businessProfile   BusinessProfile? @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
   
   conversationId    String?
   modelName         String
@@ -495,14 +509,17 @@ model AiCallLog {
   
   createdAt         DateTime @default(now())
 
+  @@index([userId, createdAt])
   @@index([businessProfileId, createdAt])
   @@index([conversationId])
 }
 
 model BillingFailureLog {
   id                Int      @id @default(autoincrement())
-  businessProfileId Int
-  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+  userId            Int
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  businessProfileId Int      @default(0)
+  businessProfile   BusinessProfile? @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
   
   modelName         String?
   promptTokens      Int?
@@ -515,6 +532,7 @@ model BillingFailureLog {
   
   createdAt         DateTime @default(now())
 
+  @@index([userId])
   @@index([businessProfileId])
   @@index([createdAt])
 }

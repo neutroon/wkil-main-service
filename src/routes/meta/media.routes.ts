@@ -132,6 +132,7 @@ async function getUserPhoneNumberIds(userId: number): Promise<string[]> {
         include: {
           whatsAppAccounts: true,
           facebookPages: true,
+          widgetInstalls: true,
         },
       },
       managedUsers: {
@@ -142,6 +143,7 @@ async function getUserPhoneNumberIds(userId: number): Promise<string[]> {
                 include: {
                   whatsAppAccounts: true,
                   facebookPages: true,
+                  widgetInstalls: true,
                 },
               },
             },
@@ -159,6 +161,7 @@ async function getUserPhoneNumberIds(userId: number): Promise<string[]> {
   user.businessProfiles.forEach((bp: any) => {
     bp.whatsAppAccounts.forEach((wa: any) => ids.add(wa.phoneNumberId));
     bp.facebookPages.forEach((fp: any) => ids.add(fp.pageId));
+    bp.widgetInstalls.forEach((wi: any) => ids.add(`widget:${wi.id}`));
   });
 
   // From managed users' profiles
@@ -166,6 +169,7 @@ async function getUserPhoneNumberIds(userId: number): Promise<string[]> {
     mgmt.user.businessProfiles.forEach((bp: any) => {
       bp.whatsAppAccounts.forEach((wa: any) => ids.add(wa.phoneNumberId));
       bp.facebookPages.forEach((fp: any) => ids.add(fp.pageId));
+      bp.widgetInstalls.forEach((wi: any) => ids.add(`widget:${wi.id}`));
     });
   });
 

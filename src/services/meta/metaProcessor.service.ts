@@ -283,6 +283,36 @@ export async function processMetaMessage(job: MetaMessageJob) {
           const mid = waRes?.messages?.[0]?.id;
           if (mid) await prisma.conversationMessage.update({ where: { id: modelSaved.id }, data: { externalId: mid } });
         }
+
+        // ── Attachment Delivery ────────────────────────────────────────────────
+        if (reply.attachment?.assetName) {
+          const { resolveAssetForChannel } = await import("../media/mediaLibrary.service");
+          const resolved = await resolveAssetForChannel(reply.attachment.assetName, businessProfileId, platform);
+
+          if (resolved) {
+            if (platform === "whatsapp") {
+              if (resolved.mediaId) {
+                const { sendWhatsAppMedia } = await import("./whatsapp.service");
+                await sendWhatsAppMedia(senderId, resolved.mediaId, resolved.mediaType, identifier, accessToken, reply.attachment.caption ?? undefined);
+              } else if (resolved.url) {
+                // Graceful fallback: send the public URL as a text message
+                const { sendWhatsAppReply: sendWaText } = await import("./whatsapp.service");
+                await sendWaText(senderId, `${reply.attachment.caption || "Here's the file"}: ${resolved.url}`, identifier, accessToken);
+              }
+            } else if (platform === "messenger" && resolved.mediaId) {
+              const { sendMessengerMedia } = await import("./messenger.service");
+              await sendMessengerMedia(senderId, resolved.mediaId, resolved.mediaType as any, accessToken);
+            }
+            // Save attachment as a distinct message bubble for inbox display
+            await saveMessage(conversation.id, "model", reply.attachment.caption ?? "", {
+              type: resolved.mediaType,
+              mediaId: resolved.mediaId,
+              status,
+            });
+          } else {
+            logger.warn("meta.processor.attachment_not_found", { assetName: reply.attachment.assetName, businessProfileId });
+          }
+        }
       } catch (sendErr: any) {
         logger.error("meta.processor.delivery_failed", { platform, error: sendErr.message });
       }

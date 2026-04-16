@@ -80,6 +80,11 @@ export interface FacebookUserInfo {
   id: string;
   name: string;
   email?: string;
+  picture?: {
+    data: {
+      url: string;
+    };
+  };
 }
 
 export interface DeviceInfo {
@@ -147,7 +152,7 @@ export async function updateTokenStatus(params: {
 }
 
 function decryptFacebookAccountForResponse<
-  T extends { accessToken: string; refreshToken: string | null },
+  T extends { accessToken: string; refreshToken: string | null; name: string | null; pictureUrl: string | null },
 >(acc: T): T {
   return {
     ...acc,
@@ -620,6 +625,8 @@ export const saveFacebookToken = async (
         lastUsedAt: new Date(),
         deviceInfo: deviceInfo ? JSON.stringify(deviceInfo) : null,
         userId,
+        name: userInfo.name,
+        pictureUrl: userInfo.picture?.data?.url || null,
       },
       create: {
         userId,
@@ -630,6 +637,8 @@ export const saveFacebookToken = async (
         refreshToken: encRefresh,
         scope: tokenData.scope,
         deviceInfo: deviceInfo ? JSON.stringify(deviceInfo) : null,
+        name: userInfo.name,
+        pictureUrl: userInfo.picture?.data?.url || null,
       },
     });
 

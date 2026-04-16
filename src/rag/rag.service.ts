@@ -40,22 +40,24 @@ async function insertChunks(
 
 // ─── Full Ingest (on create + manual trigger) ────────────────────────────────
 export async function ingestBusinessProfile(businessProfileId: number) {
-  // Pre-flight quota check
-  await assertQuotaAvailable(businessProfileId);
-
   const profile = await prisma.businessProfile.findUniqueOrThrow({
     where: { id: businessProfileId },
     include: { faqs: true, knowledgeSections: true },
   });
+
+  // Pre-flight quota check
+  await assertQuotaAvailable(profile.userId, businessProfileId);
 
   const chunks = chunkBusinessProfile(profile);
   const { embeddings, totalTokens } = await embedTexts(chunks.map((c) => c.content));
 
   // Log embedding usage
   recordAiUsage({
+    userId: profile.userId,
     businessProfileId,
     embeddingTokens: totalTokens,
-    modelName: "gemini-embedding-001"
+    modelName: "gemini-embedding-001",
+    operation: "rag_ingest_full",
   }).catch(console.error);
 
   await prisma.businessProfileChunk.deleteMany({
@@ -78,8 +80,13 @@ export async function partialReIngestBusinessProfile(
   businessProfileId: number,
   updatedFields: string[],
 ) {
+  const profile = await prisma.businessProfile.findUniqueOrThrow({
+    where: { id: businessProfileId },
+    include: { faqs: true, knowledgeSections: true },
+  });
+
   // Pre-flight quota check
-  await assertQuotaAvailable(businessProfileId);
+  await assertQuotaAvailable(profile.userId, businessProfileId);
 
   const affectedChunkTypes = Object.entries(CHUNK_TYPE_FIELDS)
     .filter(([_, fields]) => fields.some((f) => updatedFields.includes(f)))
@@ -92,11 +99,6 @@ export async function partialReIngestBusinessProfile(
     return;
   }
 
-  const profile = await prisma.businessProfile.findUniqueOrThrow({
-    where: { id: businessProfileId },
-    include: { faqs: true, knowledgeSections: true },
-  });
-
   const allChunks = chunkBusinessProfile(profile);
   const chunksToUpdate = allChunks.filter((c) =>
     affectedChunkTypes.includes(c.chunkType),
@@ -106,9 +108,11 @@ export async function partialReIngestBusinessProfile(
 
   // Log embedding usage
   recordAiUsage({
+    userId: profile.userId,
     businessProfileId,
     embeddingTokens: totalTokens,
-    modelName: "gemini-embedding-001"
+    modelName: "gemini-embedding-001",
+    operation: "rag_ingest_partial",
   }).catch(console.error);
 
   await prisma.businessProfileChunk.deleteMany({
@@ -149,11 +153,20 @@ export async function retrieveRelevantChunks(
   const { vector: queryEmbedding, totalTokens } = await embedQuery(query);
   const vector = `[${queryEmbedding.join(",")}]`;
 
+  const profile = await prisma.businessProfile.findUnique({
+    where: { id: businessProfileId },
+    select: { userId: true },
+  });
+
+  if (!profile) return [];
+
   // Log retrieval embedding usage
   recordAiUsage({
+    userId: profile.userId,
     businessProfileId,
     embeddingTokens: totalTokens,
-    modelName: "gemini-embedding-001"
+    modelName: "gemini-embedding-001",
+    operation: "rag_retrieve",
   }).catch(console.error);
 
   // 2. Cosine similarity search via pgvector (fetch extra rows, then threshold)

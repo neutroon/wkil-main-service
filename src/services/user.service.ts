@@ -103,6 +103,9 @@ export const getUserById = async (
       isBusinessProfileCreated: true,
       analytics: true,
       role: true,
+      plan: true,
+      monthlyQuota: true,
+      monthlyTokensUsed: true,
       isActive: true,
       deletedAt: true,
       createdAt: true,
@@ -119,6 +122,9 @@ export const getAllUsers = async (includeInactive: boolean = false) => {
       name: true,
       email: true,
       role: true,
+      plan: true,
+      monthlyQuota: true,
+      monthlyTokensUsed: true,
       isActive: true,
       isBusinessProfileCreated: true,
       deletedAt: true,
@@ -135,6 +141,7 @@ export const updateUserRole = async (
   name: string,
   email: string,
   plan?: string,
+  monthlyQuota?: number,
 ) => {
   return await prisma.$transaction(async (tx) => {
     // 1. Update User basic info
@@ -144,6 +151,8 @@ export const updateUserRole = async (
         role: role as "user" | "admin" | "manager" | "super_admin",
         name,
         email,
+        plan,
+        monthlyQuota,
       },
       select: {
         id: true,
@@ -152,30 +161,18 @@ export const updateUserRole = async (
         facebookAccounts: true,
         analytics: true,
         role: true,
+        plan: true,
+        monthlyQuota: true,
         isBusinessProfileCreated: true,
         updatedAt: true,
         businessProfiles: {
-          select: { id: true }
-        }
+          select: { id: true },
+        },
       },
     });
 
-    // 2. Update Plan if provided (updates all profiles for this user, usually just one)
-    if (plan) {
-      const profiles = await tx.businessProfile.findMany({
-        where: { userId: id }
-      });
-
-      for (const profile of profiles) {
-        await tx.businessProfile.update({
-          where: { id: profile.id },
-          data: { plan }
-        });
-        
-        // Clear cache for each profile
-        await clearQuotaCache(profile.id);
-      }
-    }
+    // Clear quota cache for instant enforcement
+    clearQuotaCache(id);
 
     return user;
   });

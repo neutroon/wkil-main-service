@@ -253,6 +253,23 @@ export const aiRoutingSchema: Schema = {
         "Detailed, value-heavy response for a private DM. Prices, details, links.",
       nullable: true,
     },
+    attachment: {
+      type: Type.OBJECT,
+      nullable: true,
+      description:
+        "Optional media file to send alongside the text reply. ONLY populate this if a matching asset name exists in your Media Catalog. NEVER invent an asset name. NEVER send attachments on public Facebook Comments.",
+      properties: {
+        assetName: {
+          type: Type.STRING,
+          description: "Exact name of the asset from the Media Catalog (case-sensitive).",
+        },
+        caption: {
+          type: Type.STRING,
+          nullable: true,
+          description: "Short caption to accompany the file (e.g. 'Here is our product catalog!').",
+        },
+      },
+    },
   },
   required: ["action", "reasoning"],
 };

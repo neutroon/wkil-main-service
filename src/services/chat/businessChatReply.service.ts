@@ -7,6 +7,7 @@ import {
   buildExternalQueryTools,
 } from "../../config/gemini";
 import { runAIEngineLoop, type AiRoutingDecision } from "../ai/aiEngine.service";
+import prisma from "../../config/prisma";
 export type { AiRoutingDecision };
 
 export const NOT_INGESTED_REPLY: AiRoutingDecision = {
@@ -66,6 +67,20 @@ export async function computeBusinessChatReply(params: {
     customerPhone,
   });
 
+  // Inject Media Catalog — names + instructions only, NEVER raw platform IDs
+  const mediaAssets = await prisma.businessProfileMedia.findMany({
+    where: { businessProfileId: businessProfile.id, isActive: true, deletedAt: null },
+    select: { name: true, mediaType: true, instructions: true },
+  });
+
+  let finalSystemInstruction = systemInstruction;
+  if (mediaAssets.length > 0) {
+    const catalog = mediaAssets
+      .map((a) => `- "${a.name}" (${a.mediaType}): ${a.instructions}`)
+      .join("\n");
+    finalSystemInstruction += `\n\n## MEDIA CATALOG\nYou MAY send one file per response using the "attachment" field in your JSON output.\nAvailable assets:\n${catalog}\n\nCRITICAL RULES:\n1. Only reference EXACT names from the list above.\n2. NEVER invent an asset name.\n3. NEVER send attachments to public Facebook Comments.\n4. Only attach a file when it is genuinely relevant to the customer's request.`;
+  }
+
   const captureTool =
     businessProfile.crmIntegrations.length > 0
       ? buildCaptureLeadTool(
@@ -90,7 +105,7 @@ export async function computeBusinessChatReply(params: {
       : undefined;
 
   return runAIEngineLoop({
-    systemInstruction,
+    systemInstruction: finalSystemInstruction,
     historyTurns,
     customerMessage: messageText,
     tools: finalTools,

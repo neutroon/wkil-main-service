@@ -26,7 +26,7 @@ export async function processWidgetChatMessage(params: {
   visitorId: string;
   message: string;
   conversationId?: number;
-}): Promise<{ reply: string; conversationId: number }> {
+}): Promise<{ reply: string; conversationId: number; attachment?: { url: string; type: string; caption?: string | null } | null }> {
   const { install, visitorId, message, conversationId } = params;
   const pageId = pageIdForWidget(install.id);
 
@@ -174,6 +174,20 @@ export async function processWidgetChatMessage(params: {
       preview: (reply.content || "").substring(0, 80),
     });
 
-    return { reply: reply.content || "", conversationId: conversation.id };
+    // Resolve attachment for web delivery if AI included one
+    let attachmentForWidget: { url: string; type: string; caption?: string | null } | null = null;
+    if (reply.attachment?.assetName) {
+      const { resolveAssetForChannel } = await import("../../services/media/mediaLibrary.service");
+      const resolved = await resolveAssetForChannel(reply.attachment.assetName, install.businessProfileId, "web");
+      if (resolved?.url) {
+        attachmentForWidget = { url: resolved.url, type: resolved.mediaType, caption: reply.attachment.caption ?? null };
+        await saveMessage(conversation.id, "model", reply.attachment.caption ?? "", {
+          type: resolved.mediaType,
+          status: "SENT",
+        });
+      }
+    }
+
+    return { reply: reply.content || "", conversationId: conversation.id, attachment: attachmentForWidget };
   }
 }

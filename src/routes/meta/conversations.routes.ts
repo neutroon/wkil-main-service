@@ -13,7 +13,7 @@ import { sendWhatsAppReply, sendWhatsAppAction } from "../../services/meta/whats
 import { sendMessengerReply, sendMessengerAction } from "../../services/meta/messenger.service";
 import { decryptFacebookSecret } from "../../utils/tokenCrypto";
 import { emitToBusiness, emitToConversation } from "../../utils/socket";
-import { computeBusinessChatReply } from "../../services/ai/aiEngine.service";
+import { computeBusinessChatReply } from "../../services/chat/businessChatReply.service";
 import { toPromptMessages, historyToLlmTurns } from "../../services/chat/conversationTurns";
 import { getConversationHistory } from "../../services/meta/conversation.service";
 import { getMetaMediaUrl, streamMetaMedia } from "../../services/meta/metaMedia.service";
@@ -756,7 +756,14 @@ conversationsRoutes.post(
           id: conversationId,
           pageId: { in: [...waPhoneIds, ...fbPageIds] }
         },
-        include: { businessProfile: true }
+        include: { 
+          businessProfile: {
+            include: {
+              externalDataSources: { where: { isActive: true } },
+              crmIntegrations: { where: { isActive: true }, take: 1 },
+            }
+          } 
+        }
       });
 
       if (!conversation) {

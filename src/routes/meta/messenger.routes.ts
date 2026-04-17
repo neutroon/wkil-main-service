@@ -313,6 +313,9 @@ messengerRoutes.get("/webhook", (req: Request, res: Response) => {
 });
 
 messengerRoutes.post("/webhook", async (req: Request, res: Response) => {
+  logger.info(">>> RAW WEBHOOK ENDPOINT HIT <<<", { 
+    hasSignature: Boolean(req.headers["x-hub-signature-256"])
+  });
   res.status(200).send("EVENT_RECEIVED");
 
   try {

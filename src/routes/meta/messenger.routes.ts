@@ -381,6 +381,14 @@ messengerRoutes.post("/webhook", async (req: Request, res: Response) => {
                   messageText,
                   senderName,
                 } as any);
+              } else {
+                logger.warn("facebook.webhook.comment_skipped_missing_data", { 
+                  pageId, 
+                  hasSender: !!senderId, 
+                  hasMessage: !!messageText, 
+                  hasCommentId: !!commentId,
+                  isImageOnly: !messageText
+                });
               }
             }
           }

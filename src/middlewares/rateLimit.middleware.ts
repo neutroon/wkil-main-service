@@ -1,16 +1,25 @@
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 
+// Key generator that prioritizes User ID over IP to prevent blocking entire offices/NATs
+const getRateLimitKey = (req: any) => {
+  if (req.user && req.user.id) {
+    return `user:${req.user.id}`;
+  }
+  return ipKeyGenerator(req.ip || req.socket.remoteAddress || "unknown");
+};
+
 // General rate limiting
 export const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 1000, // Increased from 100 to allow smooth dashboard navigation
   message: {
-    error: "Too many requests from this IP, please try again later",
+    error: "Too many requests from this account, please try again later",
     code: "RATE_LIMIT_EXCEEDED",
   },
   standardHeaders: true,
   legacyHeaders: false,
   validate: { trustProxy: false },
+  keyGenerator: getRateLimitKey,
 });
 
 // Strict rate limiting for authentication endpoints
@@ -51,6 +60,7 @@ export const facebookLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   validate: { trustProxy: false },
+  keyGenerator: getRateLimitKey,
 });
 
 // Admin operations rate limiting
@@ -115,7 +125,7 @@ export const widgetChatLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
-  validate: { 
+  validate: {
     trustProxy: false,
   },
   keyGenerator: (req) => {

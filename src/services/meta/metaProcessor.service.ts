@@ -94,13 +94,22 @@ export async function processMetaMessage(job: MetaMessageJob) {
          const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 8000));
          
          const profile: any = await Promise.race([profilePromise, timeoutPromise]);
-         if (profile) {
+         
+         // Production Guard: Validate name is present and not the literal string "null"
+         if (profile && profile.name && String(profile.name).toLowerCase() !== "null") {
            customerNameSet = profile.name;
            customerAvatarSet = profile.picture?.data?.url;
+         } else if (job.senderName) {
+           customerNameSet = job.senderName;
          }
        } catch (e: any) {
          logger.warn("meta.processor.profile_fetch_skipped", { senderId, reason: e.message });
-         customerNameSet = "Guest Customer"; // Fallback to avoid hanging
+         customerNameSet = job.senderName || "Guest Customer"; // Fallback to avoid hanging
+       } finally {
+          // Double-check for absolute safety
+          if (!customerNameSet || String(customerNameSet).toLowerCase() === "null") {
+            customerNameSet = job.senderName || "Guest Customer";
+          }
        }
     }
 

@@ -118,8 +118,8 @@ export async function validateTokenHealth(accessToken: string): Promise<{
     const { data } = response.data;
     return {
       isValid: data.is_valid,
-      expiresAt: data.data_access_expires_at 
-        ? new Date(data.data_access_expires_at * 1000) 
+      expiresAt: data.data_access_expires_at
+        ? new Date(data.data_access_expires_at * 1000)
         : undefined,
       scopes: data.scopes,
     };
@@ -152,7 +152,12 @@ export async function updateTokenStatus(params: {
 }
 
 function decryptFacebookAccountForResponse<
-  T extends { accessToken: string; refreshToken: string | null; name?: string | null; pictureUrl?: string | null },
+  T extends {
+    accessToken: string;
+    refreshToken: string | null;
+    name?: string | null;
+    pictureUrl?: string | null;
+  },
 >(acc: T): T {
   return {
     ...acc,
@@ -189,15 +194,15 @@ export const generateAuthUrl = (params: FacebookAuthUrlParams): string => {
   return `https://www.facebook.com/v25.0/dialog/oauth?client_id=${process.env.FB_APP_ID}&redirect_uri=${params.redirect_uri}&scope=${scope.join(",")}&response_type=code`;
 };
 
-/** 
- * Helper to call Facebook Graph API with exponential backoff retries 
+/**
+ * Helper to call Facebook Graph API with exponential backoff retries
  * for transient errors (Code 1, 2, or 500+ status).
  */
 const callGraphApiWithRetry = async <T>(
   operation: string,
   fn: () => Promise<T>,
   maxRetries: number = 3,
-  initialDelay: number = 1000
+  initialDelay: number = 1000,
 ): Promise<T> => {
   let lastError: any;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -206,22 +211,22 @@ const callGraphApiWithRetry = async <T>(
     } catch (error: any) {
       lastError = error;
       const mapped = mapFacebookGraphError(error);
-      
+
       // Facebook transient codes: 1 (Unknown), 2 (Service temporarily unavailable)
-      const isTransient = 
-        mapped.code === 1 || 
-        mapped.code === 2 || 
+      const isTransient =
+        mapped.code === 1 ||
+        mapped.code === 2 ||
         (mapped.status && mapped.status >= 500);
 
       if (isTransient && attempt < maxRetries) {
         const delay = initialDelay * Math.pow(2, attempt);
-        logger.warn(`facebook.api.retry.${operation}`, { 
-          attempt: attempt + 1, 
-          delay, 
+        logger.warn(`facebook.api.retry.${operation}`, {
+          attempt: attempt + 1,
+          delay,
           errorCode: mapped.code,
-          status: mapped.status 
+          status: mapped.status,
         });
-        await new Promise(resolve => setTimeout(resolve, delay));
+        await new Promise((resolve) => setTimeout(resolve, delay));
         continue;
       }
       throw error;
@@ -278,7 +283,7 @@ export const getUserPages = async (
       }
 
       if (!token) {
-        throw new Error("Facebook access token not found for user");
+        return [];
       }
 
       const url = `${FB_API}/me/accounts?access_token=${token}&fields=id,name,access_token,category,followers_count,picture`;
@@ -289,21 +294,21 @@ export const getUserPages = async (
       if (userId && graphPages.length > 0) {
         const storedPages = await prisma.facebookPage.findMany({
           where: {
-            pageId: { in: graphPages.map(p => p.id) },
-            facebookAccount: { userId }
+            pageId: { in: graphPages.map((p) => p.id) },
+            facebookAccount: { userId },
           },
           select: {
             pageId: true,
             responseMode: true,
             commentAutoDmEnabled: true,
             commentPublicGreeting: true,
-          }
+          },
         });
 
         // Map for fast lookup
-        const settingsMap = new Map(storedPages.map(sp => [sp.pageId, sp]));
+        const settingsMap = new Map(storedPages.map((sp) => [sp.pageId, sp]));
 
-        return graphPages.map(gp => {
+        return graphPages.map((gp) => {
           const settings = settingsMap.get(gp.id);
           return {
             ...gp,
@@ -332,7 +337,9 @@ export const getPageAccessToken = async (pageId: string): Promise<string> => {
   });
 
   if (!page) {
-    throw new Error(`Page with ID ${pageId} not found in database or is inactive.`);
+    throw new Error(
+      `Page with ID ${pageId} not found in database or is inactive.`,
+    );
   }
 
   return decryptFacebookSecret(page.pageAccessToken);
@@ -344,7 +351,8 @@ export const createPost = async (params: FacebookPostParams) => {
     try {
       let url: string;
       let postData: any;
-      const accessToken = params.accessToken || (await getPageAccessToken(params.pageId));
+      const accessToken =
+        params.accessToken || (await getPageAccessToken(params.pageId));
 
       if (params.imageUrl) {
         // Post with image using photos endpoint
@@ -368,7 +376,8 @@ export const createPost = async (params: FacebookPostParams) => {
     } catch (error: unknown) {
       const mapped = mapFacebookGraphError(error);
       logger.error("facebook.post.create_failed", mapped);
-      const codePart = mapped.code !== undefined ? ` (code: ${mapped.code})` : "";
+      const codePart =
+        mapped.code !== undefined ? ` (code: ${mapped.code})` : "";
       throw new Error(`${mapped.message}${codePart}`);
     }
   });
@@ -378,7 +387,8 @@ export const schedulePost = async (
   params: FacebookScheduleParams,
 ): Promise<{ data: { id: string } }> => {
   try {
-    const accessToken = params.accessToken || (await getPageAccessToken(params.pageId));
+    const accessToken =
+      params.accessToken || (await getPageAccessToken(params.pageId));
     const url = `${FB_API}/${params.pageId}/feed`;
     const postData = {
       message: params.message,
@@ -433,7 +443,7 @@ export const getPageDetails = async (
           responseMode: true,
           commentAutoDmEnabled: true,
           commentPublicGreeting: true,
-        }
+        },
       });
 
       if (storedPage) {
@@ -471,7 +481,9 @@ export const getPostComments = async (postId: string, accessToken: string) => {
 export const replyToComment = async (params: FacebookCommentParams) => {
   try {
     const url = `${FB_API}/${params.commentId}/comments`;
-    const accessToken = params.accessToken || (await getPageAccessToken(params.commentId.split("_")[0])); // Fallback logic for comment reply
+    const accessToken =
+      params.accessToken ||
+      (await getPageAccessToken(params.commentId.split("_")[0])); // Fallback logic for comment reply
     const postData = {
       message: params.message,
       access_token: accessToken,
@@ -489,15 +501,22 @@ export const replyToComment = async (params: FacebookCommentParams) => {
 /**
  * Fetches the permalink_url for a Facebook post.
  */
-export const getFacebookPostUrl = async (postId: string, accessToken?: string): Promise<string | null> => {
+export const getFacebookPostUrl = async (
+  postId: string,
+  accessToken?: string,
+): Promise<string | null> => {
   return callGraphApiWithRetry("get_post_url", async () => {
     try {
-      const token = accessToken || (await getPageAccessToken(postId.split("_")[0]));
+      const token =
+        accessToken || (await getPageAccessToken(postId.split("_")[0]));
       const url = `${FB_API}/${postId}?fields=permalink_url&access_token=${token}`;
       const { data } = await axios.get(url);
       return data.permalink_url;
     } catch (error: any) {
-      logger.error("facebook.post_url.fetch_failed", { postId, error: error.message });
+      logger.error("facebook.post_url.fetch_failed", {
+        postId,
+        error: error.message,
+      });
       return null;
     }
   });
@@ -537,7 +556,9 @@ export const deleteFacebookPost = async (
 /**
  * Validate an access token
  */
-export const validateAccessToken = async (accessToken: string): Promise<boolean> => {
+export const validateAccessToken = async (
+  accessToken: string,
+): Promise<boolean> => {
   try {
     const url = `${FB_API}/me?access_token=${accessToken}&fields=id`;
     await axios.get(url);
@@ -554,8 +575,10 @@ export const validateAccessToken = async (accessToken: string): Promise<boolean>
 export const sendPrivateReply = async (params: FacebookPrivateReplyParams) => {
   try {
     const url = `${FB_API}/${params.commentId}/private_replies`;
-    const accessToken = params.accessToken || (await getPageAccessToken(params.commentId.split("_")[0]));
-    
+    const accessToken =
+      params.accessToken ||
+      (await getPageAccessToken(params.commentId.split("_")[0]));
+
     const postData = {
       message: params.message,
       access_token: accessToken,
@@ -573,7 +596,11 @@ export const sendPrivateReply = async (params: FacebookPrivateReplyParams) => {
 /**
  * Fetches user profile (name) for a given PSID/UID.
  */
-export const getFacebookUserProfile = async (psid: string, pageId: string, accessToken?: string) => {
+export const getFacebookUserProfile = async (
+  psid: string,
+  pageId: string,
+  accessToken?: string,
+) => {
   try {
     const cleanPsid = psid.trim();
     const token = accessToken || (await getPageAccessToken(pageId));
@@ -582,11 +609,14 @@ export const getFacebookUserProfile = async (psid: string, pageId: string, acces
     return data;
   } catch (error: unknown) {
     const mapped = mapFacebookGraphError(error);
-    
+
     // Check for "Object does not exist" (Code 100) or Permissions (Code 10/200/400 range)
     // We log these as warnings as they are common side-effects of Beta/Dev apps or User Privacy settings.
     // Code 100 is specifically "Object does not exist" which is what the user is seeing.
-    if (mapped.code === 100 || (mapped.status && mapped.status >= 400 && mapped.status < 500)) {
+    if (
+      mapped.code === 100 ||
+      (mapped.status && mapped.status >= 400 && mapped.status < 500)
+    ) {
       logger.warn("facebook.user_profile.fetch_skipped", { psid, ...mapped });
     } else {
       logger.error("facebook.user_profile.fetch_failed", mapped);
@@ -1033,15 +1063,32 @@ export const deactivateFacebookAccount = async (facebookAccountId: number) => {
   }
 };
 
-export const deactivateFacebookPage = async (pageId: string, userId: number) => {
+export const deactivateFacebookPage = async (
+  pageId: string,
+  userId: number,
+) => {
   try {
     const page = await prisma.facebookPage.findFirst({
       where: { pageId, facebookAccount: { userId } },
-      select: { id: true, facebookAccountId: true },
+      select: { id: true, facebookAccountId: true, pageAccessToken: true },
     });
 
     if (!page) {
       throw new Error("Page not found or unauthorized");
+    }
+
+    try {
+      if (page.pageAccessToken) {
+        const token = decryptFacebookSecret(page.pageAccessToken);
+        await axios.delete(
+          `${FB_API}/${pageId}/permissions?access_token=${token}`,
+        );
+      }
+    } catch (err: any) {
+      logger.warn("facebook.page.revoke_permission_failed", {
+        pageId,
+        error: err.message,
+      });
     }
 
     await prisma.facebookPage.update({
@@ -1049,7 +1096,9 @@ export const deactivateFacebookPage = async (pageId: string, userId: number) => 
       data: { isActive: false },
     });
 
-    await logFacebookActivity(page.facebookAccountId, "page_disconnected", { pageId });
+    await logFacebookActivity(page.facebookAccountId, "page_disconnected", {
+      pageId,
+    });
   } catch (error: unknown) {
     logger.error("facebook.page.deactivate_failed", {
       error: error instanceof Error ? error.message : String(error),

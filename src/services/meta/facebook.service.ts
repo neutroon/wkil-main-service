@@ -327,6 +327,7 @@ export const getUserPages = async (
 export const getPageAccessToken = async (pageId: string): Promise<string> => {
   const page = await prisma.facebookPage.findFirst({
     where: { pageId, isActive: true },
+    orderBy: { updatedAt: "desc" },
     select: { pageAccessToken: true },
   });
 
@@ -574,13 +575,22 @@ export const sendPrivateReply = async (params: FacebookPrivateReplyParams) => {
  */
 export const getFacebookUserProfile = async (psid: string, pageId: string, accessToken?: string) => {
   try {
+    const cleanPsid = psid.trim();
     const token = accessToken || (await getPageAccessToken(pageId));
-    const url = `${FB_API}/${psid}?fields=name,first_name,last_name,picture&access_token=${token}`;
+    const url = `${FB_API}/${cleanPsid}?fields=name,first_name,last_name,picture&access_token=${token}`;
     const { data } = await axios.get(url);
     return data;
   } catch (error: unknown) {
     const mapped = mapFacebookGraphError(error);
-    logger.error("facebook.user_profile.fetch_failed", mapped);
+    
+    // Check for "Object does not exist" (Code 100) or Permissions (Code 10/200/400 range)
+    // We log these as warnings as they are common side-effects of Beta/Dev apps or User Privacy settings.
+    // Code 100 is specifically "Object does not exist" which is what the user is seeing.
+    if (mapped.code === 100 || (mapped.status && mapped.status >= 400 && mapped.status < 500)) {
+      logger.warn("facebook.user_profile.fetch_skipped", { psid, ...mapped });
+    } else {
+      logger.error("facebook.user_profile.fetch_failed", mapped);
+    }
     return null; // Return null instead of throwing to allow "there" fallback
   }
 };

@@ -34,6 +34,7 @@ import aiAnalyticsRoutes from "./routes/aiAnalytics.routes";
 import conversationsRoutes from "./routes/meta/conversations.routes";
 import mediaRoutes from "./routes/meta/media.routes";
 import mediaLibraryRoutes from "./routes/media.routes";
+import { identifyUserForRateLimit } from "./middlewares/identify.middleware";
 import { errorHandler } from "./middlewares/errorHandler.middleware";
 import prisma from "./config/prisma";
 import { logger } from "./utils/logger";
@@ -87,6 +88,7 @@ app.use(cors(corsOptions));       // ← CORS for dashboard / authenticated API
 app.use(cookieParser());
 app.use(sanitizeRequest);
 app.use(requestSizeLimit);
+app.use(identifyUserForRateLimit);
 app.use(generalLimiter);
 
 // ── Raw-body paths (declared before express.json()) ──────────────────────────

@@ -3,7 +3,7 @@ import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 // General rate limiting
 export const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
+  max: 1000, // Increased from 100 to allow smooth dashboard navigation
   message: {
     error: "Too many requests from this IP, please try again later",
     code: "RATE_LIMIT_EXCEEDED",
@@ -43,7 +43,7 @@ export const contentLimiter = rateLimit({
 // Facebook API rate limiting
 export const facebookLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 30, // Limit each IP to 30 Facebook API calls per 15 minutes
+  max: 150, // Increased from 30 to allow for page polling and multiple FB operations
   message: {
     error: "Facebook API rate limit exceeded, please try again later",
     code: "FACEBOOK_RATE_LIMIT_EXCEEDED",

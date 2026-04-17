@@ -40,6 +40,7 @@ export interface FacebookPage {
   responseMode?: string;
   commentAutoDmEnabled?: boolean;
   commentPublicGreeting?: string;
+  isActive?: boolean;
 }
 
 export interface FacebookPostParams {
@@ -302,6 +303,7 @@ export const getUserPages = async (
             responseMode: true,
             commentAutoDmEnabled: true,
             commentPublicGreeting: true,
+            isActive: true,
           },
         });
 
@@ -312,6 +314,7 @@ export const getUserPages = async (
           const settings = settingsMap.get(gp.id);
           return {
             ...gp,
+            isActive: settings ? settings.isActive : true,
             responseMode: settings?.responseMode,
             commentAutoDmEnabled: settings?.commentAutoDmEnabled,
             commentPublicGreeting: settings?.commentPublicGreeting,
@@ -667,6 +670,12 @@ export const saveFacebookToken = async (
         userId,
         name: userInfo.name,
         pictureUrl: userInfo.picture?.data?.url || null,
+        pages: {
+          updateMany: {
+            where: {},
+            data: { isActive: true }
+          }
+        }
       },
       create: {
         userId,
@@ -747,7 +756,6 @@ export const saveFacebookPages = async (
             category: page.category || null,
             pictureUrl: page.picture?.data?.url || null,
             followersCount: page.followers_count || 0,
-            isActive: true,
             lastUsedAt: new Date(),
           },
           create: {
@@ -1077,8 +1085,19 @@ export const deactivateFacebookPage = async (
       throw new Error("Page not found or unauthorized");
     }
 
+    // Try to revoke permissions on Facebook directly
     try {
-      if (page.pageAccessToken) {
+      const account = await prisma.facebookAccount.findFirst({
+        where: { id: page.facebookAccountId, isActive: true },
+        select: { accessToken: true }
+      });
+
+      if (account) {
+        const userToken = decryptFacebookSecret(account.accessToken);
+        await axios.delete(
+          `${FB_API}/${pageId}/permissions?access_token=${userToken}`,
+        );
+      } else if (page.pageAccessToken) {
         const token = decryptFacebookSecret(page.pageAccessToken);
         await axios.delete(
           `${FB_API}/${pageId}/permissions?access_token=${token}`,

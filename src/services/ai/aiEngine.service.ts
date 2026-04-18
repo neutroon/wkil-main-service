@@ -145,6 +145,69 @@ export function evaluateGuardrailsForReply(
   return { blocked: false };
 }
 
+/**
+ * PRODUCTION-GRADE: Resilient JSON parser for LLM outputs.
+ * Handles truncated strings by closing quotes/brackets and falling back to regex extraction.
+ */
+function repairAndParseAiResponse(text: string): AiRoutingDecision {
+  let cleaned = text.trim();
+
+  // 1. Basic JSON Parse
+  try {
+    return JSON.parse(cleaned);
+  } catch (e) {
+    // 2. Attempt Repair (Mid-stream truncation)
+    // If it ends mid-string, close the quote
+    let repaired = cleaned;
+    const doubleQuoteCount = (repaired.match(/"/g) || []).length;
+    if (doubleQuoteCount % 2 !== 0) {
+      repaired += '"';
+    }
+
+    // Close any missing brackets (stack based)
+    const stack: string[] = [];
+    for (const char of repaired) {
+      if (char === "{") stack.push("}");
+      if (char === "[") stack.push("]");
+      if (char === "}" || char === "]") {
+        if (stack[stack.length - 1] === char) stack.pop();
+      }
+    }
+    while (stack.length > 0) {
+      repaired += stack.pop();
+    }
+
+    try {
+      return JSON.parse(repaired);
+    } catch (e2) {
+      // 3. Regex Fallback (Final stand)
+      // Extracts keys even from a total wreck
+      const action = cleaned.match(/"action"\s*:\s*"([^"]+)"/)?.[1] as any;
+      const reasoning = cleaned.match(/"reasoning"\s*:\s*"([^"]+)"/)?.[1] || "";
+      const content = cleaned.match(/"content"\s*:\s*"([^"]+)"/)?.[1] || "";
+      const publicContent = cleaned.match(/"publicContent"\s*:\s*"([^"]+)"/)?.[1] || "";
+
+      if (action) {
+        return {
+          action,
+          reasoning,
+          content,
+          publicContent: publicContent || undefined,
+        };
+      }
+
+      throw new Error("Regex fallback failed to find 'action'");
+    }
+  }
+}
+
+function hasExcessiveRepetition(text: string): boolean {
+  if (!text) return false;
+  // Detect 10+ identical characters (emojis included)
+  const pattern = /(.)\1{9,}/u;
+  return pattern.test(text);
+}
+
 export interface AiRoutingDecision {
   action: "REPLY_AUTO" | "HANDOFF_TO_HUMAN" | "RESOLVE_CONVERSATION";
   intent?: "SALES_DM" | "GREET_ONLY" | "IGNORE" | "NONE";
@@ -345,7 +408,7 @@ export async function runAIEngineLoop(params: {
             config: {
               systemInstruction: params.systemInstruction,
               temperature: 0.35,
-              maxOutputTokens: 2048,
+              maxOutputTokens: 4096,
               safetySettings: MESSENGER_SAFETY_SETTINGS,
               tools: params.tools,
               responseMimeType: "application/json",
@@ -397,7 +460,19 @@ export async function runAIEngineLoop(params: {
 
       let decision: AiRoutingDecision;
       try {
-        decision = JSON.parse(responseText);
+        // High-resilience parsing
+        decision = repairAndParseAiResponse(responseText);
+
+        // Content Repetition Guardrail (Anti-Loop)
+        if (hasExcessiveRepetition(decision.content || "") || hasExcessiveRepetition(decision.publicContent || "")) {
+          logger.warn("ai.engine.loop_detected", { responseText });
+          decision = {
+            action: "HANDOFF_TO_HUMAN",
+            handoffCategory: "SYSTEM_ERROR",
+            reasoning: "AI loop detected (excessive repetition). Safe-failing to human.",
+            content: ""
+          };
+        }
       } catch (err) {
         logger.error("ai.engine.parsing_failed", {
           responseText,

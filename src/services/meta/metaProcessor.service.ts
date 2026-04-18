@@ -114,8 +114,9 @@ export async function processMetaMessage(job: MetaMessageJob) {
     }
 
     // 3. Sync Conversation
+    const isComment = !!job.commentId;
     const conversation = await getOrCreateConversation(identifier, senderId, businessProfileId, {
-      channel: platform,
+      channel: isComment ? "facebook_comment" : platform,
       customerName: customerNameSet,
       customerAvatar: customerAvatarSet,
       customerPhone: platform === "whatsapp" ? senderId : undefined,
@@ -151,8 +152,6 @@ export async function processMetaMessage(job: MetaMessageJob) {
     // 6. Compute AI Reply
     const historyRows = await getConversationHistory(conversation.id);
     const historyTurns = historyToLlmTurns(toPromptMessages(historyRows));
-
-    const isComment = !!job.commentId;
     
     // Inject Channel context so AI knows if it's on a public stage
     const contextualMessage = isComment 

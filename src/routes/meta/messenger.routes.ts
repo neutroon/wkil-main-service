@@ -248,6 +248,18 @@ messengerRoutes.post(
 
       // ── ELITE TIER: Channel-Aware Routing Logic ──
       if (conversation.channel === "facebook_comment") {
+        // Validation Guard: Ensure we have the Comment ID to reply to
+        if (!conversation.externalId) {
+          logger.error("messenger.manual_reply_failed.missing_id", { 
+            conversationId: conversation.id,
+            reason: "externalId is null for a facebook_comment" 
+          });
+          return res.status(400).json({ 
+            error: "Comment ID missing", 
+            detail: "The Facebook Comment ID for this thread was not correctly synced. Please try again after refreshing the thread." 
+          });
+        }
+
         // For comments, 'externalId' stores the FB Comment ID.
         // We post a public reply to that specific comment.
         fbEndpoint = `https://graph.facebook.com/v25.0/${conversation.externalId}/comments?access_token=${pageAccessToken}`;
@@ -262,27 +274,38 @@ messengerRoutes.post(
       }
 
       // 1. Send via Graph API
-      const fbRes = await fetch(fbEndpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(fbBody),
-      });
+      let fetchRes: any;
+      let fbData: any;
+      try {
+        fetchRes = await fetch(fbEndpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(fbBody),
+        });
 
-      if (!fbRes.ok) {
-        const error = await fbRes.json();
-        logger.error("messenger.conversations.send_failed", { 
+        fbData = await fetchRes.json();
+
+        if (!fetchRes.ok) {
+          logger.error("messenger.conversations.api_failed", { 
+            conversationId, 
+            error: fbData.error?.message, 
+            code: fbData.error?.code 
+          });
+          return res.status(502).json({ 
+            error: "Meta API error", 
+            detail: fbData.error?.message ?? "Unknown Meta error",
+            code: fbData.error?.code,
+            fullError: fbData.error
+          });
+        }
+      } catch (apiErr: any) {
+        logger.error("messenger.conversations.fetch_exception", { 
           conversationId, 
-          channel: conversation.channel,
-          error: JSON.stringify(error) 
+          error: apiErr.message 
         });
-        return res.status(502).json({ 
-          error: "Meta API error", 
-          detail: error.error?.message ?? "Unknown Meta error",
-          code: error.error?.code
-        });
+        return res.status(500).json({ error: "Failed to connect to Meta API" });
       }
 
-      const fbData = await fbRes.json();
       const mid = fbData.id || fbData.message_id;
 
       // 2. Persist ONLY if API call succeeded

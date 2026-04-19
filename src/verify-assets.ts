@@ -1,24 +1,31 @@
-import { PrismaClient } from "@prisma/client";
-const prisma = new PrismaClient();
+import prisma from "./config/prisma";
+import dotenv from "dotenv";
+dotenv.config();
 
-async function main() {
-  const assets = await prisma.businessProfileMedia.findMany({
-    where: { isActive: true, deletedAt: null },
-    select: {
-      id: true,
-      name: true,
-      whatsappSyncStatus: true,
-      messengerSyncStatus: true,
-      whatsappMediaId: true,
-      messengerAttachmentId: true,
-      publicUrl: true
-    }
+async function verify() {
+  console.log("Media Assets Sync Status (Gold Standard Mapping):");
+  
+  const syncs = await prisma.businessProfileMediaSync.findMany({
+    include: {
+      media: {
+        select: { name: true, publicUrl: true }
+      }
+    },
+    orderBy: { mediaId: "asc" }
   });
 
-  console.log("Media Assets Sync Status:");
-  console.table(assets);
+  console.table(syncs.map(s => ({
+    id: s.id,
+    assetId: s.mediaId,
+    name: s.media.name,
+    platform: s.platform,
+    identifier: s.identifier,
+    syncStatus: s.status,
+    externalId: s.externalMediaId,
+    expiresAt: s.expiresAt?.toISOString() || "N/A"
+  })));
+
+  await prisma.$disconnect();
 }
 
-main()
-  .catch(console.error)
-  .finally(() => prisma.$disconnect());
+verify();

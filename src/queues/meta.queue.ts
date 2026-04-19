@@ -19,8 +19,13 @@ let draining = false;
  * 4. Recovery: Resets "hanging" jobs on startup.
  */
 
-export async function enqueueMetaJob(job: MetaMessageJob): Promise<void> {
+export async function enqueueMetaJob(
+  job: MetaMessageJob,
+  delaySeconds: number = 0,
+): Promise<void> {
   try {
+    const nextAttemptAt = new Date(Date.now() + delaySeconds * 1000);
+
     await prisma.metaJob.create({
       data: {
         platform: job.platform,
@@ -28,16 +33,21 @@ export async function enqueueMetaJob(job: MetaMessageJob): Promise<void> {
         senderId: job.senderId,
         payload: job as any,
         status: "pending",
-      }
+        nextAttemptAt,
+      },
     });
-    
-    // Kick off worker (non-blocking)
-    if (!draining) void drainQueue();
+
+    // Kick off worker (non-blocking) - but only if it's due now
+    if (!draining && delaySeconds <= 0) void drainQueue();
   } catch (err: any) {
-    logger.error("meta.queue.enqueue_failed", { error: err.message, platform: job.platform });
+    logger.error("meta.queue.enqueue_failed", {
+      error: err.message,
+      platform: job.platform,
+    });
     throw err;
   }
 }
+
 
 /** Legacy aliases */
 export async function enqueueWhatsAppJob(job: any): Promise<void> {

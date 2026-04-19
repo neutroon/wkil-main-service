@@ -692,18 +692,27 @@ export const sendPrivateReply = async (params: FacebookPrivateReplyParams & { pa
   let activePageId = pageId;
 
   // ── ELITE TIER: Surgical Token Pivoting ──
-  // Only attempt a pivot if we are certain the current pageId is NOT the owner.
+  // We prioritize the Page owner of the comment. 
+  // For Comments, the prefix is usually the Post ID, not the Page ID.
+  // We only pivot if we determine the current token/page is definitely not the owner AND we can find a better match.
   if (commentId.includes("_") && businessProfileId) {
-    const prefix = commentId.split("_")[0];
-    if (prefix !== pageId) {
+    const parts = commentId.split("_");
+    const potentialPageId = parts[0]; 
+
+    // If we're not using the owner's token already, try to find a matching page in our DB.
+    if (activePageId !== potentialPageId) {
       const ownerPage = await prisma.facebookPage.findFirst({
-        where: { pageId: prefix, businessProfileId, isActive: true },
+        where: { 
+          OR: [{ pageId: potentialPageId }, { pageId: activePageId }],
+          businessProfileId, 
+          isActive: true 
+        },
         select: { pageAccessToken: true, pageId: true }
       });
       
-      if (ownerPage) {
+      if (ownerPage && ownerPage.pageId !== activePageId) {
         logger.info("facebook.delivery.private_pivot_triggered", { 
-          from: pageId, to: ownerPage.pageId, commentId 
+          from: activePageId, to: ownerPage.pageId, commentId 
         });
         activeToken = decryptFacebookSecret(ownerPage.pageAccessToken);
         activePageId = ownerPage.pageId;
@@ -717,6 +726,13 @@ export const sendPrivateReply = async (params: FacebookPrivateReplyParams & { pa
       `${FB_API}/${scopedId}/private_replies`,
       { message, access_token: activeToken }
     );
+    
+    // DEBUG: Log the raw response from Meta to verify deliverable ID
+    logger.info("facebook.delivery.private_success", { 
+      commentId, 
+      response: JSON.stringify(data) 
+    });
+    
     return data;
   } catch (error: any) {
     const mapped = mapFacebookGraphError(error);

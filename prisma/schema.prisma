@@ -292,6 +292,14 @@ model ProcessedWhatsAppMessage {
   createdAt DateTime @default(now())
 }
 
+/// Deduplicate Facebook Feed webhook retries using comment_id
+model ProcessedFacebookComment {
+  id        Int      @id @default(autoincrement())
+  commentId String   @unique
+  createdAt DateTime @default(now())
+}
+
+
 /// Durable, database-backed queue for Meta messages
 model MetaJob {
   id              String   @id @default(uuid())

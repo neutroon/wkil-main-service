@@ -15,6 +15,7 @@ export async function getOrCreateConversation(
     customerAvatar?: string;
     externalId?: string;
     postId?: string;
+    sourceCommentText?: string;
   },
 ) {
   // 1. Try to find an existing conversation for this specific channel
@@ -49,13 +50,15 @@ export async function getOrCreateConversation(
       updateData.channel = opts.channel;
     }
     
-    // ELITE IDENTITY: Always refresh externalId (latest comment) and postId (latest ad context)
-    // This prevents the "stuck on old post" problem.
+    // ELITE IDENTITY: Always refresh externalId, postId, and sourceCommentText
     if (opts?.externalId) {
       updateData.externalId = opts.externalId;
     }
     if (opts?.postId) {
       updateData.postId = opts.postId;
+    }
+    if (opts?.sourceCommentText && !existing.sourceCommentText) {
+      updateData.sourceCommentText = opts.sourceCommentText;
     }
 
     // WAKE UP: Automatically reopen conversation if it was resolved/snoozed
@@ -101,6 +104,7 @@ export async function getOrCreateConversation(
       customerAvatar: opts?.customerAvatar ?? null,
       externalId: opts?.externalId ?? null,
       postId: opts?.postId ?? null,
+      sourceCommentText: opts?.sourceCommentText ?? null,
       parentConversationId,
       readAt: null,
     },
@@ -396,6 +400,7 @@ export async function listMessengerConversations(
     externalId: c.externalId,
     postId: c.postId,
     postUrl: c.postUrl,
+    sourceCommentText: c.sourceCommentText,
     processingStatus: c.processingStatus,
     lastMessage: c.messages[0]
       ? {

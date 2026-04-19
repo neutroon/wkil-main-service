@@ -234,14 +234,28 @@ function repairAndParseAiResponse(text: string): AiRoutingDecision {
       const intent = cleaned.match(/"intent"\s*:\s*"([^"]+)"/)?.[1] || "";
 
       if (action) {
-        return {
+        const decision = {
           action,
-          intent: intent as any,
+          intent: (intent || "NONE") as any,
           reasoning,
           content: sanitizeAiText(content),
           publicContent: sanitizeAiText(publicContent) || undefined,
           privateContent: sanitizeAiText(privateContent) || undefined,
         };
+
+        // 4. SANITY CHECK: Facebook Dual Channel Deliverability
+        // If intent is SALES_DM, but privateContent is empty, it's a hallucination gap.
+        // We force the publicContent into privateContent to ensure the customer gets a message.
+        if (
+          decision.intent === "SALES_DM" &&
+          !decision.privateContent &&
+          decision.publicContent
+        ) {
+          logger.warn("ai.engine.delivery_gap_repaired", { intent: decision.intent });
+          decision.privateContent = decision.publicContent;
+        }
+
+        return decision;
       }
 
       throw new Error("Regex fallback failed to find 'action'");

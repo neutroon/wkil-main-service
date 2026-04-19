@@ -123,8 +123,13 @@ export async function registerAssetWithMeta(assetId: number) {
     const bodyString = await getObj.Body?.transformToByteArray();
     if (!bodyString) throw new Error("Empty body from R2");
     fileBuffer = Buffer.from(bodyString);
+
+    // ── Tier-1 Checksum Validation ───────────────────────────────────────────
+    if (fileBuffer.length !== asset.fileSizeBytes) {
+      throw new Error(`Data corruption detected: R2 size (${fileBuffer.length}) != DB size (${asset.fileSizeBytes})`);
+    }
   } catch (err: any) {
-    logger.error("media.meta_registration.r2_storage_fetch_failed", { assetId, error: err.message });
+    logger.error("media.meta_registration.integrity_check_failed", { assetId, error: err.message });
     return;
   }
 

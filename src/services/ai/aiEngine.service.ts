@@ -183,26 +183,17 @@ export function sanitizeAiText(text: string): string {
 
 function repairAndParseAiResponse(text: string): AiRoutingDecision {
   let cleaned = text.trim();
+  let decision: any = null;
 
   // 1. Basic JSON Parse
   try {
-    const parsed = JSON.parse(cleaned);
-    return {
-      ...parsed,
-      content: sanitizeAiText(parsed.content || ""),
-      publicContent: sanitizeAiText(parsed.publicContent || ""),
-      privateContent: sanitizeAiText(parsed.privateContent || ""),
-    };
+    decision = JSON.parse(cleaned);
   } catch (e) {
     // 2. Attempt Repair (Mid-stream truncation)
-    // If it ends mid-string, close the quote
     let repaired = cleaned;
     const doubleQuoteCount = (repaired.match(/"/g) || []).length;
-    if (doubleQuoteCount % 2 !== 0) {
-      repaired += '"';
-    }
+    if (doubleQuoteCount % 2 !== 0) repaired += '"';
 
-    // Close any missing brackets (stack based)
     const stack: string[] = [];
     for (const char of repaired) {
       if (char === "{") stack.push("}");
@@ -211,56 +202,57 @@ function repairAndParseAiResponse(text: string): AiRoutingDecision {
         if (stack[stack.length - 1] === char) stack.pop();
       }
     }
-    while (stack.length > 0) {
-      repaired += stack.pop();
-    }
+    while (stack.length > 0) repaired += stack.pop();
 
     try {
-      const parsed = JSON.parse(repaired);
-      return {
-        ...parsed,
-        content: sanitizeAiText(parsed.content || ""),
-        publicContent: sanitizeAiText(parsed.publicContent || ""),
-        privateContent: sanitizeAiText(parsed.privateContent || ""),
-      };
+      decision = JSON.parse(repaired);
     } catch (e2) {
       // 3. Regex Fallback (Final stand)
-      // Extracts keys even from a total wreck
-      const action = cleaned.match(/"action"\s*:\s*"([^"]+)"/)?.[1] as any;
+      const action = cleaned.match(/"action"\s*:\s*"([^"]+)"/)?.[1];
       const reasoning = cleaned.match(/"reasoning"\s*:\s*"([^"]+)"/)?.[1] || "";
       const content = cleaned.match(/"content"\s*:\s*"([^"]+)"/)?.[1] || "";
       const publicContent = cleaned.match(/"publicContent"\s*:\s*"([^"]+)"/)?.[1] || "";
       const privateContent = cleaned.match(/"privateContent"\s*:\s*"([^"]+)"/)?.[1] || "";
-      const intent = cleaned.match(/"intent"\s*:\s*"([^"]+)"/)?.[1] || "";
+      const intent = cleaned.match(/"intent"\s*:\s*"([^"]+)"/)?.[1];
 
-      if (action) {
-        const decision = {
-          action,
-          intent: (intent || "NONE") as any,
-          reasoning,
-          content: sanitizeAiText(content),
-          publicContent: sanitizeAiText(publicContent) || undefined,
-          privateContent: sanitizeAiText(privateContent) || undefined,
-        };
-
-        // 4. SANITY CHECK: Facebook Dual Channel Deliverability
-        // If intent is SALES_DM, but privateContent is empty, it's a hallucination gap.
-        // We force the publicContent into privateContent to ensure the customer gets a message.
-        if (
-          decision.intent === "SALES_DM" &&
-          !decision.privateContent &&
-          decision.publicContent
-        ) {
-          logger.warn("ai.engine.delivery_gap_repaired", { intent: decision.intent });
-          decision.privateContent = decision.publicContent;
-        }
-
-        return decision;
-      }
-
-      throw new Error("Regex fallback failed to find 'action'");
+      decision = {
+        action: action || "REPLY_AUTO",
+        intent: intent || "NONE",
+        reasoning,
+        content,
+        publicContent,
+        privateContent,
+      };
     }
   }
+
+  // 4. Normalization & Sanitization
+  const finalDecision: AiRoutingDecision = {
+    action: decision.action || "REPLY_AUTO",
+    intent: decision.intent || "NONE",
+    reasoning: decision.reasoning || "",
+    content: sanitizeAiText(decision.content || ""),
+    publicContent: sanitizeAiText(decision.publicContent || ""),
+    privateContent: sanitizeAiText(decision.privateContent || ""),
+    attachment: decision.attachment,
+  };
+
+  // 5. ELITE TIER: Sales Delivery Repairer (Global Fail-Safe)
+  // If the intent is SALES_DM but the AI forgot the private text, we MUST repair it.
+  if (finalDecision.intent === "SALES_DM" && !finalDecision.privateContent) {
+    if (finalDecision.publicContent || finalDecision.content) {
+      logger.warn("ai.engine.delivery_gap_repaired", { 
+        intent: finalDecision.intent,
+        reasoning: finalDecision.reasoning 
+      });
+      finalDecision.privateContent = finalDecision.publicContent || finalDecision.content;
+    } else {
+      // Hard fallback if everything is empty but intent is sales
+      finalDecision.privateContent = "Hello! I am sending you the details you requested right now.";
+    }
+  }
+
+  return finalDecision;
 }
 
 function hasExcessiveRepetition(text: string): boolean {

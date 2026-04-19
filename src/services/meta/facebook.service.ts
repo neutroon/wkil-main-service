@@ -722,18 +722,27 @@ export const sendPrivateReply = async (params: FacebookPrivateReplyParams & { pa
 
   const scopedId = scopeCommentId(commentId, activePageId);
   try {
+    // ELITE TIER: Modern Messaging API Delivery
+    // We transition from the legacy /{comment-id}/private_replies endpoint
+    // to the robust /{page-id}/messages endpoint with recipient.comment_id.
+    // This is the only endpoint resilient to v17+ App Scoping restrictions.
     const { data } = await axios.post(
-      `${FB_API}/${scopedId}/private_replies`,
-      { message, access_token: activeToken }
+      `${FB_API}/me/messages?access_token=${activeToken}`,
+      {
+        recipient: { comment_id: scopedId },
+        message: { text: message }
+      }
     );
     
     // DEBUG: Log the raw response from Meta to verify deliverable ID
     logger.info("facebook.delivery.private_success", { 
       commentId, 
-      response: JSON.stringify(data) 
+      recipient: scopedId,
+      messageId: data.message_id
     });
     
-    return data;
+    // Map standard Messaging API response (message_id) to the internal expected 'id' key
+    return { id: data.message_id, ...data };
   } catch (error: any) {
     const mapped = mapFacebookGraphError(error);
     logger.error("facebook.comment.private_reply_failed", { 

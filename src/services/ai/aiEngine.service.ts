@@ -230,13 +230,17 @@ function repairAndParseAiResponse(text: string): AiRoutingDecision {
       const reasoning = cleaned.match(/"reasoning"\s*:\s*"([^"]+)"/)?.[1] || "";
       const content = cleaned.match(/"content"\s*:\s*"([^"]+)"/)?.[1] || "";
       const publicContent = cleaned.match(/"publicContent"\s*:\s*"([^"]+)"/)?.[1] || "";
+      const privateContent = cleaned.match(/"privateContent"\s*:\s*"([^"]+)"/)?.[1] || "";
+      const intent = cleaned.match(/"intent"\s*:\s*"([^"]+)"/)?.[1] || "";
 
       if (action) {
         return {
           action,
+          intent: intent as any,
           reasoning,
           content: sanitizeAiText(content),
           publicContent: sanitizeAiText(publicContent) || undefined,
+          privateContent: sanitizeAiText(privateContent) || undefined,
         };
       }
 
@@ -250,7 +254,7 @@ function hasExcessiveRepetition(text: string): boolean {
   // We sanitize before checking - if it's just invisible junk, the sanitizer handles it.
   // If actual visible characters repeat 10+ times, it's a real loop.
   const sanitized = sanitizeAiText(text);
-  const pattern = /(.)\1{9,}/u;
+  const pattern = /(.)\1{9,}/;
   return pattern.test(sanitized);
 }
 
@@ -538,7 +542,6 @@ export async function runAIEngineLoop(params: {
           content: "",
         };
       }
-
       if (hadToolExecutionInTurn) {
         const blocked = evaluateGuardrailsForReply(
           evidence,

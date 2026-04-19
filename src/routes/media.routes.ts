@@ -7,6 +7,7 @@ import {
   updateMediaAssetMeta,
   softDeleteAsset,
 } from "../services/media/mediaLibrary.service";
+import { enqueueMediaSyncJob } from "../queues/meta.queue";
 import prisma from "../config/prisma";
 import { logger } from "../utils/logger";
 
@@ -135,11 +136,10 @@ router.get("/:id/sync-status", authenticateToken, async (req: Request, res: Resp
     const userId = (req as any).user.id;
     const asset = await prisma.businessProfileMedia.findFirst({
       where: { id: Number(req.params.id), userId },
-      select: {
-        id: true,
-        whatsappSyncStatus: true,
-        messengerSyncStatus: true,
-        whatsappMediaExpiresAt: true,
+      include: {
+        syncs: {
+          orderBy: { updatedAt: "desc" },
+        },
       },
     });
 
@@ -147,6 +147,37 @@ router.get("/:id/sync-status", authenticateToken, async (req: Request, res: Resp
     return res.json({ data: asset });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /v1/media/:id/retry — Re-enqueue manual sync ────────────────────────
+router.post("/:id/retry", authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user.id;
+    const assetId = Number(req.params.id);
+
+    // Verify ownership
+    const asset = await prisma.businessProfileMedia.findFirst({
+      where: { id: assetId, userId },
+    });
+    if (!asset) return res.status(404).json({ error: "Asset not found" });
+
+    // Reset sync states to pending for immediate UI feedback
+    await prisma.businessProfileMedia.update({
+      where: { id: assetId },
+      data: {
+        whatsappSyncStatus: "PENDING",
+        messengerSyncStatus: "PENDING",
+      },
+    });
+
+    // Enqueue job with high priority (it's a manual retry)
+    await enqueueMediaSyncJob(assetId);
+
+    return res.json({ message: "Resync enqueued successfully" });
+  } catch (err: any) {
+    logger.error("media.routes.retry_failed", { error: err.message });
+    return res.status(500).json({ error: "Failed to retry sync" });
   }
 });
 

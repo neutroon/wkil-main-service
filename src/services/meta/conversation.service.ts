@@ -18,18 +18,21 @@ export async function getOrCreateConversation(
     sourceCommentText?: string;
   },
 ) {
-  // 1. Try to find an existing conversation for this specific channel
-  // ELITE TIER: Isolation - Facebook Comments are unique per Post, while Messenger/WhatsApp are per User.
+  // 1. Try to find an existing primary conversation for this user on this page
+  // ELITE IDENTITY: We unify Messenger and Facebook Comments into a single "Universal Thread" per user.
   const existing = await prisma.conversation.findFirst({
     where: {
       pageId,
       senderId,
-      channel: opts?.channel ?? null,
-      ...(opts?.channel === "facebook_comment" ? { postId: opts.postId } : {})
+      // If we are looking for a FB/Messenger thread, find ANY thread for this user on this page
+      channel: (opts?.channel === "messenger" || opts?.channel === "facebook_comment") 
+        ? { in: ["messenger", "facebook_comment"] }
+        : (opts?.channel ?? null)
     },
-    orderBy: {
-      updatedAt: "desc",
-    },
+    orderBy: [
+      { channel: "asc" }, // Prioritize 'messenger' over 'facebook_comment' alphabetically
+      { updatedAt: "desc" }
+    ],
   });
 
   if (existing) {
@@ -427,21 +430,42 @@ export async function listMessengerConversations(
   // Build pageId -> pageName map for enrichment
   const pageMap = Object.fromEntries(pages.map((p) => [p.pageId, p.pageName]));
 
-  const [total, rows] = await Promise.all([
-    prisma.conversation.count({
+  // 1. ELITE DEDUPLICATION: Group by senderId to find the latest conversation for each user
+  // This ensures "Mohamed Mohamed" only appears ONCE in the sidebar, even if he commented on 10 posts.
+  const groups = await prisma.conversation.groupBy({
+    by: ["senderId"],
+    where: {
+      pageId: { in: pageIds },
+      channel: { in: ["messenger", "facebook_comment"] },
+    },
+    _max: {
+      updatedAt: true,
+      id: true, // We take the max(id) as a stable proxy for the latest record
+    },
+    orderBy: {
+      _max: {
+        updatedAt: "desc",
+      },
+    },
+    skip,
+    take: limit,
+  });
+
+  const uniqueIds = groups.map((g) => g._max.id).filter((id): id is number => id !== null);
+
+  const [totalGroups, rows] = await Promise.all([
+    prisma.conversation.groupBy({
+      by: ["senderId"],
       where: {
         pageId: { in: pageIds },
         channel: { in: ["messenger", "facebook_comment"] },
       },
-    }),
+    }).then(res => res.length),
     prisma.conversation.findMany({
       where: {
-        pageId: { in: pageIds },
-        channel: { in: ["messenger", "facebook_comment"] },
+        id: { in: uniqueIds },
       },
       orderBy: { updatedAt: "desc" },
-      skip,
-      take: limit,
       include: {
         messages: {
           orderBy: { createdAt: "desc" },
@@ -450,6 +474,8 @@ export async function listMessengerConversations(
       },
     }),
   ]);
+
+  const total = totalGroups;
 
   const data = rows.map((c: any) => ({
     id: c.id,

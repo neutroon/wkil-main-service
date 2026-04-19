@@ -243,3 +243,21 @@ export async function bootstrapMetaQueue() {
     void drainQueue();
   }
 }
+
+let isPolling = false;
+
+/**
+ * Initializes the background queue loop to constantly check for scheduled jobs
+ * (e.g., delayed public greetings, retries).
+ */
+export function startMetaQueue() {
+  if (isPolling) return;
+  isPolling = true;
+
+  // Poll DB for scheduled jobs every 2.5 seconds
+  setInterval(() => {
+    void drainQueue();
+  }, 2500);
+  
+  logger.info("meta.queue.background_polling_started");
+}

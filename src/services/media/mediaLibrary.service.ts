@@ -1,5 +1,7 @@
+import { GetObjectCommand } from "@aws-sdk/client-s3";
 import prisma from "../../config/prisma";
 import { logger } from "../../utils/logger";
+import { r2Client, R2_BUCKET } from "../../config/r2";
 import { generateR2Key, uploadToR2 } from "./r2Storage.service";
 import { uploadWhatsAppMedia, uploadMessengerMedia } from "../meta/metaUpload.service";
 import { decryptFacebookSecret } from "../../utils/tokenCrypto";
@@ -108,14 +110,20 @@ export async function registerAssetWithMeta(assetId: number) {
 
   if (!asset) return;
 
-  // Fetch the file from R2 for re-upload to Meta
+  // Fetch the file from R2 directly via S3 SDK (Internal call)
   let fileBuffer: Buffer;
   try {
-    const response = await fetch(asset.publicUrl);
-    if (!response.ok) throw new Error(`R2 fetch failed: HTTP ${response.status}`);
-    fileBuffer = Buffer.from(await response.arrayBuffer());
+    const getObj = await r2Client.send(
+      new GetObjectCommand({
+        Bucket: R2_BUCKET,
+        Key: asset.r2Key,
+      })
+    );
+    const bodyString = await getObj.Body?.transformToByteArray();
+    if (!bodyString) throw new Error("Empty body from R2");
+    fileBuffer = Buffer.from(bodyString);
   } catch (err: any) {
-    logger.error("media.meta_registration.r2_fetch_failed", { assetId, error: err.message });
+    logger.error("media.meta_registration.r2_storage_fetch_failed", { assetId, error: err.message });
     return;
   }
 

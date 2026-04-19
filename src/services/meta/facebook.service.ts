@@ -514,24 +514,52 @@ function scopeCommentId(id: string, pageId?: string): string {
   return id;
 }
 
-export const replyToComment = async (params: FacebookCommentParams & { pageId?: string }) => {
-  try {
-    const scopedId = scopeCommentId(params.commentId, params.pageId);
-    const url = `${FB_API}/${scopedId}/comments`;
-    const accessToken =
-      params.accessToken ||
-      (await getPageAccessToken(params.pageId || params.commentId.split("_")[0]));
-    
-    const postData = {
-      message: params.message,
-      access_token: accessToken,
-    };
+/**
+ * ELITE TIER: Resilient Comment Reply with Token Pivoting.
+ * If the current token fails or doesn't match the prefix, we attempt to find 
+ * the 'right' token for the content owner in our DB.
+ */
+export const replyToComment = async (params: FacebookCommentParams & { pageId?: string; businessProfileId?: number }) => {
+  const { commentId, message, accessToken, pageId, businessProfileId } = params;
+  
+  let activeToken = accessToken;
+  let activePageId = pageId;
 
-    const { data } = await axios.post(url, postData);
+  // ── ELITE TIER: Token Pivoting ──
+  // If the comment ID prefix (Post ID) doesn't match our 'pageId', 
+  // we might be using the wrong token context.
+  if (commentId.includes("_") && businessProfileId) {
+    const prefix = commentId.split("_")[0];
+    if (prefix !== pageId) {
+      const ownerPage = await prisma.facebookPage.findFirst({
+        where: { pageId: prefix, businessProfileId, isActive: true },
+        select: { pageAccessToken: true, pageId: true }
+      });
+      
+      if (ownerPage) {
+        logger.info("facebook.delivery.public_pivot_triggered", { 
+          from: pageId, to: ownerPage.pageId, commentId 
+        });
+        activeToken = decryptFacebookSecret(ownerPage.pageAccessToken);
+        activePageId = ownerPage.pageId;
+      }
+    }
+  }
+
+  const scopedId = scopeCommentId(commentId, activePageId);
+  try {
+    const { data } = await axios.post(
+      `${FB_API}/${scopedId}/comments`,
+      { message, access_token: activeToken }
+    );
     return data;
-  } catch (error: unknown) {
+  } catch (error: any) {
     const mapped = mapFacebookGraphError(error);
-    logger.error("facebook.comment.reply_failed", { ...mapped, commentId: params.commentId, pageId: params.pageId });
+    logger.error("facebook.comment.reply_failed", { 
+      message: mapped.message, code: mapped.code, status: mapped.status,
+      isRetryable: mapped.isRetryable, subcode: mapped.subcode,
+      commentId, pageId: activePageId 
+    });
     throw new Error(mapped.message);
   }
 };
@@ -653,24 +681,49 @@ export const validateAccessToken = async (
  * Sends a private reply to a Facebook comment.
  * Note: Each comment can only be replied to privately ONCE.
  */
-export const sendPrivateReply = async (params: FacebookPrivateReplyParams & { pageId?: string }) => {
+/**
+ * ELITE TIER: Resilient Private Reply with Token Pivoting.
+ * Note: Each comment can only be replied to privately ONCE.
+ */
+export const sendPrivateReply = async (params: FacebookPrivateReplyParams & { pageId?: string; businessProfileId?: number }) => {
+  const { commentId, message, accessToken, pageId, businessProfileId } = params;
+
+  let activeToken = accessToken;
+  let activePageId = pageId;
+
+  // ── ELITE TIER: Token Pivoting ──
+  if (commentId.includes("_") && businessProfileId) {
+    const prefix = commentId.split("_")[0];
+    if (prefix !== pageId) {
+      const ownerPage = await prisma.facebookPage.findFirst({
+        where: { pageId: prefix, businessProfileId, isActive: true },
+        select: { pageAccessToken: true, pageId: true }
+      });
+      
+      if (ownerPage) {
+        logger.info("facebook.delivery.private_pivot_triggered", { 
+          from: pageId, to: ownerPage.pageId, commentId 
+        });
+        activeToken = decryptFacebookSecret(ownerPage.pageAccessToken);
+        activePageId = ownerPage.pageId;
+      }
+    }
+  }
+
+  const scopedId = scopeCommentId(commentId, activePageId);
   try {
-    const scopedId = scopeCommentId(params.commentId, params.pageId);
-    const url = `${FB_API}/${scopedId}/private_replies`;
-    const accessToken =
-      params.accessToken ||
-      (await getPageAccessToken(params.pageId || params.commentId.split("_")[0]));
-
-    const postData = {
-      message: params.message,
-      access_token: accessToken,
-    };
-
-    const { data } = await axios.post(url, postData);
+    const { data } = await axios.post(
+      `${FB_API}/${scopedId}/private_replies`,
+      { message, access_token: activeToken }
+    );
     return data;
-  } catch (error: unknown) {
+  } catch (error: any) {
     const mapped = mapFacebookGraphError(error);
-    logger.error("facebook.comment.private_reply_failed", { ...mapped, commentId: params.commentId, pageId: params.pageId });
+    logger.error("facebook.comment.private_reply_failed", { 
+      message: mapped.message, code: mapped.code, status: mapped.status,
+      isRetryable: mapped.isRetryable, subcode: mapped.subcode,
+      commentId, pageId: activePageId 
+    });
     throw new Error(mapped.message);
   }
 };

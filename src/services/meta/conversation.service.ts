@@ -107,9 +107,12 @@ export async function getOrCreateConversation(
   });
 }
 
-export async function getConversationHistory(conversationId: number) {
+export async function getConversationHistory(conversationId: number, before?: Date) {
   const messages = await prisma.conversationMessage.findMany({
-    where: { conversationId },
+    where: { 
+      conversationId,
+      ...(before ? { createdAt: { lte: before } } : {})
+    },
     orderBy: { createdAt: "desc" },
     take: HISTORY_LIMIT,
   });

@@ -239,6 +239,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
         customerPhone: platform === "whatsapp" ? senderId : undefined,
         externalId: job.commentId,
         postId: (job as any).postId,
+        sourceCommentText: isComment ? messageText : undefined,
       },
     );
 
@@ -494,9 +495,8 @@ export async function processMetaMessage(job: MetaMessageJob) {
                   messageId: dmRes.id
                 });
               } else {
-                logger.warn("meta.processor.private_dm_no_id", {
-                  commentId: job.commentId,
-                  response: JSON.stringify(dmRes)
+                logger.warn("meta.processor.private_dm_delivery_status_ambiguous", {
+                  commentId: job.commentId
                 });
               }
             }

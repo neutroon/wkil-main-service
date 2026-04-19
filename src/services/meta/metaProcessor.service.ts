@@ -9,7 +9,7 @@ import {
 import { computeBusinessChatReply } from "../chat/businessChatReply.service";
 import { historyToLlmTurns, toPromptMessages } from "../chat/conversationTurns";
 import { emitToBusiness, emitToConversation } from "../../utils/socket";
-import { getFacebookUserProfile, getFacebookPostUrl } from "./facebook.service";
+import { getFacebookUserProfile, getFacebookPostUrl, getPostContext } from "./facebook.service";
 
 export type MetaPlatform = "messenger" | "whatsapp";
 
@@ -29,6 +29,8 @@ export interface MetaMessageJob {
   commentId?: string;
   postId?: string;
   senderName?: string;
+  businessProfileId?: number;
+  conversationId?: number;
 }
 
 /**
@@ -100,6 +102,16 @@ export async function processMetaMessage(job: MetaMessageJob) {
         commentId: job.commentId,
         error: err.message,
       });
+
+      // UI SIGNAL: Notify the dashboard that the public greeting FAILED
+      if (job.businessProfileId) {
+        emitToBusiness(job.businessProfileId, "job_failed", { 
+          conversationId: job.conversationId, 
+          type: "FACEBOOK_COMMENT_PUBLIC_REPLY",
+          error: err.message 
+        });
+      }
+      
       throw err; // Re-throw to allow queue retry
     }
   }
@@ -177,18 +189,26 @@ export async function processMetaMessage(job: MetaMessageJob) {
     const historyRows = await getConversationHistory(conversation.id);
     const historyTurns = historyToLlmTurns(toPromptMessages(historyRows));
     
-    // Inject Channel context so AI knows if it's on a public stage
-    const contextualMessage = isComment 
-      ? `[CHANNEL_CONTEXT: FACEBOOK_PUBLIC_COMMENT] ${finalContent}`
-      : finalContent;
+    // ELITE TIER: Fetch deep context (Post Text + Media) for Facebook Comments
+    // We pass this as structured data for the System Prompt, not as a message prefix.
+    let postContext: { content: string; media?: string } | undefined;
+
+    if (isComment) {
+      const postId = (job as any).postId;
+      if (postId) {
+        const fetched = await getPostContext(postId, accessToken);
+        if (fetched) postContext = { content: fetched.content, media: fetched.media };
+      }
+    }
 
     const reply = await computeBusinessChatReply({
       businessProfile,
-      messageText: contextualMessage,
+      messageText: finalContent,
       historyTurns,
       channel: isComment ? "facebook_comment" : platform as any,
       customerPhone: platform === "whatsapp" ? senderId : undefined,
       mediaInfo: mediaId ? { id: mediaId, type: type || "image", url: mediaMetadata?.url } : undefined,
+      postContext,
     });
 
     if (reply.action === "RESOLVE_CONVERSATION") {
@@ -287,6 +307,8 @@ export async function processMetaMessage(job: MetaMessageJob) {
                   ...job,
                   type: "FACEBOOK_COMMENT_PUBLIC_REPLY",
                   messageText: publicText, 
+                  businessProfileId,
+                  conversationId: conversation.id,
                 } as any,
               }
             });

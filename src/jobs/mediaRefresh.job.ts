@@ -1,6 +1,6 @@
 import cron from "node-cron";
 import prisma from "../config/prisma";
-import { registerAssetWithMeta } from "../services/media/mediaLibrary.service";
+import { enqueueMediaSyncJob } from "../queues/meta.queue";
 import { logger } from "../utils/logger";
 
 /**
@@ -17,42 +17,50 @@ export function startMediaRefreshJob() {
     fiveDaysFromNow.setDate(fiveDaysFromNow.getDate() + 5);
 
     try {
-      const expiring = await prisma.businessProfileMedia.findMany({
+      const expiringSyncs = await prisma.businessProfileMediaSync.findMany({
         where: {
-          isActive: true,
-          deletedAt: null,
-          whatsappSyncStatus: "SYNCED",
-          whatsappMediaExpiresAt: { lte: fiveDaysFromNow },
+          platform: "whatsapp",
+          status: "SYNCED",
+          expiresAt: { lte: fiveDaysFromNow },
+          media: {
+            isActive: true,
+            deletedAt: null,
+          },
         },
-        select: { id: true, name: true, businessProfileId: true },
+        select: { mediaId: true },
       });
 
-      if (expiring.length === 0) {
+      // Distinct list of asset IDs that need refreshing
+      const assetIds = Array.from(new Set(expiringSyncs.map((s) => s.mediaId)));
+
+      if (assetIds.length === 0) {
         logger.info("media.refresh_job.no_expiring_assets");
         return;
       }
 
-      logger.info("media.refresh_job.refreshing", { count: expiring.length });
+      logger.info("media.refresh_job.dispatching_to_queue", { assetCount: assetIds.length });
 
-      // Mark expiring as EXPIRED before re-registration
-      await prisma.businessProfileMedia.updateMany({
-        where: { id: { in: expiring.map((a) => a.id) } },
-        data: { whatsappSyncStatus: "EXPIRED" },
+      // Mark expiring mappings as failed/pending for safety
+      await prisma.businessProfileMediaSync.updateMany({
+        where: {
+          mediaId: { in: assetIds },
+          platform: "whatsapp",
+          expiresAt: { lte: fiveDaysFromNow },
+        },
+        data: { status: "FAILED" }, // Temporary state before re-sync
       });
 
-      // Re-register each asset sequentially to avoid rate-limiting Meta APIs
-      for (const asset of expiring) {
+      // Dispatch to durable queue for processing
+      for (const assetId of assetIds) {
         try {
-          await registerAssetWithMeta(asset.id);
-          logger.info("media.refresh_job.asset_refreshed", { assetId: asset.id, name: asset.name });
+          await enqueueMediaSyncJob(assetId);
+          logger.info("media.refresh_job.dispatched", { assetId });
         } catch (err: any) {
-          logger.error("media.refresh_job.asset_failed", { assetId: asset.id, error: err.message });
+          logger.error("media.refresh_job.dispatch_failed", { assetId, error: err.message });
         }
-        // Small delay between registrations to respect Meta rate limits
-        await new Promise((resolve) => setTimeout(resolve, 2000));
       }
 
-      logger.info("media.refresh_job.completed", { refreshed: expiring.length });
+      logger.info("media.refresh_job.completed", { dispatched: assetIds.length });
     } catch (err: any) {
       logger.error("media.refresh_job.fatal", { error: err.message });
     }

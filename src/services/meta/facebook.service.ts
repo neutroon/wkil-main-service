@@ -525,9 +525,9 @@ export const replyToComment = async (params: FacebookCommentParams & { pageId?: 
   let activeToken = accessToken;
   let activePageId = pageId;
 
-  // ── ELITE TIER: Token Pivoting ──
-  // If the comment ID prefix (Post ID) doesn't match our 'pageId', 
-  // we might be using the wrong token context.
+  // ── ELITE TIER: Surgical Token Pivoting ──
+  // Only attempt a pivot if we are certain the current pageId is NOT the owner.
+  // We check if the prefix matches a DIFFERENT Page we manage.
   if (commentId.includes("_") && businessProfileId) {
     const prefix = commentId.split("_")[0];
     if (prefix !== pageId) {
@@ -691,7 +691,8 @@ export const sendPrivateReply = async (params: FacebookPrivateReplyParams & { pa
   let activeToken = accessToken;
   let activePageId = pageId;
 
-  // ── ELITE TIER: Token Pivoting ──
+  // ── ELITE TIER: Surgical Token Pivoting ──
+  // Only attempt a pivot if we are certain the current pageId is NOT the owner.
   if (commentId.includes("_") && businessProfileId) {
     const prefix = commentId.split("_")[0];
     if (prefix !== pageId) {

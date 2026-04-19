@@ -81,9 +81,19 @@ export async function processMetaMessage(job: MetaMessageJob) {
     return;
   }
 
-  logger.info("meta.processor.started", { platform, businessProfileId, senderId, msgType: type || "text" });
+  logger.info("meta.processor.started", { platform, businessProfileId, senderId, msgType: type || "text", externalId });
 
-  // 1a. SYSTEM BYPASS: Durable Public Greeting Phase
+  // 1b. IDEMPOTENCY GUARD: Prevent duplicate processing of the same message/comment
+  if (externalId) {
+    const existing = await prisma.conversationMessage.findFirst({
+      where: { externalId },
+      select: { id: true }
+    });
+    if (existing) {
+      logger.warn("meta.processor.duplicate_event_detected", { externalId, platform });
+      return;
+    }
+  }
   // If this is a scheduled public reply, we skip AI/Conversation logic and go straight to delivery.
   if (type === "FACEBOOK_COMMENT_PUBLIC_REPLY") {
     try {

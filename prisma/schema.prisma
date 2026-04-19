@@ -223,6 +223,7 @@ model Conversation {
   externalId        String?  @unique // Facebook comment_id or similar
   postId            String?  // The source post ID (for context header)
   postUrl           String?  // Clickable link to original FB post
+  sourceCommentText String?  // The raw triggering comment text (for agent context)
   processingStatus  String   @default("COMPLETED") // "PENDING", "COMPLETED", "FAILED"
   parentConversationId Int?
   parentConversation   Conversation? @relation("ThreadContinuity", fields: [parentConversationId], references: [id])

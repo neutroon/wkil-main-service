@@ -555,6 +555,41 @@ export async function processMetaMessage(job: MetaMessageJob) {
                   messageId: dmRes.id
                 });
 
+                // ── ELITE TIER: Selective Mirroring ( Inbox Continuity ) ──
+                // We mirror only the Private Reply to the main Messenger thread for Image 2 continuity.
+                try {
+                  const messengerConv = await getOrCreateConversation(
+                    job.identifier,
+                    senderId,
+                    businessProfileId,
+                    { channel: "messenger" }
+                  );
+
+                  // Only mirror if it doesn't already exist in the Messenger thread
+                  const existingMirror = await prisma.conversationMessage.findUnique({
+                    where: { externalId: dmRes.id }
+                  });
+
+                  if (!existingMirror) {
+                    await saveMessage(messengerConv.id, "model", mainContent, {
+                      externalId: dmRes.id,
+                      intent: reply.intent,
+                      aiReasoning: reply.reasoning,
+                      mediaMetadata: { 
+                        origin: "facebook_comment_reply", 
+                        postId: job.postId,
+                        commentId: job.commentId
+                      }
+                    });
+                    logger.info("meta.processor.private_mirror_created", {
+                      messengerConvId: messengerConv.id,
+                      messageId: dmRes.id
+                    });
+                  }
+                } catch (mirrorErr: any) {
+                  logger.warn("meta.processor.mirror_failed_soft", { error: mirrorErr.message });
+                }
+
                 // ELITE TIER: Engagement - Like the comment after successful reply
                 likeComment({
                   commentId: job.commentId!,

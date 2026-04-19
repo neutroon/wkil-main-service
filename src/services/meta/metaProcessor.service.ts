@@ -355,6 +355,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
       logger.info("meta.processor.empty_main_content_skipped", {
         conversationId: conversation.id,
         intent: reply.intent,
+        reasoning: reply.reasoning,
       });
     }
 

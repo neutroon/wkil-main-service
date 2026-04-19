@@ -787,6 +787,14 @@ export const sendPrivateReply = async (params: FacebookPrivateReplyParams & { pa
     return { id: data.message_id, ...data };
   } catch (error: any) {
     const mapped = mapFacebookGraphError(error);
+    
+    // ELITE TIER: Soft Fail for "Already Replied"
+    // Subcode 2018042: "You are trying to reply to a comment that has already been replied to."
+    if (mapped.code === 100 && mapped.subcode === 2018042) {
+      logger.info("facebook.delivery.private_skip_already_replied", { commentId });
+      return { id: "ALREADY_REPLIED", status: "ALREADY_REPLIED" };
+    }
+
     logger.error("facebook.comment.private_reply_failed", { 
       message: mapped.message, code: mapped.code, status: mapped.status,
       isRetryable: mapped.isRetryable, subcode: mapped.subcode,

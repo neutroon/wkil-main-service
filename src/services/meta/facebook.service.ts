@@ -496,12 +496,25 @@ export const getPostComments = async (postId: string, accessToken: string) => {
   });
 };
 
-export const replyToComment = async (params: FacebookCommentParams) => {
+/**
+ * ELITE TIER: Ensures a comment-related ID is correctly scoped to the Page ID.
+ * Meta often rejects POSTID_COMMENTID if used with a Page token that expects PAGEID_COMMENTID.
+ */
+function scopeCommentId(id: string, pageId?: string): string {
+  if (!pageId || !id.includes("_")) return id;
+  const parts = id.split("_");
+  const commentPart = parts[parts.length - 1]; // Always the last segment
+  return `${pageId}_${commentPart}`;
+}
+
+export const replyToComment = async (params: FacebookCommentParams & { pageId?: string }) => {
   try {
-    const url = `${FB_API}/${params.commentId}/comments`;
+    const scopedId = scopeCommentId(params.commentId, params.pageId);
+    const url = `${FB_API}/${scopedId}/comments`;
     const accessToken =
       params.accessToken ||
-      (await getPageAccessToken(params.commentId.split("_")[0])); // Fallback logic for comment reply
+      (await getPageAccessToken(params.pageId || params.commentId.split("_")[0]));
+    
     const postData = {
       message: params.message,
       access_token: accessToken,
@@ -511,7 +524,7 @@ export const replyToComment = async (params: FacebookCommentParams) => {
     return data;
   } catch (error: unknown) {
     const mapped = mapFacebookGraphError(error);
-    logger.error("facebook.comment.reply_failed", mapped);
+    logger.error("facebook.comment.reply_failed", { ...mapped, commentId: params.commentId, pageId: params.pageId });
     throw new Error(mapped.message);
   }
 };
@@ -633,12 +646,13 @@ export const validateAccessToken = async (
  * Sends a private reply to a Facebook comment.
  * Note: Each comment can only be replied to privately ONCE.
  */
-export const sendPrivateReply = async (params: FacebookPrivateReplyParams) => {
+export const sendPrivateReply = async (params: FacebookPrivateReplyParams & { pageId?: string }) => {
   try {
-    const url = `${FB_API}/${params.commentId}/private_replies`;
+    const scopedId = scopeCommentId(params.commentId, params.pageId);
+    const url = `${FB_API}/${scopedId}/private_replies`;
     const accessToken =
       params.accessToken ||
-      (await getPageAccessToken(params.commentId.split("_")[0]));
+      (await getPageAccessToken(params.pageId || params.commentId.split("_")[0]));
 
     const postData = {
       message: params.message,
@@ -649,7 +663,7 @@ export const sendPrivateReply = async (params: FacebookPrivateReplyParams) => {
     return data;
   } catch (error: unknown) {
     const mapped = mapFacebookGraphError(error);
-    logger.error("facebook.comment.private_reply_failed", mapped);
+    logger.error("facebook.comment.private_reply_failed", { ...mapped, commentId: params.commentId, pageId: params.pageId });
     throw new Error(mapped.message);
   }
 };

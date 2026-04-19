@@ -58,6 +58,7 @@ ${leadInstructions}
 10. Truthfulness: NEVER claim an action is confirmed (like a lead saved) unless tool evidence confirms success.
 11. Reasoning Precision: Provide clear reasoning for your decision in the "reasoning" field. This is visible to human agents. It MUST follow the business tone and MUST be written in the SAME LANGUAGE as the conversation (e.g., if Voice is "Egyptian Arabic", the reasoning must be in Egyptian Arabic).
 12. Output Discipline (CRITICAL): Be extremely concise. NEVER repeat characters, words, or emojis excessively. Limit emoji usage to a maximum of 2-3 per message. If your response is too long or repetitive, it will be cut off and fail.
+13. Media Library (MANDATORY): If you want to send a file or photo from the media catalog, you MUST use the "attachment" field in your JSON. NEVER copy-paste URLs from the catalog into your message text.
 </rules>
 
 ${

@@ -243,33 +243,52 @@ messengerRoutes.post(
       const pageAccessToken = decryptFacebookSecret(page.pageAccessToken);
       const trimmedText = text.trim();
 
-      // 1. Send via Graph API FIRST
-      const fbRes = await fetch(
-        `https://graph.facebook.com/v25.0/me/messages?access_token=${pageAccessToken}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            recipient: { id: conversation.senderId },
-            message: { text: trimmedText },
-          }),
-        },
-      );
+      let fbEndpoint = "";
+      let fbBody : any = {};
+
+      // ── ELITE TIER: Channel-Aware Routing Logic ──
+      if (conversation.channel === "facebook_comment") {
+        // For comments, 'externalId' stores the FB Comment ID.
+        // We post a public reply to that specific comment.
+        fbEndpoint = `https://graph.facebook.com/v25.0/${conversation.externalId}/comments?access_token=${pageAccessToken}`;
+        fbBody = { message: trimmedText };
+      } else {
+        // Standard Messenger DM
+        fbEndpoint = `https://graph.facebook.com/v25.0/me/messages?access_token=${pageAccessToken}`;
+        fbBody = {
+          recipient: { id: conversation.senderId },
+          message: { text: trimmedText },
+        };
+      }
+
+      // 1. Send via Graph API
+      const fbRes = await fetch(fbEndpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(fbBody),
+      });
 
       if (!fbRes.ok) {
         const error = await fbRes.json();
         logger.error("messenger.conversations.send_failed", { 
           conversationId, 
+          channel: conversation.channel,
           error: JSON.stringify(error) 
         });
         return res.status(502).json({ 
-          error: "Messenger API error", 
-          detail: error.error?.message ?? "Unknown Messenger error" 
+          error: "Meta API error", 
+          detail: error.error?.message ?? "Unknown Meta error",
+          code: error.error?.code
         });
       }
 
+      const fbData = await fbRes.json();
+      const mid = fbData.id || fbData.message_id;
+
       // 2. Persist ONLY if API call succeeded
-      const saved = await saveMessage(conversationId, "agent", trimmedText);
+      const saved = await saveMessage(conversationId, "agent", trimmedText, {
+        externalId: mid?.toString()
+      });
 
       // Emit real-time updates
       emitToBusiness(conversation.businessProfileId, "new_message", {

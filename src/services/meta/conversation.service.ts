@@ -261,8 +261,10 @@ export async function listWhatsAppConversations(
 }
 
 /**
- * Return paginated messages for a single conversation.
- * Caller must have already verified the conversation belongs to the user.
+ * Return paginated messages for a conversation.
+ * ELITE TIER: Messenger threads now perform "Thread Convergence" — pulling in 
+ * Private DM replies from associated Facebook Comment threads to provide 
+ * a "typical messenger flow" history.
  */
 export async function listConversationMessages(
   conversationId: number,
@@ -271,41 +273,85 @@ export async function listConversationMessages(
 ) {
   limit = Math.min(limit, MAX_LIMIT);
 
-  const where: any = { conversationId };
-  if (cursor) {
-    where.id = { lt: cursor };
+  // 1. Fetch the base conversation to identify the user and page
+  const mainConv = await prisma.conversation.findUnique({
+    where: { id: conversationId },
+    select: { id: true, senderId: true, pageId: true, channel: true }
+  });
+
+  if (!mainConv) throw new Error("Conversation not found");
+
+  let conversationIdsFetch = [conversationId];
+
+  // 2. Convergence Logic: If this is a Messenger thread, find all sibling comment threads
+  if (mainConv.channel === "messenger") {
+    const siblings = await prisma.conversation.findMany({
+      where: {
+        senderId: mainConv.senderId,
+        pageId: mainConv.pageId,
+        channel: "facebook_comment"
+      },
+      select: { id: true }
+    });
+    conversationIdsFetch = [conversationId, ...siblings.map(s => s.id)];
   }
 
+  // 3. Selective Fetch: We want ALL messages from the main thread, 
+  // but ONLY "Private DMs" from the comment threads.
   const messages = await prisma.conversationMessage.findMany({
-    where,
+    where: {
+      conversationId: { in: conversationIdsFetch },
+      ...(cursor ? { id: { lt: cursor } } : {}),
+      // If the message is from a sibling (comment) thread, it MUST be a private AI reply
+      OR: [
+        { conversationId: mainConv.id }, // All native messages
+        { 
+          conversationId: { not: mainConv.id },
+          role: "model",
+          intent: "SALES_DM" // Only the private offers from comments
+        }
+      ]
+    },
     orderBy: { id: "desc" },
     take: limit,
-    select: {
-      id: true,
-      role: true,
-      content: true,
-      type: true,
-      mediaId: true,
-      mediaMetadata: true,
-      status: true,
-      aiReasoning: true,
-      handoffCategory: true,
-      intent: true,
-      createdAt: true,
-    },
+    include: {
+      conversation: {
+        select: {
+          id: true,
+          channel: true,
+          postId: true,
+          externalId: true
+        }
+      }
+    }
   });
+
+  // 4. Transform and enrich with "Origin" metadata for UI headers
+  const data = messages.map(m => ({
+    id: m.id,
+    role: m.role as any,
+    content: m.content,
+    type: m.type,
+    mediaId: m.mediaId,
+    mediaMetadata: {
+        ...(m.mediaMetadata as any || {}),
+        // If message is from a different folder, tag it for the UI header
+        ...(m.conversationId !== mainConv.id ? { 
+            origin: "facebook_comment_reply", 
+            postId: m.conversation.postId 
+        } : {})
+    },
+    status: m.status,
+    aiReasoning: m.aiReasoning,
+    handoffCategory: m.handoffCategory,
+    intent: m.intent,
+    createdAt: m.createdAt,
+  }));
 
   const nextCursor = messages.length > 0 ? messages[messages.length - 1].id : null;
   const hasMore = messages.length === limit;
 
-  return {
-    data: messages,
-    meta: {
-      limit,
-      nextCursor,
-      hasMore,
-    },
-  };
+  return { data, nextCursor, hasMore };
 }
 
 /**

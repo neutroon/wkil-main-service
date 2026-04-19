@@ -73,6 +73,11 @@ export interface FacebookPrivateReplyParams {
   accessToken: string;
 }
 
+export interface FacebookLikeParams {
+  commentId: string;
+  accessToken: string;
+}
+
 export interface FacebookTokenData {
   access_token: string;
   token_type?: string;
@@ -586,6 +591,43 @@ export const getFacebookPostUrl = async (
       return null;
     }
   });
+};
+
+/**
+ * ELITE TIER: Social Engagement - Liking a comment.
+ */
+export const likeComment = async (params: FacebookLikeParams & { pageId?: string }) => {
+  const { commentId, accessToken, pageId } = params;
+  const scopedId = scopeCommentId(commentId, pageId);
+  
+  try {
+    const { data } = await axios.post(
+      `${FB_API}/${scopedId}/likes`,
+      { access_token: accessToken }
+    );
+    return data;
+  } catch (error: any) {
+    const mapped = mapFacebookGraphError(error);
+    logger.warn("facebook.comment.like_failed", { 
+      message: mapped.message, code: mapped.code, commentId 
+    });
+    return null;
+  }
+};
+
+/**
+ * ELITE TIER: Fetches text of a specific comment for thread context.
+ */
+export const getCommentText = async (commentId: string, accessToken: string): Promise<string | null> => {
+  try {
+    const { data } = await axios.get(
+      `${FB_API}/${commentId}?fields=message&access_token=${accessToken}`
+    );
+    return data.message || null;
+  } catch (err: any) {
+    logger.warn("facebook.comment.fetch_text_failed", { commentId, error: err.message });
+    return null;
+  }
 };
 
 /**

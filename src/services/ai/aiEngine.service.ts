@@ -245,12 +245,12 @@ function repairAndParseAiResponse(text: string): AiRoutingDecision {
         intent: finalDecision.intent,
         reasoning: finalDecision.reasoning 
       });
-      // Append a CTA to ensure divergence
+      // Append a CTA in Arabic to ensure divergence and brand voice
       const base = finalDecision.publicContent || finalDecision.content;
-      finalDecision.privateContent = `${base}\n\nCould you please share your requirements or phone number so our team can provide the specific details you need?`;
+      finalDecision.privateContent = `${base}\n\nأهلاً بك! ممكن تشاركنا رقم تليفونك أو طلباتك عشان فريقنا يقدر يتواصل معاك بالتفاصيل اللي محتاجها؟`;
     } else {
       // Hard fallback if everything is empty but intent is sales
-      finalDecision.privateContent = "Hello! I am sending you the details you requested right now. How can I help you proceed?";
+      finalDecision.privateContent = "أهلاً بك! هبعتلك كل التفاصيل اللي طلبتها دلوقتي. إزاي أقدر أساعدك؟";
     }
   }
 

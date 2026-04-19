@@ -156,6 +156,8 @@ export async function processMetaMessage(job: MetaMessageJob) {
       customerName: customerNameSet,
       customerAvatar: customerAvatarSet,
       customerPhone: platform === "whatsapp" ? senderId : undefined,
+      externalId: job.commentId,
+      postId: (job as any).postId,
     });
 
     // 4. Save User Message & Emit to UI

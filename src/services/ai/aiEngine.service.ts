@@ -245,10 +245,12 @@ function repairAndParseAiResponse(text: string): AiRoutingDecision {
         intent: finalDecision.intent,
         reasoning: finalDecision.reasoning 
       });
-      finalDecision.privateContent = finalDecision.publicContent || finalDecision.content;
+      // Append a CTA to ensure divergence
+      const base = finalDecision.publicContent || finalDecision.content;
+      finalDecision.privateContent = `${base}\n\nCould you please share your requirements or phone number so our team can provide the specific details you need?`;
     } else {
       // Hard fallback if everything is empty but intent is sales
-      finalDecision.privateContent = "Hello! I am sending you the details you requested right now.";
+      finalDecision.privateContent = "Hello! I am sending you the details you requested right now. How can I help you proceed?";
     }
   }
 

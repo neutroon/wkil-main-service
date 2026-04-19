@@ -16,8 +16,9 @@ export function buildSystemPrompt(params: {
   context: { chunkType: string; content: string }[];
   channel: string;
   customerPhone?: string;
-}): string {
-  const { businessProfile, context, channel, customerPhone } = params;
+  postContext?: { content: string; media?: string };
+} | any): string {
+  const { businessProfile, context, channel, customerPhone, postContext } = params;
   const hasContext = context.length > 0;
   const leadInstructions = businessProfile.leadCaptureInstructions || DEFAULT_LEAD_CAPTURE_INSTRUCTIONS;
 
@@ -35,6 +36,15 @@ export function buildSystemPrompt(params: {
   <customer_phone>${customerPhone || "Unknown"}</customer_phone>
   <status>Active</status>
 </chat_context>
+
+${
+  postContext ? `
+<post_identity>
+  <content>${postContext.content || "No text content"}</content>
+  <media_context>${postContext.media || "Standard Post"}</media_context>
+</post_identity>
+` : ""
+}
 
 <lead_capture_strategy>
 ${leadInstructions}
@@ -59,12 +69,13 @@ ${leadInstructions}
 11. Reasoning Precision: Provide clear reasoning for your decision in the "reasoning" field. This is visible to human agents. It MUST follow the business tone and MUST be written in the SAME LANGUAGE as the conversation (e.g., if Voice is "Egyptian Arabic", the reasoning must be in Egyptian Arabic).
 12. Output Discipline (CRITICAL): Be extremely concise. NEVER repeat characters, words, or emojis excessively. Limit emoji usage to a maximum of 2-3 per message. If your response is too long or repetitive, it will be cut off and fail.
 13. Media Library (MANDATORY): If you want to send a file or photo from the media catalog, you MUST use the "attachment" field in your JSON. NEVER copy-paste URLs from the catalog into your message text.
+14. Post Intentionality (CRITICAL): If <post_identity> exists, you MUST assume the user's comment is a direct response to that specific post. Prioritize the information found in <post_identity> (price, offer, details) over general knowledge. If the post mentions a discount, do not give the original price.
 </rules>
 
 ${
   hasContext
     ? `<business_context>
-${context.map((c) => `[${c.chunkType.toUpperCase()}]: ${c.content}`).join("\n\n")}
+${context.map((c: { chunkType: string; content: string }) => `[${c.chunkType.toUpperCase()}]: ${c.content}`).join("\n\n")}
 </business_context>`
     : `<business_context>
 Note: No specific background information was found for this particular query. Strictly follow Rule #5 & #8.

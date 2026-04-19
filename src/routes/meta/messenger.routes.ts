@@ -369,6 +369,23 @@ messengerRoutes.post("/webhook", async (req: Request, res: Response) => {
               const senderName = value.from?.name;
 
               if (senderId && messageText && commentId) {
+                // IDEMPOTENCY GUARD: Prevent duplicate processing of the same comment
+                try {
+                  const inserted = await prisma.processedFacebookComment.createMany({
+                    data: [{ commentId }],
+                    skipDuplicates: true,
+                  });
+                  if (inserted.count === 0) {
+                    logger.debug("facebook.webhook.duplicate_comment_skipped", { commentId });
+                    continue;
+                  }
+                } catch (e: unknown) {
+                  logger.warn("facebook.webhook.idempotency_check_error", { 
+                    error: (e as any).message, 
+                    commentId 
+                  });
+                }
+
                 logger.info("facebook.webhook.comment_enqueued", { pageId, senderId, commentId });
                 enqueueMetaJob({
                   platform: "messenger",
@@ -382,6 +399,7 @@ messengerRoutes.post("/webhook", async (req: Request, res: Response) => {
                   senderName,
                 } as any);
               } else {
+
                 logger.warn("facebook.webhook.comment_skipped_missing_data", { 
                   pageId, 
                   hasSender: !!senderId, 

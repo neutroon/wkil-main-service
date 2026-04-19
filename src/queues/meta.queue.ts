@@ -8,6 +8,7 @@ const JOB_TIMEOUT_MS = 60000; // 60s
 const RETRY_INTERVALS = [5, 30, 300]; // seconds (5s, 30s, 5m)
 
 let draining = false;
+const ACTIVE_PROCESSING_KEYS = new Set<string>();
 
 /**
  * Unified, Industrial-Grade Durable Queue for Meta Platforms.
@@ -108,17 +109,33 @@ async function drainQueue(): Promise<void> {
 
       if (pendingJobs.length === 0) break;
 
-      // 2. Run batch in parallel
-      await Promise.all(pendingJobs.map(async (jobRecord) => {
-        // Mark as processing to avoid double pickup
-        await prisma.metaJob.update({
-          where: { id: jobRecord.id },
-          data: { status: "processing" }
-        });
+      // 2. Filter out jobs for users currently being processed
+      const jobsToRun = pendingJobs.filter(job => {
+        const key = `${job.platform}:${job.identifier}:${job.senderId}`;
+        return !ACTIVE_PROCESSING_KEYS.has(key);
+      });
 
-        const jobData = jobRecord.payload as unknown as MetaMessageJob;
+      if (jobsToRun.length === 0) {
+        // All pending jobs are for active users; wait for next cycle
+        break; 
+      }
+
+      // 3. Run batch in parallel
+      await Promise.all(jobsToRun.map(async (jobRecord) => {
+        const key = `${jobRecord.platform}:${jobRecord.identifier}:${jobRecord.senderId}`;
+        
+        // Lock this user
+        ACTIVE_PROCESSING_KEYS.add(key);
 
         try {
+          // Mark as processing to avoid double pickup
+          await prisma.metaJob.update({
+            where: { id: jobRecord.id },
+            data: { status: "processing" }
+          });
+
+          const jobData = jobRecord.payload as unknown as MetaMessageJob;
+
           logger.info("meta.queue.processing_job", { 
             id: jobRecord.id,
             platform: jobData.platform, 
@@ -187,6 +204,9 @@ async function drainQueue(): Promise<void> {
               }
             });
           }
+        } finally {
+          // ALWAYS Release lock
+          ACTIVE_PROCESSING_KEYS.delete(key);
         }
       }));
     }

@@ -9,6 +9,10 @@ import {
 
 const FB_API = process.env.FB_API_URL;
 
+// ELITE TIER: In-memory cache for post content to avoid redundant Graph API calls
+const POST_CONTEXT_CACHE = new Map<string, { content: string; media?: string; expiresAt: number }>();
+const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+
 export interface FacebookAuthUrlParams {
   redirect_uri: string;
 }
@@ -219,13 +223,24 @@ const callGraphApiWithRetry = async <T>(
         mapped.code === 2 ||
         (mapped.status && mapped.status >= 500);
 
-      if (isTransient && attempt < maxRetries) {
-        const delay = initialDelay * Math.pow(2, attempt);
+      // Facebook throttling codes: 4 (App), 17 (User), 32 (Page), 613 (Custom)
+      const isRateLimit = 
+        mapped.code === 4 || 
+        mapped.code === 17 || 
+        mapped.code === 32 || 
+        mapped.code === 613;
+
+      if ((isTransient || isRateLimit) && attempt < maxRetries) {
+        // For Rate Limits, we use a much more aggressive backoff (Elite Tier)
+        const delay = isRateLimit 
+          ? (60000 + Math.random() * 60000) * (attempt + 1) // 1-2 mins per retry
+          : initialDelay * Math.pow(2, attempt);
+        
         logger.warn(`facebook.api.retry.${operation}`, {
           attempt: attempt + 1,
           delay,
           errorCode: mapped.code,
-          status: mapped.status,
+          isRateLimit,
         });
         await new Promise((resolve) => setTimeout(resolve, delay));
         continue;
@@ -520,6 +535,49 @@ export const getFacebookPostUrl = async (
         postId,
         error: error.message,
       });
+      return null;
+    }
+  });
+};
+
+/**
+ * ELITE TIER: Fetches full post context (text + media metadata) with caching.
+ */
+export const getPostContext = async (
+  postId: string,
+  accessToken?: string
+): Promise<{ content: string; media?: string } | null> => {
+  // 1. Check Cache
+  const cached = POST_CONTEXT_CACHE.get(postId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return { content: cached.content, media: cached.media };
+  }
+
+  return callGraphApiWithRetry("get_post_context", async () => {
+    try {
+      const token = accessToken || (await getPageAccessToken(postId.split("_")[0]));
+      // Fetch core message and attachments for visual awareness
+      const url = `${FB_API}/${postId}?fields=message,attachments{media_type,description}&access_token=${token}`;
+      const { data } = await axios.get(url);
+
+      const content = data.message || "";
+      let mediaDesc = "";
+
+      if (data.attachments?.data?.[0]) {
+        const att = data.attachments.data[0];
+        mediaDesc = `[Type: ${att.media_type || "image"}${att.description ? `, Desc: ${att.description}` : ""}]`;
+      }
+
+      // 2. Update Cache
+      POST_CONTEXT_CACHE.set(postId, {
+        content,
+        media: mediaDesc,
+        expiresAt: Date.now() + CACHE_TTL_MS
+      });
+
+      return { content, media: mediaDesc };
+    } catch (error: any) {
+      logger.error("facebook.post_context.fetch_failed", { postId, error: error.message });
       return null;
     }
   });

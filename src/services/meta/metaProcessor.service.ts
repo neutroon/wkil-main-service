@@ -488,11 +488,17 @@ export async function processMetaMessage(job: MetaMessageJob) {
                   where: { id: modelSaved.id },
                   data: { externalId: dmRes.id },
                 });
+                logger.info("meta.processor.private_dm_sent", {
+                  senderId,
+                  commentId: job.commentId,
+                  messageId: dmRes.id
+                });
+              } else {
+                logger.warn("meta.processor.private_dm_no_id", {
+                  commentId: job.commentId,
+                  response: JSON.stringify(dmRes)
+                });
               }
-              logger.info("meta.processor.private_dm_sent", {
-                senderId,
-                commentId: job.commentId,
-              });
             }
           } else if (mainContent) {
             // Standard Messenger Reply (Direct Message)

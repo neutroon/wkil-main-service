@@ -1,4 +1,5 @@
 import { MetaMessageJob, processMetaMessage } from "../services/meta/metaProcessor.service";
+import { registerAssetWithMeta } from "../services/media/mediaLibrary.service";
 import { logger } from "../utils/logger";
 import prisma from "../config/prisma";
 
@@ -57,6 +58,28 @@ export async function enqueueMessengerJob(job: any): Promise<void> {
   });
 }
 
+/**
+ * Enqueues a media synchronization job (Meta registration).
+ */
+export async function enqueueMediaSyncJob(assetId: number): Promise<void> {
+  try {
+    await prisma.metaJob.create({
+      data: {
+        platform: "media_sync",
+        identifier: assetId.toString(),
+        senderId: "system",
+        payload: { assetId } as any,
+        status: "pending",
+      }
+    });
+    if (!draining) void drainQueue();
+  } catch (err: any) {
+    logger.error("meta.queue.enqueue_media_sync_failed", { error: err.message, assetId });
+    throw err;
+  }
+}
+
+
 async function drainQueue(): Promise<void> {
   if (draining) return;
   draining = true;
@@ -98,10 +121,18 @@ async function drainQueue(): Promise<void> {
             setTimeout(() => reject(new Error("Job Processing Timeout (60s)")), JOB_TIMEOUT_MS)
           );
 
-          await Promise.race([
-            processMetaMessage(jobData),
-            timeoutPromise
-          ]);
+          if (jobRecord.platform === "media_sync") {
+            const { assetId } = jobRecord.payload as { assetId: number };
+            await Promise.race([
+              registerAssetWithMeta(assetId),
+              timeoutPromise
+            ]);
+          } else {
+            await Promise.race([
+              processMetaMessage(jobData),
+              timeoutPromise
+            ]);
+          }
 
           // MARK SUCCESS
           await prisma.metaJob.update({

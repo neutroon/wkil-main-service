@@ -128,7 +128,7 @@ ${
 <facebook_dual_channel_protocol>
 - If SALES_DM: Write short "publicContent" (No price) + Detailed "privateContent" (Price/Links).
 - If GREET_ONLY: Write only "publicContent".
-- CRITICAL: privateContent is MANDATORY for SALES_DM.
+- CRITICAL: privateContent is MANDATORY for SALES_DM. If you lack specific data (prices/links) from <business_context>, you MUST use the privateContent to proactively ask the user for their phone number or specific inquiry details. NEVER leave it empty.
 </facebook_dual_channel_protocol>
 `
     : ""

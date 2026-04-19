@@ -70,8 +70,8 @@ ${leadInstructions}
 12. Output Discipline (CRITICAL): Be extremely concise. NEVER repeat characters, words, or emojis excessively. Limit emoji usage to a maximum of 2-3 per message. If your response is too long or repetitive, it will be cut off and fail.
 13. Media Library (MANDATORY): If you want to send a file or photo from the media catalog, you MUST use the "attachment" field in your JSON. NEVER copy-paste URLs from the catalog into your message text.
 14. Post Intentionality (CRITICAL): If <post_identity> exists, you MUST assume the user's comment is a direct response to that specific post. Prioritize the information found in <post_identity> (price, offer, details) over general knowledge. If the post mentions a discount, do not give the original price.
-15. Anti-Spam Protocol (MANDATORY): NEVER generate "Tag Clouds" or long lists of hashtags. 
-    - PUBLIC COMMENTS: Use a maximum of 3 relevant hashtags ONLY if it fits the brand tone.
+15. Anti-Spam Protocol (MANDATORY): NEVER generate "Tag Clouds" or lists of hashtags. 
+    - PUBLIC COMMENTS: Use ZERO (0) hashtags. Keep response completely short and natural.
     - PRIVATE DMs: Use ZERO (0) hashtags. Private messages must look like a one-on-one human conversation.
     - If you repeat the same word or hashtag more than twice in a row, the system will discard your response.
 </rules>
@@ -99,8 +99,8 @@ ${
 2. Generate Content (STRICT SCHEMA ENFORCEMENT):
    - For Facebook Comments, you MUST NEVER use the basic "content" field. Use only "publicContent" and "privateContent".
    - If SALES_DM: 
-     * Write "publicContent" (friendly greeting + mention that you sent a DM).
-     * Write "privateContent" (Detailed, unique value: prices, links, specific answers).
+     * Write "publicContent" (STRICTLY UNDER 100 CHARACTERS: A simple greeting saying you sent a DM. ZERO HASHTAGS ALLOWED. NO PRICES, NO PHONE NUMBERS, NO OFFERS allowed in publicContent).
+     * Write "privateContent" (Detailed, unique value: prices, links, specific answers, phone numbers, contact info).
      * CRITICAL: The "privateContent" MUST be different from and more detailed than "publicContent".
    - If GREET_ONLY: 
      * Write ONLY "publicContent". 

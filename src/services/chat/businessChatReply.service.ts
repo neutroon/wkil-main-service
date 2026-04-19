@@ -35,6 +35,7 @@ export async function computeBusinessChatReply(params: {
   channel: "messenger" | "whatsapp" | "web";
   customerPhone?: string;
   mediaInfo?: { id: string; type: string; url?: string };
+  postContext?: { content: string; media?: string };
 }): Promise<AiRoutingDecision> {
   const {
     businessProfile,
@@ -65,6 +66,7 @@ export async function computeBusinessChatReply(params: {
     context: relevantChunks,
     channel,
     customerPhone,
+    postContext: params.postContext,
   });
 
   // Inject Media Catalog — names + instructions only, NEVER raw platform IDs

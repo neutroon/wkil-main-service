@@ -247,12 +247,24 @@ messengerRoutes.post(
       let fbData: any;
       try {
         if (conversation.channel === "facebook_comment") {
+          // Validation Guard: Ensure we have the Comment ID to reply to
+          if (!conversation.externalId) {
+            logger.error("messenger.manual_reply_failed.missing_id", { 
+              conversationId: conversation.id,
+              reason: "externalId is null for a facebook_comment" 
+            });
+            return res.status(400).json({ 
+              error: "Comment ID missing", 
+              detail: "The Facebook Comment ID for this thread was not correctly synced. Please try again after refreshing the thread." 
+            });
+          }
+
           const { replyToComment } = await import("../../services/meta/facebook.service");
           fbData = await replyToComment({
-            commentId: conversation.externalId!,
+            commentId: conversation.externalId,
             message: trimmedText,
             accessToken: pageAccessToken,
-            pageId: page.pageId, // Explicit Page authority for scoping
+            pageId: page.pageId,
           });
         } else {
           const { sendMessengerReply } = await import("../../services/meta/messenger.service");

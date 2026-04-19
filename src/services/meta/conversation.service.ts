@@ -48,13 +48,19 @@ export async function getOrCreateConversation(
     if (opts?.channel && !existing.channel) {
       updateData.channel = opts.channel;
     }
-    // Sync externalId (Comment ID) if missing
-    if (opts?.externalId && !existing.externalId) {
+    
+    // ELITE IDENTITY: Always refresh externalId (latest comment) and postId (latest ad context)
+    // This prevents the "stuck on old post" problem.
+    if (opts?.externalId) {
       updateData.externalId = opts.externalId;
     }
-    // Sync postId if missing
-    if (opts?.postId && !existing.postId) {
+    if (opts?.postId) {
       updateData.postId = opts.postId;
+    }
+
+    // WAKE UP: Automatically reopen conversation if it was resolved/snoozed
+    if (existing.status !== "OPEN") {
+      updateData.status = "OPEN";
     }
 
     if (Object.keys(updateData).length > 0) {

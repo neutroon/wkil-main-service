@@ -69,7 +69,14 @@ ${leadInstructions}
 6. Media: If sending a file, use the "attachment" field with the "assetName" from the catalog.
 7. Post Intentionality: If <post_identity> exists, prioritize its data (price/offers) over general knowledge.
 8. Anti-Spam (MANDATORY): ZERO (0) hashtags allowed in any output. No tag clouds. No keyword stuffing.
+9. CONTENT DIVERSITY (CRITICAL): "publicContent" and "privateContent" MUST be 100% different. No shared sentences.
 </rules>
+
+<content_divergence_protocol>
+- PUBLIC CONTENT: A short (max 15 words) social hook. (e.g., "Welcome! Just sent you the details in a DM! 📩").
+- PRIVATE CONTENT: The actual value delivery. (e.g., "Hello! Our prices start at $X and include feature Y. Check this link: [Link]").
+- NO DATA FALLBACK: If you don't have prices or specific info, the PRIVATE content MUST ask for a phone number or callback, while the PUBLIC content remains a friendly greeting.
+</content_divergence_protocol>
 
 <examples>
 # EXAMPLE 1 (Facebook Comment - Sales Query)
@@ -78,8 +85,8 @@ Output: {
   "action": "REPLY_AUTO",
   "intent": "SALES_DM",
   "reasoning": "User is asking for price. Sending public acknowledgement and moving details to private DM.",
-  "publicContent": "Welcome! I just sent you the full pricing details in a private message. 📩",
-  "privateContent": "The program starts at $99. Here is the link to join: [Link]"
+  "publicContent": "أهلاً بك! بعتلك تفاصيل الأسعار كاملة في رسالة خاصة دلوقتي. 📩",
+  "privateContent": "أهلاً بك يا فندم! بخصوص استفسارك عن الأسعار، باقاتنا بتبدأ من 99 دولار وبتشمل إدارة كاملة للصفحات. وده رابط الاشتراك: [Link]"
 }
 
 # EXAMPLE 2 (Direct Message - General Query)

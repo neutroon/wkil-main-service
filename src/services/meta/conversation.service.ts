@@ -307,7 +307,10 @@ export async function listConversationMessages(
       OR: [
         { conversationId: mainConv.id }, // Native messages always included
         mainConv.channel === "messenger" 
-          ? { conversationId: { not: mainConv.id }, role: "model", intent: "SALES_DM" }
+          ? { 
+              conversationId: { not: mainConv.id }, 
+              isPrivate: true // SURGICAL LOCKDOWN: No public leakage
+            }
           : { conversationId: { not: mainConv.id } } // Pull full history for comments
       ]
     },

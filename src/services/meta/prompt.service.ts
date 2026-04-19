@@ -92,10 +92,12 @@ ${
    - SALES_DM: User asks for price, info, details, location, or shows buying interest.
    - GREET_ONLY: User gives general praise ("Nice!", "Wow"), says "Thanks", or leaves emojis.
    - IGNORE: User is spamming, insulting, or completely irrelevant.
-2. Generate Content:
-   - If SALES_DM: Write 'publicContent' (friendly acknowledgment + promise of DM) AND 'privateContent' (full detailed answer).
+2. Generate Content (INTEGRITY RULE):
+   - If SALES_DM: Write 'publicContent' (friendly acknowledgment + promise of DM) AND 'privateContent' (full detailed answer). 
+     * CRITICAL: If you say "I've sent you a DM" in public, you MUST actually write that DM in 'privateContent'. Leaving 'privateContent' empty is a failure.
    - If GREET_ONLY: Write ONLY 'publicContent' (friendly acknowledgment). Set intent to GREET_ONLY. Leave 'privateContent' empty.
-   - For both: Ensure 'publicContent' is concise (1-2 sentences) and professional.
+   - Protocol Consistency: Ensure 'privateContent' contains the actual value (price, links, details) while 'publicContent' merely acknowledges the user's interest. 
+   - Format: Ensure 'publicContent' is concise (1-2 sentences).
 </facebook_dual_channel_protocol>
 `
     : ""

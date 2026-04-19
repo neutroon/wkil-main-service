@@ -3,7 +3,7 @@ import app from "./app";
 import dotenv from "dotenv";
 import { initSocket } from "./utils/socket";
 
-import { bootstrapMetaQueue } from "./queues/meta.queue";
+import { bootstrapMetaQueue, startMetaQueue } from "./queues/meta.queue";
 import { startMediaRefreshJob } from "./jobs/mediaRefresh.job";
 import { logger } from "./utils/logger";
 import prisma from "./config/prisma";
@@ -20,6 +20,8 @@ const server = httpServer.listen(PORT, "0.0.0.0", async () => {
   
   // High-Resilience Recovery: Pick up where we left off
   void bootstrapMetaQueue();
+  // Start the background queue loop for delayed/scheduled jobs
+  startMetaQueue();
   // Daily WhatsApp media ID refresh (expires after 30 days)
   startMediaRefreshJob();
 });

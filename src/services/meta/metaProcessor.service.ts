@@ -103,6 +103,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
         message: messageText,
         accessToken,
         pageId: identifier,
+        businessProfileId,
       });
       logger.info("meta.processor.public_greeting_delivered", {
         commentId: job.commentId,
@@ -234,36 +235,45 @@ export async function processMetaMessage(job: MetaMessageJob) {
     const status = (reply.action === "HANDOFF_TO_HUMAN" || !isAutoMode) ? "PENDING_REVIEW" : "SENT";
 
     // Standard fallback logic for general chat
-    const mainContent = reply.privateContent || reply.content || "";
+    const mainContent = (reply.privateContent || reply.content || "").trim();
     
-    // If it's a comment, we might have dual content
+    // If it's a comment, we might have dual content settings
     const pageSettings = (job as any).pageSettings; 
 
     // A. The "Core" Response (Usually the Private DM or standard reply)
-    const modelSaved = await saveMessage(conversation.id, "model", mainContent, {
-      status,
-      aiReasoning: reply.reasoning,
-      handoffCategory: isComment && reply.intent === "SALES_DM" ? "PRIVATE_DM_REPLY" : reply.handoffCategory,
-      intent: reply.intent, // Persist detected intent
-    });
+    let modelSaved: any = null;
+    if (mainContent.length > 0 || reply.action === "HANDOFF_TO_HUMAN") {
+      modelSaved = await saveMessage(conversation.id, "model", mainContent, {
+        status,
+        aiReasoning: reply.reasoning,
+        handoffCategory: isComment && reply.intent === "SALES_DM" ? "PRIVATE_DM_REPLY" : reply.handoffCategory,
+        intent: reply.intent, // Persist detected intent
+      });
 
-    emitToBusiness(businessProfileId, "new_message", { conversationId: conversation.id, message: modelSaved });
-    emitToConversation(conversation.id, "new_message", { message: modelSaved });
+      emitToBusiness(businessProfileId, "new_message", { conversationId: conversation.id, message: modelSaved });
+      emitToConversation(conversation.id, "new_message", { message: modelSaved });
+    } else {
+      logger.info("meta.processor.empty_main_content_skipped", { conversationId: conversation.id, intent: reply.intent });
+    }
 
     // B. The "Public" Greeting (Only for comments)
     let publicSaved: any = null;
     if (isComment && (reply.publicContent || pageSettings?.commentPublicGreeting)) {
-      const publicTxt = reply.publicContent || (pageSettings?.commentPublicGreeting || "Thanks {name}! Check your DMs.")
-        .replace(/{name}|{{name}}/g, customerNameSet || "there");
+      const publicTxt = (reply.publicContent || (pageSettings?.commentPublicGreeting || "Thanks {name}! Check your DMs."))
+        .replace(/{name}|{{name}}/g, customerNameSet || "there").trim();
         
-      publicSaved = await saveMessage(conversation.id, "model", publicTxt, {
-        status, // Should match main status
-        handoffCategory: "PUBLIC_COMMENT_REPLY",
-        intent: reply.intent, // Tag with same intent
-      });
-      
-      emitToBusiness(businessProfileId, "new_message", { conversationId: conversation.id, message: publicSaved });
-      emitToConversation(conversation.id, "new_message", { message: publicSaved });
+      if (publicTxt.length > 0) {
+        publicSaved = await saveMessage(conversation.id, "model", publicTxt, {
+          status, // Should match main status
+          handoffCategory: "PUBLIC_COMMENT_REPLY",
+          intent: reply.intent, // Tag with same intent
+        });
+        
+        emitToBusiness(businessProfileId, "new_message", { conversationId: conversation.id, message: publicSaved });
+        emitToConversation(conversation.id, "new_message", { message: publicSaved });
+      } else {
+        logger.info("meta.processor.empty_public_content_skipped", { conversationId: conversation.id });
+      }
     }
 
     // C. Resolve Post URL if missing (New Contextual Header requirement)
@@ -343,7 +353,8 @@ export async function processMetaMessage(job: MetaMessageJob) {
                 commentId: job.commentId!, 
                 message: mainContent, 
                 accessToken,
-                pageId: job.identifier 
+                pageId: job.identifier,
+                businessProfileId, // ELITE TOKEN PIVOTING
               });
 
               

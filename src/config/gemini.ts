@@ -281,7 +281,7 @@ export const aiRoutingSchema: Schema = {
       },
     },
   },
-  required: ["action", "reasoning"],
+  required: ["action", "reasoning", "intent", "publicContent", "privateContent"],
 };
 
 /**

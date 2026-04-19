@@ -295,7 +295,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
         // ── Attachment Delivery ────────────────────────────────────────────────
         if (reply.attachment?.assetName) {
           const { resolveAssetForChannel } = await import("../media/mediaLibrary.service");
-          const resolved = await resolveAssetForChannel(reply.attachment.assetName, businessProfileId, platform);
+          const resolved = await resolveAssetForChannel(reply.attachment.assetName, businessProfileId, platform, identifier);
 
           if (resolved) {
             if (platform === "whatsapp") {

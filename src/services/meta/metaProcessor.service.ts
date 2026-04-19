@@ -544,7 +544,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
                 businessProfileId, // ELITE TOKEN PIVOTING
               });
 
-              if (dmRes?.id) {
+              if (dmRes?.id && dmRes.id !== "ALREADY_REPLIED") {
                 await prisma.conversationMessage.update({
                   where: { id: modelSaved.id },
                   data: { externalId: dmRes.id },
@@ -562,6 +562,10 @@ export async function processMetaMessage(job: MetaMessageJob) {
                   pageId: job.identifier
                 }).catch(err => logger.warn("meta.processor.auto_like_failed", { error: err.message }));
 
+              } else if (dmRes?.id === "ALREADY_REPLIED") {
+                logger.info("meta.processor.private_dm_skipped_already_sent", {
+                  commentId: job.commentId
+                });
               } else {
                 logger.warn("meta.processor.private_dm_delivery_status_ambiguous", {
                   commentId: job.commentId

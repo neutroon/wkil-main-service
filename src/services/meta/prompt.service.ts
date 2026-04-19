@@ -16,7 +16,7 @@ export function buildSystemPrompt(params: {
   context: { chunkType: string; content: string }[];
   channel: string;
   customerPhone?: string;
-  postContext?: { content: string; media?: string };
+  postContext?: { content: string; media?: string; parentContext?: string };
 } | any): string {
   const { businessProfile, context, channel, customerPhone, postContext } = params;
   const hasContext = context.length > 0;
@@ -48,6 +48,7 @@ ${
 <post_identity>
   <content>${postContext.content || "No text content"}</content>
   <media_context>${postContext.media || "Standard Post"}</media_context>
+  ${postContext.parentContext ? `<parent_comment>${postContext.parentContext}</parent_comment>` : ""}
 </post_identity>
 ` : ""
 }

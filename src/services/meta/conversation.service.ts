@@ -142,6 +142,8 @@ export async function saveMessage(
     aiReasoning?: string | null;
     handoffCategory?: string | null;
     intent?: string | null;
+    isPrivate?: boolean;
+    origin?: string | null;
   }
 ) {
   const msg = await prisma.conversationMessage.create({
@@ -157,6 +159,8 @@ export async function saveMessage(
       aiReasoning: opts?.aiReasoning,
       handoffCategory: opts?.handoffCategory,
       intent: opts?.intent,
+      isPrivate: opts?.isPrivate ?? false,
+      origin: opts?.origin,
     },
   });
 

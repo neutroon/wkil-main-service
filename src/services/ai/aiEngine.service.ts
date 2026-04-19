@@ -149,12 +149,33 @@ export function evaluateGuardrailsForReply(
  * PRODUCTION-GRADE: Resilient JSON parser for LLM outputs.
  * Handles truncated strings by closing quotes/brackets and falling back to regex extraction.
  */
+/**
+ * PRODUCTION-GRADE: Sanitizes LLM output to prevent 'ghost loops'.
+ * Removes common invisible unicode characters (e.g., zero-width spaces, 
+ * variation selectors) that Gemini sometimes emits in loops.
+ */
+export function sanitizeAiText(text: string): string {
+  if (!text) return "";
+  // Removes control chars, variation selectors, zero-width spaces, etc.
+  // U+FE00-U+FE0F are variation selectors, U+200B is zero-width space
+  return text
+    .replace(/[\uFE00-\uFE0F\u200B-\u200D\u2060\uFEFF]/g, "")
+    .replace(/\s+/g, " ") // Collapse multiple spaces
+    .trim();
+}
+
 function repairAndParseAiResponse(text: string): AiRoutingDecision {
   let cleaned = text.trim();
 
   // 1. Basic JSON Parse
   try {
-    return JSON.parse(cleaned);
+    const parsed = JSON.parse(cleaned);
+    return {
+      ...parsed,
+      content: sanitizeAiText(parsed.content || ""),
+      publicContent: sanitizeAiText(parsed.publicContent || ""),
+      privateContent: sanitizeAiText(parsed.privateContent || ""),
+    };
   } catch (e) {
     // 2. Attempt Repair (Mid-stream truncation)
     // If it ends mid-string, close the quote
@@ -178,7 +199,13 @@ function repairAndParseAiResponse(text: string): AiRoutingDecision {
     }
 
     try {
-      return JSON.parse(repaired);
+      const parsed = JSON.parse(repaired);
+      return {
+        ...parsed,
+        content: sanitizeAiText(parsed.content || ""),
+        publicContent: sanitizeAiText(parsed.publicContent || ""),
+        privateContent: sanitizeAiText(parsed.privateContent || ""),
+      };
     } catch (e2) {
       // 3. Regex Fallback (Final stand)
       // Extracts keys even from a total wreck
@@ -191,8 +218,8 @@ function repairAndParseAiResponse(text: string): AiRoutingDecision {
         return {
           action,
           reasoning,
-          content,
-          publicContent: publicContent || undefined,
+          content: sanitizeAiText(content),
+          publicContent: sanitizeAiText(publicContent) || undefined,
         };
       }
 
@@ -203,9 +230,11 @@ function repairAndParseAiResponse(text: string): AiRoutingDecision {
 
 function hasExcessiveRepetition(text: string): boolean {
   if (!text) return false;
-  // Detect 10+ identical characters (emojis included)
+  // We sanitize before checking - if it's just invisible junk, the sanitizer handles it.
+  // If actual visible characters repeat 10+ times, it's a real loop.
+  const sanitized = sanitizeAiText(text);
   const pattern = /(.)\1{9,}/u;
-  return pattern.test(text);
+  return pattern.test(sanitized);
 }
 
 export interface AiRoutingDecision {

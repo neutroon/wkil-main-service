@@ -243,77 +243,39 @@ messengerRoutes.post(
       const pageAccessToken = decryptFacebookSecret(page.pageAccessToken);
       const trimmedText = text.trim();
 
-      let fbEndpoint = "";
-      let fbBody : any = {};
-
-      // ── ELITE TIER: Channel-Aware Routing Logic ──
-      if (conversation.channel === "facebook_comment") {
-        // Validation Guard: Ensure we have the Comment ID to reply to
-        if (!conversation.externalId) {
-          logger.error("messenger.manual_reply_failed.missing_id", { 
-            conversationId: conversation.id,
-            reason: "externalId is null for a facebook_comment" 
-          });
-          return res.status(400).json({ 
-            error: "Comment ID missing", 
-            detail: "The Facebook Comment ID for this thread was not correctly synced. Please try again after refreshing the thread." 
-          });
-        }
-
-        // For comments, 'externalId' stores the FB Comment ID.
-        // We post a public reply to that specific comment.
-        fbEndpoint = `https://graph.facebook.com/v25.0/${conversation.externalId}/comments?access_token=${pageAccessToken}`;
-        fbBody = { message: trimmedText };
-      } else {
-        // Standard Messenger DM
-        fbEndpoint = `https://graph.facebook.com/v25.0/me/messages?access_token=${pageAccessToken}`;
-        fbBody = {
-          recipient: { id: conversation.senderId },
-          message: { text: trimmedText },
-        };
-      }
-
-      // 1. Send via Graph API
-      let fetchRes: any;
+      // ── ELITE TIER: Hardened Delivery via Service Layer ──
       let fbData: any;
       try {
-        fetchRes = await fetch(fbEndpoint, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(fbBody),
-        });
-
-        fbData = await fetchRes.json();
-
-        if (!fetchRes.ok) {
-          logger.error("messenger.conversations.api_failed", { 
-            conversationId, 
-            error: fbData.error?.message, 
-            code: fbData.error?.code 
+        if (conversation.channel === "facebook_comment") {
+          const { replyToComment } = await import("../../services/meta/facebook.service");
+          fbData = await replyToComment({
+            commentId: conversation.externalId!,
+            message: trimmedText,
+            accessToken: pageAccessToken,
+            pageId: page.pageId, // Explicit Page authority for scoping
           });
-          return res.status(502).json({ 
-            error: "Meta API error", 
-            detail: fbData.error?.message ?? "Unknown Meta error",
-            code: fbData.error?.code,
-            fullError: fbData.error
-          });
+        } else {
+          const { sendMessengerReply } = await import("../../services/meta/messenger.service");
+          fbData = await sendMessengerReply(conversation.senderId, trimmedText, pageAccessToken);
         }
       } catch (apiErr: any) {
-        logger.error("messenger.conversations.fetch_exception", { 
+        logger.error("messenger.manual_reply.api_failed", { 
           conversationId, 
           error: apiErr.message 
         });
-        return res.status(500).json({ error: "Failed to connect to Meta API" });
+        return res.status(502).json({ 
+          error: "Meta API error", 
+          detail: apiErr.message || "Unknown error occurred during delivery" 
+        });
       }
 
+      // 2. Persist locally & Emit
       const mid = fbData.id || fbData.message_id;
-
-      // 2. Persist ONLY if API call succeeded
       const saved = await saveMessage(conversationId, "agent", trimmedText, {
-        externalId: mid?.toString()
+        externalId: mid?.toString(),
+        status: "SENT"
       });
 
-      // Emit real-time updates
       emitToBusiness(conversation.businessProfileId, "new_message", {
         conversationId: conversation.id,
         message: saved,

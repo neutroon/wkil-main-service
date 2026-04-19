@@ -92,6 +92,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
         commentId: job.commentId!,
         message: messageText,
         accessToken,
+        pageId: identifier,
       });
       logger.info("meta.processor.public_greeting_delivered", {
         commentId: job.commentId,
@@ -331,7 +332,8 @@ export async function processMetaMessage(job: MetaMessageJob) {
               const dmRes: any = await sendPrivateReply({ 
                 commentId: job.commentId!, 
                 message: mainContent, 
-                accessToken 
+                accessToken,
+                pageId: job.identifier 
               });
 
               

@@ -13,6 +13,8 @@ import {
   getFacebookUserProfile,
   getFacebookPostUrl,
   getPostContext,
+  getCommentText,
+  likeComment,
 } from "./facebook.service";
 
 export type MetaPlatform = "messenger" | "whatsapp";
@@ -32,10 +34,17 @@ export interface MetaMessageJob {
   customerName?: string;
   commentId?: string;
   postId?: string;
+  parentId?: string; // NEW: Track parent comment for deep context
   senderName?: string;
   businessProfileId?: number;
   conversationId?: number;
 }
+
+// ELITE TIER: Spam & Burst Shield
+// Prevents AI loops or user spam from draining API credits.
+const SPAM_GUARD_CACHE = new Map<string, { count: number; lastMessageAt: number }>();
+const SPAM_LIMIT = 3; // Max 3 messages per cooldown
+const SPAM_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
  * High-Resilience Unified Meta Processor.
@@ -126,6 +135,29 @@ export async function processMetaMessage(job: MetaMessageJob) {
     msgType: type || "text",
     externalId,
   });
+
+  // 1b. ELITE TIER: Spam Shield (Burst Protection)
+  const spamKey = `${businessProfileId}_${senderId}`;
+  const now = Date.now();
+  const userData = SPAM_GUARD_CACHE.get(spamKey);
+
+  if (userData) {
+    // If within cooldown period
+    if (now - userData.lastMessageAt < SPAM_COOLDOWN_MS) {
+      if (userData.count >= SPAM_LIMIT) {
+        logger.warn("meta.processor.spam_shield_activated", { senderId, businessProfileId });
+        return; // Ignore silently
+      }
+      userData.count += 1;
+      userData.lastMessageAt = now;
+    } else {
+      // Cooldown expired, reset
+      SPAM_GUARD_CACHE.set(spamKey, { count: 1, lastMessageAt: now });
+    }
+  } else {
+    // First message from this user
+    SPAM_GUARD_CACHE.set(spamKey, { count: 1, lastMessageAt: now });
+  }
 
   // 1b. IDEMPOTENCY GUARD: Prevent duplicate processing of the same message/comment
   if (externalId) {
@@ -287,14 +319,24 @@ export async function processMetaMessage(job: MetaMessageJob) {
 
     // ELITE TIER: Fetch deep context (Post Text + Media) for Facebook Comments
     // We pass this as structured data for the System Prompt, not as a message prefix.
-    let postContext: { content: string; media?: string } | undefined;
+    let postContext: { content: string; media?: string; parentContext?: string } | undefined;
 
     if (isComment) {
       const postId = (job as any).postId;
-      if (postId) {
-        const fetched = await getPostContext(postId, accessToken);
-        if (fetched)
-          postContext = { content: fetched.content, media: fetched.media };
+      const parentId = job.parentId;
+
+      const promises: Promise<any>[] = [];
+      if (postId) promises.push(getPostContext(postId, accessToken));
+      if (parentId) promises.push(getCommentText(parentId, accessToken));
+
+      const [pContext, parContext] = await Promise.all(promises);
+      
+      if (pContext) {
+        postContext = { 
+          content: pContext.content, 
+          media: pContext.media,
+          parentContext: parContext || undefined 
+        };
       }
     }
 
@@ -512,6 +554,14 @@ export async function processMetaMessage(job: MetaMessageJob) {
                   commentId: job.commentId,
                   messageId: dmRes.id
                 });
+
+                // ELITE TIER: Engagement - Like the comment after successful reply
+                likeComment({
+                  commentId: job.commentId!,
+                  accessToken,
+                  pageId: job.identifier
+                }).catch(err => logger.warn("meta.processor.auto_like_failed", { error: err.message }));
+
               } else {
                 logger.warn("meta.processor.private_dm_delivery_status_ambiguous", {
                   commentId: job.commentId

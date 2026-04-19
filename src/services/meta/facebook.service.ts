@@ -497,14 +497,21 @@ export const getPostComments = async (postId: string, accessToken: string) => {
 };
 
 /**
- * ELITE TIER: Ensures a comment-related ID is correctly scoped to the Page ID.
- * Meta often rejects POSTID_COMMENTID if used with a Page token that expects PAGEID_COMMENTID.
+ * ELITE TIER: Passive ID Scoping
+ * Only prefixes the ID if it's a raw numeric string.
+ * If the ID already has a prefix (e.g. from an Ad or Crosspost), we trust it.
  */
 function scopeCommentId(id: string, pageId?: string): string {
-  if (!pageId || !id.includes("_")) return id;
-  const parts = id.split("_");
-  const commentPart = parts[parts.length - 1]; // Always the last segment
-  return `${pageId}_${commentPart}`;
+  // If it already has an underscore, it's already scoped (e.g. POSTID_COMMENTID)
+  // We MUST trust this prefix, especially for Ads or Crossposts.
+  if (id.includes("_")) return id;
+  
+  // Fallback: If it's a raw ID and we HAVE a pageId, apply the scoping
+  if (pageId) {
+    return `${pageId}_${id}`;
+  }
+  
+  return id;
 }
 
 export const replyToComment = async (params: FacebookCommentParams & { pageId?: string }) => {

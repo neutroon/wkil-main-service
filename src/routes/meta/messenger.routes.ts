@@ -379,9 +379,6 @@ messengerRoutes.post("/webhook", async (req: Request, res: Response) => {
                 continue;
               }
 
-              // DEBUG: Dump the exact structure of a comment webhook to find the real child ID
-              logger.debug("facebook.webhook.comment_raw_payload", { value: JSON.stringify(value) });
-
               const messageText = value.message;
               const commentId = value.id || value.comment_id;
               const postId = value.post_id;

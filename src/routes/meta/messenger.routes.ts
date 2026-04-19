@@ -380,7 +380,7 @@ messengerRoutes.post("/webhook", async (req: Request, res: Response) => {
               }
 
               const messageText = value.message;
-              const commentId = value.comment_id;
+              const commentId = value.id;
               const postId = value.post_id;
               const senderName = value.from?.name;
 

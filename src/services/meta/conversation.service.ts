@@ -19,11 +19,13 @@ export async function getOrCreateConversation(
   },
 ) {
   // 1. Try to find an existing conversation for this specific channel
+  // ELITE TIER: Isolation - Facebook Comments are unique per Post, while Messenger/WhatsApp are per User.
   const existing = await prisma.conversation.findFirst({
     where: {
       pageId,
       senderId,
       channel: opts?.channel ?? null,
+      ...(opts?.channel === "facebook_comment" ? { postId: opts.postId } : {})
     },
     orderBy: {
       updatedAt: "desc",
@@ -112,9 +114,12 @@ export async function getOrCreateConversation(
 }
 
 export async function getConversationHistory(conversationId: number, before?: Date, postId?: string) {
+  // ELITE TIER: Multi-Post Safety
+  // If we are in a post-bound conversation, we strictly only pull history from that SAME post.
   const messages = await prisma.conversationMessage.findMany({
     where: { 
       conversationId,
+      conversation: postId ? { postId } : {}, // Ensure cross-post isolation
       ...(before ? { createdAt: { lte: before } } : {})
     },
     orderBy: { createdAt: "desc" },

@@ -613,7 +613,7 @@ model BusinessProfileMedia {
   whatsappMediaExpiresAt DateTime?       // WhatsApp IDs expire after ~30 days
   messengerAttachmentId String?         // Reusable — does not expire
 
-  // Sync status per platform
+  // Sync status per platform (Legacy — migrated to BusinessProfileMediaSync)
   whatsappSyncStatus    String          @default("PENDING") // PENDING | SYNCED | FAILED | EXPIRED
   messengerSyncStatus   String          @default("PENDING")
 
@@ -621,11 +621,35 @@ model BusinessProfileMedia {
   isActive              Boolean         @default(true)
   deletedAt             DateTime?
 
-  createdAt             DateTime        @default(now())
-  updatedAt             DateTime        @updatedAt
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  syncs                 BusinessProfileMediaSync[]
 
   @@index([businessProfileId])
   @@index([userId])
   @@index([isActive, businessProfileId])
   @@index([whatsappMediaExpiresAt]) // For the refresh scheduler
+}
+
+/// Stores specific media IDs per platform identity (PageID or PhoneID)
+model BusinessProfileMediaSync {
+  id                    Int                  @id @default(autoincrement())
+  mediaId               Int
+  media                 BusinessProfileMedia @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  
+  platform              String               // "messenger" | "whatsapp"
+  identifier            String               // PageID or PhoneNumberId (e.g. 1029384756)
+  externalMediaId       String               
+  expiresAt             DateTime?            // Optional: for WhatsApp IDs
+  
+  status                String               @default("SYNCED") // SYNCED | FAILED
+  lastError             String?              @db.Text
+  
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+
+  @@unique([mediaId, platform, identifier])
+  @@index([mediaId])
+  @@index([platform, identifier])
 }

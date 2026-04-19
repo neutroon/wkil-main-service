@@ -380,18 +380,10 @@ export async function listMediaAssets(businessProfileId: number, userId: number)
   return prisma.businessProfileMedia.findMany({
     where: { businessProfileId, userId, isActive: true, deletedAt: null },
     orderBy: { createdAt: "desc" },
-    select: {
-      id: true,
-      name: true,
-      instructions: true,
-      mediaType: true,
-      mimeType: true,
-      fileSizeBytes: true,
-      publicUrl: true,
-      whatsappSyncStatus: true,
-      messengerSyncStatus: true,
-      createdAt: true,
-      updatedAt: true,
+    include: {
+      syncs: {
+        orderBy: { updatedAt: "desc" },
+      },
     },
   });
 }

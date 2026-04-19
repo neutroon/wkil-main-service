@@ -382,6 +382,7 @@ messengerRoutes.post("/webhook", async (req: Request, res: Response) => {
               const messageText = value.message;
               const commentId = value.id || value.comment_id;
               const postId = value.post_id;
+              const parentId = value.parent_id; // NEW: Deep thread awareness
               const senderName = value.from?.name;
 
               if (senderId && messageText && commentId) {
@@ -411,6 +412,7 @@ messengerRoutes.post("/webhook", async (req: Request, res: Response) => {
                   senderId,
                   commentId,
                   postId,
+                  parentId,
                   messageText,
                   senderName,
                 } as any);

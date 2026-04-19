@@ -107,7 +107,7 @@ export async function getOrCreateConversation(
   });
 }
 
-export async function getConversationHistory(conversationId: number, before?: Date) {
+export async function getConversationHistory(conversationId: number, before?: Date, postId?: string) {
   const messages = await prisma.conversationMessage.findMany({
     where: { 
       conversationId,

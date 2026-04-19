@@ -250,12 +250,34 @@ function repairAndParseAiResponse(text: string): AiRoutingDecision {
 }
 
 function hasExcessiveRepetition(text: string): boolean {
-  if (!text) return false;
-  // We sanitize before checking - if it's just invisible junk, the sanitizer handles it.
-  // If actual visible characters repeat 10+ times, it's a real loop.
+  if (!text || text.length < 50) return false;
   const sanitized = sanitizeAiText(text);
-  const pattern = /(.)\1{9,}/;
-  return pattern.test(sanitized);
+  
+  // 1. Character-level loops (aaaaa)
+  const charPattern = /(.)\1{9,}/;
+  if (charPattern.test(sanitized)) return true;
+
+  // 2. Word-level loops (word word word word)
+  const wordPattern = /(\b.+?\b)\s+\1\s+\1\s+\1/gi;
+  if (wordPattern.test(sanitized)) return true;
+
+  // 3. Block-level loops (A block of text repeating twice)
+  // We check for large chunks (50+ chars) that repeat
+  if (sanitized.length > 200) {
+    const half = Math.floor(sanitized.length / 2);
+    for (let len = 50; len <= half; len++) {
+      for (let i = 0; i <= sanitized.length - len * 2; i++) {
+        const chunk = sanitized.substring(i, i + len);
+        const rest = sanitized.substring(i + len);
+        if (rest.includes(chunk)) {
+          // If a 50+ char block repeats, it's a hallucination/loop
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
 }
 
 export interface AiRoutingDecision {
@@ -457,8 +479,8 @@ export async function runAIEngineLoop(params: {
             contents,
             config: {
               systemInstruction: params.systemInstruction,
-              temperature: 0.35,
-              maxOutputTokens: 4096,
+              temperature: 0.4,
+              maxOutputTokens: 2048,
               safetySettings: MESSENGER_SAFETY_SETTINGS,
               tools: params.tools,
               responseMimeType: "application/json",
@@ -507,6 +529,17 @@ export async function runAIEngineLoop(params: {
     if (functionCalls.length === 0) {
       if (!responseText)
         throw new Error("No reply text and no function call generated");
+
+      // FAIL-SAFE: If the AI output is insane (e.g. 4000+ chars), it's a hallucination.
+      if (responseText.length > 4000) {
+        logger.warn("ai.engine.hallucination_detected", { length: responseText.length });
+        return {
+          action: "HANDOFF_TO_HUMAN",
+          handoffCategory: "SYSTEM_ERROR",
+          reasoning: "AI hallucination detected (excessive output length). Safe-failing to human.",
+          content: ""
+        };
+      }
 
       let decision: AiRoutingDecision;
       try {

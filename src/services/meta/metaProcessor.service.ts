@@ -81,7 +81,31 @@ export async function processMetaMessage(job: MetaMessageJob) {
 
   logger.info("meta.processor.started", { platform, businessProfileId, senderId, msgType: type || "text" });
 
+  // 1a. SYSTEM BYPASS: Durable Public Greeting Phase
+  // If this is a scheduled public reply, we skip AI/Conversation logic and go straight to delivery.
+  if (type === "FACEBOOK_COMMENT_PUBLIC_REPLY") {
+    try {
+      const { replyToComment } = await import("./facebook.service");
+      await replyToComment({
+        commentId: job.commentId!,
+        message: messageText,
+        accessToken,
+      });
+      logger.info("meta.processor.public_greeting_delivered", {
+        commentId: job.commentId,
+      });
+      return;
+    } catch (err: any) {
+      logger.error("meta.processor.public_greeting_failed", {
+        commentId: job.commentId,
+        error: err.message,
+      });
+      throw err; // Re-throw to allow queue retry
+    }
+  }
+
   try {
+
     // 2. Resolve Customer Profile (with strict timeout for Messenger)
     let customerNameSet: string | undefined = job.customerName;
     let customerAvatarSet: string | undefined;
@@ -239,37 +263,46 @@ export async function processMetaMessage(job: MetaMessageJob) {
 
           if (isComment) {
             // INTENT-AWARE DELIVERY
-            const intent = reply.intent || "SALES_DM"; // Default to SALES_DM for backward compatibility
+            const intent = reply.intent || "SALES_DM";
             
             if (intent === "IGNORE") {
               logger.info("meta.processor.ignore_intent", { commentId: job.commentId });
               return;
             }
 
-            // 1. Sending Public Greeting (Contextual AI answer OR Template Fallback)
+            // 1. SCHEDULE Durable Public Greeting (Durable Jitter)
+            // Instead of volatile setTimeout, we create a new job 20-45s in the future.
             const publicText = publicSaved?.content || "Thanks! Check your DMs.";
-            // Humanized Jitter for public engagement
-            const delay = 10000 + Math.random() * 20000; 
-            setTimeout(async () => {
-              try {
-                await replyToComment({
-                  commentId: job.commentId!,
-                  message: publicText,
-                  accessToken
-                });
-                logger.info("meta.processor.public_greeting_sent", { commentId: job.commentId });
-              } catch (e: any) {
-                logger.error("meta.processor.public_greeting_failed", { error: e.message });
-              }
-            }, delay);
+            const delaySec = 20 + Math.floor(Math.random() * 25); 
+            const nextAttemptAt = new Date(Date.now() + delaySec * 1000);
 
-            // 2. Sending Private DM ONLY if intent is SALES_DM
-            if (intent === "SALES_DM" && mainContent) {
+            await prisma.metaJob.create({
+              data: {
+                platform: "messenger",
+                identifier: job.identifier,
+                senderId: job.senderId,
+                status: "pending",
+                nextAttemptAt,
+                payload: {
+                  ...job,
+                  type: "FACEBOOK_COMMENT_PUBLIC_REPLY",
+                  messageText: publicText, 
+                } as any,
+              }
+            });
+            logger.info("meta.processor.public_greeting_scheduled", { commentId: job.commentId, delaySec });
+
+
+            // 2. Sending Private DM ONLY if intent is SALES_DM AND the setting is enabled for this page
+            const isAutoDmAllowed = pageSettings?.commentAutoDmEnabled === true;
+
+            if (intent === "SALES_DM" && mainContent && isAutoDmAllowed) {
               const dmRes: any = await sendPrivateReply({ 
                 commentId: job.commentId!, 
                 message: mainContent, 
                 accessToken 
               });
+
               
               if (dmRes?.id) {
                 await prisma.conversationMessage.update({ 
@@ -279,8 +312,8 @@ export async function processMetaMessage(job: MetaMessageJob) {
               }
               logger.info("meta.processor.private_dm_sent", { senderId, commentId: job.commentId });
             }
-
-          } else if (mainContent) {
+          }
+ else if (mainContent) {
             // Standard Messenger Reply (Direct Message)
             const fbRes: any = await sendMessengerReply(senderId, mainContent, accessToken);
             if (fbRes?.message_id) await prisma.conversationMessage.update({ where: { id: modelSaved.id }, data: { externalId: fbRes.message_id } });

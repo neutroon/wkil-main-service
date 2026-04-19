@@ -200,7 +200,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
     }
 
     // 6. Compute AI Reply
-    const historyRows = await getConversationHistory(conversation.id, userSaved.createdAt);
+    const historyRows = await getConversationHistory(conversation.id, userSaved.createdAt, job.postId);
     const historyTurns = historyToLlmTurns(toPromptMessages(historyRows));
     
     // ELITE TIER: Fetch deep context (Post Text + Media) for Facebook Comments

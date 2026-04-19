@@ -8,7 +8,14 @@ export async function getOrCreateConversation(
   pageId: string,
   senderId: string,
   businessProfileId: number,
-  opts?: { channel?: string; customerPhone?: string; customerName?: string; customerAvatar?: string },
+  opts?: { 
+    channel?: string; 
+    customerPhone?: string; 
+    customerName?: string; 
+    customerAvatar?: string;
+    externalId?: string;
+    postId?: string;
+  },
 ) {
   // 1. Try to find an existing conversation for this specific channel
   const existing = await prisma.conversation.findFirst({
@@ -40,6 +47,14 @@ export async function getOrCreateConversation(
     // Sync channel if needed
     if (opts?.channel && !existing.channel) {
       updateData.channel = opts.channel;
+    }
+    // Sync externalId (Comment ID) if missing
+    if (opts?.externalId && !existing.externalId) {
+      updateData.externalId = opts.externalId;
+    }
+    // Sync postId if missing
+    if (opts?.postId && !existing.postId) {
+      updateData.postId = opts.postId;
     }
 
     if (Object.keys(updateData).length > 0) {
@@ -78,6 +93,8 @@ export async function getOrCreateConversation(
       customerPhone: opts?.customerPhone ?? null,
       customerName: opts?.customerName ?? null,
       customerAvatar: opts?.customerAvatar ?? null,
+      externalId: opts?.externalId ?? null,
+      postId: opts?.postId ?? null,
       parentConversationId,
       readAt: null,
     },

@@ -41,6 +41,13 @@ export function initSocket(server: HTTPServer): SocketIOServer {
       logger.info("socket.join_room", { socketId: socket.id, room });
     });
 
+    // Leave room for a specific conversation
+    socket.on("leave_conversation", (conversationId: string | number) => {
+      const room = `conversation:${conversationId}`;
+      socket.leave(room);
+      logger.info("socket.leave_room", { socketId: socket.id, room });
+    });
+
     // Join room for a business admin
     socket.on("join_business", (businessProfileId: string | number) => {
       const room = `business:${businessProfileId}`;

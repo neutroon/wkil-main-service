@@ -150,18 +150,35 @@ export function evaluateGuardrailsForReply(
  * Handles truncated strings by closing quotes/brackets and falling back to regex extraction.
  */
 /**
- * PRODUCTION-GRADE: Sanitizes LLM output to prevent 'ghost loops'.
- * Removes common invisible unicode characters (e.g., zero-width spaces, 
- * variation selectors) that Gemini sometimes emits in loops.
+ * PRODUCTION-GRADE: Sanitizes LLM output to prevent 'ghost loops' and 'stuttering'.
+ * Removes common invisible unicode characters and heals word-level repetitions.
  */
 export function sanitizeAiText(text: string): string {
   if (!text) return "";
-  // Removes control chars, variation selectors, zero-width spaces, etc.
-  // U+FE00-U+FE0F are variation selectors, U+200B is zero-width space
-  return text
+
+  // 1. Remove invisible junk (variation selectors, zero-width spaces, etc.)
+  let sanitized = text
     .replace(/[\uFE00-\uFE0F\u200B-\u200D\u2060\uFEFF]/g, "")
-    .replace(/\s+/g, " ") // Collapse multiple spaces
+    .replace(/\s+/g, " ")
     .trim();
+
+  // 2. HEAL: Word-level Repetition (Stuttering)
+  // Catch phrases or words repeated 3+ times (e.g., "Hello Hello Hello")
+  const phrasePattern = /(\b.+?\b)\1{3,}/gi;
+  if (phrasePattern.test(sanitized)) {
+    logger.warn("ai.engine.stutter_detected", { original: sanitized.substring(0, 100) });
+    // Keep the first execution of the pattern, discard the rest
+    sanitized = sanitized.replace(phrasePattern, "$1");
+  }
+
+  // 3. HEAL: Hard-Truncate extreme length (Backup guard)
+  // Most social replies shouldn't exceed 2000 chars unless explicitly long-form
+  if (sanitized.length > 5000) {
+    logger.warn("ai.engine.excessive_length_truncated", { length: sanitized.length });
+    sanitized = sanitized.substring(0, 2000) + "...";
+  }
+
+  return sanitized;
 }
 
 function repairAndParseAiResponse(text: string): AiRoutingDecision {

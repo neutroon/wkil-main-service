@@ -438,10 +438,9 @@ export async function processMetaMessage(job: MetaMessageJob) {
             }
 
             // 1. SCHEDULE Durable Public Greeting (Durable Jitter)
-            // Reduced delay to 1-3 seconds for near real-time response perception
-            const publicText =
-              publicSaved?.content || "Thanks! Check your DMs.";
-            const delaySec = 1 + Math.floor(Math.random() * 2);
+            // Human-like response simulation (20 to 45 seconds) to avoid robotic instant replies
+            const publicText = publicSaved?.content || "Thanks! Check your DMs.";
+            const delaySec = 20 + Math.floor(Math.random() * 25);
             const nextAttemptAt = new Date(Date.now() + delaySec * 1000);
 
             await prisma.metaJob.create({

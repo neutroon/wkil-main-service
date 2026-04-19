@@ -298,6 +298,12 @@ export async function processMetaMessage(job: MetaMessageJob) {
       }
     }
 
+    // Emit "AI Typing" for better UX
+    emitToBusiness(businessProfileId, "customer_typing", { 
+      conversationId: conversation.id, 
+      typing: true 
+    });
+
     const reply = await computeBusinessChatReply({
       businessProfile,
       messageText: finalContent,
@@ -308,6 +314,11 @@ export async function processMetaMessage(job: MetaMessageJob) {
         ? { id: mediaId, type: type || "image", url: mediaMetadata?.url }
         : undefined,
       postContext,
+    });
+
+    emitToBusiness(businessProfileId, "customer_typing", { 
+      conversationId: conversation.id, 
+      typing: false 
     });
 
     if (reply.action === "RESOLVE_CONVERSATION") {
@@ -405,6 +416,12 @@ export async function processMetaMessage(job: MetaMessageJob) {
           });
           // Update local conversation object for subsequent emits if needed
           conversation.postUrl = postUrl;
+
+          // Emit sync to UI
+          emitToBusiness(businessProfileId, "conversation_updated", {
+            id: conversation.id,
+            postUrl,
+          });
         }
       } catch (err: any) {
         logger.warn("facebook.processor.post_url_resolve_failed", {

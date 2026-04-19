@@ -395,6 +395,8 @@ export async function processMetaMessage(job: MetaMessageJob) {
             ? "PRIVATE_DM_REPLY"
             : reply.handoffCategory,
         intent: reply.intent, // Persist detected intent
+        isPrivate: isComment && reply.intent === "SALES_DM",
+        origin: isComment ? "facebook_comment_reply" : undefined,
       });
 
       emitToBusiness(businessProfileId, "new_message", {
@@ -431,6 +433,8 @@ export async function processMetaMessage(job: MetaMessageJob) {
           status, // Should match main status
           handoffCategory: "PUBLIC_COMMENT_REPLY",
           intent: reply.intent, // Tag with same intent
+          isPrivate: false,
+          origin: "facebook_comment_public_reply",
         });
 
         emitToBusiness(businessProfileId, "new_message", {
@@ -575,6 +579,8 @@ export async function processMetaMessage(job: MetaMessageJob) {
                       externalId: dmRes.id,
                       intent: reply.intent,
                       aiReasoning: reply.reasoning,
+                      isPrivate: true,
+                      origin: "facebook_comment_reply",
                       mediaMetadata: { 
                         origin: "facebook_comment_reply", 
                         postId: job.postId,

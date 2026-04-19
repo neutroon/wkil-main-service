@@ -110,10 +110,16 @@ async function drainQueue(): Promise<void> {
       if (pendingJobs.length === 0) break;
 
       // 2. Filter out jobs for users currently being processed
-      const jobsToRun = pendingJobs.filter(job => {
+      // CRITICAL BUG FIX (Batch Level Serizalization): 
+      // We must track which keys we've picked IN THIS EXACT BATCH to prevent picking 2 jobs for same user at once.
+      const jobsToRun: typeof pendingJobs = [];
+      for (const job of pendingJobs) {
         const key = `${job.platform}:${job.identifier}:${job.senderId}`;
-        return !ACTIVE_PROCESSING_KEYS.has(key);
-      });
+        if (!ACTIVE_PROCESSING_KEYS.has(key)) {
+          ACTIVE_PROCESSING_KEYS.add(key);
+          jobsToRun.push(job);
+        }
+      }
 
       if (jobsToRun.length === 0) {
         // All pending jobs are for active users; wait for next cycle
@@ -124,9 +130,7 @@ async function drainQueue(): Promise<void> {
       await Promise.all(jobsToRun.map(async (jobRecord) => {
         const key = `${jobRecord.platform}:${jobRecord.identifier}:${jobRecord.senderId}`;
         
-        // Lock this user
-        ACTIVE_PROCESSING_KEYS.add(key);
-
+        // Lock already set in the filter stage for this batch
         try {
           // Mark as processing to avoid double pickup
           await prisma.metaJob.update({

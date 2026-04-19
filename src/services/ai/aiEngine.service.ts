@@ -182,6 +182,7 @@ export function sanitizeAiText(text: string): string {
 }
 
 function repairAndParseAiResponse(text: string): AiRoutingDecision {
+  logger.debug("ai.engine.raw_response_trace", { text });
   let cleaned = text.trim();
   let decision: any = null;
 

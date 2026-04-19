@@ -135,8 +135,10 @@ async function generateContentStream(
   responseMimeType?: string,
   enableSearch?: boolean,
   onRetry?: (msg: string) => void,
+  temperature: number = 0.4,
 ) {
   const config: any = {
+    temperature,
     responseMimeType: enableSearch
       ? "text/plain"
       : responseMimeType || "text/plain",
@@ -161,8 +163,10 @@ async function generateContent(
   responseMimeType?: string,
   enableSearch?: boolean,
   onRetry?: (msg: string) => void,
+  temperature: number = 0.4,
 ): Promise<{ text: string; usage: AiUsageMetadata }> {
   const config: any = {
+    temperature,
     responseMimeType: enableSearch
       ? "text/plain"
       : responseMimeType || "text/plain",
@@ -433,6 +437,7 @@ export async function generateMessengerAssistantReply(params: {
   historyTurns: { role: "user" | "model"; text?: string; parts?: any[] }[];
   customerMessage: string;
   tools?: Tool[];
+  temperature?: number;
 }): Promise<{ response: any; usage: AiUsageMetadata }> {
   const contents = [
     ...params.historyTurns.map((t) => ({
@@ -453,7 +458,7 @@ export async function generateMessengerAssistantReply(params: {
           contents,
           config: {
             systemInstruction: params.systemInstruction,
-            temperature: 0.35,
+            temperature: params.temperature ?? 0.4,
             maxOutputTokens: 1024,
             responseMimeType: "text/plain",
             safetySettings: MESSENGER_SAFETY_SETTINGS,

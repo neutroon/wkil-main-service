@@ -283,33 +283,32 @@ export async function listConversationMessages(
 
   let conversationIdsFetch = [conversationId];
 
-  // 2. Convergence Logic: If this is a Messenger thread, find all sibling comment threads
-  if (mainConv.channel === "messenger") {
+  // 2. Convergence Logic: If this is a Messenger or Comment thread, find all sibling threads
+  if (mainConv.channel === "messenger" || mainConv.channel === "facebook_comment") {
     const siblings = await prisma.conversation.findMany({
       where: {
         senderId: mainConv.senderId,
         pageId: mainConv.pageId,
-        channel: "facebook_comment"
+        channel: "facebook_comment",
+        id: { not: mainConv.id } // Only fetch OTHER comment threads
       },
       select: { id: true }
     });
     conversationIdsFetch = [conversationId, ...siblings.map(s => s.id)];
   }
 
-  // 3. Selective Fetch: We want ALL messages from the main thread, 
-  // but ONLY "Private DMs" from the comment threads.
+  // 3. Selective Fetch: 
+  // - Messenger: Native messages + Sibling Private DMs
+  // - Comments: Native messages + ALL Sibling comments
   const messages = await prisma.conversationMessage.findMany({
     where: {
       conversationId: { in: conversationIdsFetch },
       ...(cursor ? { id: { lt: cursor } } : {}),
-      // If the message is from a sibling (comment) thread, it MUST be a private AI reply
       OR: [
-        { conversationId: mainConv.id }, // All native messages
-        { 
-          conversationId: { not: mainConv.id },
-          role: "model",
-          intent: "SALES_DM" // Only the private offers from comments
-        }
+        { conversationId: mainConv.id }, // Native messages always included
+        mainConv.channel === "messenger" 
+          ? { conversationId: { not: mainConv.id }, role: "model", intent: "SALES_DM" }
+          : { conversationId: { not: mainConv.id } } // Pull full history for comments
       ]
     },
     orderBy: { id: "desc" },
@@ -351,7 +350,13 @@ export async function listConversationMessages(
   const nextCursor = messages.length > 0 ? messages[messages.length - 1].id : null;
   const hasMore = messages.length === limit;
 
-  return { data, nextCursor, hasMore };
+  return { 
+    data, 
+    meta: {
+        nextCursor,
+        hasMore
+    } 
+  };
 }
 
 /**

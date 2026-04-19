@@ -292,6 +292,13 @@ export async function processMetaMessage(job: MetaMessageJob) {
             });
             logger.info("meta.processor.public_greeting_scheduled", { commentId: job.commentId, delaySec });
 
+            // UI SIGNAL: Notify the dashboard that a public greeting is scheduled
+            emitToBusiness(businessProfileId, "job_scheduled", { 
+              conversationId: conversation.id, 
+              type: "FACEBOOK_COMMENT_PUBLIC_REPLY",
+              nextAttemptAt 
+            });
+
 
             // 2. Sending Private DM ONLY if intent is SALES_DM AND the setting is enabled for this page
             const isAutoDmAllowed = pageSettings?.commentAutoDmEnabled === true;

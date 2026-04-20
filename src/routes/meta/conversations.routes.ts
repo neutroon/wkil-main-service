@@ -328,6 +328,88 @@ conversationsRoutes.patch(
   }
 );
 
+/**
+ * PATCH /v1/meta/conversations/:id/status
+ * Update conversation lifecycle status (OPEN, ARCHIVED, RESOLVED).
+ */
+conversationsRoutes.patch(
+  "/:id/status",
+  authenticateToken,
+  async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).user.id as number;
+      const conversationId = parseInt(req.params.id, 10);
+      const { status } = req.body as { status: string };
+
+      const validStatuses = ["OPEN", "ARCHIVED", "RESOLVED", "SNOOZED"];
+      if (!validStatuses.includes(status)) {
+        return res.status(400).json({ error: "Invalid status" });
+      }
+
+      const phoneNumberIds = await getUserPhoneNumberIds(userId);
+      const conversation = await prisma.conversation.findFirst({
+        where: { id: conversationId, pageId: { in: phoneNumberIds } }
+      });
+
+      if (!conversation) return res.status(404).json({ error: "Not found" });
+
+      const updated = await prisma.conversation.update({
+        where: { id: conversationId },
+        data: { status }
+      });
+
+      emitToBusiness(conversation.businessProfileId, "conversation_status_updated", {
+        conversationId: updated.id,
+        status: updated.status
+      });
+
+      return res.json({ data: updated });
+    } catch (error: any) {
+      return res.status(500).json({ error: "Failed to update status" });
+    }
+  }
+);
+
+/**
+ * DELETE /v1/meta/conversations/:id
+ * Hard delete - restricted to ADMIN/SUPER_ADMIN roles.
+ */
+conversationsRoutes.delete(
+  "/:id",
+  authenticateToken,
+  async (req: Request, res: Response) => {
+    try {
+      const user = (req as any).user;
+      const isAdmin = user.role === "admin" || user.role === "super_admin";
+      
+      if (!isAdmin) {
+        return res.status(403).json({ error: "Only admins can perform a hard delete." });
+      }
+
+      const conversationId = parseInt(req.params.id, 10);
+      const phoneNumberIds = await getUserPhoneNumberIds(user.id);
+      
+      const conversation = await prisma.conversation.findFirst({
+        where: { id: conversationId, pageId: { in: phoneNumberIds } }
+      });
+
+      if (!conversation) return res.status(404).json({ error: "Not found" });
+
+      await prisma.conversation.delete({
+        where: { id: conversationId }
+      });
+
+      emitToBusiness(conversation.businessProfileId, "conversation_deleted", {
+        conversationId
+      });
+
+      return res.json({ success: true });
+    } catch (error: any) {
+      return res.status(500).json({ error: "Failed to delete conversation" });
+    }
+  }
+);
+
 // ─── POST /v1/whatsapp/conversations/:id/messages ────────────────────────────
 /**
  * Send a human-initiated outbound message from the dashboard.

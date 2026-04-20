@@ -437,6 +437,7 @@ export async function listMessengerConversations(
     where: {
       pageId: { in: pageIds },
       channel: { in: ["messenger", "facebook_comment"] },
+      status: { not: "ARCHIVED" },
     },
     _max: {
       updatedAt: true,

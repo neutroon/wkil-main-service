@@ -10,7 +10,7 @@ import {
 } from "../../config/gemini";
 import { pushLeadToCrm } from "../crm/crm.service";
 import { executeExternalQuery } from "../external/externalData.service";
-import { recordAiUsage } from "../billing.service";
+import { recordAiUsage, assertQuotaAvailable } from "../billing.service";
 import prisma from "../../config/prisma";
 
 type VerificationStatus = "verified" | "unverified" | "failed";
@@ -321,6 +321,7 @@ export async function runAIEngineLoop(params: {
   }
 
   const userId = profile.userId;
+  await assertQuotaAvailable(userId, params.businessProfileId);
   const policy = resolveTruthfulnessPolicy(params.policy);
 
   // Prepare User Part (Text + Optional Media)

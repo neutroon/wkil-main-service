@@ -119,6 +119,14 @@ export const resendVerification = async (email: string) => {
     return { message: "If the account is unverified, a new link has been sent." };
   }
 
+  const now = new Date();
+  const cooldownPeriod = 60 * 1000; // 60 seconds
+
+  if (user.lastVerificationSentAt && (now.getTime() - user.lastVerificationSentAt.getTime() < cooldownPeriod)) {
+    const remaining = Math.ceil((cooldownPeriod - (now.getTime() - user.lastVerificationSentAt.getTime())) / 1000);
+    throw new Error(`Please wait ${remaining} seconds before requesting another email.`);
+  }
+
   const verificationToken = generateRandomToken();
   const hashedToken = hashToken(verificationToken);
 
@@ -126,6 +134,7 @@ export const resendVerification = async (email: string) => {
     where: { id: user.id },
     data: {
       emailVerificationToken: hashedToken,
+      lastVerificationSentAt: now,
     },
   });
 

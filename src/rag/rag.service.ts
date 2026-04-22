@@ -160,6 +160,9 @@ export async function retrieveRelevantChunks(
 
   if (!profile) return [];
 
+  // Pre-flight quota check
+  await assertQuotaAvailable(profile.userId, businessProfileId);
+
   // Log retrieval embedding usage
   recordAiUsage({
     userId: profile.userId,

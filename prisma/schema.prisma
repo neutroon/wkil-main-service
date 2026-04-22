@@ -29,6 +29,12 @@ model User {
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
 
+  // Identity Lifecycle (Production Grade)
+  isEmailVerified        Boolean   @default(false)
+  emailVerificationToken String?   @unique
+  passwordResetToken     String?   @unique
+  passwordResetExpires   DateTime?
+
   // Management relationships
   managedUsers  UserManagement[] @relation("ManagerRelations")
   managedBy     UserManagement[] @relation("UserRelations")

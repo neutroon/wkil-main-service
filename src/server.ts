@@ -1,14 +1,12 @@
+import "dotenv/config";
 import { createServer } from "http";
 import app from "./app";
-import dotenv from "dotenv";
 import { initSocket } from "./utils/socket";
 
 import { bootstrapMetaQueue, startMetaQueue } from "./queues/meta.queue";
 import { startMediaRefreshJob } from "./jobs/mediaRefresh.job";
 import { logger } from "./utils/logger";
 import prisma from "./config/prisma";
-
-dotenv.config();
 
 const PORT = Number(process.env.PORT) || 8080;
 

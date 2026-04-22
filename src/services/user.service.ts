@@ -82,11 +82,8 @@ export const getUserById = async (
   id: number,
   includeInactive: boolean = false,
 ) => {
-  return prisma.user.findFirst({
-    where: {
-      id,
-      ...(includeInactive ? {} : { isActive: true }),
-    },
+  return prisma.user.findUnique({
+    where: { id },
     select: {
       id: true,
       name: true,
@@ -94,8 +91,6 @@ export const getUserById = async (
       role: true,
       plan: true,
       isBusinessProfileCreated: true,
-      monthlyQuota: true,
-      monthlyTokensUsed: true,
       monthlyCreditsUsed: true,
       monthlyCreditQuota: true,
       isActive: true,
@@ -103,7 +98,6 @@ export const getUserById = async (
       createdAt: true,
       updatedAt: true,
       facebookAccounts: {
-        where: { isActive: true },
         select: {
           id: true,
           facebookUserId: true,
@@ -111,7 +105,6 @@ export const getUserById = async (
           pictureUrl: true,
           isActive: true,
           pages: {
-            where: { isActive: true },
             select: {
               id: true,
               pageId: true,
@@ -123,7 +116,9 @@ export const getUserById = async (
               businessProfileId: true,
             },
           },
-          _count: { select: { activities: true } },
+          _count: {
+            select: { activities: true },
+          },
         },
       },
       businessProfiles: {
@@ -133,12 +128,13 @@ export const getUserById = async (
           responseMode: true,
           plan: true,
           monthlyCreditsUsed: true,
-          monthlyTokensUsed: true,
           brandKitCompleted: true,
           createdAt: true,
-        }
+        },
       },
-      _count: { select: { businessProfiles: true } },
+      _count: {
+        select: { businessProfiles: true },
+      },
     },
   });
 };

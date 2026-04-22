@@ -152,32 +152,70 @@ router.get("/:id/sync-status", authenticateToken, async (req: Request, res: Resp
 
 // ── POST /v1/media/:id/retry — Re-enqueue manual sync ────────────────────────
 router.post("/:id/retry", authenticateToken, async (req: Request, res: Response) => {
+  // ... (existing logic)
+});
+
+/**
+ * ── POST /v1/media/ai/generate ──────────────────────────────────────────────
+ * Unified End-to-End Gemini 3.1 Visual Generation
+ */
+router.post("/ai/generate", authenticateToken, async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user.id;
-    const assetId = Number(req.params.id);
+    const { businessProfileId, prompt, postId } = req.body;
 
-    // Verify ownership
-    const asset = await prisma.businessProfileMedia.findFirst({
-      where: { id: assetId, userId },
-    });
-    if (!asset) return res.status(404).json({ error: "Asset not found" });
+    if (!businessProfileId || !prompt) {
+      return res.status(400).json({ error: "businessProfileId and prompt are required" });
+    }
 
-    // Reset sync states to pending for immediate UI feedback
-    await prisma.businessProfileMedia.update({
-      where: { id: assetId },
-      data: {
-        whatsappSyncStatus: "PENDING",
-        messengerSyncStatus: "PENDING",
-      },
+    const { createGeminiVisual } = await import("../services/media/geminiVisual.service");
+    const asset = await createGeminiVisual({
+      userId,
+      businessProfileId: Number(businessProfileId),
+      userPrompt: prompt,
+      postId: postId ? Number(postId) : undefined,
     });
 
-    // Enqueue job with high priority (it's a manual retry)
-    await enqueueMediaSyncJob(assetId);
-
-    return res.json({ message: "Resync enqueued successfully" });
+    return res.status(201).json({ 
+      data: asset, 
+      message: "Studio asset generated successfully. Meta sync pending." 
+    });
   } catch (err: any) {
-    logger.error("media.routes.retry_failed", { error: err.message });
-    return res.status(500).json({ error: "Failed to retry sync" });
+    logger.error("media.gemini.generate_failed", { error: err.message });
+    const status = err.statusCode || 500;
+    return res.status(status).json({ error: err.message });
+  }
+});
+
+/**
+ * ── POST /v1/media/ai/refine ────────────────────────────────────────────────
+ * Conversational Image Editing via Gemini 3.1 (Nano Banana 2)
+ */
+router.post("/ai/refine", authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user.id;
+    const { businessProfileId, assetId, instruction } = req.body;
+
+    if (!businessProfileId || !assetId || !instruction) {
+      return res.status(400).json({ error: "businessProfileId, assetId, and instruction are required" });
+    }
+
+    const { refineGeminiVisual } = await import("../services/media/geminiVisual.service");
+    const asset = await refineGeminiVisual({
+      userId,
+      businessProfileId: Number(businessProfileId),
+      assetId: Number(assetId),
+      instruction,
+    });
+
+    return res.status(200).json({ 
+      data: asset, 
+      message: "Asset refined successfully via Nano Banana reasoning." 
+    });
+  } catch (err: any) {
+    logger.error("media.gemini.refine_failed", { error: err.message });
+    const status = err.statusCode || 500;
+    return res.status(status).json({ error: err.message });
   }
 });
 

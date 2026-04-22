@@ -1169,6 +1169,7 @@ export const getAdminAnalytics = async (days: number = 30) => {
       totalPages,
       recentActivities,
       userAnalytics,
+      creditsAgg,
     ] = await Promise.all([
       prisma.user.count(),
       prisma.user.count({
@@ -1208,7 +1209,13 @@ export const getAdminAnalytics = async (days: number = 30) => {
         },
         orderBy: { date: "desc" },
       }),
+      prisma.businessProfile.aggregate({
+        _sum: { monthlyTokensUsed: true }
+      }),
     ]);
+
+    const totalCreditsUsed = creditsAgg._sum.monthlyTokensUsed || 0;
+    const totalRevenue = totalCreditsUsed * 0.001;
 
     return {
       overview: {
@@ -1217,6 +1224,7 @@ export const getAdminAnalytics = async (days: number = 30) => {
         totalAccounts,
         totalPages,
         activeRate: totalUsers > 0 ? (activeUsers / totalUsers) * 100 : 0,
+        totalRevenue: parseFloat(totalRevenue.toFixed(2)),
       },
       recentActivities,
       userAnalytics,

@@ -59,7 +59,7 @@ export const createUser = async (
 export const loginUser = async (email: string, password: string) => {
   const user = await prisma.user.findUnique({
     where: { email },
-    select: { id: true, name: true, email: true, password: true, role: true },
+    select: { id: true, name: true, email: true, password: true, role: true, isEmailVerified: true, lastVerificationSentAt: true },
   });
 
   if (!user) {
@@ -91,6 +91,8 @@ export const loginUser = async (email: string, password: string) => {
     name: user.name,
     email: user.email,
     role: user.role,
+    isEmailVerified: user.isEmailVerified,
+    lastVerificationSentAt: user.lastVerificationSentAt,
     accessToken,
     refreshToken,
   };
@@ -108,6 +110,8 @@ export const getUserById = async (
       email: true,
       role: true,
       plan: true,
+      isEmailVerified: true,
+      lastVerificationSentAt: true,
       isBusinessProfileCreated: true,
       monthlyCreditsUsed: true,
       monthlyCreditQuota: true,
@@ -169,6 +173,7 @@ export const getAllUsers = async (includeInactive: boolean = false) => {
       monthlyQuota: true,
       monthlyTokensUsed: true,
       isActive: true,
+      isEmailVerified: true,
       isBusinessProfileCreated: true,
       deletedAt: true,
       createdAt: true,
@@ -340,6 +345,7 @@ export const getManagedUsers = async (managerId: number) => {
           name: true,
           email: true,
           role: true,
+          isEmailVerified: true,
           isActive: true,
           deletedAt: true,
           createdAt: true,

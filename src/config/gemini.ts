@@ -52,6 +52,7 @@ const MODELS = {
   PRIMARY: "gemini-3-flash-preview",        // Best quality
   RESERVE: "gemini-3.1-flash-lite-preview", // Cheaper/faster preview
   STABLE:  "gemini-2.5-flash",              // Non-preview, always available
+  IMAGE_GEN: "gemini-3.1-flash-image-preview", // Nano Banana 2 (Visual)
 };
 
 /**
@@ -558,6 +559,70 @@ async function embedQuery(
     vector: result.embeddings![0].values!,
     totalTokens: tokens,
   };
+}
+
+export async function generateVisualContent(params: {
+  prompt: string;
+  imageBuffer?: Buffer; // For editing existing images
+  mimeType?: string;
+  onRetry?: (msg: string) => void;
+  aspectRatio?: string; // e.g. "1:1", "16:9", "9:16"
+}): Promise<{ imageBuffer: Buffer; usage: AiUsageMetadata }> {
+  // Use specialized image generation tier
+  const model = MODELS.IMAGE_GEN;
+
+  // Prepare contents array
+  const parts: any[] = [{ text: params.prompt }];
+  
+  // If editing, add the base image
+  if (params.imageBuffer) {
+    parts.push({
+      inlineData: {
+        data: params.imageBuffer.toString("base64"),
+        mimeType: params.mimeType || "image/png",
+      },
+    });
+  }
+
+  try {
+    const response = await genAI.models.generateContent({
+      model,
+      contents: [{ role: "user", parts }],
+      config: {
+        // High fidelity social parameters for April 2026
+        temperature: 0.7,
+        maxOutputTokens: 2048,
+      },
+    });
+
+    const usage = response.usageMetadata;
+
+    // Extract image binary from the multimodal response parts
+    const imagePart = response.candidates?.[0]?.content?.parts?.find(
+      (p: any) => p.inlineData || p.fileData
+    );
+
+    if (!imagePart || (!imagePart.inlineData && !imagePart.fileData)) {
+      throw new Error("No image was generated in the response parts. Safety filter might have triggered.");
+    }
+
+    const base64Data = imagePart.inlineData?.data || (imagePart as any).fileData?.data;
+    if (!base64Data) throw new Error("Image data was empty in the response (Model might have returned a File URI instead of bytes).");
+
+    return {
+      imageBuffer: Buffer.from(base64Data, "base64"),
+      usage: {
+        promptTokens: usage?.promptTokenCount || 0,
+        completionTokens: usage?.candidatesTokenCount || 0, // Pixels are counted as output tokens
+        totalTokens: usage?.totalTokenCount || 0,
+        groundingCalls: 0,
+        model,
+      },
+    };
+  } catch (error: any) {
+    logger.error(`[GeminiVisual] Final failure on model ${model}:`, { error: error.message });
+    throw error;
+  }
 }
 
 export { generateContent, generateContentStream, embedTexts, embedQuery };

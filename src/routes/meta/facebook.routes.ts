@@ -306,10 +306,6 @@ facebookRoutes.get(
       const { pageId } = req.params;
       const { access_token } = req.query;
 
-      if (!access_token) {
-        return res.status(400).json({ error: "access_token is required" });
-      }
-
       const result = await getPagePosts(pageId, access_token as string);
       res.json(result);
     } catch (error: unknown) {
@@ -351,11 +347,7 @@ facebookRoutes.get(
       const { postId } = req.params;
       const { access_token } = req.query;
 
-      if (!access_token) {
-        return res.status(400).json({ error: "access_token is required" });
-      }
-
-      const result = await getPostComments(postId, access_token as string);
+      const result = await getPostComments(postId, access_token as string || "");
       res.json(result);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
@@ -374,9 +366,9 @@ facebookRoutes.post(
       const { commentId } = req.params;
       const { message, accessToken } = req.body;
 
-      if (!commentId || !message || !accessToken) {
+      if (!commentId || !message) {
         return res.status(400).json({
-          error: "commentId, message, and accessToken are required",
+          error: "commentId and message are required",
         });
       }
 

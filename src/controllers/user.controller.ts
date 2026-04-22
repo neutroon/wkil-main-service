@@ -12,6 +12,8 @@ import {
 import {
   setAuthCookies,
   clearAuthCookies,
+  generateAccessToken,
+  generateRefreshToken,
   // setUserRoleCookies,
 } from "../middlewares/auth.middleware";
 
@@ -19,8 +21,28 @@ export const registerUser = async (req: Request, res: Response) => {
   try {
     const { name, email, password, role } = req.body;
     const user = await createUser(name, email, password, role);
+
+    // Auto-login: Generate tokens
+    const accessToken = generateAccessToken({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+    });
+
+    const refreshToken = generateRefreshToken({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+    });
+
+    // Set HTTP-only cookies
+    setAuthCookies(res, accessToken, refreshToken);
+
     res.status(201).json({
       message: "User created successfully",
+      accessToken,
       user: {
         id: user.id,
         name: user.name,

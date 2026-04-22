@@ -6,6 +6,8 @@ import {
 } from "../middlewares/auth.middleware";
 import { getBillingMultiplier } from "./settings.service";
 import { clearQuotaCache } from "./billing.service";
+import { generateRandomToken, hashToken } from "../utils/tokenCrypto";
+import { sendVerificationEmail } from "./mail.service";
 
 export const createUser = async (
   name: string,
@@ -21,21 +23,37 @@ export const createUser = async (
     throw new Error("User already exists");
   }
 
-  return prisma.user.create({
+  // Generate verification token (unhashed for email, hashed for DB)
+  const verificationToken = generateRandomToken();
+  const hashedVerificationToken = hashToken(verificationToken);
+
+  const user = await prisma.user.create({
     data: {
       name,
       email,
       password: hashed,
       role: role as "user" | "admin" | "manager" | "super_admin",
+      isEmailVerified: false,
+      emailVerificationToken: hashedVerificationToken,
     },
     select: {
       id: true,
       name: true,
       email: true,
       role: true,
+      isEmailVerified: true,
       createdAt: true,
     },
   });
+
+  // Send verification email asynchronously
+  sendVerificationEmail(user.email, user.name, verificationToken).catch((err) => {
+    // We log but don't fail the registration if the email fails (user can resend later)
+    const { logger } = require("../utils/logger");
+    logger.error("Registration email dispatch failed", { userId: user.id, error: err });
+  });
+
+  return user;
 };
 
 export const loginUser = async (email: string, password: string) => {
@@ -175,7 +193,7 @@ export const updateUserRole = async (
       data: {
         role: role as "user" | "admin" | "manager" | "super_admin",
         name,
-        email,
+        // email: email, // Disabled for production identity stability
         plan,
         monthlyQuota,
       },

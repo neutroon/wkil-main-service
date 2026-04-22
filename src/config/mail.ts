@@ -1,9 +1,5 @@
 import nodemailer from "nodemailer";
 import { logger } from "../utils/logger";
-import dotenv from "dotenv";
-
-// Ensure environment variables are loaded before configuration is defined
-dotenv.config();
 
 /**
  * Production-grade SMTP Configuration

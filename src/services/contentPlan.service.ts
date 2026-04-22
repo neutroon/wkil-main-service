@@ -27,7 +27,7 @@ export async function* generateContentStrategyStream(briefing: BriefingInput) {
   }
 
   // Pre-flight quota check
-  await assertQuotaAvailable(briefing.businessProfileId);
+  await assertQuotaAvailable(profile.userId, briefing.businessProfileId);
 
   // 1. Common Persona Details
   const persona = `
@@ -241,7 +241,7 @@ export async function generateContentStrategy(briefing: BriefingInput) {
   }
 
   // Pre-flight quota check
-  await assertQuotaAvailable(briefing.businessProfileId);
+  await assertQuotaAvailable(profile.userId, briefing.businessProfileId);
 
   // 1. Common Persona Details
   const persona = `
@@ -449,7 +449,7 @@ export async function generatePostExecution(postId: number, userId: number) {
   }
 
   // Pre-flight quota check
-  await assertQuotaAvailable(post.contentPlan.businessProfile.id);
+  await assertQuotaAvailable(userId, post.contentPlan.businessProfile.id);
 
   if (post.contentPlan.userId !== userId) {
     throw new Error("Unauthorized");

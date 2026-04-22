@@ -8,6 +8,7 @@ import {
   PLAN_TOKEN_LIMITS,
 } from "../config/billing";
 import { getBillingMultiplier } from "./settings.service";
+import { AppError } from "../middlewares/errorHandler.middleware";
 
 /**
  * Calculates YOUR cost to Google (system cost).
@@ -111,8 +112,9 @@ export async function assertQuotaAvailable(
   };
 
   if (isOverQuota) {
-    throw new Error(
-      `AI quota exceeded for plan ${user.plan}. Please upgrade.`,
+    throw new AppError(
+      `AI quota exceeded for plan ${user.plan}. Please upgrade for more tokens.`,
+      402,
     );
   }
 }

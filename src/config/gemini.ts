@@ -564,7 +564,9 @@ async function embedQuery(
 export async function generateVisualContent(params: {
   prompt: string;
   imageBuffer?: Buffer; // For editing existing images
+  brandLogoBuffer?: Buffer; // For native branding
   mimeType?: string;
+  brandLogoMimeType?: string;
   onRetry?: (msg: string) => void;
   aspectRatio?: string; // e.g. "1:1", "16:9", "9:16"
 }): Promise<{ imageBuffer: Buffer; usage: AiUsageMetadata }> {
@@ -580,6 +582,16 @@ export async function generateVisualContent(params: {
       inlineData: {
         data: params.imageBuffer.toString("base64"),
         mimeType: params.mimeType || "image/png",
+      },
+    });
+  }
+
+  // If branding, add the brand logo as a reference image
+  if (params.brandLogoBuffer) {
+    parts.push({
+      inlineData: {
+        data: params.brandLogoBuffer.toString("base64"),
+        mimeType: params.brandLogoMimeType || "image/png",
       },
     });
   }

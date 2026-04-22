@@ -41,6 +41,7 @@
     "multer": "^2.0.2",
     "multer-storage-cloudinary": "^4.0.0",
     "node-cron": "^4.2.1",
+    "nodemailer": "^8.0.5",
     "os": "^0.1.2",
     "socket.io": "^4.8.3"
   },
@@ -52,6 +53,7 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^2.0.0",
     "@types/node": "^24.5.2",
+    "@types/nodemailer": "^8.0.0",
     "@types/socket.io": "^3.0.1",
     "nodemon": "^3.1.10",
     "prisma": "^6.16.2",

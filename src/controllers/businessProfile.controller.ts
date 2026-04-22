@@ -32,6 +32,15 @@ interface BusinessProfileBody {
   address?: string;
   faqs?: Faq[];
   knowledgeSections?: KnowledgeSection[];
+  brandLogoUrl?: string;
+  brandPrimaryColor?: string;
+  brandSecondaryColor?: string;
+  brandAccentColor?: string;
+  visualAesthetic?: string;
+  artStyle?: string;
+  brandKitCompleted?: boolean;
+  brandWatermarkEnabled?: boolean;
+  watermarkPosition?: "TOP_LEFT" | "TOP_RIGHT" | "BOTTOM_LEFT" | "BOTTOM_RIGHT" | "CENTER";
   leadCaptureInstructions?: string;
 }
 
@@ -52,6 +61,15 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
       faqs,
       knowledgeSections,
       leadCaptureInstructions,
+      brandLogoUrl,
+      brandPrimaryColor,
+      brandSecondaryColor,
+      brandAccentColor,
+      visualAesthetic,
+      artStyle,
+      brandKitCompleted,
+      brandWatermarkEnabled,
+      watermarkPosition,
     }: BusinessProfileBody = req.body;
 
     const userId = (req as any).user.id;
@@ -75,6 +93,15 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
         workingHours,
         address,
         leadCaptureInstructions,
+        brandLogoUrl,
+        brandPrimaryColor,
+        brandSecondaryColor,
+        brandAccentColor,
+        visualAesthetic,
+        artStyle,
+        brandKitCompleted,
+        brandWatermarkEnabled,
+        watermarkPosition,
         ...(faqs &&
           faqs.length > 0 && {
             faqs: {
@@ -203,6 +230,15 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
       faqs,
       knowledgeSections,
       leadCaptureInstructions,
+      brandLogoUrl,
+      brandPrimaryColor,
+      brandSecondaryColor,
+      brandAccentColor,
+      visualAesthetic,
+      artStyle,
+      brandKitCompleted,
+      brandWatermarkEnabled,
+      watermarkPosition,
     }: BusinessProfileBody = req.body;
 
     // Verify the profile exists AND belongs to this user
@@ -229,6 +265,15 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
         workingHours,
         address,
         leadCaptureInstructions,
+        brandLogoUrl,
+        brandPrimaryColor,
+        brandSecondaryColor,
+        brandAccentColor,
+        visualAesthetic,
+        artStyle,
+        brandKitCompleted,
+        brandWatermarkEnabled,
+        watermarkPosition,
         // Delete existing FAQs and recreate — avoids needing IDs in the payload
         ...(faqs && {
           faqs: {

@@ -5,7 +5,8 @@ import {
   EMBEDDING_RATE_PER_TOKEN,
   GROUNDING_FEE_PER_CALL,
   GROUNDING_FREE_TIER_PER_DAY,
-  PLAN_TOKEN_LIMITS,
+  PLAN_CREDIT_LIMITS,
+  CREDIT_VALUE_USD,
 } from "../config/billing";
 import { getBillingMultiplier } from "./settings.service";
 import { AppError } from "../middlewares/errorHandler.middleware";
@@ -25,10 +26,18 @@ export function calculateSystemCost(params: {
 
   // 1. Generation Cost (Model specific)
   if (params.modelName && (params.promptTokens || params.completionTokens)) {
-    const rates =
-      MODEL_PRICING[params.modelName] || MODEL_PRICING["gemini-3-flash"];
-    cost += (params.promptTokens || 0) * (rates.prompt / 1_000_000);
-    cost += (params.completionTokens || 0) * (rates.completion / 1_000_000);
+    const rates = MODEL_PRICING[params.modelName];
+
+    if (!rates) {
+      logger.warn("billing.calculate_cost.missing_model_rates", {
+        modelName: params.modelName,
+        fallbackTo: "gemini-3-flash",
+      });
+    }
+
+    const activeRates = rates || MODEL_PRICING["gemini-3-flash"];
+    cost += (params.promptTokens || 0) * (activeRates.prompt / 1_000_000);
+    cost += (params.completionTokens || 0) * (activeRates.completion / 1_000_000);
   }
 
   // 2. Embedding Cost
@@ -83,27 +92,27 @@ export async function assertQuotaAvailable(
   const cached = QUOTA_CACHE[userId];
   if (cached && cached.expiresAt > Date.now()) {
     if (cached.isOverQuota) {
-      throw new Error(`AI quota exceeded. Please upgrade.`);
+      throw new Error(`AI credit quota exceeded. Please upgrade.`);
     }
     return;
   }
 
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { plan: true, monthlyQuota: true, monthlyTokensUsed: true },
+    select: { plan: true, monthlyCreditQuota: true, monthlyCreditsUsed: true },
   });
 
   if (!user) {
     throw new Error("User not found");
   }
 
-  // Priority: 1. Admin Override (monthlyQuota) 2. Plan Limit
+  // Priority: 1. Admin Override (monthlyCreditQuota) 2. Plan Limit
   const limit =
-    user.monthlyQuota ||
-    PLAN_TOKEN_LIMITS[user.plan] ||
-    PLAN_TOKEN_LIMITS["FREE"];
+    user.monthlyCreditQuota ||
+    PLAN_CREDIT_LIMITS[user.plan] ||
+    PLAN_CREDIT_LIMITS["FREE"];
 
-  const isOverQuota = (user.monthlyTokensUsed || 0) >= limit;
+  const isOverQuota = (user.monthlyCreditsUsed || 0) >= limit;
 
   // Update Cache
   QUOTA_CACHE[userId] = {
@@ -113,7 +122,7 @@ export async function assertQuotaAvailable(
 
   if (isOverQuota) {
     throw new AppError(
-      `AI quota exceeded for plan ${user.plan}. Please upgrade for more tokens.`,
+      `AI credit quota exceeded for plan ${user.plan}. Please upgrade for more credits.`,
       402,
     );
   }
@@ -191,6 +200,9 @@ export async function recordAiUsage(params: {
         isGroundingFree,
       });
 
+    // 2.5 Convert Customer Cost to Credits (1 Credit = $0.001)
+    const creditsUsed = Math.ceil(customerCost / CREDIT_VALUE_USD);
+
     // 3. Perform atomic updates and logging in a transaction
     await prisma.$transaction([
       // A. Update Daily Aggregates
@@ -248,22 +260,24 @@ export async function recordAiUsage(params: {
         },
       }),
 
-      // C. Update total usage on BusinessProfile for usage estimation/reporting
+      // C. Update total usage (Credits) on BusinessProfile
       ...(businessProfileId
         ? [
             prisma.businessProfile.update({
               where: { id: businessProfileId },
               data: {
+                monthlyCreditsUsed: { increment: creditsUsed },
                 monthlyTokensUsed: { increment: totalTokens },
               },
             }),
           ]
         : []),
 
-      // D. Update total usage on User for global quota enforcement
+      // D. Update total usage on User (global quota enforcement)
       prisma.user.update({
         where: { id: userId },
         data: {
+          monthlyCreditsUsed: { increment: creditsUsed },
           monthlyTokensUsed: { increment: totalTokens },
         },
       }),

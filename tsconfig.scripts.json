@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "dist/scripts",
+    "noEmit": true
+  },
+  "include": ["scripts/**/*.ts", "src/utils/tokenCrypto.ts", "src/config/prisma.ts"]
+}

@@ -13,6 +13,7 @@ interface AuthRequest extends Request {
     name: string;
     email: string;
     role: "super_admin" | "admin" | "manager" | "user";
+    isEmailVerified: boolean;
   };
 }
 
@@ -145,7 +146,7 @@ export const authenticateToken = async (
         id: decoded.id,
         isActive: true,
       },
-      select: { id: true, name: true, email: true, role: true },
+      select: { id: true, name: true, email: true, role: true, isEmailVerified: true },
     });
 
     if (!user) {
@@ -160,6 +161,7 @@ export const authenticateToken = async (
       name: user.name,
       email: user.email,
       role: user.role as "user" | "admin",
+      isEmailVerified: user.isEmailVerified,
     };
 
     next();
@@ -347,6 +349,24 @@ export const requireUser = (
     return res.status(401).json({
       error: "Authentication required",
       code: "AUTH_REQUIRED",
+    });
+  }
+  next();
+};
+
+/**
+ * Middleware to enforce email verification.
+ * Blocks access to protected routes if the user's email is not verified.
+ */
+export const requireVerified = (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+) => {
+  if (!req.user || !req.user.isEmailVerified) {
+    return res.status(403).json({
+      error: "Email verification required",
+      code: "EMAIL_NOT_VERIFIED",
     });
   }
   next();

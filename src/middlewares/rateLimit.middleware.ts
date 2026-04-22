@@ -36,6 +36,19 @@ export const authLimiter = rateLimit({
   skipSuccessfulRequests: true, // Don't count successful requests
 });
 
+// High-intensity security limiter for forgot-password and resend-verification
+export const securityActionLimiter = rateLimit({
+  windowMs: 30 * 60 * 1000, // 30 minutes
+  max: 3, // Very strict: 3 attempts per half hour
+  message: {
+    error: "Too many security reset attempts, please try again in 30 minutes",
+    code: "SECURITY_ACTION_LIMIT_EXCEEDED",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: { trustProxy: false },
+});
+
 // Content generation rate limiting
 export const contentLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour

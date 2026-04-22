@@ -169,9 +169,8 @@ export async function getAiPerformanceStats(
   const revenue = actualSystemCost * multiplier;
   const profit = revenue - actualSystemCost;
 
-  // For the legacy 'estimatedCost' field:
-  // Show billed cost (revenue) to users/managers, and reveal profit to admins
-  const estimatedCost = revenue;
+  // 8. Role-based data hardening: Scrub sensitive fields for non-admins
+  const isAdmin = ["admin", "super_admin"].includes(role);
 
   return {
     automationRate,
@@ -182,13 +181,13 @@ export async function getAiPerformanceStats(
     accuracyScore,
     dailyVolume,
     totalTokensConsumed,
-    estimatedCost,
-    systemCost: actualSystemCost,
-    revenue,
-    profit,
-    billingMultiplier: multiplier,
-    groundingCalls: totalGroundingCalls,
-    embeddingTokens: totalEmbeddingTokens,
+    estimatedCost: revenue,
+    systemCost: isAdmin ? actualSystemCost : 0,
+    revenue: isAdmin ? revenue : 0,
+    profit: isAdmin ? profit : 0,
+    billingMultiplier: isAdmin ? multiplier : 0,
+    groundingCalls: isAdmin ? totalGroundingCalls : 0,
+    embeddingTokens: isAdmin ? totalEmbeddingTokens : 0,
   };
 }
 

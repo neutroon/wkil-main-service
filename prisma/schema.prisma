@@ -52,8 +52,10 @@ model User {
   // User-Centric Billing (Production Grade)
   plan                String    @default("FREE") // "FREE", "PRO", "ENTERPRISE"
   monthlyTokensUsed   Int       @default(0)     // Aggregated usage across all businesses
-  monthlyQuota        Int?                      // Individual hard-ceiling override from Admin
-  autoResetEnabled    Boolean   @default(true)  // Resets tokens at start of month
+  monthlyCreditsUsed  Int       @default(0)     // New Credit-based tracking
+  monthlyQuota        Int?                      // Individual hard-ceiling override (tokens)
+  monthlyCreditQuota  Int?                      // Individual hard-ceiling override (Credits)
+  autoResetEnabled    Boolean   @default(true)  // Resets usage at start of month
 }
 
 model BusinessProfile {
@@ -74,6 +76,18 @@ model BusinessProfile {
   workingHours        String?
   address             String?
   leadCaptureInstructions String? @default("Captures a prospective lead's information. Trigger this ONLY when the user explicitly expresses strong buying intent, asks for a callback, tells you their contact details, or wants to proceed with an action.")
+  
+  // Brand Kit & Visual DNA
+  brandLogoUrl           String?
+  brandPrimaryColor     String?
+  brandSecondaryColor   String?
+  brandAccentColor      String?
+  visualAesthetic       String?   // The Vibe (e.g., KHALEEJI_LUXURY)
+  artStyle             String?   // The Rendering (e.g., REALISTIC)
+  brandKitCompleted    Boolean   @default(false)
+  brandKitUpdatedAt    DateTime?
+  brandWatermarkEnabled Boolean   @default(true)
+  watermarkPosition     WatermarkPosition @default(BOTTOM_RIGHT)
 
   // Facebook Comment Settings
   facebookGreetingMode     String @default("AI") // "AI", "TEMPLATE"
@@ -87,6 +101,8 @@ model BusinessProfile {
 
   plan                String    @default("FREE") // "FREE", "PRO", "ENTERPRISE"
   monthlyTokensUsed   Int       @default(0)     // Rolling monthly usage for quota checks
+  monthlyCreditsUsed  Int       @default(0)     // New Credit-based tracking
+  monthlyCreditQuota  Int?                      // Individual hard-ceiling override (Credits)
   autoResetEnabled    Boolean   @default(false) // Whether usage resets automatically at month-start
 
   createdAt DateTime @default(now())
@@ -663,4 +679,12 @@ model BusinessProfileMediaSync {
   @@unique([mediaId, platform, identifier])
   @@index([mediaId])
   @@index([platform, identifier])
+}
+
+enum WatermarkPosition {
+  TOP_LEFT
+  TOP_RIGHT
+  BOTTOM_LEFT
+  BOTTOM_RIGHT
+  CENTER
 }

@@ -109,8 +109,15 @@ app.use(
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
+import { authenticateToken, requireVerified } from "./middlewares/auth.middleware";
+
 // ── Routes ───────────────────────────────────────────────────────────────────
 app.use("/v1/auth", authRoutes);
+
+// Protected Enterprise Routes (Require Authentication & Email Verification)
+app.use(authenticateToken);
+app.use(requireVerified);
+
 app.use("/v1/users", userRoutes);
 app.use("/v1/content", contentRoutes);
 app.use("/v1/facebook", facebookRoutes);

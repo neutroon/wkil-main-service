@@ -85,9 +85,7 @@ export const getCurrentUser = async (req: Request, res: Response) => {
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
-    // Include the current accessToken from cookies to allow the frontend to stay in sync
-    const accessToken = req.cookies?.accessToken || (req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.split(" ")[1] : null);
-    res.status(200).json({ ...user, accessToken });
+    res.status(200).json(user);
   } catch (err: any) {
     res.status(400).json({ error: err.message });
   }

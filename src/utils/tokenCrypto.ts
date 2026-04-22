@@ -49,3 +49,18 @@ export function decryptFacebookSecret(stored: string): string {
     "utf8",
   );
 }
+
+/**
+ * ── Identity Lifecycle Security (Production Grade) ──────────────────────────
+ */
+
+/** Generates a cryptographically secure, high-entropy token for emails. */
+export function generateRandomToken(): string {
+  return randomBytes(32).toString("hex");
+}
+
+/** Hashes a token using SHA-256 before database storage. */
+export function hashToken(token: string): string {
+  const { createHash } = require("crypto");
+  return createHash("sha256").update(token).digest("hex");
+}

@@ -23,10 +23,13 @@ export const verifyEmail = async (token: string) => {
   });
 
   if (!user) {
+    logger.warn("Verification failed: Invalid or expired token", { token: hashedToken });
     throw new Error("Invalid or expired verification token");
   }
 
-  return prisma.user.update({
+  logger.info("Verifying email for user", { userId: user.id, email: user.email });
+
+  const updatedUser = await prisma.user.update({
     where: { id: user.id },
     data: {
       isEmailVerified: true,
@@ -38,6 +41,10 @@ export const verifyEmail = async (token: string) => {
       isEmailVerified: true,
     },
   });
+
+  logger.info("Email verified successfully", { userId: updatedUser.id });
+
+  return updatedUser;
 };
 
 /**

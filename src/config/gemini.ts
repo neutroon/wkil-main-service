@@ -607,6 +607,13 @@ export async function generateVisualContent(params: {
       },
     });
 
+    // DEBUG: Log raw response to verify usage reporting structure for image models
+    logger.debug("gemini_visual.raw_response_metadata", { 
+      hasUsage: Boolean(response.usageMetadata),
+      usage: response.usageMetadata,
+      candidateCount: response.candidates?.length
+    });
+
     const usage = response.usageMetadata;
 
     // Extract image binary from the multimodal response parts
@@ -620,6 +627,12 @@ export async function generateVisualContent(params: {
 
     const base64Data = imagePart.inlineData?.data || (imagePart as any).fileData?.data;
     if (!base64Data) throw new Error("Image data was empty in the response (Model might have returned a File URI instead of bytes).");
+
+    logger.info("gemini_visual.token_usage", { 
+      promptTokens: usage?.promptTokenCount || 0, 
+      completionTokens: usage?.candidatesTokenCount || 0,
+      model
+    });
 
     return {
       imageBuffer: Buffer.from(base64Data, "base64"),

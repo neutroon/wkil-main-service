@@ -9,7 +9,7 @@ import {
 } from "../services/media/mediaLibrary.service";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { r2Client, R2_BUCKET } from "../config/r2";
-import { enqueueMediaSyncJob } from "../queues/meta.queue";
+import { enqueueMetaJob, enqueueMediaSyncJob } from "../queues/meta.queue";
 import prisma from "../config/prisma";
 import { logger } from "../utils/logger";
 
@@ -199,22 +199,32 @@ router.post("/ai/generate", authenticateToken, async (req: Request, res: Respons
       return res.status(400).json({ error: "businessProfileId and prompt are required" });
     }
 
-    const { createGeminiVisual } = await import("../services/media/geminiVisual.service");
-    const asset = await createGeminiVisual({
-      userId,
-      businessProfileId: Number(businessProfileId),
-      userPrompt: prompt,
-      postId: postId ? Number(postId) : undefined,
-    });
+    // 1. Resilience: Set status to 'generating' immediately
+    if (postId) {
+      await prisma.contentPlanPost.update({
+        where: { id: Number(postId) },
+        data: { status: "generating" }
+      });
+    }
 
-    return res.status(201).json({ 
-      data: asset, 
-      message: "Studio asset generated successfully. Meta sync pending." 
+    // 2. Enqueue the background worker job
+    await enqueueMetaJob({
+      platform: "messenger", // Overloaded platform for routing
+      type: "visual_production", 
+      identifier: String(businessProfileId),
+      senderId: String(userId),
+      messageText: prompt,
+      businessProfileId: Number(businessProfileId),
+      postId: postId ? Number(postId) : undefined,
+    } as any);
+
+    return res.status(202).json({ 
+      message: "Generation task accepted and moved to background worker.",
+      status: "processing" 
     });
   } catch (err: any) {
-    logger.error("media.gemini.generate_failed", { error: err.message });
-    const status = err.statusCode || 500;
-    return res.status(status).json({ error: err.message });
+    logger.error("media.gemini.enqueue_generate_failed", { error: err.message });
+    return res.status(500).json({ error: "Failed to queue generation task" });
   }
 });
 
@@ -231,23 +241,33 @@ router.post("/ai/refine", authenticateToken, async (req: Request, res: Response)
       return res.status(400).json({ error: "businessProfileId, assetId, and instruction are required" });
     }
 
-    const { refineGeminiVisual } = await import("../services/media/geminiVisual.service");
-    const asset = await refineGeminiVisual({
-      userId,
-      businessProfileId: Number(businessProfileId),
-      assetId: Number(assetId),
-      instruction,
-      postId: postId ? Number(postId) : undefined,
-    });
+    // 1. Resilience: Set status to 'generating' immediately
+    if (postId) {
+      await prisma.contentPlanPost.update({
+        where: { id: Number(postId) },
+        data: { status: "generating" }
+      });
+    }
 
-    return res.status(200).json({ 
-      data: asset, 
-      message: "Asset refined successfully via Nano Banana reasoning." 
+    // 2. Enqueue the background worker job
+    await enqueueMetaJob({
+      platform: "messenger", // Overloaded platform for routing
+      type: "visual_refine",
+      identifier: String(businessProfileId),
+      senderId: String(userId),
+      messageText: instruction,
+      mediaId: String(assetId),
+      businessProfileId: Number(businessProfileId),
+      postId: postId ? Number(postId) : undefined,
+    } as any);
+
+    return res.status(202).json({ 
+      message: "Refinement task accepted and moved to background worker.",
+      status: "processing" 
     });
   } catch (err: any) {
-    logger.error("media.gemini.refine_failed", { error: err.message });
-    const status = err.statusCode || 500;
-    return res.status(status).json({ error: err.message });
+    logger.error("media.gemini.enqueue_refine_failed", { error: err.message });
+    return res.status(500).json({ error: "Failed to queue refinement task" });
   }
 });
 

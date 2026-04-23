@@ -42,6 +42,7 @@ export const createUser = async (
       email: true,
       role: true,
       isEmailVerified: true,
+      lastVerificationSentAt: true,
       createdAt: true,
     },
   });
@@ -210,6 +211,8 @@ export const updateUserRole = async (
         analytics: true,
         role: true,
         plan: true,
+        isEmailVerified: true,
+        lastVerificationSentAt: true,
         monthlyQuota: true,
         isBusinessProfileCreated: true,
         updatedAt: true,

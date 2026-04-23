@@ -785,7 +785,6 @@ export async function processVisualJob(payload: any) {
     }
 
     // Push real-time update to the dashboard
-    logger.info("visual_processor.emitting_update", { businessProfileId, status: "completed" });
     emitToBusiness(businessProfileId, "visual_updated", {
       type,
       postId,

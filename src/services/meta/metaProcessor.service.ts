@@ -18,7 +18,7 @@ import {
   likeComment,
 } from "./facebook.service";
 
-export type MetaPlatform = "messenger" | "whatsapp";
+export type MetaPlatform = "messenger" | "whatsapp" | "visual_production" | "visual_refine" | "media_sync" | "facebook" | "instagram" | "linkedin";
 
 export interface MetaMessageJob {
   platform: MetaPlatform;
@@ -650,7 +650,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
           const resolved = await resolveAssetForChannel(
             reply.attachment.assetName,
             businessProfileId,
-            platform,
+            platform as any,
             identifier,
           );
 
@@ -736,32 +736,56 @@ export async function processMetaMessage(job: MetaMessageJob) {
  * Executed by the MetaQueue worker to handle heavy AI image generation/refinement.
  */
 export async function processVisualJob(payload: any) {
-  const { type, businessProfileId, userId, prompt, instruction, assetId, postId } = payload;
+  const { 
+    type, 
+    businessProfileId, 
+    userId, 
+    prompt, 
+    instruction, 
+    assetId, 
+    postId,
+    senderId,
+    messageText,
+    mediaId
+  } = payload;
 
-  logger.info("visual_processor.job_picked", { type, businessProfileId, userId, postId });
+  // 1. Normalize Payload (Support both unified names and MetaMessageJob field aliases)
+  const normalizedType = type === "visual_production" ? "generate" : (type === "visual_refine" ? "refine" : type);
+  const normalizedUserId = Number(userId || senderId);
+  const normalizedPrompt = prompt || messageText;
+  const normalizedInstruction = instruction || messageText;
+  const normalizedAssetId = Number(assetId || mediaId);
+
+  logger.info("visual_processor.job_picked", { 
+    type: normalizedType, 
+    businessProfileId, 
+    userId: normalizedUserId, 
+    postId 
+  });
 
   try {
     const { createGeminiVisual, refineGeminiVisual } = await import("../media/geminiVisual.service");
 
     let resultAsset;
-    if (type === "generate") {
+    if (normalizedType === "generate") {
       resultAsset = await createGeminiVisual({
-        userId,
+        userId: normalizedUserId,
         businessProfileId,
-        userPrompt: prompt,
+        userPrompt: normalizedPrompt,
         postId,
       });
-    } else if (type === "refine") {
+    } else if (normalizedType === "refine") {
       resultAsset = await refineGeminiVisual({
-        userId,
+        userId: normalizedUserId,
         businessProfileId,
-        assetId,
-        instruction,
+        assetId: normalizedAssetId,
+        instruction: normalizedInstruction,
         postId,
       });
     }
 
     // Push real-time update to the dashboard
+    logger.info("visual_processor.emitting_update", { businessProfileId, status: "completed" });
     emitToBusiness(businessProfileId, "visual_updated", {
       type,
       postId,

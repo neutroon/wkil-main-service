@@ -363,10 +363,18 @@ export const requireVerified = (
   res: Response,
   next: NextFunction,
 ) => {
-  if (!req.user || !req.user.isEmailVerified) {
+  if (!req.user) {
+    return res.status(401).json({
+      error: "Authentication required",
+      code: "AUTH_REQUIRED",
+    });
+  }
+
+  if (!req.user.isEmailVerified) {
     return res.status(403).json({
       error: "Email verification required",
       code: "EMAIL_NOT_VERIFIED",
+      email: req.user.email,
     });
   }
   next();

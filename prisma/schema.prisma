@@ -661,6 +661,7 @@ model BusinessProfileMedia {
   updatedAt             DateTime  @updatedAt
 
   syncs                 BusinessProfileMediaSync[]
+  contentPlanPosts      ContentPlanPost[]
 
   @@index([businessProfileId])
   @@index([userId])

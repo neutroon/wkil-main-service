@@ -1,59 +1,52 @@
-import { MetaMessageJob, processMetaMessage } from "../services/meta/metaProcessor.service";
-import { registerAssetWithMeta } from "../services/media/mediaLibrary.service";
+import { Queue, Worker, Job } from "bullmq";
+import { bullConnection } from "../config/redis";
 import { logger } from "../utils/logger";
 import prisma from "../config/prisma";
-
-const EXPRESS_CONCURRENCY = 8;     // High throughput for messaging
-const PRODUCTION_CONCURRENCY = 2;  // Dedicated capacity for visual production
-const JOB_TIMEOUT_MS = 120000;     // 120s max for any job
-const RETRY_INTERVALS = [5, 30, 300]; 
-
-let drainingExpress = false;
-let drainingProduction = false;
-const ACTIVE_PROCESSING_KEYS = new Set<string>();
+import { processMetaMessage, processVisualJob } from "../services/meta/metaProcessor.service";
+import { registerAssetWithMeta } from "../services/media/mediaLibrary.service";
 
 /**
- * Unified, Industrial-Grade Durable Queue for Meta Platforms.
- * 
- * FEATURES:
- * 1. Database-First: Jobs are persisted before processing (Zero Message Loss).
- * 2. Exponential Backoff: Failsafe retries for transient errors.
- * 3. Parallel Execution: Concurrency of 3 parallel workers.
- * 4. Recovery: Resets "hanging" jobs on startup.
+ * Enterprise-Grade Meta Engine Queues.
+ * Divided into lanes to ensure "Instant" messages aren't stuck behind "Slow" AI generation.
  */
 
-export async function enqueueMetaJob(
-  job: MetaMessageJob,
-  delaySeconds: number = 0,
-): Promise<void> {
-  try {
-    const nextAttemptAt = new Date(Date.now() + delaySeconds * 1000);
+// EXPRESS LANE: For Messenger, WhatsApp, and Webhooks (< 1s)
+export const metaExpressQueue = new Queue("meta-express", { 
+  connection: bullConnection,
+  defaultJobOptions: { removeOnComplete: true, attempts: 2 }
+});
 
-    await prisma.metaJob.create({
-      data: {
-        platform: job.platform,
-        identifier: job.identifier,
-        senderId: job.senderId,
-        payload: job as any,
-        status: "pending",
-        nextAttemptAt,
-      },
-    });
+// PRODUCTION LANE: For Gemini Image Generation and AI Branding (20-60s)
+export const metaProductionQueue = new Queue("meta-production", { 
+  connection: bullConnection,
+  defaultJobOptions: { removeOnComplete: true, attempts: 1 }
+});
 
-    // Kick off worker (non-blocking) - but only if it's due now
-    // We check both lanes to see if either needs a kickstart
-    if (!(drainingExpress && drainingProduction) && delaySeconds <= 0) void drainQueue();
-  } catch (err: any) {
-    logger.error("meta.queue.enqueue_failed", {
-      error: err.message,
-      platform: job.platform,
-    });
-    throw err;
-  }
+export type MetaJobType = "messaging" | "visual_production" | "media_sync";
+
+export interface MetaEngineJob {
+  type: MetaJobType;
+  payload: any;
 }
 
+/**
+ * Enqueues a job into the appropriate BullMQ lane.
+ */
+export async function enqueueMetaJob(
+  payload: any,
+  delaySeconds: number = 0,
+): Promise<void> {
+  const isVisual = payload.type === "visual_production" || payload.type === "visual_refine";
+  const queue = isVisual ? metaProductionQueue : metaExpressQueue;
 
-/** Legacy aliases */
+  await queue.add(
+    isVisual ? "visual_task" : "message_task",
+    { type: isVisual ? "visual_production" : "messaging", payload },
+    { delay: delaySeconds * 1000 }
+  );
+}
+
+/** Legacy & Specialized Aliases */
 export async function enqueueWhatsAppJob(job: any): Promise<void> {
   await enqueueMetaJob({ 
     ...job, 
@@ -72,176 +65,45 @@ export async function enqueueMessengerJob(job: any): Promise<void> {
   });
 }
 
-/**
- * Enqueues a media synchronization job (Meta registration).
- */
-export async function enqueueMediaSyncJob(assetId: number): Promise<void> {
-  try {
-    await prisma.metaJob.create({
-      data: {
-        platform: "media_sync",
-        identifier: assetId.toString(),
-        senderId: "system",
-        payload: { assetId } as any,
-        status: "pending",
-      }
-    });
-    if (!(drainingExpress && drainingProduction)) void drainQueue();
-  } catch (err: any) {
-    logger.error("meta.queue.enqueue_media_sync_failed", { error: err.message, assetId });
-    throw err;
-  }
+export async function enqueueMediaSyncJob(assetId: number) {
+  await metaExpressQueue.add("media_sync", { type: "media_sync", payload: { assetId } });
 }
 
-
-/**
- * INDUSTRIAL-GRADE LANE ISOLATED WORKER
- * 
- * Separates "Fast" messaging from "Slow" visual production to prevent 
- * resource starvation and maintain production-tier SLAs.
+/** 
+ * WORKER: Express Lane 
+ * High concurrency (8) for fast messaging.
  */
-async function drainLane(lane: "EXPRESS" | "PRODUCTION") {
-  const isExpress = lane === "EXPRESS";
-  if (isExpress && drainingExpress) return;
-  if (!isExpress && drainingProduction) return;
-
-  if (isExpress) drainingExpress = true; else drainingProduction = true;
-
-  const concurrency = isExpress ? EXPRESS_CONCURRENCY : PRODUCTION_CONCURRENCY;
-  const platforms = isExpress 
-    ? ["facebook", "instagram", "linkedin", "whatsapp", "messenger", "media_sync"]
-    : ["visual_production", "visual_refine"];
-
-  try {
-    while (true) {
-      // 1. Fetch available jobs for this lane
-      const pendingJobs = await prisma.metaJob.findMany({
-        where: {
-          status: { in: ["pending", "retrying"] },
-          nextAttemptAt: { lte: new Date() },
-          platform: { in: platforms }
-        },
-        orderBy: { createdAt: "asc" },
-        take: concurrency,
-      });
-
-      if (pendingJobs.length === 0) break;
-
-      const jobsToRun = pendingJobs.filter(job => {
-        const key = `${job.platform}:${job.identifier}:${job.senderId}`;
-        if (!ACTIVE_PROCESSING_KEYS.has(key)) {
-          ACTIVE_PROCESSING_KEYS.add(key);
-          return true;
-        }
-        return false;
-      });
-
-      if (jobsToRun.length === 0) break;
-
-      await Promise.all(jobsToRun.map(async (jobRecord) => {
-        const key = `${jobRecord.platform}:${jobRecord.identifier}:${jobRecord.senderId}`;
-        try {
-          await prisma.metaJob.update({
-            where: { id: jobRecord.id },
-            data: { status: "processing" }
-          });
-
-          const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error(`Lane ${lane} Timeout (${JOB_TIMEOUT_MS/1000}s)`)), JOB_TIMEOUT_MS)
-          );
-
-          if (jobRecord.platform === "media_sync") {
-             const { assetId } = jobRecord.payload as { assetId: number };
-             await Promise.race([registerAssetWithMeta(assetId), timeoutPromise]);
-          } else if (lane === "PRODUCTION") {
-             const { processVisualJob } = await import("../services/meta/metaProcessor.service");
-             await Promise.race([processVisualJob(jobRecord.payload as any), timeoutPromise]);
-          } else {
-             await Promise.race([processMetaMessage(jobRecord.payload as any), timeoutPromise]);
-          }
-
-          await prisma.metaJob.update({
-            where: { id: jobRecord.id },
-            data: { status: "completed" }
-          });
-
-        } catch (jobErr: any) {
-          const nextAttempt = jobRecord.attempts + 1;
-          const maxAttempts = jobRecord.maxAttempts;
-
-          if (nextAttempt < maxAttempts) {
-            const backoffSec = RETRY_INTERVALS[nextAttempt - 1] || 300;
-            await prisma.metaJob.update({
-              where: { id: jobRecord.id },
-              data: {
-                status: "retrying",
-                attempts: nextAttempt,
-                lastError: jobErr.message.slice(0, 1000),
-                nextAttemptAt: new Date(Date.now() + backoffSec * 1000)
-              }
-            });
-          } else {
-            // AUTO-RESET post status on permanent production failure
-            const payload = jobRecord.payload as any;
-            if (payload?.postId) {
-              await prisma.contentPlanPost.update({
-                where: { id: payload.postId },
-                data: { status: "pending" }
-              });
-            }
-
-            await prisma.metaJob.update({
-              where: { id: jobRecord.id },
-              data: { status: "failed", lastError: jobErr.message.slice(0, 1000), attempts: nextAttempt }
-            });
-          }
-        } finally {
-          ACTIVE_PROCESSING_KEYS.delete(key);
-        }
-      }));
+export const expressWorker = new Worker(
+  "meta-express",
+  async (job: Job<MetaEngineJob>) => {
+    const { type, payload } = job.data;
+    if (type === "media_sync") {
+      await registerAssetWithMeta(payload.assetId);
+    } else {
+      await processMetaMessage(payload);
     }
-  } catch (err: any) {
-    logger.error(`meta.queue.lane_error.${lane}`, { error: err.message });
-  } finally {
-    if (isExpress) drainingExpress = false; else drainingProduction = false;
-  }
-}
+  },
+  { connection: bullConnection, concurrency: 8 }
+);
 
-async function drainQueue() {
-  await Promise.all([
-    drainLane("EXPRESS"),
-    drainLane("PRODUCTION")
-  ]);
-}
-
-/**
- * STARTUP RECOVERY: Resets any jobs that were abandoned in "processing" state.
+/** 
+ * WORKER: Production Lane
+ * Lower concurrency (2) to manage AI quota and heavy loads.
  */
+export const productionWorker = new Worker(
+  "meta-production",
+  async (job: Job<MetaEngineJob>) => {
+    await processVisualJob(job.data.payload);
+  },
+  { connection: bullConnection, concurrency: 2 }
+);
+
+// Recovery / Bootstrap logic (Optional now that we use Redis persistence)
 export async function bootstrapMetaQueue() {
-  const reset = await prisma.metaJob.updateMany({
-    where: { status: "processing" },
-    data: { status: "pending" }
-  });
-  if (reset.count > 0) {
-    logger.info("meta.queue.recovery_bootstrapped", { count: reset.count });
-    void drainQueue();
-  }
+  logger.info("meta.engine.bullmq_initialized");
 }
 
-let isPolling = false;
-
-/**
- * Initializes the background queue loop to constantly check for scheduled jobs
- * (e.g., delayed public greetings, retries).
- */
 export function startMetaQueue() {
-  if (isPolling) return;
-  isPolling = true;
-
-  // Poll DB for scheduled jobs every 2.5 seconds
-  setInterval(() => {
-    void drainQueue();
-  }, 2500);
-  
-  logger.info("meta.queue.background_polling_started");
+  // BullMQ workers start automatically on initialization
+  logger.info("meta.engine.workers_online");
 }

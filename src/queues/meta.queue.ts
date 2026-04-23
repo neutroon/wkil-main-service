@@ -13,13 +13,13 @@ import { registerAssetWithMeta } from "../services/media/mediaLibrary.service";
 // EXPRESS LANE: For Messenger, WhatsApp, and Webhooks (< 1s)
 export const metaExpressQueue = new Queue("meta-express", { 
   connection: bullConnection,
-  defaultJobOptions: { removeOnComplete: true, attempts: 2 }
+  defaultJobOptions: { removeOnComplete: false, attempts: 2 }
 });
 
 // PRODUCTION LANE: For Gemini Image Generation and AI Branding (20-60s)
 export const metaProductionQueue = new Queue("meta-production", { 
   connection: bullConnection,
-  defaultJobOptions: { removeOnComplete: true, attempts: 1 }
+  defaultJobOptions: { removeOnComplete: false, attempts: 1 }
 });
 
 export type MetaJobType = "messaging" | "visual_production" | "media_sync";
@@ -32,18 +32,27 @@ export interface MetaEngineJob {
 /**
  * Enqueues a job into the appropriate BullMQ lane.
  */
-export async function enqueueMetaJob(
-  payload: any,
-  delaySeconds: number = 0,
-): Promise<void> {
+export async function enqueueMetaJob(job: any): Promise<void> {
+  const { delaySeconds = 0, ...payload } = job;
+
   const isVisual = payload.type === "visual_production" || payload.type === "visual_refine";
   const queue = isVisual ? metaProductionQueue : metaExpressQueue;
 
-  await queue.add(
-    isVisual ? "visual_task" : "message_task",
-    { type: isVisual ? "visual_production" : "messaging", payload },
-    { delay: delaySeconds * 1000 }
-  );
+  try {
+    await queue.add(
+      isVisual ? "visual_task" : "message_task",
+      { type: isVisual ? "visual_production" : "messaging", payload },
+      { delay: delaySeconds * 1000 }
+    );
+    logger.info("meta.queue.enqueued", { 
+      type: isVisual ? "visual" : "messaging", 
+      platform: payload.platform,
+      delaySeconds 
+    });
+  } catch (err: any) {
+    logger.error("meta.queue.add_failed", { error: err.message, payload });
+    throw err;
+  }
 }
 
 /** Legacy & Specialized Aliases */
@@ -105,5 +114,11 @@ export async function bootstrapMetaQueue() {
 
 export function startMetaQueue() {
   // BullMQ workers start automatically on initialization
+  expressWorker.on("error", (err) => logger.error("meta.engine.worker_error.express", { error: err.message }));
+  expressWorker.on("completed", (job) => logger.info("meta.engine.job_completed.express", { jobId: job.id }));
+  
+  productionWorker.on("error", (err) => logger.error("meta.engine.worker_error.production", { error: err.message }));
+  productionWorker.on("completed", (job) => logger.info("meta.engine.job_completed.production", { jobId: job.id }));
+  
   logger.info("meta.engine.workers_online");
 }

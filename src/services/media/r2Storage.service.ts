@@ -36,7 +36,10 @@ export async function uploadToR2(
     }),
   );
 
-  const publicUrl = `${R2_PUBLIC_URL}/${key}`;
+  const publicUrl = R2_PUBLIC_URL 
+    ? `${R2_PUBLIC_URL}/${key}` 
+    : `/v1/media/file/${key}`;
+
   logger.info("r2.upload.success", { key, mimeType, publicUrl });
   return publicUrl;
 }

@@ -86,6 +86,8 @@ export const expressWorker = new Worker(
   "meta-express",
   async (job: Job<MetaEngineJob>) => {
     const { type, payload } = job.data;
+    logger.info("meta.engine.worker_start.express", { jobId: job.id, type, platform: payload.platform });
+    
     if (type === "media_sync") {
       await registerAssetWithMeta(payload.assetId);
     } else {
@@ -108,17 +110,18 @@ export const productionWorker = new Worker(
 );
 
 // Recovery / Bootstrap logic (Optional now that we use Redis persistence)
-export async function bootstrapMetaQueue() {
-  logger.info("meta.engine.bullmq_initialized");
-}
-
+// Workers are initialized but we define a start function to ensure they are "touched" and logging
 export function startMetaQueue() {
-  // BullMQ workers start automatically on initialization
+  logger.info("meta.engine.initializing_workers...");
+  
   expressWorker.on("error", (err) => logger.error("meta.engine.worker_error.express", { error: err.message }));
   expressWorker.on("completed", (job) => logger.info("meta.engine.job_completed.express", { jobId: job.id }));
   
   productionWorker.on("error", (err) => logger.error("meta.engine.worker_error.production", { error: err.message }));
   productionWorker.on("completed", (job) => logger.info("meta.engine.job_completed.production", { jobId: job.id }));
   
-  logger.info("meta.engine.workers_online");
+  logger.info("meta.engine.workers_online", {
+    expressConcurrency: 8,
+    productionConcurrency: 2
+  });
 }

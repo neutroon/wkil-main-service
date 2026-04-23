@@ -786,7 +786,7 @@ export async function processVisualJob(payload: any) {
 
     // Push real-time update to the dashboard
     emitToBusiness(businessProfileId, "visual_updated", {
-      type,
+      type: normalizedType, // Speak the frontend's language (generate/refine)
       postId,
       asset: resultAsset,
       status: "completed"

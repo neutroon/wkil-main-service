@@ -117,7 +117,14 @@ export async function createGeminiVisual(params: {
     let brandLogoBuffer: Buffer | undefined;
     if (profile.brandLogoUrl) {
       try {
-        const resp = await axios.get(profile.brandLogoUrl, { responseType: "arraybuffer" });
+        let logoUrl = profile.brandLogoUrl;
+        // Handle relative URLs by prepending the backend base URL
+        if (logoUrl.startsWith("/")) {
+          const baseUrl = process.env.BACKEND_URL || "http://localhost:8080";
+          logoUrl = `${baseUrl}${logoUrl}`;
+        }
+        
+        const resp = await axios.get(logoUrl, { responseType: "arraybuffer" });
         brandLogoBuffer = Buffer.from(resp.data);
       } catch (err) {
         logger.warn("gemini_visual.logo_fetch_failed", { url: profile.brandLogoUrl });

@@ -158,6 +158,12 @@ async function drainQueue(): Promise<void> {
               registerAssetWithMeta(assetId),
               timeoutPromise
             ]);
+          } else if (jobRecord.platform === "visual_production" || jobRecord.platform === "visual_refine") {
+             const { processVisualJob } = await import("../services/meta/metaProcessor.service");
+             await Promise.race([
+               processVisualJob(jobRecord.payload as any),
+               timeoutPromise
+             ]);
           } else {
             await Promise.race([
               processMetaMessage(jobData),

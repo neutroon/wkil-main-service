@@ -289,6 +289,14 @@ export async function recordAiUsage(params: {
       systemCost,
       customerCost,
     });
+
+    // Notify Frontend to refresh credits in real-time
+    const { emitToBusiness } = await import("../utils/socket");
+    emitToBusiness(businessProfileId || 0, "credits_updated", {
+      userId,
+      creditsUsed,
+      totalCreditsUsed: (await prisma.user.findUnique({ where: { id: userId }, select: { monthlyCreditsUsed: true } }))?.monthlyCreditsUsed || 0
+    });
   } catch (error: any) {
     logger.error("billing.record_usage_failure.dead_lettering", {
       error: error.message,

@@ -1,5 +1,6 @@
 import prisma from "../../config/prisma";
 import { logger } from "../../utils/logger";
+import { emitToBusiness, emitToConversation } from "../../utils/socket";
 import { decryptFacebookSecret } from "../../utils/tokenCrypto";
 import {
   getOrCreateConversation,
@@ -8,7 +9,7 @@ import {
 } from "./conversation.service";
 import { computeBusinessChatReply } from "../chat/businessChatReply.service";
 import { historyToLlmTurns, toPromptMessages } from "../chat/conversationTurns";
-import { emitToBusiness, emitToConversation } from "../../utils/socket";
+// No change to socket imports here as they are now at top
 import {
   getFacebookUserProfile,
   getFacebookPostUrl,
@@ -727,5 +728,60 @@ export async function processMetaMessage(job: MetaMessageJob) {
       senderId,
       error: err.message,
     });
+  }
+}
+
+/**
+ * PRODUCTION-GRADE: Background Visual Processor
+ * Executed by the MetaQueue worker to handle heavy AI image generation/refinement.
+ */
+export async function processVisualJob(payload: any) {
+  const { type, businessProfileId, userId, prompt, instruction, assetId, postId } = payload;
+
+  logger.info("visual_processor.job_picked", { type, businessProfileId, userId, postId });
+
+  try {
+    const { createGeminiVisual, refineGeminiVisual } = await import("../media/geminiVisual.service");
+
+    let resultAsset;
+    if (type === "generate") {
+      resultAsset = await createGeminiVisual({
+        userId,
+        businessProfileId,
+        userPrompt: prompt,
+        postId,
+      });
+    } else if (type === "refine") {
+      resultAsset = await refineGeminiVisual({
+        userId,
+        businessProfileId,
+        assetId,
+        instruction,
+        postId,
+      });
+    }
+
+    // Push real-time update to the dashboard
+    emitToBusiness(businessProfileId, "visual_updated", {
+      type,
+      postId,
+      asset: resultAsset,
+      status: "completed"
+    });
+
+    logger.info("visual_processor.job_completed", { type, businessProfileId, assetId: resultAsset?.id });
+
+  } catch (err: any) {
+    logger.error("visual_processor.job_failed", { type, businessProfileId, error: err.message });
+    
+    // Notify UI of failure so it can stop the loader
+    emitToBusiness(businessProfileId, "visual_updated", {
+      type,
+      postId,
+      status: "failed",
+      error: err.message
+    });
+
+    throw err; // Re-throw for queue retry logic
   }
 }

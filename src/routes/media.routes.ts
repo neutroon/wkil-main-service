@@ -194,7 +194,7 @@ router.post("/ai/generate", authenticateToken, async (req: Request, res: Respons
 router.post("/ai/refine", authenticateToken, async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user.id;
-    const { businessProfileId, assetId, instruction } = req.body;
+    const { businessProfileId, assetId, instruction, postId } = req.body;
 
     if (!businessProfileId || !assetId || !instruction) {
       return res.status(400).json({ error: "businessProfileId, assetId, and instruction are required" });
@@ -206,6 +206,7 @@ router.post("/ai/refine", authenticateToken, async (req: Request, res: Response)
       businessProfileId: Number(businessProfileId),
       assetId: Number(assetId),
       instruction,
+      postId: postId ? Number(postId) : undefined,
     });
 
     return res.status(200).json({ 

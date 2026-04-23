@@ -50,14 +50,14 @@ export interface FacebookPage {
 export interface FacebookPostParams {
   pageId: string;
   message: string;
-  accessToken: string;
+  accessToken?: string;
   imageUrl?: string;
 }
 
 export interface FacebookScheduleParams {
   pageId: string;
   message: string;
-  accessToken: string;
+  accessToken?: string;
   scheduleTime: number;
 }
 

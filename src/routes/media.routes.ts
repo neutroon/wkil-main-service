@@ -153,7 +153,7 @@ router.get("/:id/sync-status", authenticateToken, async (req: Request, res: Resp
 });
 
 // ── GET /v1/media/file/* — Fallback proxy to serve R2 files if no CDN URL is set ──
-router.get(/\/file\/(.*)/, async (req: Request, res: Response) => {
+router.get(/\/file\/(.+)/, async (req: Request, res: Response) => {
   try {
     const key = req.params[0];
     if (!key) return res.status(400).json({ error: "Key is required" });

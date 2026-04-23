@@ -584,7 +584,7 @@ ${schemaInstruct}
         imagePrompt: result.imagePrompt || null,
         reelScript: result.reelScript || null,
         carouselSlides: result.carouselSlides || null,
-        status: "generated", // Moved forward from pending
+        status: "generated", // Ready for user review / visual request
       },
     });
 

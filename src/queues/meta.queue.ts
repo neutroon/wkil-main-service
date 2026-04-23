@@ -4,7 +4,7 @@ import { logger } from "../utils/logger";
 import prisma from "../config/prisma";
 
 const CONCURRENCY = 3;
-const JOB_TIMEOUT_MS = 60000; // 60s
+const JOB_TIMEOUT_MS = 120000; // Increased to 120s for high-fidelity Gemini 3.1 visual rendering
 const RETRY_INTERVALS = [5, 30, 300]; // seconds (5s, 30s, 5m)
 
 let draining = false;
@@ -199,11 +199,14 @@ async function drainQueue(): Promise<void> {
                 nextAttemptAt: new Date(Date.now() + backoffSec * 1000)
               }
             });
-          } else {
-            logger.error("meta.queue.job_permanently_failed", { 
-              id: jobRecord.id, 
-              error: jobErr.message 
-            });
+            // CLEAR STUCK STATUS ON POST IF APPLICABLE
+            const payload = jobRecord.payload as any;
+            if (payload?.postId) {
+              await prisma.contentPlanPost.update({
+                where: { id: payload.postId },
+                data: { status: "pending" }
+              });
+            }
 
             await prisma.metaJob.update({
               where: { id: jobRecord.id },

@@ -5,6 +5,10 @@ import {
   partialReIngestBusinessProfile,
   retrieveRelevantChunks,
 } from "../rag/rag.service";
+import { uploadToR2 } from "../services/media/r2Storage.service";
+import { randomUUID } from "crypto";
+import path from "path";
+import { logger } from "../utils/logger";
 
 interface Faq {
   id?: number;
@@ -373,5 +377,28 @@ export const retrieveBusinessProfile = async (req: Request, res: Response) => {
     res.json({ chunks });
   } catch (err) {
     res.status(500).json({ message: "Retrieval failed", error: err });
+  }
+};
+export const uploadLogo = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user.id;
+    if (!userId) return res.status(401).json({ message: "Unauthorized" });
+
+    if (!req.file) {
+      return res.status(400).json({ message: "No logo file uploaded" });
+    }
+
+    const ext = path.extname(req.file.originalname).toLowerCase();
+    const key = `logos/u_${userId}/${randomUUID()}${ext}`;
+
+    const publicUrl = await uploadToR2(key, req.file.buffer, req.file.mimetype);
+
+    return res.status(200).json({
+      message: "Logo uploaded successfully",
+      url: publicUrl,
+    });
+  } catch (error: any) {
+    logger.error("business_profile.logo_upload_failed", { error: error.message });
+    return res.status(500).json({ message: "Internal server error during logo upload" });
   }
 };

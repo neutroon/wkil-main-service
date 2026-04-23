@@ -109,7 +109,7 @@ async function drainLane(lane: "EXPRESS" | "PRODUCTION") {
 
   const concurrency = isExpress ? EXPRESS_CONCURRENCY : PRODUCTION_CONCURRENCY;
   const platforms = isExpress 
-    ? ["facebook", "instagram", "linkedin", "whatsapp", "media_sync"]
+    ? ["facebook", "instagram", "linkedin", "whatsapp", "messenger", "media_sync"]
     : ["visual_production", "visual_refine"];
 
   try {

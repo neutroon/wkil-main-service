@@ -39,13 +39,52 @@ const ART_STYLE_MAPPINGS: Record<string, string> = {
 };
 
 /**
+ * Art Director Helper: Injects Brand Identity into prompts
+ */
+async function groundingPromptWithBrand(params: {
+  userPrompt: string,
+  profile: any,
+  isRefine?: boolean,
+  sourcePrompt?: string
+}) {
+  const { userPrompt, profile, isRefine, sourcePrompt } = params;
+  
+  const aestheticBrief = profile.visualAesthetic ? AESTHETIC_MAPPINGS[profile.visualAesthetic] || "" : "";
+  const styleBrief = profile.artStyle ? ART_STYLE_MAPPINGS[profile.artStyle] || "" : "";
+  const colorBrief = [profile.brandPrimaryColor, profile.brandSecondaryColor, profile.brandAccentColor]
+    .filter(Boolean)
+    .join(", ");
+
+  const artDirectorPrompt = `You are a world-class Social Media Art Director.
+${isRefine ? "You are refining an existing image based on new instructions." : "You are creating a new social media image."}
+
+[BRAND IDENTITY]:
+- Aesthetic Vibe: ${aestheticBrief || "Modern and Professional"}
+- Technical Style: ${styleBrief || "High-quality photography"}
+- Color Palette: ${colorBrief || "Natural and vibrant"}
+
+[CRITICAL INSTRUCTIONS]:
+1. Style Execution: Focus on "Ultra-High Definition Photography", master-level lighting, shallow depth of field (f/1.8), and global illumination.
+2. Style Consistency: Ensure the result strictly adheres to the technical style and aesthetic vibe mentioned above.
+3. Color Accuracy: Use the provided hex codes (${colorBrief}) as the dominant or accent colors in the composition. Ensure they feel like a natural part of the brand's DNA.
+4. Composition: Perfectly balanced (rule-of-thirds or symmetrical), optimized for elite social media engagement.
+5. Rendering: Ray-traced textures, no artifacts, realistic shadows and reflections.
+6. Native Branding: If a logo is provided in the multimodal context, integrate it naturally into the scene or as a high-fidelity watermark in the ${profile.watermarkPosition || "BOTTOM_RIGHT"} corner.
+${isRefine ? `7. Evolution: The previous intent was "${sourcePrompt}". Now, apply the following change: "${userPrompt}" while strictly maintaining the brand kit and technical quality above.` : `7. Intent: ${userPrompt}`}
+8. Output: Return ONLY the final photographic prompt string. No conversational filler.`;
+
+  const { text: enhancedPrompt } = await generateContent(artDirectorPrompt);
+  return (enhancedPrompt || userPrompt).trim();
+}
+
+/**
  * Service to handle end-to-end Gemini 3.1 Flash Image generation and editing.
  */
 export async function createGeminiVisual(params: {
   userId: number;
   businessProfileId: number;
   userPrompt: string;
-  postId?: number; // Optional: Link to a content plan post
+  postId?: number; 
 }) {
   const { userId, businessProfileId, userPrompt, postId } = params;
 
@@ -59,36 +98,12 @@ export async function createGeminiVisual(params: {
   // 2. Pre-flight quota check
   await assertQuotaAvailable(userId, businessProfileId);
 
-  // 3. Assemble Brand Tokens
-  const aestheticBrief = profile.visualAesthetic ? AESTHETIC_MAPPINGS[profile.visualAesthetic] || "" : "";
-  const styleBrief = profile.artStyle ? ART_STYLE_MAPPINGS[profile.artStyle] || "" : "";
-  const colorBrief = [profile.brandPrimaryColor, profile.brandSecondaryColor, profile.brandAccentColor]
-    .filter(Boolean)
-    .join(", ");
-
-  // 4. "Art Director" - Use Gemini to beautify the prompt with brand grounding
-  const artDirectorPrompt = `You are a world-class Social Media Art Director.
-Convert the following user intent into a high-fidelity photographic prompt for gemini-3.1-flash-image.
-
-[BRAND GROUNDING]:
-- Aesthetic Vibe: ${aestheticBrief || "Modern and Professional"}
-- Technical Style: ${styleBrief || "High-quality photography"}
-- Color Palette: ${colorBrief || "Natural and vibrant"}
-
-[CRITICAL INSTRUCTIONS]:
-1. Style: Focus on "Ultra-High Definition Photography", master-level lighting, shallow depth of field (f/1.8), and global illumination.
-2. Composition: Perfectly balanced, rule-of-thirds or symmetrical, optimized for elite social media engagement.
-3. Rendering: Ray-traced textures, no artifacts, realistic shadows and reflections.
-4. Native Branding: If a logo is attached, integrate it naturally into the scene or as a high-fidelity mark in the ${profile.watermarkPosition || "BOTTOM_RIGHT"} corner.
-5. Prompt Intent: ${userPrompt}
-6. Output: Return ONLY the final prompt string. No conversational filler.`;
-
-  const { text: enhancedPrompt } = await generateContent(artDirectorPrompt);
-  const finalPrompt = (enhancedPrompt || userPrompt).trim();
+  // 3. Grounding - Use Art Director to beautify the prompt with brand grounding
+  const finalPrompt = await groundingPromptWithBrand({ userPrompt, profile });
 
   logger.info("gemini_visual.generating_branded", { userId, businessProfileId, finalPrompt });
 
-  // 5. Fetch Brand Logo for Multimodal injection
+  // 4. Fetch Brand Logo for Multimodal injection
   let brandLogoBuffer: Buffer | undefined;
   if (profile.brandLogoUrl) {
     try {
@@ -99,14 +114,14 @@ Convert the following user intent into a high-fidelity photographic prompt for g
     }
   }
 
-  // 6. Execution - Generate the Branded Pixels
+  // 5. Execution - Generate the Branded Pixels
   const { imageBuffer, usage } = await generateVisualContent({
     prompt: finalPrompt,
     brandLogoBuffer,
-    brandLogoMimeType: "image/png", // High-fidelity standard
+    brandLogoMimeType: "image/png",
   });
 
-  // 7. Persistence - Upload to R2 and add to Media Catalog
+  // 6. Persistence
   const assetName = `AI_Branded_${Date.now()}`;
   const asset = await createMediaAsset({
     businessProfileId,
@@ -118,7 +133,7 @@ Convert the following user intent into a high-fidelity photographic prompt for g
     instructions: `Branded AI Image: ${userPrompt}`,
   });
 
-  // 8. Link to Content Plan Post (if provided)
+  // 7. Link to Content Plan Post
   if (postId) {
     await prisma.contentPlanPost.update({
       where: { id: postId },
@@ -130,7 +145,7 @@ Convert the following user intent into a high-fidelity photographic prompt for g
     });
   }
 
-  // 9. Record Usage
+  // 8. Record Usage
   await recordAiUsage({
     userId,
     businessProfileId,
@@ -153,40 +168,59 @@ export async function refineGeminiVisual(params: {
 }) {
   const { userId, businessProfileId, assetId, instruction, postId } = params;
 
-  // 1. Quota Check (Edits are medium-high value)
+  // 1. Quota Check
   await assertQuotaAvailable(userId, businessProfileId);
 
-  // 2. Fetch the base asset
-  const asset = await prisma.businessProfileMedia.findFirst({
-    where: { id: assetId, userId },
-  });
+  // 2. Fetch dependencies
+  const [profile, asset] = await Promise.all([
+    prisma.businessProfile.findFirst({ where: { id: businessProfileId, userId } }),
+    prisma.businessProfileMedia.findFirst({ where: { id: assetId, userId } })
+  ]);
+
+  if (!profile) throw new Error("Business profile not found");
   if (!asset) throw new Error("Source asset not found");
 
-  // Since we stream to R2, we fetch it back as a Buffer directly via SDK for maximum reliability
+  // 3. Grounding - Art Director for refinement
+  const finalPrompt = await groundingPromptWithBrand({ 
+    userPrompt: instruction, 
+    profile, 
+    isRefine: true,
+    sourcePrompt: asset.instructions 
+  });
+
+  // 4. Fetch source image and brand logo
   let imageBuffer: Buffer;
   try {
     const getObj = await r2Client.send(
-      new GetObjectCommand({
-        Bucket: R2_BUCKET,
-        Key: asset.r2Key,
-      })
+      new GetObjectCommand({ Bucket: R2_BUCKET, Key: asset.r2Key })
     );
     const bodyBytes = await getObj.Body?.transformToByteArray();
-    if (!bodyBytes) throw new Error("Source asset data is empty in R2");
+    if (!bodyBytes) throw new Error("Source asset data empty");
     imageBuffer = Buffer.from(bodyBytes);
   } catch (err: any) {
-    logger.error("gemini_visual.refine_fetch_failed", { assetId, r2Key: asset.r2Key, error: err.message });
-    throw new Error("Failed to fetch source image for refinement. Please try again.");
+    logger.error("gemini_visual.refine_fetch_failed", { assetId, error: err.message });
+    throw new Error("Failed to fetch source image for refinement.");
   }
 
-  // 3. Command the pixels
+  let brandLogoBuffer: Buffer | undefined;
+  if (profile.brandLogoUrl) {
+    try {
+      const resp = await axios.get(profile.brandLogoUrl, { responseType: "arraybuffer" });
+      brandLogoBuffer = Buffer.from(resp.data);
+    } catch (err) {
+       // Non-critical, continue without logo
+    }
+  }
+
+  // 5. Command the pixels
   const { imageBuffer: refinedBuffer, usage } = await generateVisualContent({
-    prompt: instruction,
+    prompt: finalPrompt,
     imageBuffer,
+    brandLogoBuffer,
     mimeType: asset.mimeType,
   });
 
-  // 4. Save as a NEW asset (keep version history)
+  // 6. Save as a NEW asset
   const refinedAssetName = `${asset.name}_Refined_${Date.now()}`;
   const refinedAsset = await createMediaAsset({
     businessProfileId,
@@ -198,7 +232,7 @@ export async function refineGeminiVisual(params: {
     instructions: `AI Refinement: ${instruction} (Source: ${asset.name})`,
   });
 
-  // 5. Link to Content Plan Post (if provided)
+  // 7. Link to Content Plan Post
   if (postId) {
     await prisma.contentPlanPost.update({
       where: { id: postId },
@@ -209,7 +243,7 @@ export async function refineGeminiVisual(params: {
     });
   }
 
-  // 6. Log Billing
+  // 8. Log Billing
   await recordAiUsage({
     userId,
     businessProfileId,

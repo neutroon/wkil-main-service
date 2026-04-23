@@ -7,6 +7,8 @@ import {
   updateMediaAssetMeta,
   softDeleteAsset,
 } from "../services/media/mediaLibrary.service";
+import { GetObjectCommand } from "@aws-sdk/client-s3";
+import { r2Client, R2_BUCKET } from "../config/r2";
 import { enqueueMediaSyncJob } from "../queues/meta.queue";
 import prisma from "../config/prisma";
 import { logger } from "../utils/logger";
@@ -147,6 +149,35 @@ router.get("/:id/sync-status", authenticateToken, async (req: Request, res: Resp
     return res.json({ data: asset });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /v1/media/file/* — Fallback proxy to serve R2 files if no CDN URL is set ──
+router.get("/file/*", async (req: Request, res: Response) => {
+  try {
+    const key = req.params[0];
+    if (!key) return res.status(400).json({ error: "Key is required" });
+
+    const getObj = await r2Client.send(
+      new GetObjectCommand({
+        Bucket: R2_BUCKET,
+        Key: key,
+      })
+    );
+
+    const contentType = getObj.ContentType || "application/octet-stream";
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    res.setHeader("Access-Control-Allow-Origin", "*"); // Allow frontend to fetch/preview
+
+    if (getObj.Body) {
+      (getObj.Body as any).pipe(res);
+    } else {
+      res.status(404).json({ error: "File body is empty" });
+    }
+  } catch (err: any) {
+    logger.warn("media.proxy.failed", { key: req.params[0], error: err.message });
+    res.status(404).json({ error: "File not found in storage" });
   }
 });
 

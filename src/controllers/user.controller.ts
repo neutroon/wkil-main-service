@@ -9,6 +9,7 @@ import {
   reactivateUser,
   permanentlyDeleteUser,
 } from "../services/user.service";
+import * as authService from "../services/auth.service";
 import {
   setAuthCookies,
   clearAuthCookies,
@@ -16,6 +17,7 @@ import {
   generateRefreshToken,
   // setUserRoleCookies,
 } from "../middlewares/auth.middleware";
+import { logger } from "../utils/logger";
 
 export const registerUser = async (req: Request, res: Response) => {
   try {
@@ -48,6 +50,8 @@ export const registerUser = async (req: Request, res: Response) => {
         name: user.name,
         email: user.email,
         role: user.role,
+        isEmailVerified: user.isEmailVerified,
+        lastVerificationSentAt: user.lastVerificationSentAt,
       },
     });
   } catch (err: any) {
@@ -60,6 +64,17 @@ export const loginUserController = async (req: Request, res: Response) => {
     const { email, password } = req.body;
     const result = await loginUser(email, password);
 
+    // Identity Lifecycle: Proactively trigger verification email if unverified
+    if (!result.isEmailVerified) {
+      authService.resendVerification(email).catch((err) => {
+        // We log but don't fail the login (they will land on the pending page anyway)
+        logger.info("Auto-verification email suppressed or failed on login", {
+          email,
+          reason: err.message,
+        });
+      });
+    }
+
     // Set HTTP-only cookies
     setAuthCookies(res, result.accessToken, result.refreshToken);
     // setUserRoleCookies(res, result.role, result.role);
@@ -71,6 +86,8 @@ export const loginUserController = async (req: Request, res: Response) => {
         id: result.id,
         email: result.email,
         role: result.role,
+        isEmailVerified: result.isEmailVerified,
+        lastVerificationSentAt: result.lastVerificationSentAt,
       },
     });
   } catch (err: any) {

@@ -3,8 +3,14 @@ import { createServer } from "http";
 import app from "./app";
 import { initSocket } from "./utils/socket";
 
-import { bootstrapMetaQueue, startMetaQueue } from "./queues/meta.queue";
+import { 
+  bootstrapMetaQueue, 
+  startMetaQueue, 
+  expressWorker, 
+  productionWorker 
+} from "./queues/meta.queue";
 import { startMediaRefreshJob } from "./jobs/mediaRefresh.job";
+import { socialWorker } from "./workers/social.worker"; // Initialize BullMQ Worker
 import { logger } from "./utils/logger";
 import prisma from "./config/prisma";
 

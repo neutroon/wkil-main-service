@@ -38,6 +38,7 @@ import { identifyUserForRateLimit } from "./middlewares/identify.middleware";
 import { errorHandler } from "./middlewares/errorHandler.middleware";
 import prisma from "./config/prisma";
 import { logger } from "./utils/logger";
+import missionControlRouter from "./routes/admin/missionControl";
 
 const app = express();
 
@@ -127,6 +128,7 @@ app.use("/v1/meta/media", mediaRoutes);
 app.use("/v1/meta/conversations", conversationsRoutes);
 app.use("/v1/leads", leadRoutes);
 app.use("/v1/admin", adminRoutes);
+app.use("/v1/admin/mission-control", missionControlRouter);
 app.use("/v1/manager", managerRoutes);
 app.use("/v1/dashboard", dashboardRoutes);
 app.use("/v1/scrape", scrapeRoutes);

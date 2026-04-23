@@ -14,6 +14,8 @@ import { logger } from "../utils/logger";
  */
 export const verifyEmail = async (token: string) => {
   const hashedToken = hashToken(token);
+  
+  logger.info("Email verification attempt started", { hashedToken });
 
   const user = await prisma.user.findFirst({
     where: {
@@ -23,26 +25,35 @@ export const verifyEmail = async (token: string) => {
   });
 
   if (!user) {
-    logger.warn("Verification failed: Invalid or expired token", { token: hashedToken });
+    logger.warn("Verification failed: Token mismatch or expired", { hashedToken });
     throw new Error("Invalid or expired verification token");
   }
 
-  logger.info("Verifying email for user", { userId: user.id, email: user.email });
+  logger.info("Verification target user identified", { 
+    userId: user.id, 
+    email: user.email,
+    currentStatus: user.isEmailVerified 
+  });
 
   const updatedUser = await prisma.user.update({
     where: { id: user.id },
     data: {
       isEmailVerified: true,
-      emailVerificationToken: null, // Clear token after successful use
+      emailVerificationToken: null,
     },
     select: {
       id: true,
       email: true,
       isEmailVerified: true,
+      updatedAt: true
     },
   });
 
-  logger.info("Email verified successfully", { userId: updatedUser.id });
+  logger.info("Database update successful: Email activated", { 
+    userId: updatedUser.id, 
+    isEmailVerified: updatedUser.isEmailVerified,
+    newUpdatedAt: updatedUser.updatedAt
+  });
 
   return updatedUser;
 };

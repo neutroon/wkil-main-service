@@ -3,6 +3,8 @@ import { createMediaAsset } from "./mediaLibrary.service";
 import { recordAiUsage, assertQuotaAvailable } from "../billing.service";
 import { logger } from "../../utils/logger";
 import prisma from "../../config/prisma";
+import { GetObjectCommand } from "@aws-sdk/client-s3";
+import { r2Client, R2_BUCKET } from "../../config/r2";
 
 import axios from "axios";
 
@@ -74,11 +76,12 @@ Convert the following user intent into a high-fidelity photographic prompt for g
 - Color Palette: ${colorBrief || "Natural and vibrant"}
 
 [CRITICAL INSTRUCTIONS]:
-1. Style: Focus on "Deep Professional Photography", cinematic lighting, and 8k resolution.
-2. Composition: Modern, centered, and optimized for social media engagement.
-3. Native Branding: If a logo is attached, integrate it naturally into the scene or as a high-fidelity mark in the ${profile.watermarkPosition || "BOTTOM_RIGHT"} corner.
-4. Prompt Intent: ${userPrompt}
-5. Output: Return ONLY the final prompt string. No conversational filler.`;
+1. Style: Focus on "Ultra-High Definition Photography", master-level lighting, shallow depth of field (f/1.8), and global illumination.
+2. Composition: Perfectly balanced, rule-of-thirds or symmetrical, optimized for elite social media engagement.
+3. Rendering: Ray-traced textures, no artifacts, realistic shadows and reflections.
+4. Native Branding: If a logo is attached, integrate it naturally into the scene or as a high-fidelity mark in the ${profile.watermarkPosition || "BOTTOM_RIGHT"} corner.
+5. Prompt Intent: ${userPrompt}
+6. Output: Return ONLY the final prompt string. No conversational filler.`;
 
   const { text: enhancedPrompt } = await generateContent(artDirectorPrompt);
   const finalPrompt = (enhancedPrompt || userPrompt).trim();
@@ -159,12 +162,22 @@ export async function refineGeminiVisual(params: {
   });
   if (!asset) throw new Error("Source asset not found");
 
-  // Since we stream to R2, we need it as a Buffer back to send to Gemini
-  // For production efficiency, in a real env, we'd fetch from R2 here.
-  // For now, let's look for it in the local FS or fetch via public URL
-  const res = await fetch(asset.publicUrl);
-  const arrayBuffer = await res.arrayBuffer();
-  const imageBuffer = Buffer.from(arrayBuffer);
+  // Since we stream to R2, we fetch it back as a Buffer directly via SDK for maximum reliability
+  let imageBuffer: Buffer;
+  try {
+    const getObj = await r2Client.send(
+      new GetObjectCommand({
+        Bucket: R2_BUCKET,
+        Key: asset.r2Key,
+      })
+    );
+    const bodyBytes = await getObj.Body?.transformToByteArray();
+    if (!bodyBytes) throw new Error("Source asset data is empty in R2");
+    imageBuffer = Buffer.from(bodyBytes);
+  } catch (err: any) {
+    logger.error("gemini_visual.refine_fetch_failed", { assetId, r2Key: asset.r2Key, error: err.message });
+    throw new Error("Failed to fetch source image for refinement. Please try again.");
+  }
 
   // 3. Command the pixels
   const { imageBuffer: refinedBuffer, usage } = await generateVisualContent({

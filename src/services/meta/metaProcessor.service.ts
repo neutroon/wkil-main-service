@@ -126,7 +126,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
       identifier,
       error: err.message,
     });
-    return;
+    throw err; // Throw so BullMQ marks it as failed in Mission Control
   }
 
   logger.info("meta.processor.started", {

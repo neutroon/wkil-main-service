@@ -430,43 +430,23 @@ export async function listMessengerConversations(
   // Build pageId -> pageName map for enrichment
   const pageMap = Object.fromEntries(pages.map((p) => [p.pageId, p.pageName]));
 
-  // 1. ELITE DEDUPLICATION: Group by senderId to find the latest conversation for each user
-  // This ensures "Mohamed Mohamed" only appears ONCE in the sidebar, even if he commented on 10 posts.
-  const groups = await prisma.conversation.groupBy({
-    by: ["senderId"],
-    where: {
-      pageId: { in: pageIds },
-      channel: { in: ["messenger", "facebook_comment"] },
-      status: { not: "ARCHIVED" },
-    },
-    _max: {
-      updatedAt: true,
-      id: true, // We take the max(id) as a stable proxy for the latest record
-    },
-    orderBy: {
-      _max: {
-        updatedAt: "desc",
-      },
-    },
-    skip,
-    take: limit,
-  });
-
-  const uniqueIds = groups.map((g) => g._max.id).filter((id): id is number => id !== null);
-
-  const [totalGroups, rows] = await Promise.all([
-    prisma.conversation.groupBy({
-      by: ["senderId"],
+  const [total, rows] = await Promise.all([
+    prisma.conversation.count({
       where: {
         pageId: { in: pageIds },
         channel: { in: ["messenger", "facebook_comment"] },
+        status: { not: "ARCHIVED" },
       },
-    }).then(res => res.length),
+    }),
     prisma.conversation.findMany({
       where: {
-        id: { in: uniqueIds },
+        pageId: { in: pageIds },
+        channel: { in: ["messenger", "facebook_comment"] },
+        status: { not: "ARCHIVED" },
       },
       orderBy: { updatedAt: "desc" },
+      skip,
+      take: limit,
       include: {
         messages: {
           orderBy: { createdAt: "desc" },
@@ -475,8 +455,6 @@ export async function listMessengerConversations(
       },
     }),
   ]);
-
-  const total = totalGroups;
 
   const data = rows.map((c: any) => ({
     id: c.id,

@@ -209,7 +209,7 @@ router.post("/ai/generate", authenticateToken, async (req: Request, res: Respons
 
     // 2. Enqueue the background worker job
     await enqueueMetaJob({
-      platform: "messenger", // Overloaded platform for routing
+      platform: "visual_production", 
       type: "visual_production", 
       identifier: String(businessProfileId),
       senderId: String(userId),
@@ -251,7 +251,7 @@ router.post("/ai/refine", authenticateToken, async (req: Request, res: Response)
 
     // 2. Enqueue the background worker job
     await enqueueMetaJob({
-      platform: "messenger", // Overloaded platform for routing
+      platform: "visual_refine",
       type: "visual_refine",
       identifier: String(businessProfileId),
       senderId: String(userId),

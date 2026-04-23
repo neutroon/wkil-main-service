@@ -207,8 +207,27 @@ contentRoutes.patch(
 
       const updated = await prisma.contentPlanPost.update({
         where: { id: parseInt(postId, 10) },
-        data: { status: manual ? "approved_manual" : "approved" }
+        data: { status: manual ? "approved_manual" : "approved" },
+        include: { contentPlan: true }
       });
+
+      // ── ELITE TIER: Production-Grade Scheduling ──
+      if (!manual && updated.scheduledAt) {
+        const { socialQueue } = await import("../queues/social.queue");
+        const delay = Math.max(0, new Date(updated.scheduledAt).getTime() - Date.now());
+        
+        await socialQueue.add(
+          `publish-${updated.id}`, 
+          { 
+            postId: updated.id, 
+            platform: updated.platform, 
+            businessProfileId: updated.contentPlan.businessProfileId 
+          },
+          { delay, jobId: `post-${updated.id}` } // Deduplication via jobId
+        );
+
+        console.log(`[ContentAPI] Post ${postId} enqueued for publishing in ${delay}ms`);
+      }
 
       res.json(updated);
     } catch (err: any) {

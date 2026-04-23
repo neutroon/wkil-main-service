@@ -455,9 +455,16 @@ export async function generatePostExecution(postId: number, userId: number) {
     throw new Error("Unauthorized");
   }
 
-  const profile = post.contentPlan.businessProfile;
+  // 2. Set 'generating' status immediately for resilience
+  await prisma.contentPlanPost.update({
+    where: { id: postId },
+    data: { status: "generating" },
+  });
 
-  // 2. Build targeted prompt depending on the format
+  try {
+    const profile = post.contentPlan.businessProfile;
+
+    // 2b. Build targeted prompt depending on the format
   const persona = `
 - Brand Name: ${profile.name}
 - Identity: ${profile.identity}
@@ -510,8 +517,8 @@ Output strictly as JSON:
     schemaInstruct = `
 Output strictly as JSON:
 {
-  "caption": "The main post text including emojis and hashtags",
-  "imagePrompt": "Detailed visual description of the ideal AI-generated image for this post"
+  "caption": "A high-engagement social media caption. Use a punchy hook, body with value/benefit, and a clear call-to-action. Tone MUST match the persona.",
+  "imagePrompt": "A world-class technical photography brief. Describe: 1. Subject action & emotion, 2. Specific camera angle (Dutch angle, low-shot, etc), 3. Material textures, 4. Lighting style (e.g. moody chiaroscuro or high-key airy sunlight), 5. Compositional focus. Avoid AI-generic descriptions."
 }`;
   }
 
@@ -531,10 +538,12 @@ Follow this exact JSON structure:
 ${schemaInstruct}
 
 [CRITICAL INSTRUCTIONS]:
-1. Language/Dialect: You MUST write ALL content (caption, slide text, scripts) strictly in the language specified in the "Voice" field above: ${profile.voice}.
-2. Fact-Checking: Use the provided "BUSINESS KNOWLEDGE" and persona details to include specific information about products, pricing, or services. Do not be generic.
-3. Identity: Ensure the content perfectly matches the Brand Name and Tone.
-4. Output: Do NOT include any surrounding markdown. Just the raw JSON.`;
+1. Language/Dialect: You MUST write ALL content (caption, slide text, scripts, etc.) strictly in the language specified in the "Voice" field above: ${profile.voice}.
+2. Visual Narrative: Your "imagePrompt" values are for a high-end Art Director. Be descriptive, technical, and artistic. Avoid words like "photorealistic" — instead, describe the lighting, lens, and texture.
+3. Hook-Driven Copy: Captions must not be dry. Use the "AIDA" (Attention, Interest, Desire, Action) framework or professional storytelling.
+4. Fact-Checking: Use the provided "BUSINESS KNOWLEDGE" and persona details to include specific information about products, pricing, or services. Do not be generic.
+5. Identity: Ensure the content perfectly matches the Brand Name and Tone.
+6. Output: Do NOT include any surrounding markdown. Just the raw JSON.`;
 
   console.log(
     `[ContentPlanService] Generating Post Execution for Post ${postId} (${post.format})...`,
@@ -581,7 +590,21 @@ ${schemaInstruct}
 
     return updatedPost;
   } catch (err) {
+    // Reset status on error so user can retry
+    await prisma.contentPlanPost.update({
+      where: { id: postId },
+      data: { status: "pending" },
+    });
     console.error("Gemini JSON Parsing error for Post Execution", err);
     throw new Error("Failed to parse the generated content from AI.");
   }
+} catch (outerErr: any) {
+  // Global catch for the entire generation process
+  await prisma.contentPlanPost.update({
+    where: { id: postId },
+    data: { status: "pending" },
+  });
+  logger.error("generatePostExecution.global_failure", { postId, error: outerErr.message });
+  throw outerErr;
+}
 }

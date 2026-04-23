@@ -121,6 +121,7 @@ Convert the following user intent into a high-fidelity photographic prompt for g
       where: { id: postId },
       data: {
         imageUrl: asset.publicUrl,
+        mediaAssetId: asset.id,
         status: "generated", 
       },
     });
@@ -145,8 +146,9 @@ export async function refineGeminiVisual(params: {
   businessProfileId: number;
   assetId: number;
   instruction: string;
+  postId?: number;
 }) {
-  const { userId, businessProfileId, assetId, instruction } = params;
+  const { userId, businessProfileId, assetId, instruction, postId } = params;
 
   // 1. Quota Check (Edits are medium-high value)
   await assertQuotaAvailable(userId, businessProfileId);
@@ -183,7 +185,18 @@ export async function refineGeminiVisual(params: {
     instructions: `AI Refinement: ${instruction} (Source: ${asset.name})`,
   });
 
-  // 5. Log Billing
+  // 5. Link to Content Plan Post (if provided)
+  if (postId) {
+    await prisma.contentPlanPost.update({
+      where: { id: postId },
+      data: {
+        imageUrl: refinedAsset.publicUrl,
+        mediaAssetId: refinedAsset.id,
+      },
+    });
+  }
+
+  // 6. Log Billing
   await recordAiUsage({
     userId,
     businessProfileId,

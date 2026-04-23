@@ -173,11 +173,13 @@ export async function createGeminiVisual(params: {
       });
     }
 
-    // 8. Record Usage
+    // 8. Record Usage (Fixed: Explicitly map fields to match recordAiUsage expectations)
     await recordAiUsage({
       userId,
       businessProfileId,
-      ...usage,
+      promptTokens: usage.promptTokens,
+      completionTokens: usage.completionTokens,
+      modelName: usage.model,
       operation: "gemini_image_generation_branded",
     });
 
@@ -301,11 +303,13 @@ export async function refineGeminiVisual(params: {
       });
     }
 
-    // 8. Log Billing
+    // 8. Log Billing (Fixed: Explicitly map fields to match recordAiUsage expectations)
     await recordAiUsage({
       userId,
       businessProfileId,
-      ...usage,
+      promptTokens: usage.promptTokens,
+      completionTokens: usage.completionTokens,
+      modelName: usage.model,
       operation: "gemini_image_refine_e2e",
     });
 

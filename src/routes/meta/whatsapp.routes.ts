@@ -322,6 +322,22 @@ whatsappRoutes.post("/webhook", async (req: Request, res: Response) => {
 
         if (!phoneNumberId || !Array.isArray(messages)) continue;
 
+        // ── GATE: Verify this phoneNumberId belongs to an active WA account ──
+        // Status updates (above) are intentionally NOT gated — they relate to
+        // already-sent messages and should always be processed. Only inbound
+        // message enqueueing is blocked for unknown/disconnected accounts.
+        const knownAccount = await prisma.whatsAppAccount.findFirst({
+          where: { phoneNumberId, isActive: true },
+          select: { id: true },
+        });
+        if (!knownAccount) {
+          logger.warn("whatsapp.webhook.unknown_account_discarded", {
+            phoneNumberId,
+            reason: "Account is not connected to any active business profile.",
+          });
+          continue; // Skip enqueueing — no jobs created for unknown accounts
+        }
+
         for (const msgData of messages) {
           const msg = msgData as any;
           const wamid = msg.id;

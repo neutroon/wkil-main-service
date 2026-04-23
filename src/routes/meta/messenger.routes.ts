@@ -365,6 +365,22 @@ messengerRoutes.post("/webhook", async (req: Request, res: Response) => {
     for (const entry of body.entry) {
       const pageId = entry.id;
 
+      // ── GATE: Verify this page is connected to an active business profile ──
+      // This is the most efficient place to check: once per entry, before any job
+      // is enqueued. Unknown pages are discarded silently here — Mission Control
+      // stays completely clean, and no jobs are ever wasted.
+      const knownPage = await prisma.facebookPage.findFirst({
+        where: { pageId, isActive: true },
+        select: { id: true },
+      });
+      if (!knownPage) {
+        logger.warn("messenger.webhook.unknown_page_discarded", {
+          pageId,
+          reason: "Page is not connected to any active business profile.",
+        });
+        continue; // Skip this entire entry — no jobs enqueued
+      }
+
       // 1. Handle Feed changes (Facebook Comments)
       if (Array.isArray(entry.changes)) {
         for (const change of entry.changes) {

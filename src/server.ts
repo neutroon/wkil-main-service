@@ -4,7 +4,6 @@ import app from "./app";
 import { initSocket } from "./utils/socket";
 
 import { 
-  bootstrapMetaQueue, 
   startMetaQueue, 
   expressWorker, 
   productionWorker 
@@ -22,8 +21,6 @@ initSocket(httpServer);
 const server = httpServer.listen(PORT, "0.0.0.0", async () => {
   logger.info(`Server running on port ${PORT}`);
   
-  // High-Resilience Recovery: Pick up where we left off
-  void bootstrapMetaQueue();
   // Start the background queue loop for delayed/scheduled jobs
   startMetaQueue();
   // Daily WhatsApp media ID refresh (expires after 30 days)

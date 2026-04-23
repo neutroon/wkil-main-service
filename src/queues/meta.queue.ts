@@ -13,13 +13,13 @@ import { registerAssetWithMeta } from "../services/media/mediaLibrary.service";
 // EXPRESS LANE: For Messenger, WhatsApp, and Webhooks (< 1s)
 export const metaExpressQueue = new Queue("meta-express", { 
   connection: bullConnection,
-  defaultJobOptions: { removeOnComplete: false, attempts: 2 }
+  defaultJobOptions: { removeOnComplete: true, attempts: 2 }
 });
 
 // PRODUCTION LANE: For Gemini Image Generation and AI Branding (20-60s)
 export const metaProductionQueue = new Queue("meta-production", { 
   connection: bullConnection,
-  defaultJobOptions: { removeOnComplete: false, attempts: 1 }
+  defaultJobOptions: { removeOnComplete: true, attempts: 1 }
 });
 
 export type MetaJobType = "messaging" | "visual_production" | "media_sync";

@@ -1,3 +1,4 @@
+import { UnrecoverableError } from "bullmq";
 import prisma from "../../config/prisma";
 import { logger } from "../../utils/logger";
 import { emitToBusiness, emitToConversation } from "../../utils/socket";
@@ -82,10 +83,18 @@ export async function processMetaMessage(job: MetaMessageJob) {
           },
         },
       });
-      if (!page || !page.businessProfileId)
-        throw new Error(
-          `Messenger page ${identifier} not found or has no profile.`,
+      if (!page || !page.businessProfileId) {
+        logger.warn("meta.processor.page_not_found", {
+          platform: "messenger",
+          pageId: identifier,
+          reason: "Page is not connected to any business profile.",
+        });
+        // UnrecoverableError: BullMQ will NOT retry, but WILL show it in Mission Control.
+        // This is the correct pattern for permanent, non-retryable failures.
+        throw new UnrecoverableError(
+          `Messenger page ${identifier} is not connected to any business profile. Cannot process.`,
         );
+      }
       businessProfileId = page.businessProfileId;
       businessProfile = page.businessProfile!;
       accessToken = decryptFacebookSecret(page.pageAccessToken);
@@ -111,10 +120,17 @@ export async function processMetaMessage(job: MetaMessageJob) {
           },
         },
       });
-      if (!account || !account.businessProfileId)
-        throw new Error(
-          `WhatsApp account ${identifier} not found or has no profile.`,
+      if (!account || !account.businessProfileId) {
+        logger.warn("meta.processor.account_not_found", {
+          platform: "whatsapp",
+          phoneNumberId: identifier,
+          reason: "WhatsApp account is not connected to any business profile.",
+        });
+        // UnrecoverableError: BullMQ will NOT retry, but WILL show it in Mission Control.
+        throw new UnrecoverableError(
+          `WhatsApp account ${identifier} is not connected to any business profile. Cannot process.`,
         );
+      }
       businessProfileId = account.businessProfileId;
       businessProfile = account.businessProfile!;
       accessToken = decryptFacebookSecret(account.accessToken);
@@ -126,7 +142,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
       identifier,
       error: err.message,
     });
-    throw err; // Throw so BullMQ marks it as failed in Mission Control
+    throw err; // Re-throw for genuine unexpected errors (DB down, decryption failure, etc.)
   }
 
   logger.info("meta.processor.started", {

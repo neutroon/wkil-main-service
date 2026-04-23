@@ -3,11 +3,13 @@ import { registerAssetWithMeta } from "../services/media/mediaLibrary.service";
 import { logger } from "../utils/logger";
 import prisma from "../config/prisma";
 
-const CONCURRENCY = 3;
-const JOB_TIMEOUT_MS = 120000; // Increased to 120s for high-fidelity Gemini 3.1 visual rendering
-const RETRY_INTERVALS = [5, 30, 300]; // seconds (5s, 30s, 5m)
+const EXPRESS_CONCURRENCY = 8;     // High throughput for messaging
+const PRODUCTION_CONCURRENCY = 2;  // Dedicated capacity for visual production
+const JOB_TIMEOUT_MS = 120000;     // 120s max for any job
+const RETRY_INTERVALS = [5, 30, 300]; 
 
-let draining = false;
+let drainingExpress = false;
+let drainingProduction = false;
 const ACTIVE_PROCESSING_KEYS = new Set<string>();
 
 /**
@@ -39,7 +41,8 @@ export async function enqueueMetaJob(
     });
 
     // Kick off worker (non-blocking) - but only if it's due now
-    if (!draining && delaySeconds <= 0) void drainQueue();
+    // We check both lanes to see if either needs a kickstart
+    if (!(drainingExpress && drainingProduction) && delaySeconds <= 0) void drainQueue();
   } catch (err: any) {
     logger.error("meta.queue.enqueue_failed", {
       error: err.message,
@@ -83,7 +86,7 @@ export async function enqueueMediaSyncJob(assetId: number): Promise<void> {
         status: "pending",
       }
     });
-    if (!draining) void drainQueue();
+    if (!(drainingExpress && drainingProduction)) void drainQueue();
   } catch (err: any) {
     logger.error("meta.queue.enqueue_media_sync_failed", { error: err.message, assetId });
     throw err;
@@ -91,87 +94,72 @@ export async function enqueueMediaSyncJob(assetId: number): Promise<void> {
 }
 
 
-async function drainQueue(): Promise<void> {
-  if (draining) return;
-  draining = true;
+/**
+ * INDUSTRIAL-GRADE LANE ISOLATED WORKER
+ * 
+ * Separates "Fast" messaging from "Slow" visual production to prevent 
+ * resource starvation and maintain production-tier SLAs.
+ */
+async function drainLane(lane: "EXPRESS" | "PRODUCTION") {
+  const isExpress = lane === "EXPRESS";
+  if (isExpress && drainingExpress) return;
+  if (!isExpress && drainingProduction) return;
+
+  if (isExpress) drainingExpress = true; else drainingProduction = true;
+
+  const concurrency = isExpress ? EXPRESS_CONCURRENCY : PRODUCTION_CONCURRENCY;
+  const platforms = isExpress 
+    ? ["facebook", "instagram", "linkedin", "whatsapp", "media_sync"]
+    : ["visual_production", "visual_refine"];
 
   try {
     while (true) {
-      // 1. Fetch available jobs
+      // 1. Fetch available jobs for this lane
       const pendingJobs = await prisma.metaJob.findMany({
         where: {
           status: { in: ["pending", "retrying"] },
           nextAttemptAt: { lte: new Date() },
+          platform: { in: platforms }
         },
         orderBy: { createdAt: "asc" },
-        take: CONCURRENCY,
+        take: concurrency,
       });
 
       if (pendingJobs.length === 0) break;
 
-      // 2. Filter out jobs for users currently being processed
-      // CRITICAL BUG FIX (Batch Level Serizalization): 
-      // We must track which keys we've picked IN THIS EXACT BATCH to prevent picking 2 jobs for same user at once.
-      const jobsToRun: typeof pendingJobs = [];
-      for (const job of pendingJobs) {
+      const jobsToRun = pendingJobs.filter(job => {
         const key = `${job.platform}:${job.identifier}:${job.senderId}`;
         if (!ACTIVE_PROCESSING_KEYS.has(key)) {
           ACTIVE_PROCESSING_KEYS.add(key);
-          jobsToRun.push(job);
+          return true;
         }
-      }
+        return false;
+      });
 
-      if (jobsToRun.length === 0) {
-        // All pending jobs are for active users; wait for next cycle
-        break; 
-      }
+      if (jobsToRun.length === 0) break;
 
-      // 3. Run batch in parallel
       await Promise.all(jobsToRun.map(async (jobRecord) => {
         const key = `${jobRecord.platform}:${jobRecord.identifier}:${jobRecord.senderId}`;
-        
-        // Lock already set in the filter stage for this batch
         try {
-          // Mark as processing to avoid double pickup
           await prisma.metaJob.update({
             where: { id: jobRecord.id },
             data: { status: "processing" }
           });
 
-          const jobData = jobRecord.payload as unknown as MetaMessageJob;
-
-          logger.info("meta.queue.processing_job", { 
-            id: jobRecord.id,
-            platform: jobData.platform, 
-            senderId: jobData.senderId,
-            attempt: jobRecord.attempts + 1
-          });
-
-          // SAFETY: Job-level timeout
           const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error("Job Processing Timeout (60s)")), JOB_TIMEOUT_MS)
+            setTimeout(() => reject(new Error(`Lane ${lane} Timeout (${JOB_TIMEOUT_MS/1000}s)`)), JOB_TIMEOUT_MS)
           );
 
           if (jobRecord.platform === "media_sync") {
-            const { assetId } = jobRecord.payload as { assetId: number };
-            await Promise.race([
-              registerAssetWithMeta(assetId),
-              timeoutPromise
-            ]);
-          } else if (jobRecord.platform === "visual_production" || jobRecord.platform === "visual_refine") {
+             const { assetId } = jobRecord.payload as { assetId: number };
+             await Promise.race([registerAssetWithMeta(assetId), timeoutPromise]);
+          } else if (lane === "PRODUCTION") {
              const { processVisualJob } = await import("../services/meta/metaProcessor.service");
-             await Promise.race([
-               processVisualJob(jobRecord.payload as any),
-               timeoutPromise
-             ]);
+             await Promise.race([processVisualJob(jobRecord.payload as any), timeoutPromise]);
           } else {
-            await Promise.race([
-              processMetaMessage(jobData),
-              timeoutPromise
-            ]);
+             await Promise.race([processMetaMessage(jobRecord.payload as any), timeoutPromise]);
           }
 
-          // MARK SUCCESS
           await prisma.metaJob.update({
             where: { id: jobRecord.id },
             data: { status: "completed" }
@@ -183,13 +171,6 @@ async function drainQueue(): Promise<void> {
 
           if (nextAttempt < maxAttempts) {
             const backoffSec = RETRY_INTERVALS[nextAttempt - 1] || 300;
-            logger.warn("meta.queue.job_retrying", { 
-              id: jobRecord.id, 
-              error: jobErr.message, 
-              nextAttempt,
-              delaySec: backoffSec
-            });
-
             await prisma.metaJob.update({
               where: { id: jobRecord.id },
               data: {
@@ -199,7 +180,8 @@ async function drainQueue(): Promise<void> {
                 nextAttemptAt: new Date(Date.now() + backoffSec * 1000)
               }
             });
-            // CLEAR STUCK STATUS ON POST IF APPLICABLE
+          } else {
+            // AUTO-RESET post status on permanent production failure
             const payload = jobRecord.payload as any;
             if (payload?.postId) {
               await prisma.contentPlanPost.update({
@@ -210,33 +192,26 @@ async function drainQueue(): Promise<void> {
 
             await prisma.metaJob.update({
               where: { id: jobRecord.id },
-              data: { 
-                status: "failed", 
-                lastError: jobErr.message.slice(0, 1000), 
-                attempts: nextAttempt 
-              }
+              data: { status: "failed", lastError: jobErr.message.slice(0, 1000), attempts: nextAttempt }
             });
           }
         } finally {
-          // ALWAYS Release lock
           ACTIVE_PROCESSING_KEYS.delete(key);
         }
       }));
     }
-  } catch (criticalErr: any) {
-    logger.error("meta.queue.critical_worker_error", { error: criticalErr.message });
+  } catch (err: any) {
+    logger.error(`meta.queue.lane_error.${lane}`, { error: err.message });
   } finally {
-    draining = false;
-    
-    // Check if new jobs arrived while finishing the last batch
-    const hasMore = await prisma.metaJob.count({
-      where: {
-        status: { in: ["pending", "retrying"] },
-        nextAttemptAt: { lte: new Date() },
-      }
-    });
-    if (hasMore > 0) void drainQueue();
+    if (isExpress) drainingExpress = false; else drainingProduction = false;
   }
+}
+
+async function drainQueue() {
+  await Promise.all([
+    drainLane("EXPRESS"),
+    drainLane("PRODUCTION")
+  ]);
 }
 
 /**

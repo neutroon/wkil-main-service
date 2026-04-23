@@ -530,8 +530,8 @@ export async function runAIEngineLoop(params: {
     const meta = (response as any).usageMetadata;
     const grounding = candidate.groundingMetadata?.searchEntryPoint;
     if (meta) {
-      sessionStats.promptTokens += meta.promptTokenCount || 0;
-      sessionStats.completionTokens += meta.candidatesTokenCount || 0;
+      sessionStats.promptTokens += meta.promptTokenCount || meta.promptTokens || 0;
+      sessionStats.completionTokens += meta.candidatesTokenCount || meta.completionTokens || 0;
       if (grounding) sessionStats.groundingCalls += 1;
     }
 

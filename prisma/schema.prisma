@@ -614,6 +614,8 @@ model ContentPlanPost {
   caption           String?  @db.Text
   imagePrompt       String?  @db.Text
   imageUrl          String?
+  mediaAssetId      Int?
+  mediaAsset        BusinessProfileMedia? @relation(fields: [mediaAssetId], references: [id], onDelete: SetNull)
   reelScript        String?  @db.Text // Script for reels/video
   carouselSlides    Json?    // Array of { slideText, slideImagePrompt } for carousels
   status            String   @default("pending") // pending, generated, approved, approved_manual, scheduled, posted

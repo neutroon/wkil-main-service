@@ -115,6 +115,10 @@ import { authenticateToken, requireVerified } from "./middlewares/auth.middlewar
 // ── Routes ───────────────────────────────────────────────────────────────────
 app.use("/v1/auth", authRoutes);
 
+// Public/Webhook Routes (Meta sends payloads here without Bearer tokens)
+app.use("/v1/messenger", messengerRoutes);
+app.use("/v1/whatsapp", whatsappRoutes);
+
 // Protected Enterprise Routes (Require Authentication & Email Verification)
 app.use(authenticateToken);
 app.use(requireVerified);
@@ -122,8 +126,6 @@ app.use(requireVerified);
 app.use("/v1/users", userRoutes);
 app.use("/v1/content", contentRoutes);
 app.use("/v1/facebook", facebookRoutes);
-app.use("/v1/messenger", messengerRoutes);
-app.use("/v1/whatsapp", whatsappRoutes);
 app.use("/v1/meta/media", mediaRoutes);
 app.use("/v1/meta/conversations", conversationsRoutes);
 app.use("/v1/leads", leadRoutes);

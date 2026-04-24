@@ -7,6 +7,7 @@ import { logger } from "../../utils/logger";
 import { verifyMetaWebhookSignature } from "../../utils/metaWebhook";
 import { redisClient } from "../../config/redis";
 import { authenticateToken } from "../../middlewares/auth.middleware";
+import { isKnownWhatsAppAccount, invalidateWhatsAppAccountCache } from "../../services/meta/webhookCache.service";
 import { encryptFacebookSecret } from "../../utils/tokenCrypto";
 import conversationsRoutes from "./conversations.routes";
 import {
@@ -319,11 +320,8 @@ whatsappRoutes.post("/webhook", async (req: Request, res: Response) => {
         // Status updates (above) are intentionally NOT gated — they relate to
         // already-sent messages and should always be processed. Only inbound
         // message enqueueing is blocked for unknown/disconnected accounts.
-        const knownAccount = await prisma.whatsAppAccount.findFirst({
-          where: { phoneNumberId, isActive: true },
-          select: { id: true },
-        });
-        if (!knownAccount) {
+        const isKnown = await isKnownWhatsAppAccount(phoneNumberId);
+        if (!isKnown) {
           logger.warn("whatsapp.webhook.unknown_account_discarded", {
             phoneNumberId,
             reason: "Account is not connected to any active business profile.",
@@ -670,6 +668,8 @@ whatsappRoutes.delete(
         where: { id },
         data: { isActive: false },
       });
+
+      await invalidateWhatsAppAccountCache(account.phoneNumberId);
 
       res.json({ success: true, message: "Account deactivated successfully" });
     } catch (error: any) {

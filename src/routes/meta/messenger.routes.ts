@@ -4,6 +4,7 @@ import prisma from "../../config/prisma";
 import { enqueueMetaJob } from "../../queues/meta.queue";
 import { logger } from "../../utils/logger";
 import { verifyMetaWebhookSignature } from "../../utils/metaWebhook";
+import { redisClient } from "../../config/redis";
 import { authenticateToken } from "../../middlewares/auth.middleware";
 import {
   listMessengerConversations,
@@ -115,16 +116,7 @@ messengerRoutes.post(
 
 const isDev = process.env.NODE_ENV !== "production";
 
-function isProcessedMessengerTableMissing(error: unknown): boolean {
-  if (error instanceof Prisma.PrismaClientKnownRequestError) {
-    if (error.code === "P2021") return true;
-  }
-  const msg = error instanceof Error ? error.message : String(error);
-  return (
-    msg.includes("ProcessedMessengerMessage") &&
-    msg.includes("does not exist")
-  );
-}
+
 
 // ─── Shared Helpers ───────────────────────────────────────────────────────────
 
@@ -403,20 +395,10 @@ messengerRoutes.post("/webhook", async (req: Request, res: Response) => {
 
               if (senderId && messageText && commentId) {
                 // IDEMPOTENCY GUARD: Prevent duplicate processing of the same comment
-                try {
-                  const inserted = await prisma.processedFacebookComment.createMany({
-                    data: [{ commentId }],
-                    skipDuplicates: true,
-                  });
-                  if (inserted.count === 0) {
-                    logger.debug("facebook.webhook.duplicate_comment_skipped", { commentId });
-                    continue;
-                  }
-                } catch (e: unknown) {
-                  logger.warn("facebook.webhook.idempotency_check_error", { 
-                    error: (e as any).message, 
-                    commentId 
-                  });
+                const isNew = await redisClient.set(`webhook:dedup:fbcomment:${commentId}`, "1", "EX", 86400, "NX");
+                if (!isNew) {
+                  logger.debug("facebook.webhook.duplicate_comment_skipped", { commentId });
+                  continue;
                 }
 
                 logger.info("facebook.webhook.comment_enqueued", { pageId, senderId, commentId });
@@ -544,22 +526,10 @@ messengerRoutes.post("/webhook", async (req: Request, res: Response) => {
           if (msgType !== "text" && !attachments) continue;
 
           if (messageMid) {
-            try {
-              const inserted = await prisma.processedMessengerMessage.createMany({
-                data: [{ messageMid }],
-                skipDuplicates: true,
-              });
-              if (inserted.count === 0) {
-                logger.debug("messenger.webhook.duplicate_mid_skipped", { messageMid });
-                continue;
-              }
-            } catch (e: unknown) {
-              // PRODUCTION FAIL-SAFE: If the idempotency table is missing or errors, 
-              // we proceed to process the message anyway to prioritize customer experience over strict deduplication.
-              logger.warn("messenger.webhook.idempotency_check_error", { 
-                error: (e as any).message, 
-                messageMid 
-              });
+            const isNew = await redisClient.set(`webhook:dedup:messenger:${messageMid}`, "1", "EX", 86400, "NX");
+            if (!isNew) {
+              logger.debug("messenger.webhook.duplicate_mid_skipped", { messageMid });
+              continue;
             }
           }
 

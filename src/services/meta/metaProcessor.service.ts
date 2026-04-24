@@ -589,15 +589,16 @@ export async function processMetaMessage(job: MetaMessageJob) {
                     businessProfileId,
                     { channel: "messenger" }
                   );
-
+ 
                   // Only mirror if it doesn't already exist in the Messenger thread
+                  const mirrorId = `mirror_${dmRes.id}`;
                   const existingMirror = await prisma.conversationMessage.findUnique({
-                    where: { externalId: dmRes.id }
+                    where: { externalId: mirrorId }
                   });
-
+ 
                   if (!existingMirror) {
                     await saveMessage(messengerConv.id, "model", mainContent, {
-                      externalId: dmRes.id,
+                      externalId: mirrorId,
                       intent: reply.intent,
                       aiReasoning: reply.reasoning,
                       isPrivate: true,
@@ -610,7 +611,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
                     });
                     logger.info("meta.processor.private_mirror_created", {
                       messengerConvId: messengerConv.id,
-                      messageId: dmRes.id
+                      messageId: mirrorId
                     });
                   }
                 } catch (mirrorErr: any) {

@@ -6,6 +6,7 @@ import { logger } from "../../utils/logger";
 import { verifyMetaWebhookSignature } from "../../utils/metaWebhook";
 import { redisClient } from "../../config/redis";
 import { authenticateToken } from "../../middlewares/auth.middleware";
+import { isKnownFacebookPage } from "../../services/meta/webhookCache.service";
 import {
   listMessengerConversations,
   listConversationMessages,
@@ -361,11 +362,8 @@ messengerRoutes.post("/webhook", async (req: Request, res: Response) => {
       // This is the most efficient place to check: once per entry, before any job
       // is enqueued. Unknown pages are discarded silently here — Mission Control
       // stays completely clean, and no jobs are ever wasted.
-      const knownPage = await prisma.facebookPage.findFirst({
-        where: { pageId, isActive: true },
-        select: { id: true },
-      });
-      if (!knownPage) {
+      const isKnown = await isKnownFacebookPage(pageId);
+      if (!isKnown) {
         logger.warn("messenger.webhook.unknown_page_discarded", {
           pageId,
           reason: "Page is not connected to any active business profile.",

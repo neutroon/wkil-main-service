@@ -12,6 +12,7 @@ import {
   listConversationMessages,
   getMessengerConversationForUser,
   saveMessage,
+  getOrCreateConversation,
 } from "../../services/meta/conversation.service";
 import { handleMessengerMessage } from "../../services/meta/messenger.service";
 import { decryptFacebookSecret } from "../../utils/tokenCrypto";
@@ -254,6 +255,8 @@ messengerRoutes.post(
 
       // ── ELITE TIER: Hardened Delivery via Service Layer ──
       let fbData: any;
+      const isPrivateRequest = req.body.isPrivate === true;
+
       try {
         if (conversation.channel === "facebook_comment") {
           // Validation Guard: Ensure we have the Comment ID to reply to
@@ -268,13 +271,24 @@ messengerRoutes.post(
             });
           }
 
-          const { replyToComment } = await import("../../services/meta/facebook.service");
-          fbData = await replyToComment({
-            commentId: conversation.externalId,
-            message: trimmedText,
-            accessToken: pageAccessToken,
-            pageId: page.pageId,
-          });
+          if (isPrivateRequest) {
+            const { sendPrivateReply } = await import("../../services/meta/facebook.service");
+            fbData = await sendPrivateReply({
+              commentId: conversation.externalId,
+              message: trimmedText,
+              accessToken: pageAccessToken,
+              pageId: page.pageId,
+              businessProfileId: page.businessProfileId!
+            });
+          } else {
+            const { replyToComment } = await import("../../services/meta/facebook.service");
+            fbData = await replyToComment({
+              commentId: conversation.externalId,
+              message: trimmedText,
+              accessToken: pageAccessToken,
+              pageId: page.pageId,
+            });
+          }
         } else {
           const { sendMessengerReply } = await import("../../services/meta/messenger.service");
           fbData = await sendMessengerReply(conversation.senderId, trimmedText, pageAccessToken);
@@ -294,8 +308,36 @@ messengerRoutes.post(
       const mid = fbData.id || fbData.message_id;
       const saved = await saveMessage(conversationId, "agent", trimmedText, {
         externalId: mid?.toString(),
-        status: "SENT"
+        status: "SENT",
+        isPrivate: isPrivateRequest,
+        origin: conversation.channel === "facebook_comment" ? "facebook_comment_reply" : undefined
       });
+
+      // 3. Selective Mirroring for Private Replies to Comments
+      if (conversation.channel === "facebook_comment" && isPrivateRequest && mid) {
+        try {
+          const messengerConv = await getOrCreateConversation(
+            page.pageId,
+            conversation.senderId,
+            page.businessProfileId!,
+            { channel: "messenger" }
+          );
+
+          const mirrorId = `mirror_${mid}`;
+          await saveMessage(messengerConv.id, "agent", trimmedText, {
+            externalId: mirrorId,
+            isPrivate: true,
+            origin: "facebook_comment_reply",
+            mediaMetadata: {
+              origin: "facebook_comment_reply",
+              postId: conversation.postId,
+              commentId: conversation.externalId
+            }
+          });
+        } catch (mirrorErr: any) {
+          logger.warn("messenger.manual_reply.mirror_failed_soft", { error: mirrorErr.message });
+        }
+      }
 
       emitToBusiness(conversation.businessProfileId, "new_message", {
         conversationId: conversation.id,

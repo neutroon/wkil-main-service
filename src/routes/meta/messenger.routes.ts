@@ -134,11 +134,24 @@ function parsePagination(
 }
 
 async function getUserFacebookPageIds(userId: number): Promise<string[]> {
+  // 1. Resolve all BusinessProfiles owned by this user
+  const profiles = await prisma.businessProfile.findMany({
+    where: { userId },
+    select: { id: true },
+  });
+  const profileIds = profiles.map((p) => p.id);
+
+  if (profileIds.length === 0) {
+    return [];
+  }
+
+  // 2. Resolve all Facebook pages linked to these profiles
   const pages = await prisma.facebookPage.findMany({
-    where: { facebookAccount: { userId }, isActive: true },
+    where: { businessProfileId: { in: profileIds }, isActive: true },
     select: { pageId: true },
   });
-  return pages.map((p: { pageId: string }) => p.pageId);
+
+  return pages.map((p) => p.pageId);
 }
 
 // ─── API Routes (Authenticated) ───────────────────────────────────────────────

@@ -40,6 +40,7 @@ export interface MetaMessageJob {
   senderName?: string;
   businessProfileId?: number;
   conversationId?: number;
+  isPrivate?: boolean;
 }
 
 // ELITE TIER: Spam & Burst Shield
@@ -296,11 +297,14 @@ export async function processMetaMessage(job: MetaMessageJob) {
     const finalType = type || "text";
     const finalContent = messageText || "";
 
+    const isPrivate = platform === "messenger" ? true : (job.isPrivate ?? false);
+
     const userSaved = await saveMessage(conversation.id, "user", finalContent, {
       externalId,
       type: finalType,
       mediaId,
       mediaMetadata,
+      isPrivate,
     });
 
     emitToBusiness(businessProfileId, "new_message", {
@@ -404,6 +408,8 @@ export async function processMetaMessage(job: MetaMessageJob) {
     // A. The "Core" Response (Usually the Private DM or standard reply)
     let modelSaved: any = null;
     if (mainContent.length > 0 || reply.action === "HANDOFF_TO_HUMAN") {
+      const isPrivate = platform === "messenger" ? true : (isComment && reply.intent === "SALES_DM");
+
       modelSaved = await saveMessage(conversation.id, "model", mainContent, {
         status,
         aiReasoning: reply.reasoning,
@@ -412,7 +418,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
             ? "PRIVATE_DM_REPLY"
             : reply.handoffCategory,
         intent: reply.intent, // Persist detected intent
-        isPrivate: isComment && reply.intent === "SALES_DM",
+        isPrivate,
         origin: isComment ? "facebook_comment_reply" : undefined,
       });
 

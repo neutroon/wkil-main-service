@@ -37,17 +37,29 @@ function parsePagination(
 }
 
 async function getUserPhoneNumberIds(userId: number): Promise<string[]> {
+  // 1. Resolve all BusinessProfiles owned by this user
+  const profiles = await prisma.businessProfile.findMany({
+    where: { userId },
+    select: { id: true },
+  });
+  const profileIds = profiles.map((p) => p.id);
+
+  if (profileIds.length === 0) {
+    return [];
+  }
+
+  // 2. Resolve all IDs (WA, FB, Widget) linked to these profiles
   const [waAccounts, fbPages, widgets] = await Promise.all([
     prisma.whatsAppAccount.findMany({
-      where: { userId, isActive: true },
+      where: { businessProfileId: { in: profileIds }, isActive: true },
       select: { phoneNumberId: true },
     }),
     prisma.facebookPage.findMany({
-      where: { facebookAccount: { userId }, isActive: true },
+      where: { businessProfileId: { in: profileIds }, isActive: true },
       select: { pageId: true },
     }),
     prisma.widgetInstall.findMany({
-      where: { userId, isActive: true },
+      where: { businessProfileId: { in: profileIds }, isActive: true },
       select: { id: true },
     }),
   ]);
@@ -55,6 +67,7 @@ async function getUserPhoneNumberIds(userId: number): Promise<string[]> {
   const waIds = waAccounts.map((a) => a.phoneNumberId);
   const fbIds = fbPages.map((p) => p.pageId);
   const widgetIds = widgets.map((w) => `widget:${w.id}`);
+
   return [...waIds, ...fbIds, ...widgetIds];
 }
 

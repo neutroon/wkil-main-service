@@ -154,6 +154,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
     externalId,
   });
 
+  /* 
   // 1b. ELITE TIER: Spam Shield (Burst Protection)
   const spamKey = `${businessProfileId}_${senderId}`;
   const now = Date.now();
@@ -176,6 +177,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
     // First message from this user
     SPAM_GUARD_CACHE.set(spamKey, { count: 1, lastMessageAt: now });
   }
+  */
 
   // 1b. IDEMPOTENCY GUARD: Prevent duplicate processing of the same message/comment
   if (externalId) {

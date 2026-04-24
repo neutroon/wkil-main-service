@@ -381,6 +381,7 @@ export async function listMessengerConversations(
   userId: number,
   page: number,
   limit: number,
+  channel: "messenger" | "facebook_comment" = "messenger",
 ) {
   const MAX_LIMIT = 100;
   limit = Math.min(limit, MAX_LIMIT);
@@ -416,14 +417,14 @@ export async function listMessengerConversations(
     prisma.conversation.count({
       where: {
         pageId: { in: pageIds },
-        channel: { in: ["messenger", "facebook_comment"] },
+        channel: channel,
         status: { not: "ARCHIVED" },
       },
     }),
     prisma.conversation.findMany({
       where: {
         pageId: { in: pageIds },
-        channel: { in: ["messenger", "facebook_comment"] },
+        channel: channel,
         status: { not: "ARCHIVED" },
       },
       orderBy: { updatedAt: "desc" },

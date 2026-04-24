@@ -156,7 +156,7 @@ async function getUserFacebookPageIds(userId: number): Promise<string[]> {
 
 // ─── API Routes (Authenticated) ───────────────────────────────────────────────
 
-/** List paginated Messenger conversations. */
+/** List paginated Messenger/Comment conversations. */
 messengerRoutes.get(
   "/",
   authenticateToken,
@@ -164,7 +164,10 @@ messengerRoutes.get(
     try {
       const userId = (req as any).user.id as number;
       const { page, limit } = parsePagination(req.query as Record<string, unknown>);
-      const result = await listMessengerConversations(userId, page, limit);
+      // Accept a 'channel' query param to allow fetching messenger or facebook_comment separately
+      const channelParam = req.query.channel as string | undefined;
+      const channel = channelParam === "facebook_comment" ? "facebook_comment" : "messenger";
+      const result = await listMessengerConversations(userId, page, limit, channel);
       return res.json(result);
     } catch (error: any) {
       logger.error("messenger.conversations.list_failed", { error: error.message });

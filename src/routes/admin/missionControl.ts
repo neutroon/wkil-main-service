@@ -13,12 +13,12 @@ import { authenticateToken, requireAdmin } from "../../middlewares/auth.middlewa
 
 const serverAdapter = new ExpressAdapter();
 
-// Initialize BullBoard with all production queues
+// Initialize BullBoard with all production queues and manual management enabled
 createBullBoard({
   queues: [
-    new BullMQAdapter(socialQueue),
-    new BullMQAdapter(metaExpressQueue),
-    new BullMQAdapter(metaProductionQueue),
+    new BullMQAdapter(socialQueue, { readOnlyMode: false }),
+    new BullMQAdapter(metaExpressQueue, { readOnlyMode: false }),
+    new BullMQAdapter(metaProductionQueue, { readOnlyMode: false }),
   ],
   serverAdapter: serverAdapter,
 });

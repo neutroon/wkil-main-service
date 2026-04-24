@@ -2,7 +2,7 @@ import prisma from "../../config/prisma";
 import { redisClient } from "../../config/redis";
 import { logger } from "../../utils/logger";
 
-const CACHE_TTL_SECONDS = 300; // 5 minutes
+const CACHE_TTL_SECONDS = 86400; // 24 hours (safe because of active invalidation)
 
 /**
  * Checks if a Facebook Page ID is known and active.

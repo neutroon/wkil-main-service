@@ -51,7 +51,11 @@ export async function getOrCreateConversation(
       updateData.customerAvatar = opts.customerAvatar;
     }
     // Sync channel if needed
-    if (opts?.channel && !existing.channel) {
+    // ELITE TIER: Upgrade 'facebook_comment' to 'messenger' if the user DMs us.
+    // This prevents duplicate sidebar entries and ensures the conversation "moves" to the Messenger tab.
+    if (opts?.channel === "messenger" && existing.channel === "facebook_comment") {
+      updateData.channel = "messenger";
+    } else if (opts?.channel && !existing.channel) {
       updateData.channel = opts.channel;
     }
     

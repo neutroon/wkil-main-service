@@ -1,6 +1,7 @@
 import prisma from "../../config/prisma";
 import { logger } from "../../utils/logger";
 import { decryptFacebookSecret } from "../../utils/tokenCrypto";
+import { redisClient } from "../../config/redis";
 import {
   getOrCreateConversation,
   getConversationHistory,
@@ -107,17 +108,10 @@ export async function handleMessengerMessage(
 ) {
   // Idempotency: prevent processing same Message ID twice (Meta retries)
   if (externalId) {
-    try {
-      const inserted = await prisma.processedMessengerMessage.createMany({
-        data: [{ messageMid: externalId }],
-        skipDuplicates: true,
-      });
-      if (inserted.count === 0) {
-        logger.debug("messenger.duplicate_mid_skipped", { externalId });
-        return;
-      }
-    } catch (e: unknown) {
-      logger.warn("messenger.idempotency_check_error", { error: String(e) });
+    const isNew = await redisClient.set(`webhook:dedup:messenger:${externalId}`, "1", "EX", 86400, "NX");
+    if (!isNew) {
+      logger.debug("messenger.duplicate_mid_skipped", { externalId });
+      return;
     }
   }
 

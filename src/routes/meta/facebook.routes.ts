@@ -20,7 +20,15 @@ import {
   validateAccessToken,
   deactivateFacebookPage,
   switchDevice,
+  sendPrivateReply,
 } from "../../services/meta/facebook.service";
+import { 
+  getOrCreateConversation, 
+  saveMessage,
+} from "../../services/meta/conversation.service";
+import { decryptFacebookSecret } from "../../utils/tokenCrypto";
+import { emitToBusiness, emitToConversation } from "../../utils/socket";
+import { logger } from "../../utils/logger";
 import { authenticateToken } from "../../middlewares/auth.middleware";
 import {
   validateFacebookPost,
@@ -668,6 +676,115 @@ facebookRoutes.patch(
       res.status(500).json({ error: message });
     }
   },
+);
+
+// Step 8: Send a private reply to a specific comment message
+facebookRoutes.post(
+  "/private-reply/:messageId",
+  authenticateToken,
+  async (req: Request, res: Response) => {
+    try {
+      const userId = (req as AuthRequest).user.id;
+      const messageId = parseInt(req.params.messageId, 10);
+      const { message } = req.body;
+
+      if (!messageId || !message) {
+        return res.status(400).json({ error: "messageId and message are required" });
+      }
+
+      // 1. Resolve the source message and its conversation
+      const sourceMsg = await prisma.conversationMessage.findUnique({
+        where: { id: messageId },
+        include: { 
+          conversation: {
+            include: { businessProfile: true }
+          } 
+        }
+      });
+
+      if (!sourceMsg || !sourceMsg.externalId) {
+        return res.status(404).json({ error: "Source comment not found or missing externalId" });
+      }
+
+      if (sourceMsg.conversation.channel !== "facebook_comment") {
+        return res.status(400).json({ error: "Private replies are only supported for Facebook Comments" });
+      }
+
+      // 2. Resolve Page Token
+      const page = await prisma.facebookPage.findFirst({
+        where: { 
+          pageId: sourceMsg.conversation.pageId, 
+          businessProfileId: sourceMsg.conversation.businessProfileId,
+          isActive: true 
+        }
+      });
+
+      if (!page) {
+        return res.status(404).json({ error: "Associated Facebook Page not found" });
+      }
+
+      const accessToken = decryptFacebookSecret(page.pageAccessToken);
+
+      // 3. Send Private Reply via Meta API
+      const dmRes = await sendPrivateReply({
+        commentId: sourceMsg.externalId,
+        message,
+        accessToken,
+        pageId: page.pageId,
+        businessProfileId: page.businessProfileId!
+      });
+
+      if (!dmRes?.id) {
+        throw new Error("Meta API failed to return a message ID for private reply");
+      }
+
+      // 4. Save the reply in the Comment Thread
+      const saved = await saveMessage(sourceMsg.conversationId, "agent", message, {
+        externalId: dmRes.id,
+        status: "SENT",
+        isPrivate: true,
+        origin: "facebook_comment_reply"
+      });
+
+      // 5. Selective Mirroring to Messenger Thread
+      try {
+        const messengerConv = await getOrCreateConversation(
+          page.pageId,
+          sourceMsg.conversation.senderId,
+          page.businessProfileId!,
+          { channel: "messenger" }
+        );
+
+        const mirrorId = `mirror_${dmRes.id}`;
+        await saveMessage(messengerConv.id, "agent", message, {
+          externalId: mirrorId,
+          isPrivate: true,
+          origin: "facebook_comment_reply",
+          mediaMetadata: {
+            origin: "facebook_comment_reply",
+            postId: sourceMsg.conversation.postId,
+            commentId: sourceMsg.externalId
+          }
+        });
+      } catch (mirrorErr: any) {
+        logger.warn("facebook.routes.mirror_failed_soft", { error: mirrorErr.message });
+      }
+
+      // 6. Emit to UI
+      emitToBusiness(page.businessProfileId!, "new_message", {
+        conversationId: sourceMsg.conversationId,
+        message: saved,
+      });
+      emitToConversation(sourceMsg.conversationId, "new_message", {
+        message: saved,
+      });
+
+      res.json({ success: true, data: saved });
+    } catch (error: any) {
+      logger.error("facebook.private_reply_failed", { error: error.message });
+      res.status(500).json({ error: error.message });
+    }
+  }
 );
 
 export default facebookRoutes;

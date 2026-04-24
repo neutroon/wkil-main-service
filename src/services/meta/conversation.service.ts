@@ -192,9 +192,20 @@ export async function listWhatsAppConversations(
   limit = Math.min(limit, MAX_LIMIT);
   const skip = (page - 1) * limit;
 
-  // Resolve all phoneNumberIds owned by this user
+  // 1. Resolve all BusinessProfiles owned by this user
+  const profiles = await prisma.businessProfile.findMany({
+    where: { userId },
+    select: { id: true },
+  });
+  const profileIds = profiles.map((p) => p.id);
+
+  if (profileIds.length === 0) {
+    return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
+  }
+
+  // 2. Resolve all phoneNumberIds linked to these profiles
   const accounts = await prisma.whatsAppAccount.findMany({
-    where: { userId, isActive: true },
+    where: { businessProfileId: { in: profileIds }, isActive: true },
     select: { phoneNumberId: true, displayPhoneNumber: true },
   });
 
@@ -415,9 +426,20 @@ export async function listMessengerConversations(
   limit = Math.min(limit, MAX_LIMIT);
   const skip = (page - 1) * limit;
 
-  // Resolve all pageIds owned by this user
+  // 1. Resolve all BusinessProfiles owned by this user
+  const profiles = await prisma.businessProfile.findMany({
+    where: { userId },
+    select: { id: true },
+  });
+  const profileIds = profiles.map((p) => p.id);
+
+  if (profileIds.length === 0) {
+    return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
+  }
+
+  // 2. Resolve all pageIds linked to these profiles
   const pages = await prisma.facebookPage.findMany({
-    where: { facebookAccount: { userId }, isActive: true },
+    where: { businessProfileId: { in: profileIds }, isActive: true },
     select: { pageId: true, pageName: true },
   });
 
@@ -470,6 +492,7 @@ export async function listMessengerConversations(
     postUrl: c.postUrl,
     sourceCommentText: c.sourceCommentText,
     processingStatus: c.processingStatus,
+    aiEnabled: c.aiEnabled,
     lastMessage: c.messages[0]
       ? {
           role: c.messages[0].role,

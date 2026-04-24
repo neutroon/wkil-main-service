@@ -525,21 +525,17 @@ export async function processMetaMessage(job: MetaMessageJob) {
             const delaySec = 20 + Math.floor(Math.random() * 25);
             const nextAttemptAt = new Date(Date.now() + delaySec * 1000);
 
-            await prisma.metaJob.create({
-              data: {
-                platform: "messenger",
-                identifier: job.identifier,
-                senderId: job.senderId,
-                status: "pending",
-                nextAttemptAt,
-                payload: {
-                  ...job,
-                  type: "FACEBOOK_COMMENT_PUBLIC_REPLY",
-                  messageText: publicText,
-                  businessProfileId,
-                  conversationId: conversation.id,
-                } as any,
-              },
+            const { enqueueMetaJob } = await import("../../queues/meta.queue");
+            await enqueueMetaJob({
+              ...job,
+              delaySeconds: delaySec,
+              platform: "messenger",
+              identifier: job.identifier,
+              senderId: job.senderId,
+              type: "FACEBOOK_COMMENT_PUBLIC_REPLY",
+              messageText: publicText,
+              businessProfileId,
+              conversationId: conversation.id,
             });
             logger.info("meta.processor.public_greeting_scheduled", {
               commentId: job.commentId,

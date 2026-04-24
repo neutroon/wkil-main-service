@@ -5,6 +5,7 @@ import prisma from "../../config/prisma";
 import { enqueueMetaJob } from "../../queues/meta.queue";
 import { logger } from "../../utils/logger";
 import { verifyMetaWebhookSignature } from "../../utils/metaWebhook";
+import { redisClient } from "../../config/redis";
 import { authenticateToken } from "../../middlewares/auth.middleware";
 import { encryptFacebookSecret } from "../../utils/tokenCrypto";
 import conversationsRoutes from "./conversations.routes";
@@ -131,15 +132,7 @@ const oauthPreviewTokenCache = new Map<
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function isProcessedWhatsAppTableMissing(error: unknown): boolean {
-  if (error instanceof Prisma.PrismaClientKnownRequestError) {
-    if (error.code === "P2021") return true;
-  }
-  const msg = error instanceof Error ? error.message : String(error);
-  return (
-    msg.includes("ProcessedWhatsAppMessage") && msg.includes("does not exist")
-  );
-}
+
 
 function pruneOauthPreviewTokenCache(now: number): void {
   for (const [key, value] of oauthPreviewTokenCache.entries()) {
@@ -375,27 +368,10 @@ whatsappRoutes.post("/webhook", async (req: Request, res: Response) => {
 
           // Idempotency — deduplicate Meta retries by wamid
           if (wamid) {
-            try {
-              const inserted = await prisma.processedWhatsAppMessage.createMany(
-                {
-                  data: [{ wamid }],
-                  skipDuplicates: true,
-                },
-              );
-              if (inserted.count === 0) {
-                logger.debug("whatsapp.webhook.duplicate_wamid_skipped", {
-                  wamid,
-                });
-                continue;
-              }
-            } catch (e: unknown) {
-              if (isProcessedWhatsAppTableMissing(e)) {
-                logger.warn(
-                  "whatsapp.webhook.idempotency_table_missing_run_prisma_migrate",
-                );
-              } else {
-                throw e;
-              }
+            const isNew = await redisClient.set(`webhook:dedup:whatsapp:${wamid}`, "1", "EX", 86400, "NX");
+            if (!isNew) {
+              logger.debug("whatsapp.webhook.duplicate_wamid_skipped", { wamid });
+              continue;
             }
           }
 

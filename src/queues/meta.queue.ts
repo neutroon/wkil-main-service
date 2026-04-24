@@ -22,7 +22,7 @@ export const metaProductionQueue = new Queue("meta-production", {
   defaultJobOptions: { removeOnComplete: true, attempts: 1 }
 });
 
-export type MetaJobType = "messaging" | "visual_production" | "media_sync";
+export type MetaJobType = "messaging" | "visual_production" | "media_sync" | "media_refresh_scanner";
 
 export interface MetaEngineJob {
   type: MetaJobType;
@@ -90,6 +90,9 @@ export const expressWorker = new Worker(
     
     if (type === "media_sync") {
       await registerAssetWithMeta(payload.assetId);
+    } else if (type === "media_refresh_scanner") {
+      const { processMediaRefresh } = await import("../jobs/mediaRefresh.job");
+      await processMediaRefresh();
     } else {
       await processMetaMessage(payload);
     }

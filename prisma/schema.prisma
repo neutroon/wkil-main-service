@@ -304,26 +304,7 @@ model AiCorrection {
   @@index([messageId])
 }
 
-/// Deduplicate Meta webhook retries using message.mid
-model ProcessedMessengerMessage {
-  id         Int      @id @default(autoincrement())
-  messageMid String   @unique
-  createdAt  DateTime @default(now())
-}
 
-/// Deduplicate WhatsApp Cloud API webhook retries using wamid
-model ProcessedWhatsAppMessage {
-  id        Int      @id @default(autoincrement())
-  wamid     String   @unique
-  createdAt DateTime @default(now())
-}
-
-/// Deduplicate Facebook Feed webhook retries using comment_id
-model ProcessedFacebookComment {
-  id        Int      @id @default(autoincrement())
-  commentId String   @unique
-  createdAt DateTime @default(now())
-}
 
 
 

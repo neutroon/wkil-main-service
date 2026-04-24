@@ -365,6 +365,8 @@ export async function listConversationMessages(
     aiReasoning: m.aiReasoning,
     handoffCategory: m.handoffCategory,
     intent: m.intent,
+    isPrivate: m.isPrivate,
+    origin: m.origin,
     createdAt: m.createdAt,
   }));
 

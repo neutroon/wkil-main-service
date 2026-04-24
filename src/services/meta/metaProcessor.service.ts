@@ -396,16 +396,30 @@ export async function processMetaMessage(job: MetaMessageJob) {
 
     // 7. Save AI Choice (Draft or Sent)
     const isAutoMode = responseMode === "AUTO";
-    const status =
-      reply.action === "HANDOFF_TO_HUMAN" || !isAutoMode
-        ? "PENDING_REVIEW"
-        : "SENT";
+    const pageSettings = (job as any).pageSettings;
+    const isAutoDmAllowed = pageSettings?.commentAutoDmEnabled === true;
+
+    // The status for the PRIVATE part of the reply
+    let privateStatus = isAutoMode ? "SENT" : "PENDING_REVIEW";
+    if (reply.action === "HANDOFF_TO_HUMAN") privateStatus = "PENDING_REVIEW";
+    
+    // If it's a comment and it's a SALES_DM intent, but Auto-DM is disabled, 
+    // we MUST downgrade to PENDING_REVIEW so it doesn't look like it was sent.
+    if (isComment && reply.intent === "SALES_DM" && !isAutoDmAllowed) {
+      privateStatus = "PENDING_REVIEW";
+    }
+
+    // Public greetings are generally allowed if Auto mode is on
+    const publicStatus = isAutoMode ? "SENT" : "PENDING_REVIEW";
+
+    // Legacy status for downstream logic (will be used for delivery check)
+    const status = privateStatus; 
 
     // Standard fallback logic for general chat
     const mainContent = (reply.privateContent || reply.content || "").trim();
 
     // If it's a comment, we might have dual content settings
-    const pageSettings = (job as any).pageSettings;
+    // (pageSettings is already defined at line 399)
 
     // A. The "Core" Response (Usually the Private DM or standard reply)
     let modelSaved: any = null;
@@ -413,7 +427,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
       const isPrivate = platform === "messenger" ? true : (isComment && reply.intent === "SALES_DM");
 
       modelSaved = await saveMessage(conversation.id, "model", mainContent, {
-        status,
+        status: privateStatus,
         aiReasoning: reply.reasoning,
         handoffCategory:
           isComment && reply.intent === "SALES_DM"
@@ -455,7 +469,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
 
       if (publicTxt.length > 0) {
         publicSaved = await saveMessage(conversation.id, "model", publicTxt, {
-          status, // Should match main status
+          status: publicStatus,
           handoffCategory: "PUBLIC_COMMENT_REPLY",
           intent: reply.intent, // Tag with same intent
           isPrivate: false,
@@ -509,7 +523,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
     }
 
     // 8. Platform Delivery (if AUTO)
-    if (status === "SENT" && reply.handoffCategory !== "SYSTEM_ERROR") {
+    if (isAutoMode && reply.handoffCategory !== "SYSTEM_ERROR") {
       try {
         if (platform === "messenger") {
           const { sendMessengerReply } = await import("./messenger.service");
@@ -529,38 +543,38 @@ export async function processMetaMessage(job: MetaMessageJob) {
 
             // 1. SCHEDULE Durable Public Greeting (Durable Jitter)
             // Human-like response simulation (20 to 45 seconds) to avoid robotic instant replies
-            const publicText = publicSaved?.content || "Thanks! Check your DMs.";
-            const delaySec = 20 + Math.floor(Math.random() * 25);
-            const nextAttemptAt = new Date(Date.now() + delaySec * 1000);
+            if (publicStatus === "SENT" && publicSaved) {
+              const publicText = publicSaved.content || "Thanks! Check your DMs.";
+              const delaySec = 20 + Math.floor(Math.random() * 25);
+              const nextAttemptAt = new Date(Date.now() + delaySec * 1000);
 
-            const { enqueueMetaJob } = await import("../../queues/meta.queue");
-            await enqueueMetaJob({
-              ...job,
-              delaySeconds: delaySec,
-              platform: "messenger",
-              identifier: job.identifier,
-              senderId: job.senderId,
-              type: "FACEBOOK_COMMENT_PUBLIC_REPLY",
-              messageText: publicText,
-              businessProfileId,
-              conversationId: conversation.id,
-            });
-            logger.info("meta.processor.public_greeting_scheduled", {
-              commentId: job.commentId,
-              delaySec,
-            });
+              const { enqueueMetaJob } = await import("../../queues/meta.queue");
+              await enqueueMetaJob({
+                ...job,
+                delaySeconds: delaySec,
+                platform: "messenger",
+                identifier: job.identifier,
+                senderId: job.senderId,
+                type: "FACEBOOK_COMMENT_PUBLIC_REPLY",
+                messageText: publicText,
+                businessProfileId,
+                conversationId: conversation.id,
+              });
+              logger.info("meta.processor.public_greeting_scheduled", {
+                commentId: job.commentId,
+                delaySec,
+              });
 
-            // UI SIGNAL: Notify the dashboard that a public greeting is scheduled
-            emitToBusiness(businessProfileId, "job_scheduled", {
-              conversationId: conversation.id,
-              type: "FACEBOOK_COMMENT_PUBLIC_REPLY",
-              nextAttemptAt,
-            });
+              // UI SIGNAL: Notify the dashboard that a public greeting is scheduled
+              emitToBusiness(businessProfileId, "job_scheduled", {
+                conversationId: conversation.id,
+                type: "FACEBOOK_COMMENT_PUBLIC_REPLY",
+                nextAttemptAt,
+              });
+            }
 
             // 2. Sending Private DM ONLY if intent is SALES_DM AND the setting is enabled for this page
-            const isAutoDmAllowed = pageSettings?.commentAutoDmEnabled === true;
-
-            if (intent === "SALES_DM" && mainContent && isAutoDmAllowed) {
+            if (privateStatus === "SENT" && mainContent) {
               const dmRes: any = await sendPrivateReply({
                 commentId: job.commentId!,
                 message: mainContent,
@@ -635,7 +649,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
                 });
               }
             }
-          } else if (mainContent) {
+          } else if (mainContent && privateStatus === "SENT") {
             // Standard Messenger Reply (Direct Message)
             const fbRes: any = await sendMessengerReply(
               senderId,
@@ -648,7 +662,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
                 data: { externalId: fbRes.message_id },
               });
           }
-        } else if (mainContent) {
+        } else if (mainContent && privateStatus === "SENT") {
           const { sendWhatsAppReply } = await import("./whatsapp.service");
           const waRes: any = await sendWhatsAppReply(
             senderId,
@@ -665,7 +679,9 @@ export async function processMetaMessage(job: MetaMessageJob) {
         }
 
         // ── Attachment Delivery ────────────────────────────────────────────────
-        if (reply.attachment?.assetName) {
+        // Meta's Private Reply API for Comments (v17+) does NOT support media/attachments.
+        // We only allow attachments for direct Messenger DMs or WhatsApp.
+        if (reply.attachment?.assetName && !isComment) {
           const { resolveAssetForChannel } =
             await import("../media/mediaLibrary.service");
           const resolved = await resolveAssetForChannel(
@@ -710,22 +726,35 @@ export async function processMetaMessage(job: MetaMessageJob) {
               );
             }
             // Save attachment as a distinct message bubble for inbox display
-            await saveMessage(
+            const savedAttach = await saveMessage(
               conversation.id,
               "model",
               reply.attachment.caption ?? "",
               {
                 type: resolved.mediaType,
                 mediaId: resolved.mediaId,
-                status,
+                status: privateStatus,
               },
             );
+
+            emitToBusiness(businessProfileId, "new_message", {
+              conversationId: conversation.id,
+              message: savedAttach,
+            });
+            emitToConversation(conversation.id, "new_message", {
+              message: savedAttach,
+            });
           } else {
             logger.warn("meta.processor.attachment_not_found", {
               assetName: reply.attachment.assetName,
               businessProfileId,
             });
           }
+        } else if (reply.attachment?.assetName && isComment) {
+          logger.info("meta.processor.attachment_skipped_for_comment", {
+            conversationId: conversation.id,
+            reason: "Meta Private Reply API for comments does not support media attachments."
+          });
         }
       } catch (sendErr: any) {
         logger.error("meta.processor.delivery_failed", {

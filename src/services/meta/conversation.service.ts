@@ -19,20 +19,13 @@ export async function getOrCreateConversation(
   },
 ) {
   // 1. Try to find an existing primary conversation for this user on this page
-  // ELITE IDENTITY: We unify Messenger and Facebook Comments into a single "Universal Thread" per user.
   const existing = await prisma.conversation.findFirst({
     where: {
       pageId,
       senderId,
-      // If we are looking for a FB/Messenger thread, find ANY thread for this user on this page
-      channel: (opts?.channel === "messenger" || opts?.channel === "facebook_comment") 
-        ? { in: ["messenger", "facebook_comment"] }
-        : (opts?.channel ?? null)
+      channel: opts?.channel ?? null,
     },
-    orderBy: [
-      { channel: "asc" }, // Prioritize 'messenger' over 'facebook_comment' alphabetically
-      { updatedAt: "desc" }
-    ],
+    orderBy: { updatedAt: "desc" }
   });
 
   if (existing) {
@@ -51,11 +44,7 @@ export async function getOrCreateConversation(
       updateData.customerAvatar = opts.customerAvatar;
     }
     // Sync channel if needed
-    // ELITE TIER: Upgrade 'facebook_comment' to 'messenger' if the user DMs us.
-    // This prevents duplicate sidebar entries and ensures the conversation "moves" to the Messenger tab.
-    if (opts?.channel === "messenger" && existing.channel === "facebook_comment") {
-      updateData.channel = "messenger";
-    } else if (opts?.channel && !existing.channel) {
+    if (opts?.channel && !existing.channel) {
       updateData.channel = opts.channel;
     }
     
@@ -303,38 +292,10 @@ export async function listConversationMessages(
 
   if (!mainConv) throw new Error("Conversation not found");
 
-  let conversationIdsFetch = [conversationId];
-
-  // 2. Convergence Logic: If this is a Messenger or Comment thread, find all sibling threads
-  if (mainConv.channel === "messenger" || mainConv.channel === "facebook_comment") {
-    const siblings = await prisma.conversation.findMany({
-      where: {
-        senderId: mainConv.senderId,
-        pageId: mainConv.pageId,
-        channel: "facebook_comment",
-        id: { not: mainConv.id } // Only fetch OTHER comment threads
-      },
-      select: { id: true }
-    });
-    conversationIdsFetch = [conversationId, ...siblings.map(s => s.id)];
-  }
-
-  // 3. Selective Fetch: 
-  // - Messenger: Native messages + Sibling Private DMs
-  // - Comments: Native messages + ALL Sibling comments
   const messages = await prisma.conversationMessage.findMany({
     where: {
-      conversationId: { in: conversationIdsFetch },
+      conversationId: conversationId,
       ...(cursor ? { id: { lt: cursor } } : {}),
-      OR: [
-        { conversationId: mainConv.id }, // Native messages always included
-        mainConv.channel === "messenger" 
-          ? { 
-              conversationId: { not: mainConv.id }, 
-              isPrivate: true // SURGICAL LOCKDOWN: No public leakage
-            }
-          : { conversationId: { not: mainConv.id } } // Pull full history for comments
-      ]
     },
     orderBy: { id: "desc" },
     take: limit,
@@ -350,21 +311,14 @@ export async function listConversationMessages(
     }
   });
 
-  // 4. Transform and enrich with "Origin" metadata for UI headers
+  // 4. Transform and enrich
   const data = messages.map(m => ({
     id: m.id,
     role: m.role as any,
     content: m.content,
     type: m.type,
     mediaId: m.mediaId,
-    mediaMetadata: {
-        ...(m.mediaMetadata as any || {}),
-        // If message is from a different folder, tag it for the UI header
-        ...(m.conversationId !== mainConv.id ? { 
-            origin: "facebook_comment_reply", 
-            postId: m.conversation.postId 
-        } : {})
-    },
+    mediaMetadata: m.mediaMetadata as any || {},
     status: m.status,
     aiReasoning: m.aiReasoning,
     handoffCategory: m.handoffCategory,

@@ -6,6 +6,7 @@ import {
   decryptFacebookSecret,
   encryptFacebookSecret,
 } from "../../utils/tokenCrypto";
+import { invalidateFacebookPageCache } from "./webhookCache.service";
 
 const FB_API = process.env.FB_API_URL;
 
@@ -1265,6 +1266,11 @@ export const switchDevice = async (
 
 export const deactivateFacebookAccount = async (facebookAccountId: number) => {
   try {
+    const pages = await prisma.facebookPage.findMany({
+      where: { facebookAccountId },
+      select: { pageId: true },
+    });
+
     await prisma.facebookAccount.update({
       where: { id: facebookAccountId },
       data: {
@@ -1277,6 +1283,10 @@ export const deactivateFacebookAccount = async (facebookAccountId: number) => {
         },
       },
     });
+
+    for (const page of pages) {
+      await invalidateFacebookPageCache(page.pageId).catch(() => {});
+    }
 
     await logFacebookActivity(facebookAccountId, "account_deactivated");
   } catch (error: unknown) {
@@ -1330,6 +1340,8 @@ export const deactivateFacebookPage = async (
       where: { id: page.id },
       data: { isActive: false },
     });
+
+    await invalidateFacebookPageCache(pageId).catch(() => {});
 
     await logFacebookActivity(page.facebookAccountId, "page_disconnected", {
       pageId,

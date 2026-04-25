@@ -24,6 +24,8 @@ import { saveMessage } from "../../services/meta/conversation.service";
 import { validate } from "../../middlewares/validate.middleware";
 import { idParamSchema } from "../../validations/shared.validation";
 import { AppError } from "../../middlewares/errorHandler.middleware";
+import { env } from "../../config/env";
+import { z } from "zod";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 16 * 1024 * 1024 } }); // 16MB limit
 
@@ -101,7 +103,7 @@ whatsappRoutes.post("/conversations/:id/media", authenticateToken, upload.single
   return res.json(sentMsg);
 });
 
-const isDev = process.env.NODE_ENV !== "production";
+const isDev = env.NODE_ENV !== "production";
 const OAUTH_EXCHANGE_REF_TTL_MS = 10 * 60 * 1000;
 const OAUTH_EXCHANGE_REF_MAX_ENTRIES = 500;
 const oauthPreviewTokenCache = new Map<
@@ -135,7 +137,7 @@ function pruneOauthPreviewTokenCache(now: number): void {
 // Meta calls this once when you save the webhook URL in the Developer Console.
 
 whatsappRoutes.get("/webhook", (req: Request, res: Response) => {
-  const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN;
+  const VERIFY_TOKEN = env.WHATSAPP_VERIFY_TOKEN;
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
@@ -171,7 +173,7 @@ whatsappRoutes.post("/webhook", async (req: Request, res: Response) => {
       !verifyMetaWebhookSignature(
         rawBody as Buffer,
         signature,
-        process.env.FB_APP_SECRET,
+        env.FB_APP_SECRET,
       )
     ) {
       logger.error("whatsapp.webhook.invalid_signature");
@@ -458,7 +460,7 @@ whatsappRoutes.post("/oauth", authenticateToken, async (req: Request, res: Respo
     phoneNumberId,
     displayPhoneNumber,
     accessToken,
-    businessProfileId: businessProfileId ? parseInt(businessProfileId) : undefined,
+    businessProfileId: businessProfileId ? z.coerce.number().int().positive().parse(businessProfileId) : undefined,
   });
 
   return res.status(201).json({ success: true, account });
@@ -551,15 +553,17 @@ whatsappRoutes.post("/accounts/:id/link-business", authenticateToken, validate(i
 
   if (!account) throw new AppError("WhatsApp account not found", 404);
 
+  const businessProfileIdNum = z.coerce.number().int().positive().parse(businessProfileId);
+
   const businessProfile = await prisma.businessProfile.findFirst({
-    where: { id: parseInt(businessProfileId), userId },
+    where: { id: businessProfileIdNum, userId },
   });
 
   if (!businessProfile) throw new AppError("Business profile not found", 404);
 
   const updated = await prisma.whatsAppAccount.update({
     where: { id },
-    data: { businessProfileId: parseInt(businessProfileId) },
+    data: { businessProfileId: businessProfileIdNum },
   });
 
   return res.json({ success: true, account: sanitiseAccount(updated) });

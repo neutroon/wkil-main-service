@@ -7,10 +7,9 @@ import {
 import { validate } from "../../middlewares/validate.middleware";
 import { websiteAnalysisSchema } from "../../validations/scraping.validation";
 import { AppError } from "../../middlewares/errorHandler.middleware";
+import { env } from "../../config/env";
 
-const SCRAPING_SERVICE_URL =
-  process.env.SCRAPING_SERVICE_URL ||
-  "https://scraper.pagespilot.com/api/scrape";
+const SCRAPING_SERVICE_URL = env.SCRAPING_SERVICE_URL || "https://scraper.pagespilot.com/api/scrape";
 
 const OnboardingRouter = Router();
 

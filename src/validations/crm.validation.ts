@@ -6,7 +6,7 @@ import { z } from "zod";
  */
 export const crmIntegrationSchema = z.object({
   params: z.object({
-    profileId: z.string().regex(/^\d+$/, "profileId must be numeric"),
+    profileId: z.coerce.number(),
   }),
   body: z.object({
     provider: z.string().min(1, "Provider is required"),
@@ -22,7 +22,7 @@ export const crmIntegrationSchema = z.object({
  */
 export const getCrmSchema = z.object({
   params: z.object({
-    profileId: z.string().regex(/^\d+$/, "profileId must be numeric"),
+    profileId: z.coerce.number(),
   }),
 });
 
@@ -32,7 +32,7 @@ export const getCrmSchema = z.object({
  */
 export const deleteCrmSchema = z.object({
   params: z.object({
-    profileId: z.string().regex(/^\d+$/, "profileId must be numeric"),
-    integrationId: z.string().regex(/^\d+$/, "integrationId must be numeric"),
+    profileId: z.coerce.number(),
+    integrationId: z.coerce.number(),
   }),
 });

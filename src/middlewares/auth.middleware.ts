@@ -2,11 +2,11 @@ import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import prisma from "../config/prisma";
 import { AppError } from "./errorHandler.middleware";
+import { env } from "../config/env";
 
-const JWT_SECRET = process.env.JWT_SECRET || "supersecret";
-const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || "refreshsecret";
-const ACCESS_TOKEN_EXPIRES_IN = "24h"; // Production stability lifespan
-const REFRESH_TOKEN_EXPIRES_IN = "7d"; // Long-lived refresh token
+const { JWT_SECRET, JWT_REFRESH_SECRET } = env;
+const ACCESS_TOKEN_EXPIRES_IN = "24h"; 
+const REFRESH_TOKEN_EXPIRES_IN = "7d";
 
 interface AuthRequest extends Request {
   user?: {
@@ -40,13 +40,12 @@ export const generateRefreshToken = (payload: {
   });
 };
 
-// Set HTTP-only cookies
 export const setAuthCookies = (
   res: Response,
   accessToken: string,
   refreshToken: string
 ) => {
-  const isProduction = process.env.NODE_ENV === "production";
+  const isProduction = env.NODE_ENV === "production";
 
   // Access token cookie (short-lived)
   res.cookie("accessToken", accessToken, {
@@ -246,10 +245,7 @@ export const requireSuperAdmin = (
   next: NextFunction
 ) => {
   if (!req.user || req.user.role !== "super_admin") {
-    return res.status(403).json({
-      error: "Super admin access required",
-      code: "SUPER_ADMIN_REQUIRED",
-    });
+    throw new AppError("Super admin access required", 403, true, "SUPER_ADMIN_REQUIRED");
   }
   next();
 };
@@ -263,10 +259,7 @@ export const requireManagerOrAdmin = (
     !req.user ||
     !["super_admin", "admin", "manager"].includes(req.user.role)
   ) {
-    return res.status(403).json({
-      error: "Manager or admin access required",
-      code: "MANAGER_OR_ADMIN_REQUIRED",
-    });
+    throw new AppError("Manager or admin access required", 403, true, "MANAGER_OR_ADMIN_REQUIRED");
   }
   next();
 };
@@ -298,10 +291,7 @@ export const requireManagerAccess = async (
       const canManage = await canManageUser(user.id, parseInt(userId));
 
       if (!canManage) {
-        return res.status(403).json({
-          error: "You can only manage users assigned to you",
-          code: "INSUFFICIENT_PERMISSIONS",
-        });
+        throw new AppError("You can only manage users assigned to you", 403, true, "INSUFFICIENT_PERMISSIONS");
       }
     }
 
@@ -320,10 +310,7 @@ export const requireUser = (
   next: NextFunction
 ) => {
   if (!req.user) {
-    return res.status(401).json({
-      error: "Authentication required",
-      code: "AUTH_REQUIRED",
-    });
+    throw new AppError("Authentication required", 401, true, "AUTH_REQUIRED");
   }
   next();
 };
@@ -338,10 +325,7 @@ export const requireVerified = (
   next: NextFunction,
 ) => {
   if (!req.user) {
-    return res.status(401).json({
-      error: "Authentication required",
-      code: "AUTH_REQUIRED",
-    });
+    throw new AppError("Authentication required", 401, true, "AUTH_REQUIRED");
   }
 
   if (!req.user.isEmailVerified) {

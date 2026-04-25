@@ -1,56 +1,70 @@
-import { Router } from "express";
+import { Router, Request, Response, NextFunction } from "express";
 import { authenticateToken } from "../middlewares/auth.middleware";
 import prisma from "../config/prisma";
-import { Request, Response } from "express";
+import { validate } from "../middlewares/validate.middleware";
+import {
+  dataSourceSchema,
+  updateDataSourceSchema,
+  getDataSourceSchema,
+  deleteDataSourceSchema,
+} from "../validations/dataSource.validation";
+import { AppError } from "../middlewares/errorHandler.middleware";
 
 const externalDataSourceRoutes = Router();
 
 // Middleware to ensure user owns the business profile
-const authorizeBusinessProfile = async (req: Request, res: Response, next: Function) => {
-  try {
-    const userId = (req as any).user.id;
-    const profileId = parseInt(req.params.profileId);
-    
-    if (isNaN(profileId)) {
-      return res.status(400).json({ error: "Invalid profile ID" });
-    }
+const authorizeBusinessProfile = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  const userId = (req as any).user.id;
+  const profileId = parseInt(req.params.profileId);
 
-    const profile = await prisma.businessProfile.findUnique({
-      where: { id: profileId, userId },
-    });
+  const profile = await prisma.businessProfile.findUnique({
+    where: { id: profileId, userId },
+  });
 
-    if (!profile) {
-      return res.status(403).json({ error: "Unauthorized access to business profile" });
-    }
-
-    next();
-  } catch (error) {
-    res.status(500).json({ error: "Server error during authorization" });
+  if (!profile) {
+    throw new AppError("Unauthorized access to business profile", 403);
   }
+
+  next();
 };
 
 // Get all data sources for a profile
-externalDataSourceRoutes.get("/business-profiles/:profileId", authenticateToken, authorizeBusinessProfile, async (req: Request, res: Response) => {
-  try {
+externalDataSourceRoutes.get(
+  "/business-profiles/:profileId",
+  authenticateToken,
+  validate(getDataSourceSchema),
+  authorizeBusinessProfile,
+  async (req: Request, res: Response) => {
     const profileId = parseInt(req.params.profileId);
     const sources = await prisma.externalDataSource.findMany({
       where: { businessProfileId: profileId },
     });
     return res.json(sources);
-  } catch (e: any) {
-    return res.status(500).json({ error: e.message });
-  }
-});
+  },
+);
 
 // Create or configure a new external data source
-externalDataSourceRoutes.post("/business-profiles/:profileId", authenticateToken, authorizeBusinessProfile, async (req: Request, res: Response) => {
-  try {
+externalDataSourceRoutes.post(
+  "/business-profiles/:profileId",
+  authenticateToken,
+  validate(dataSourceSchema),
+  authorizeBusinessProfile,
+  async (req: Request, res: Response) => {
     const profileId = parseInt(req.params.profileId);
-    const { name, description, apiUrl, method, headers, queryParams, expectedParamsSchema, isActive } = req.body;
-
-    if (!name || !apiUrl || !description) {
-        return res.status(400).json({ error: "name, description, and apiUrl are required" });
-    }
+    const {
+      name,
+      description,
+      apiUrl,
+      method,
+      headers,
+      queryParams,
+      expectedParamsSchema,
+      isActive,
+    } = req.body;
 
     const newSource = await prisma.externalDataSource.create({
       data: {
@@ -63,21 +77,32 @@ externalDataSourceRoutes.post("/business-profiles/:profileId", authenticateToken
         queryParams,
         expectedParamsSchema,
         isActive: isActive !== undefined ? isActive : true,
-      }
+      },
     });
 
     return res.json({ success: true, source: newSource });
-  } catch (e: any) {
-    return res.status(500).json({ error: e.message });
-  }
-});
+  },
+);
 
 // Update an existing external data source
-externalDataSourceRoutes.put("/business-profiles/:profileId/:sourceId", authenticateToken, authorizeBusinessProfile, async (req: Request, res: Response) => {
-  try {
+externalDataSourceRoutes.put(
+  "/business-profiles/:profileId/:sourceId",
+  authenticateToken,
+  validate(updateDataSourceSchema),
+  authorizeBusinessProfile,
+  async (req: Request, res: Response) => {
     const profileId = parseInt(req.params.profileId);
     const sourceId = parseInt(req.params.sourceId);
-    const { name, description, apiUrl, method, headers, queryParams, expectedParamsSchema, isActive } = req.body;
+    const {
+      name,
+      description,
+      apiUrl,
+      method,
+      headers,
+      queryParams,
+      expectedParamsSchema,
+      isActive,
+    } = req.body;
 
     const updatedSource = await prisma.externalDataSource.updateMany({
       where: { id: sourceId, businessProfileId: profileId },
@@ -90,22 +115,24 @@ externalDataSourceRoutes.put("/business-profiles/:profileId/:sourceId", authenti
         queryParams,
         expectedParamsSchema,
         isActive,
-      }
+      },
     });
 
     if (updatedSource.count === 0) {
-      return res.status(404).json({ error: "Data source not found or unauthorized" });
+      throw new AppError("Data source not found or unauthorized", 404);
     }
 
     return res.json({ success: true, count: updatedSource.count });
-  } catch (e: any) {
-    return res.status(500).json({ error: e.message });
-  }
-});
+  },
+);
 
 // Delete an external data source
-externalDataSourceRoutes.delete("/business-profiles/:profileId/:sourceId", authenticateToken, authorizeBusinessProfile, async (req: Request, res: Response) => {
-  try {
+externalDataSourceRoutes.delete(
+  "/business-profiles/:profileId/:sourceId",
+  authenticateToken,
+  validate(deleteDataSourceSchema),
+  authorizeBusinessProfile,
+  async (req: Request, res: Response) => {
     const profileId = parseInt(req.params.profileId);
     const sourceId = parseInt(req.params.sourceId);
 
@@ -114,9 +141,7 @@ externalDataSourceRoutes.delete("/business-profiles/:profileId/:sourceId", authe
     });
 
     return res.json({ success: true });
-  } catch (e: any) {
-    return res.status(500).json({ error: e.message });
-  }
-});
+  },
+);
 
 export default externalDataSourceRoutes;

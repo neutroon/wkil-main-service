@@ -25,7 +25,7 @@ export const facebookCallbackSchema = z.object({
 export const facebookPagesSchema = z.object({
   query: z.object({
     access_token: z.string().optional(),
-    facebook_account_id: z.string().optional(),
+    facebook_account_id: z.coerce.number().optional(),
   }),
 });
 
@@ -38,7 +38,7 @@ export const facebookPostSchema = z.object({
     message: z.string().min(1, "message is required"),
     accessToken: z.string().optional(),
     imageUrl: z.string().url().optional().or(z.literal("")),
-    facebookAccountId: z.union([z.number(), z.string()]).optional(),
+    facebookAccountId: z.coerce.number().optional(),
   }),
 });
 
@@ -50,7 +50,7 @@ export const facebookScheduleSchema = z.object({
     pageId: z.string().min(1, "pageId is required"),
     message: z.string().min(1, "message is required"),
     accessToken: z.string().optional(),
-    scheduleTime: z.union([z.number(), z.string().regex(/^\d+$/).transform(Number)]),
+    scheduleTime: z.coerce.number(),
   }),
 });
 
@@ -59,7 +59,7 @@ export const facebookScheduleSchema = z.object({
  */
 export const facebookAnalyticsSchema = z.object({
   query: z.object({
-    days: z.string().regex(/^\d+$/).transform(Number).optional().default(30),
+    days: z.coerce.number().optional().default(30),
   }),
 });
 
@@ -68,7 +68,7 @@ export const facebookAnalyticsSchema = z.object({
  */
 export const facebookLinkBusinessSchema = z.object({
   body: z.object({
-    businessProfileId: z.union([z.number(), z.string().regex(/^\d+$/).transform(Number)]),
+    businessProfileId: z.coerce.number(),
   }),
 });
 
@@ -88,7 +88,7 @@ export const facebookPageSettingsSchema = z.object({
  */
 export const facebookPrivateReplySchema = z.object({
   params: z.object({
-    messageId: z.string().regex(/^\d+$/, "messageId must be numeric").transform(Number),
+    messageId: z.coerce.number(),
   }),
   body: z.object({
     message: z.string().min(1, "message is required"),
@@ -100,7 +100,7 @@ export const facebookPrivateReplySchema = z.object({
  */
 export const facebookIdParamSchema = z.object({
   params: z.object({
-    id: z.string().regex(/^\d+$/, "ID must be numeric"),
+    id: z.coerce.number(),
   }),
 });
 

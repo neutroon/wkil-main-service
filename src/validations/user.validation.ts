@@ -27,14 +27,14 @@ export const loginUserSchema = z.object({
  */
 export const updateUserSchema = z.object({
   params: z.object({
-    id: z.string().regex(/^\d+$/).transform(Number),
+    id: z.coerce.number(),
   }),
   body: z.object({
     name: z.string().min(2).optional(),
     email: z.string().email().optional(),
     role: z.enum(["user", "manager", "admin"]).optional(),
     plan: z.string().optional(),
-    monthlyQuota: z.union([z.number(), z.string().regex(/^\d+$/).transform(Number)]).optional(),
+    monthlyQuota: z.coerce.number().optional(),
   }),
 });
 
@@ -43,7 +43,7 @@ export const updateUserSchema = z.object({
  */
 export const userIdParamSchema = z.object({
   params: z.object({
-    id: z.string().regex(/^\d+$/).transform(Number),
+    id: z.coerce.number(),
   }),
 });
 

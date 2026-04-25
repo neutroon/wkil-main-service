@@ -1,3 +1,4 @@
+import { env } from "../config/env";
 import { Server as SocketIOServer } from "socket.io";
 import { Server as HTTPServer } from "http";
 import { createAdapter } from "@socket.io/redis-adapter";
@@ -16,7 +17,7 @@ export function initSocket(server: HTTPServer): SocketIOServer {
   });
 
   // PRODUCTION-GRADE: Multi-Instance Synchronization via Redis
-  const redisUrl = process.env.REDIS_URL;
+  const redisUrl = env.REDIS_URL;
   if (redisUrl) {
     try {
       const pubClient = new Redis(redisUrl, {

@@ -21,6 +21,9 @@ import { uploadWhatsAppMedia } from "../../services/meta/metaUpload.service";
 import { sendWhatsAppMedia } from "../../services/meta/whatsapp.service";
 import { decryptFacebookSecret } from "../../utils/tokenCrypto";
 import { saveMessage } from "../../services/meta/conversation.service";
+import { validate } from "../../middlewares/validate.middleware";
+import { idParamSchema } from "../../validations/shared.validation";
+import { AppError } from "../../middlewares/errorHandler.middleware";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 16 * 1024 * 1024 } }); // 16MB limit
 
@@ -33,85 +36,70 @@ whatsappRoutes.use("/conversations", conversationsRoutes);
  * POST /v1/whatsapp/conversations/:id/media
  * Uploads media to Meta and sends it to the customer.
  */
-whatsappRoutes.post(
-  "/conversations/:id/media",
-  authenticateToken,
-  upload.single("file"),
-  async (req: Request, res: Response): Promise<any> => {
-    try {
-      const userId = (req as any).user.id as number;
-      const conversationId = parseInt(req.params.id, 10);
-      const file = req.file;
-      const messageText = req.body.messageText || "";
+whatsappRoutes.post("/conversations/:id/media", authenticateToken, upload.single("file"), validate(idParamSchema), async (req: Request, res: Response) => {
+  const userId = (req as any).user.id as number;
+  const { id: conversationId } = req.params as any;
+  const file = req.file;
+  const messageText = req.body.messageText || "";
 
-      if (!file) {
-        return res.status(400).json({ error: "No file uploaded" });
-      }
+  if (!file) throw new AppError("No file uploaded", 400);
 
-      // 1. Ownership Check
-      const conversation = await prisma.conversation.findUnique({
-        where: { id: conversationId },
-        include: { businessProfile: true }
-      });
+  // 1. Ownership Check
+  const conversation = await prisma.conversation.findUnique({
+    where: { id: conversationId },
+    include: { businessProfile: true }
+  });
 
-      if (!conversation || conversation.businessProfile.userId !== userId) {
-        return res.status(403).json({ error: "Access denied or conversation not found" });
-      }
-
-      // 2. Token Resolution
-      const account = await prisma.whatsAppAccount.findFirst({
-        where: { phoneNumberId: conversation.pageId, isActive: true },
-      });
-
-      if (!account) {
-        return res.status(404).json({ error: "WhatsApp account not found" });
-      }
-
-      const accessToken = decryptFacebookSecret(account.accessToken);
-
-      // 3. Upload to Meta
-      const mediaId = await uploadWhatsAppMedia(
-        conversation.pageId,
-        accessToken,
-        file.buffer,
-        file.originalname,
-        file.mimetype
-      );
-
-      // 4. Send via Meta
-      const type = file.mimetype.split("/")[0] === "application" ? "document" : file.mimetype.split("/")[0];
-      const platformRes = await sendWhatsAppMedia(
-        conversation.senderId,
-        mediaId,
-        type,
-        conversation.pageId,
-        accessToken,
-        messageText,
-        file.originalname
-      );
-
-      const wamid = (platformRes as any)?.messages?.[0]?.id;
-
-      // 5. Save to DB
-      const sentMsg = await saveMessage(conversationId, "agent", messageText, {
-        externalId: wamid,
-        type,
-        mediaId,
-        mediaMetadata: { 
-          mimeType: file.mimetype, 
-          filename: file.originalname, 
-          size: file.size 
-        }
-      });
-
-      res.json(sentMsg);
-
-    } catch (err: any) {
-      logger.error("whatsapp.send_media.failed", { error: err.message });
-      res.status(500).json({ error: err.message });
-    }
+  if (!conversation || conversation.businessProfile.userId !== userId) {
+    throw new AppError("Access denied or conversation not found", 404);
   }
-);
+
+  // 2. Token Resolution
+  const account = await prisma.whatsAppAccount.findFirst({
+    where: { phoneNumberId: conversation.pageId, isActive: true },
+  });
+
+  if (!account) throw new AppError("WhatsApp account not found", 404);
+
+  const accessToken = decryptFacebookSecret(account.accessToken);
+
+  // 3. Upload to Meta
+  const mediaId = await uploadWhatsAppMedia(
+    conversation.pageId,
+    accessToken,
+    file.buffer,
+    file.originalname,
+    file.mimetype
+  );
+
+  // 4. Send via Meta
+  const type = file.mimetype.split("/")[0] === "application" ? "document" : file.mimetype.split("/")[0];
+  const platformRes = await sendWhatsAppMedia(
+    conversation.senderId,
+    mediaId,
+    type,
+    conversation.pageId,
+    accessToken,
+    messageText,
+    file.originalname
+  );
+
+  const wamid = (platformRes as any)?.messages?.[0]?.id;
+
+  // 5. Save to DB
+  const sentMsg = await saveMessage(conversationId, "agent", messageText, {
+    externalId: wamid,
+    type,
+    mediaId,
+    mediaMetadata: { 
+      mimeType: file.mimetype, 
+      filename: file.originalname, 
+      size: file.size 
+    }
+  });
+
+  return res.json(sentMsg);
+});
 
 const isDev = process.env.NODE_ENV !== "production";
 const OAUTH_EXCHANGE_REF_TTL_MS = 10 * 60 * 1000;
@@ -393,45 +381,22 @@ whatsappRoutes.post("/webhook", async (req: Request, res: Response) => {
  * redirectUri must match Meta's JS SDK "current page" URL (origin + path + query),
  * identical to POST /oauth — same value used when exchanging the code at Graph API.
  */
-whatsappRoutes.get(
-  "/oauth/phone-numbers",
-  authenticateToken,
-  async (req: Request, res: Response) => {
-    try {
-      const userId = (req as any).user.id as number;
-      const { code } = req.query;
-      // redirectUri is optional: omitted for FB.login SDK codes, present for manual dialog flow.
-      const redirectUri =
-        typeof req.query.redirectUri === "string"
-          ? req.query.redirectUri
-          : undefined;
-      const now = Date.now();
-      pruneOauthPreviewTokenCache(now);
-      if (!code) {
-        return res.status(400).json({ error: "code is required" });
-      }
+whatsappRoutes.get("/oauth/phone-numbers", authenticateToken, async (req: Request, res: Response) => {
+  const userId = (req as any).user.id as number;
+  const { code } = req.query;
+  const redirectUri = typeof req.query.redirectUri === "string" ? req.query.redirectUri : undefined;
+  const now = Date.now();
+  pruneOauthPreviewTokenCache(now);
+  
+  if (!code) throw new AppError("code is required", 400);
 
-      const accessToken = await exchangeCodeForToken(
-        code as string,
-        redirectUri,
-      );
-      const accounts = await discoverWabaAccounts(accessToken);
-      const exchangeRef = randomUUID();
-      oauthPreviewTokenCache.set(exchangeRef, {
-        userId,
-        accessToken,
-        createdAt: now,
-      });
+  const accessToken = await exchangeCodeForToken(code as string, redirectUri);
+  const accounts = await discoverWabaAccounts(accessToken);
+  const exchangeRef = randomUUID();
+  oauthPreviewTokenCache.set(exchangeRef, { userId, accessToken, createdAt: now });
 
-      res.json({ data: accounts, exchangeRef });
-    } catch (error: any) {
-      logger.error("whatsapp.oauth.phone_numbers_failed", {
-        error: error.message,
-      });
-      res.status(500).json({ error: error.message });
-    }
-  },
-);
+  return res.json({ data: accounts, exchangeRef });
+});
 
 /**
  * POST /v1/whatsapp/oauth
@@ -442,315 +407,190 @@ whatsappRoutes.get(
  *   4. Upsert WhatsAppAccount row in DB
  * Body: { code: string, phoneNumberId: string, businessProfileId?: number }
  */
-whatsappRoutes.post(
-  "/oauth",
-  authenticateToken,
-  async (req: Request, res: Response) => {
-    try {
-      const userId = (req as any).user.id;
-      const {
-        code,
-        phoneNumberId,
-        businessProfileId,
-        redirectUri,
-        exchangeRef,
-      } = req.body;
-      const now = Date.now();
-      pruneOauthPreviewTokenCache(now);
+whatsappRoutes.post("/oauth", authenticateToken, async (req: Request, res: Response) => {
+  const userId = (req as any).user.id;
+  const { code, phoneNumberId, businessProfileId, redirectUri, exchangeRef } = req.body;
+  const now = Date.now();
+  pruneOauthPreviewTokenCache(now);
 
-      if (!phoneNumberId || (!code && !exchangeRef)) {
-        return res.status(400).json({
-          error:
-            "phoneNumberId is required and either code or exchangeRef must be provided",
-        });
+  if (!phoneNumberId || (!code && !exchangeRef)) {
+    throw new AppError("phoneNumberId is required and either code or exchangeRef must be provided", 400);
+  }
+
+  let accessToken: string | undefined;
+  if (exchangeRef && typeof exchangeRef === "string") {
+    const cached = oauthPreviewTokenCache.get(exchangeRef);
+    if (cached) {
+      const expired = now - cached.createdAt > OAUTH_EXCHANGE_REF_TTL_MS;
+      if (!expired && cached.userId === userId) {
+        accessToken = cached.accessToken;
+        oauthPreviewTokenCache.delete(exchangeRef);
       }
-
-      // Step 1: Reuse the preview token when available; fallback to code exchange.
-      let accessToken: string | undefined;
-      if (exchangeRef && typeof exchangeRef === "string") {
-        const cached = oauthPreviewTokenCache.get(exchangeRef);
-        if (cached) {
-          const expired = now - cached.createdAt > OAUTH_EXCHANGE_REF_TTL_MS;
-          if (!expired && cached.userId === userId) {
-            accessToken = cached.accessToken;
-            oauthPreviewTokenCache.delete(exchangeRef);
-            logger.info("whatsapp.oauth.exchange_ref_reused", { userId });
-          } else if (expired) {
-            oauthPreviewTokenCache.delete(exchangeRef);
-            logger.warn("whatsapp.oauth.exchange_ref_expired", { userId });
-          } else {
-            logger.warn("whatsapp.oauth.exchange_ref_user_mismatch", {
-              userId,
-            });
-          }
-        } else {
-          logger.warn("whatsapp.oauth.exchange_ref_not_found", { userId });
-        }
-      } else if (exchangeRef !== undefined) {
-        logger.warn("whatsapp.oauth.exchange_ref_invalid", { userId });
-      }
-      if (!accessToken) {
-        logger.info("whatsapp.oauth.exchange_ref_fallback_code_exchange", {
-          userId,
-        });
-        accessToken = await exchangeCodeForToken(
-          code as string,
-          redirectUri as string,
-        );
-      }
-
-      // Step 2: Discover phone numbers to find the matching WABA and display name
-      const accounts = await discoverWabaAccounts(accessToken);
-      let wabaId: string | undefined;
-      let displayPhoneNumber: string | undefined;
-
-      for (const waba of accounts) {
-        const phone = waba.phone_numbers.find((p) => p.id === phoneNumberId);
-        if (phone) {
-          wabaId = waba.id;
-          displayPhoneNumber = phone.display_phone_number;
-          break;
-        }
-      }
-
-      if (!wabaId || !displayPhoneNumber) {
-        return res.status(404).json({
-          error: `Phone number ${phoneNumberId} not found in any WABA associated with this token.`,
-        });
-      }
-
-      // Step 3: Subscribe our webhook to this WABA
-      await subscribeWebhook(wabaId, accessToken);
-
-      // Step 4: Persist into DB
-      const account = await saveWhatsAppAccount({
-        userId,
-        wabaId,
-        phoneNumberId,
-        displayPhoneNumber,
-        accessToken,
-        businessProfileId: businessProfileId
-          ? parseInt(businessProfileId)
-          : undefined,
-      });
-
-      res.status(201).json({ success: true, account });
-    } catch (error: any) {
-      logger.error("whatsapp.oauth.connect_failed", { error: error.message });
-      res.status(500).json({ error: error.message });
     }
-  },
-);
+  }
+
+  if (!accessToken) {
+    accessToken = await exchangeCodeForToken(code as string, redirectUri as string);
+  }
+
+  const accounts = await discoverWabaAccounts(accessToken);
+  let wabaId: string | undefined;
+  let displayPhoneNumber: string | undefined;
+
+  for (const waba of accounts) {
+    const phone = waba.phone_numbers.find((p) => p.id === phoneNumberId);
+    if (phone) {
+      wabaId = waba.id;
+      displayPhoneNumber = phone.display_phone_number;
+      break;
+    }
+  }
+
+  if (!wabaId || !displayPhoneNumber) {
+    throw new AppError(`Phone number ${phoneNumberId} not found in any WABA associated with this token.`, 404);
+  }
+
+  await subscribeWebhook(wabaId, accessToken);
+
+  const account = await saveWhatsAppAccount({
+    userId,
+    wabaId,
+    phoneNumberId,
+    displayPhoneNumber,
+    accessToken,
+    businessProfileId: businessProfileId ? parseInt(businessProfileId) : undefined,
+  });
+
+  return res.status(201).json({ success: true, account });
+});
 
 // ─── Account management (authenticated) ──────────────────────────────────────
 
 /**
  * POST /v1/whatsapp/accounts
  * Register a WhatsApp Business phone number for the authenticated user.
- * Body: { phoneNumberId, displayPhoneNumber, wabaId, accessToken }
  */
-whatsappRoutes.post(
-  "/accounts",
-  authenticateToken,
-  async (req: Request, res: Response) => {
-    try {
-      const userId = (req as any).user.id;
-      const { phoneNumberId, displayPhoneNumber, wabaId, accessToken } =
-        req.body;
+whatsappRoutes.post("/accounts", authenticateToken, async (req: Request, res: Response) => {
+  const userId = (req as any).user.id;
+  const { phoneNumberId, displayPhoneNumber, wabaId, accessToken } = req.body;
 
-      if (!phoneNumberId || !displayPhoneNumber || !wabaId || !accessToken) {
-        return res.status(400).json({
-          error:
-            "phoneNumberId, displayPhoneNumber, wabaId, and accessToken are required",
-        });
-      }
+  if (!phoneNumberId || !displayPhoneNumber || !wabaId || !accessToken) {
+    throw new AppError("phoneNumberId, displayPhoneNumber, wabaId, and accessToken are required", 400);
+  }
 
-      const encryptedToken = encryptFacebookSecret(accessToken as string);
+  const encryptedToken = encryptFacebookSecret(accessToken as string);
 
-      const account = await prisma.whatsAppAccount.upsert({
-        where: { userId_phoneNumberId: { userId, phoneNumberId } },
-        create: {
-          userId,
-          phoneNumberId,
-          displayPhoneNumber,
-          wabaId,
-          accessToken: encryptedToken,
-        },
-        update: {
-          displayPhoneNumber,
-          wabaId,
-          accessToken: encryptedToken,
-          isActive: true,
-        },
-      });
+  const account = await prisma.whatsAppAccount.upsert({
+    where: { userId_phoneNumberId: { userId, phoneNumberId } },
+    create: { userId, phoneNumberId, displayPhoneNumber, wabaId, accessToken: encryptedToken },
+    update: { displayPhoneNumber, wabaId, accessToken: encryptedToken, isActive: true },
+  });
 
-      res
-        .status(201)
-        .json({ success: true, account: sanitiseAccount(account) });
-    } catch (error: any) {
-      logger.error("whatsapp.accounts.create_failed", { error: error.message });
-      res.status(500).json({ error: error.message });
-    }
-  },
-);
+  return res.status(201).json({ success: true, account: sanitiseAccount(account) });
+});
 
 /**
  * GET /v1/whatsapp/accounts
  * List all active WhatsApp accounts for the authenticated user.
  */
-whatsappRoutes.get(
-  "/accounts",
-  authenticateToken,
-  async (req: Request, res: Response) => {
-    try {
-      const userId = (req as any).user.id;
-      const accounts = await prisma.whatsAppAccount.findMany({
-        where: { userId, isActive: true },
-        select: {
-          id: true,
-          phoneNumberId: true,
-          displayPhoneNumber: true,
-          wabaId: true,
-          businessProfileId: true,
-          isActive: true,
-          createdAt: true,
-          updatedAt: true,
-        },
-      });
-      res.json({ data: accounts });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  },
-);
+whatsappRoutes.get("/accounts", authenticateToken, async (req: Request, res: Response) => {
+  const userId = (req as any).user.id;
+  const accounts = await prisma.whatsAppAccount.findMany({
+    where: { userId, isActive: true },
+    select: {
+      id: true,
+      phoneNumberId: true,
+      displayPhoneNumber: true,
+      wabaId: true,
+      businessProfileId: true,
+      isActive: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
+  return res.json({ data: accounts });
+});
 
 /**
  * DELETE /v1/whatsapp/accounts/:id
  * Soft-deactivate a WhatsApp account.
  */
-whatsappRoutes.delete(
-  "/accounts/:id",
-  authenticateToken,
-  async (req: Request, res: Response) => {
-    try {
-      const userId = (req as any).user.id;
-      const id = parseInt(req.params.id);
+whatsappRoutes.delete("/accounts/:id", authenticateToken, validate(idParamSchema), async (req: Request, res: Response) => {
+  const userId = (req as any).user.id;
+  const { id } = req.params as any;
 
-      const account = await prisma.whatsAppAccount.findFirst({
-        where: { id, userId, isActive: true },
-      });
+  const account = await prisma.whatsAppAccount.findFirst({
+    where: { id, userId, isActive: true },
+  });
 
-      if (!account) {
-        return res.status(404).json({ error: "WhatsApp account not found" });
-      }
+  if (!account) throw new AppError("WhatsApp account not found", 404);
 
-      await prisma.whatsAppAccount.update({
-        where: { id },
-        data: { isActive: false },
-      });
+  await prisma.whatsAppAccount.update({
+    where: { id },
+    data: { isActive: false },
+  });
 
-      await invalidateWhatsAppAccountCache(account.phoneNumberId);
-
-      res.json({ success: true, message: "Account deactivated successfully" });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  },
-);
+  await invalidateWhatsAppAccountCache(account.phoneNumberId);
+  return res.json({ success: true, message: "Account deactivated successfully" });
+});
 
 /**
  * POST /v1/whatsapp/accounts/:id/link-business
  * Link a WhatsApp account to a BusinessProfile.
- * Body: { businessProfileId }
  */
-whatsappRoutes.post(
-  "/accounts/:id/link-business",
-  authenticateToken,
-  async (req: Request, res: Response) => {
-    try {
-      const userId = (req as any).user.id;
-      const id = parseInt(req.params.id);
-      const { businessProfileId } = req.body;
+whatsappRoutes.post("/accounts/:id/link-business", authenticateToken, validate(idParamSchema), async (req: Request, res: Response) => {
+  const userId = (req as any).user.id;
+  const { id } = req.params as any;
+  const { businessProfileId } = req.body;
 
-      if (!businessProfileId) {
-        return res.status(400).json({ error: "businessProfileId is required" });
-      }
+  if (!businessProfileId) throw new AppError("businessProfileId is required", 400);
 
-      const account = await prisma.whatsAppAccount.findFirst({
-        where: { id, userId, isActive: true },
-      });
+  const account = await prisma.whatsAppAccount.findFirst({
+    where: { id, userId, isActive: true },
+  });
 
-      if (!account) {
-        return res.status(404).json({ error: "WhatsApp account not found" });
-      }
+  if (!account) throw new AppError("WhatsApp account not found", 404);
 
-      const businessProfile = await prisma.businessProfile.findFirst({
-        where: { id: parseInt(businessProfileId), userId },
-      });
+  const businessProfile = await prisma.businessProfile.findFirst({
+    where: { id: parseInt(businessProfileId), userId },
+  });
 
-      if (!businessProfile) {
-        return res.status(404).json({ error: "Business profile not found" });
-      }
+  if (!businessProfile) throw new AppError("Business profile not found", 404);
 
-      const updated = await prisma.whatsAppAccount.update({
-        where: { id },
-        data: { businessProfileId: parseInt(businessProfileId) },
-      });
+  const updated = await prisma.whatsAppAccount.update({
+    where: { id },
+    data: { businessProfileId: parseInt(businessProfileId) },
+  });
 
-      res.json({ success: true, account: sanitiseAccount(updated) });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  },
-);
+  return res.json({ success: true, account: sanitiseAccount(updated) });
+});
 
 /**
  * DELETE /v1/whatsapp/accounts/:id/unlink-business
  * Unlink a WhatsApp account from its BusinessProfile.
  */
-whatsappRoutes.delete(
-  "/accounts/:id/unlink-business",
-  authenticateToken,
-  async (req: Request, res: Response) => {
-    try {
-      const userId = (req as any).user.id;
-      const id = parseInt(req.params.id);
+whatsappRoutes.delete("/accounts/:id/unlink-business", authenticateToken, validate(idParamSchema), async (req: Request, res: Response) => {
+  const userId = (req as any).user.id;
+  const { id } = req.params as any;
 
-      const account = await prisma.whatsAppAccount.findFirst({
-        where: { id, userId, isActive: true },
-      });
+  const account = await prisma.whatsAppAccount.findFirst({
+    where: { id, userId, isActive: true },
+  });
 
-      if (!account) {
-        return res.status(404).json({ error: "WhatsApp account not found" });
-      }
+  if (!account) throw new AppError("WhatsApp account not found", 404);
+  if (!account.businessProfileId) throw new AppError("Account is not linked to any business profile", 400);
 
-      if (!account.businessProfileId) {
-        return res
-          .status(400)
-          .json({ error: "Account is not linked to any business profile" });
-      }
+  const updated = await prisma.whatsAppAccount.update({
+    where: { id },
+    data: { businessProfileId: null },
+  });
 
-      const updated = await prisma.whatsAppAccount.update({
-        where: { id },
-        data: { businessProfileId: null },
-      });
-
-      res.json({ success: true, account: sanitiseAccount(updated) });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  },
-);
-
-// ─── Private helpers ──────────────────────────────────────────────────────────
+  return res.json({ success: true, account: sanitiseAccount(updated) });
+});
 
 /** Strip encrypted accessToken before sending to clients. */
-function sanitiseAccount(
-  account: Record<string, unknown>,
-): Record<string, unknown> {
-  const { accessToken: _omit, ...safe } = account as {
-    accessToken?: string;
-  } & Record<string, unknown>;
+function sanitiseAccount(account: any): any {
+  const { accessToken: _omit, ...safe } = account;
   return safe;
 }
 

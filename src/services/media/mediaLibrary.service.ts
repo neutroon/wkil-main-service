@@ -10,6 +10,7 @@ import {
 import { decryptFacebookSecret } from "../../utils/tokenCrypto";
 import { enqueueMediaSyncJob } from "../../queues/meta.queue";
 import { syncMediaStatus } from "../socketSync.service";
+import { AppError } from "../../middlewares/errorHandler.middleware";
 
 // Allowed MIME types and their media type classifications
 const MIME_TO_MEDIA_TYPE: Record<string, "image" | "document" | "video"> = {
@@ -60,16 +61,17 @@ export async function createMediaAsset(params: {
   const profile = await prisma.businessProfile.findFirst({
     where: { id: businessProfileId, userId },
   });
-  if (!profile) throw new Error("Business profile not found or access denied");
+  if (!profile) throw new AppError("Business profile not found or access denied", 404);
 
   // 2. Validate MIME type
   const mediaType = MIME_TO_MEDIA_TYPE[mimeType];
-  if (!mediaType) throw new Error(`Unsupported file type: ${mimeType}`);
+  if (!mediaType) throw new AppError(`Unsupported file type: ${mimeType}`, 400);
 
   // 3. Validate file size
   if (fileBuffer.length > MAX_FILE_SIZE) {
-    throw new Error(
+    throw new AppError(
       `File exceeds maximum size of 25MB (received ${Math.round(fileBuffer.length / 1024 / 1024)}MB)`,
+      400
     );
   }
 
@@ -137,13 +139,14 @@ export async function registerAssetWithMeta(assetId: number) {
       }),
     );
     const bodyString = await getObj.Body?.transformToByteArray();
-    if (!bodyString) throw new Error("Empty body from R2");
+    if (!bodyString) throw new AppError("Empty body from R2", 502);
     fileBuffer = Buffer.from(bodyString);
 
     // ── Tier-1 Checksum Validation ───────────────────────────────────────────
     if (fileBuffer.length !== asset.fileSizeBytes) {
-      throw new Error(
+      throw new AppError(
         `Data corruption detected: R2 size (${fileBuffer.length}) != DB size (${asset.fileSizeBytes})`,
+        502
       );
     }
   } catch (err: any) {
@@ -413,7 +416,7 @@ export async function softDeleteAsset(
   const asset = await prisma.businessProfileMedia.findFirst({
     where: { id: assetId, userId },
   });
-  if (!asset) throw new Error("Asset not found or access denied");
+  if (!asset) throw new AppError("Asset not found or access denied", 404);
 
   await prisma.businessProfileMedia.update({
     where: { id: assetId },
@@ -452,7 +455,7 @@ export async function updateMediaAssetMeta(
   const asset = await prisma.businessProfileMedia.findFirst({
     where: { id: assetId, userId, isActive: true },
   });
-  if (!asset) throw new Error("Asset not found or access denied");
+  if (!asset) throw new AppError("Asset not found or access denied", 404);
 
   const updateData: any = {};
   if (data.name) updateData.name = data.name.trim().substring(0, 100);

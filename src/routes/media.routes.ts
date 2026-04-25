@@ -14,6 +14,8 @@ import prisma from "../config/prisma";
 import { logger } from "../utils/logger";
 import { validate } from "../middlewares/validate.middleware";
 import { 
+  uploadMediaSchema,
+  updateMediaSchema,
   aiGenerateSchema, 
   aiRefineSchema, 
   mediaIdParamSchema,

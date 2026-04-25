@@ -14,11 +14,10 @@ import prisma from "../config/prisma";
 import { logger } from "../utils/logger";
 import { validate } from "../middlewares/validate.middleware";
 import { 
-  uploadMediaSchema, 
-  updateMediaSchema, 
   aiGenerateSchema, 
   aiRefineSchema, 
-  mediaIdParamSchema 
+  mediaIdParamSchema,
+  mediaListQuerySchema
 } from "../validations/media.validation";
 import { AppError } from "../middlewares/errorHandler.middleware";
 
@@ -46,13 +45,9 @@ const upload = multer({
 });
 
 // ── GET /v1/media — List all active assets for authenticated user ─────────────
-router.get("/", authenticateToken, async (req: Request, res: Response) => {
+router.get("/", authenticateToken, validate(mediaListQuerySchema), async (req: Request, res: Response) => {
   const userId = (req as any).user.id;
-  const businessProfileId = Number(req.query.businessProfileId);
-
-  if (!businessProfileId) {
-    throw new AppError("businessProfileId is required", 400);
-  }
+  const { businessProfileId } = req.query as any;
 
   // Verify ownership
   const profile = await prisma.businessProfile.findFirst({
@@ -75,9 +70,9 @@ router.post(
     const { businessProfileId, name, instructions } = req.body;
 
     if (!req.file) throw new AppError("No file uploaded", 400);
-
+ 
     const asset = await createMediaAsset({
-      businessProfileId: Number(businessProfileId),
+      businessProfileId,
       userId,
       fileBuffer: req.file.buffer,
       originalName: req.file.originalname,
@@ -97,7 +92,7 @@ router.patch(
   validate(updateMediaSchema),
   async (req: Request, res: Response) => {
     const userId = (req as any).user.id;
-    const assetId = Number(req.params.id);
+    const { id: assetId } = req.params as any;
     const { name, instructions } = req.body;
 
     const updated = await updateMediaAssetMeta(assetId, userId, { name, instructions });
@@ -112,7 +107,8 @@ router.delete(
   validate(mediaIdParamSchema),
   async (req: Request, res: Response) => {
     const userId = (req as any).user.id;
-    await softDeleteAsset(Number(req.params.id), userId);
+    const { id } = req.params as any;
+    await softDeleteAsset(id, userId);
     return res.json({ message: "Asset deactivated successfully" });
   }
 );
@@ -124,8 +120,9 @@ router.get(
   validate(mediaIdParamSchema),
   async (req: Request, res: Response) => {
     const userId = (req as any).user.id;
+    const { id } = req.params as any;
     const asset = await prisma.businessProfileMedia.findFirst({
-      where: { id: Number(req.params.id), userId },
+      where: { id, userId },
       include: {
         syncs: {
           orderBy: { updatedAt: "desc" },
@@ -169,7 +166,7 @@ router.post(
   validate(mediaIdParamSchema),
   async (req: Request, res: Response) => {
     const userId = (req as any).user.id;
-    const assetId = Number(req.params.id);
+    const { id: assetId } = req.params as any;
 
     const asset = await prisma.businessProfileMedia.findFirst({
       where: { id: assetId, userId },
@@ -198,7 +195,7 @@ router.post(
     // 1. Resilience: Set status to 'generating' immediately
     if (postId) {
       await prisma.contentPlanPost.update({
-        where: { id: Number(postId) },
+        where: { id: postId },
         data: { status: "generating" }
       });
     }
@@ -210,8 +207,8 @@ router.post(
       identifier: String(businessProfileId),
       senderId: String(userId),
       messageText: prompt,
-      businessProfileId: Number(businessProfileId),
-      postId: postId ? Number(postId) : undefined,
+      businessProfileId,
+      postId,
     } as any);
 
     return res.status(202).json({ 
@@ -236,7 +233,7 @@ router.post(
     // 1. Resilience: Set status to 'generating' immediately
     if (postId) {
       await prisma.contentPlanPost.update({
-        where: { id: Number(postId) },
+        where: { id: postId },
         data: { status: "generating" }
       });
     }
@@ -249,8 +246,8 @@ router.post(
       senderId: String(userId),
       messageText: instruction,
       mediaId: String(assetId),
-      businessProfileId: Number(businessProfileId),
-      postId: postId ? Number(postId) : undefined,
+      businessProfileId,
+      postId,
     } as any);
 
     return res.status(202).json({ 

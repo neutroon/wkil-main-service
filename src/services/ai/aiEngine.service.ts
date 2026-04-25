@@ -12,6 +12,7 @@ import { pushLeadToCrm } from "../crm/crm.service";
 import { executeExternalQuery } from "../external/externalData.service";
 import { recordAiUsage, assertQuotaAvailable } from "../billing.service";
 import prisma from "../../config/prisma";
+import { AppError } from "../../middlewares/errorHandler.middleware";
 
 type VerificationStatus = "verified" | "unverified" | "failed";
 
@@ -317,7 +318,7 @@ export async function runAIEngineLoop(params: {
   });
 
   if (!profile) {
-    throw new Error("Business profile not found");
+    throw new AppError("Business profile not found", 404);
   }
 
   const userId = profile.userId;
@@ -388,7 +389,7 @@ export async function runAIEngineLoop(params: {
           );
         }
 
-        if (!url) throw new Error("Could not resolve media URL");
+        if (!url) throw new AppError("Could not resolve media URL", 502);
 
         const response = await fetch(url, {
           headers: {
@@ -517,7 +518,7 @@ export async function runAIEngineLoop(params: {
 
     const response = responseResult;
     const candidate = (response as any).candidates?.[0];
-    if (!candidate) throw new Error("No candidate from Gemini");
+    if (!candidate) throw new AppError("No candidate from Gemini", 502);
 
     const responseParts = candidate.content?.parts || [];
     let responseText = responseParts
@@ -538,7 +539,7 @@ export async function runAIEngineLoop(params: {
     const functionCalls = response.functionCalls || [];
     if (functionCalls.length === 0) {
       if (!responseText)
-        throw new Error("No reply text and no function call generated");
+        throw new AppError("No reply text and no function call generated", 502);
 
       // FAIL-SAFE: If the AI output is insane (e.g. 4000+ chars), it's a hallucination.
       if (responseText.length > 4000) {
@@ -703,6 +704,6 @@ export async function runAIEngineLoop(params: {
     }
   }
 
-  throw new Error("Exceeded max AI tool turns without Final Answer");
+  throw new AppError("Exceeded max AI tool turns without Final Answer", 429);
 }
 

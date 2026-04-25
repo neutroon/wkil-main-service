@@ -3,6 +3,7 @@ import { recordAiUsage, assertQuotaAvailable } from "./billing.service";
 import { logger } from "../utils/logger";
 import { retrieveRelevantChunks } from "../rag/rag.service";
 import prisma from "../config/prisma";
+import { AppError } from "../middlewares/errorHandler.middleware";
 
 export interface BriefingInput {
   businessProfileId: number;
@@ -23,7 +24,7 @@ export async function* generateContentStrategyStream(briefing: BriefingInput) {
   });
 
   if (!profile) {
-    throw new Error("Business profile not found");
+    throw new AppError("Business profile not found", 404);
   }
 
   // Pre-flight quota check
@@ -177,7 +178,7 @@ Schema:
   }).catch(console.error);
 
   if (!responseText) {
-    throw new Error("Failed to generate strategy JSON");
+    throw new AppError("Failed to generate strategy JSON", 502);
   }
 
   let parsedCalendar = [];
@@ -188,7 +189,7 @@ Schema:
       .trim();
     parsedCalendar = JSON.parse(cleanText);
   } catch (err) {
-    throw new Error("Invalid strategic format received from AI.");
+    throw new AppError("Invalid strategic format received from AI.", 502);
   }
 
   yield {
@@ -237,7 +238,7 @@ export async function generateContentStrategy(briefing: BriefingInput) {
   });
 
   if (!profile) {
-    throw new Error("Business profile not found");
+    throw new AppError("Business profile not found", 404);
   }
 
   // Pre-flight quota check
@@ -372,7 +373,7 @@ Schema:
   }).catch(console.error);
 
   if (!responseText) {
-    throw new Error("Failed to generate strategy from Gemini");
+    throw new AppError("Failed to generate strategy from Gemini", 502);
   }
 
   let parsedCalendar: Array<{
@@ -391,8 +392,9 @@ Schema:
     parsedCalendar = JSON.parse(cleanText);
   } catch (err) {
     console.error("Gemini failed to output valid JSON in Stage 2", err);
-    throw new Error(
+    throw new AppError(
       "Invalid format received from AI in strategy phase. Try again.",
+      502
     );
   }
 
@@ -445,14 +447,14 @@ export async function generatePostExecution(postId: number, userId: number) {
   });
 
   if (!post) {
-    throw new Error("Post not found");
+    throw new AppError("Post not found", 404);
   }
 
   // Pre-flight quota check
   await assertQuotaAvailable(userId, post.contentPlan.businessProfile.id);
 
   if (post.contentPlan.userId !== userId) {
-    throw new Error("Unauthorized");
+    throw new AppError("Unauthorized", 401);
   }
 
   // 2. Set 'generating' status immediately for resilience
@@ -564,8 +566,9 @@ ${schemaInstruct}
   }).catch(console.error);
 
   if (!responseText) {
-    throw new Error(
+    throw new AppError(
       "Failed to generate post execution: No text returned from Gemini. This may be due to safety filters.",
+      502
     );
   }
 
@@ -596,7 +599,7 @@ ${schemaInstruct}
       data: { status: "pending" },
     });
     console.error("Gemini JSON Parsing error for Post Execution", err);
-    throw new Error("Failed to parse the generated content from AI.");
+    throw new AppError("Failed to parse the generated content from AI.", 502);
   }
 } catch (outerErr: any) {
   // Global catch for the entire generation process

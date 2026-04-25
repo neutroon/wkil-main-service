@@ -8,6 +8,7 @@ import {
 } from "./conversation.service";
 import { computeBusinessChatReply } from "../chat/businessChatReply.service";
 import { historyToLlmTurns, toPromptMessages } from "../chat/conversationTurns";
+import { AppError } from "../../middlewares/errorHandler.middleware";
 
 const FALLBACK_REPLY =
   "Sorry, we can't respond right now. Please try again or contact the business directly.";
@@ -39,8 +40,8 @@ export async function sendWhatsAppReply(
   );
 
   if (!response.ok) {
-    const error = (await response.json()) as unknown;
-    throw new Error(`WhatsApp Cloud API error: ${JSON.stringify(error)}`);
+    const error = (await response.json()) as any;
+    throw new AppError(`WhatsApp Cloud API error: ${JSON.stringify(error)}`, 502);
   }
 
   return response.json();
@@ -84,8 +85,8 @@ export async function sendWhatsAppMedia(
   );
 
   if (!response.ok) {
-    const error = (await response.json()) as unknown;
-    throw new Error(`WhatsApp Cloud API media error: ${JSON.stringify(error)}`);
+    const error = (await response.json()) as any;
+    throw new AppError(`WhatsApp Cloud API media error: ${JSON.stringify(error)}`, 502);
   }
 
   return response.json();
@@ -140,7 +141,7 @@ export async function listWhatsAppTemplates(
   if (!response.ok) {
     const error = await response.json();
     logger.error("whatsapp.templates.list_failed", { wabaId, error });
-    throw new Error(`WhatsApp Templates API error: ${JSON.stringify(error)}`);
+    throw new AppError(`WhatsApp Templates API error: ${JSON.stringify(error)}`, 502);
   }
 
   const result = (await response.json()) as { data: any[] };
@@ -181,7 +182,7 @@ export async function sendWhatsAppTemplate(
 
   if (!response.ok) {
     const error = await response.json();
-    throw new Error(`WhatsApp Template Send error: ${JSON.stringify(error)}`);
+    throw new AppError(`WhatsApp Template Send error: ${JSON.stringify(error)}`, 502);
   }
 
   return response.json();

@@ -4,6 +4,7 @@ import { recordAiUsage, assertQuotaAvailable } from "../billing.service";
 import { applyWatermark, WatermarkPosition } from "./watermark.service";
 import { logger } from "../../utils/logger";
 import prisma from "../../config/prisma";
+import { env } from "../../config/env";
 import { AppError } from "../../middlewares/errorHandler.middleware";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { r2Client, R2_BUCKET } from "../../config/r2";
@@ -121,7 +122,7 @@ export async function createGeminiVisual(params: {
         let logoUrl = profile.brandLogoUrl;
         // Handle relative URLs by prepending the backend base URL
         if (logoUrl.startsWith("/")) {
-          const baseUrl = process.env.BACKEND_URL || "http://localhost:8080";
+          const baseUrl = env.BACKEND_URL || "http://localhost:8080";
           logoUrl = `${baseUrl}${logoUrl}`;
         }
         

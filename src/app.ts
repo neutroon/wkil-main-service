@@ -23,7 +23,7 @@ import authRoutes from "./routes/auth.routes";
 import dashboardRoutes from "./routes/dashboard.routes";
 import os from "os";
 import scrapeRoutes from "./routes/scraping/scrape";
-import businessProfileRouts from "./routes/buisnessProfile.routes";
+import businessProfileRoutes from "./routes/businessProfile.routes";
 import messengerRoutes from "./routes/meta/messenger.routes";
 import whatsappRoutes from "./routes/meta/whatsapp.routes";
 import crmRoutes from "./routes/crm.routes";
@@ -134,30 +134,36 @@ app.use("/v1/admin/mission-control", missionControlRouter);
 app.use("/v1/manager", managerRoutes);
 app.use("/v1/dashboard", dashboardRoutes);
 app.use("/v1/scrape", scrapeRoutes);
-app.use("/v1/business-profile", businessProfileRouts);
+app.use("/v1/business-profile", businessProfileRoutes);
 app.use("/v1/crm", crmRoutes);
 app.use("/v1/external-data", externalDataSourceRoutes);
 app.use("/v1/widget", widgetRoutes);
 app.use("/v1/analytics", aiAnalyticsRoutes);
 app.use("/v1/media", mediaLibraryRoutes);
 
-// Health check endpoint
-app.get("/v1/health", async (req, res) => {
-  let dbStatus = "UP";
+// Health check endpoint (System Vitals Diagnostic)
+app.get("/v1/health", async (_req, res) => {
+  let database = "UP";
   try {
     await prisma.$queryRaw`SELECT 1`;
   } catch (err) {
-    dbStatus = "DOWN";
+    database = "DOWN";
     logger.error("Health check: Database connection failed", { error: err });
   }
 
-  res.status(dbStatus === "UP" ? 200 : 503).json({
-    status: dbStatus === "UP" ? "OK" : "PARTIAL_OUTAGE",
-    database: dbStatus,
+  const status = database === "UP" ? "healthy" : "degraded";
+  const statusCode = database === "UP" ? 200 : 503;
+
+  res.status(statusCode).json({
+    status,
+    database,
     timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    memoryUsage: process.memoryUsage(),
-    cpuLoad: os.loadavg(),
+    system: {
+      uptime: process.uptime(),
+      memory: process.memoryUsage(),
+      cpu: os.loadavg(),
+      platform: process.platform,
+    },
   });
 });
 

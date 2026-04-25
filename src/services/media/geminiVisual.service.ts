@@ -7,9 +7,9 @@ import prisma from "../../config/prisma";
 import { env } from "../../config/env";
 import { AppError } from "../../middlewares/errorHandler.middleware";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
+import { internalClient } from "../../utils/apiClient";
 import { r2Client, R2_BUCKET } from "../../config/r2";
 
-import axios from "axios";
 
 /**
  * Aesthetic DNA Mappings (The Vibe)
@@ -126,7 +126,7 @@ export async function createGeminiVisual(params: {
           logoUrl = `${baseUrl}${logoUrl}`;
         }
         
-        const resp = await axios.get(logoUrl, { responseType: "arraybuffer" });
+        const resp = await internalClient.get(logoUrl, { responseType: "arraybuffer" });
         brandLogoBuffer = Buffer.from(resp.data);
       } catch (err) {
         logger.warn("gemini_visual.logo_fetch_failed", { url: profile.brandLogoUrl });
@@ -256,7 +256,7 @@ export async function refineGeminiVisual(params: {
     let brandLogoBuffer: Buffer | undefined;
     if (profile.brandLogoUrl) {
       try {
-        const resp = await axios.get(profile.brandLogoUrl, { responseType: "arraybuffer" });
+        const resp = await internalClient.get(profile.brandLogoUrl, { responseType: "arraybuffer" });
         brandLogoBuffer = Buffer.from(resp.data);
       } catch (err) {
         // Non-critical, continue without logo

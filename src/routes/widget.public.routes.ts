@@ -1,4 +1,4 @@
-import { Router, Response, Request } from "express";
+import { Router, Response } from "express";
 import prisma from "../config/prisma";
 import { processWidgetChatMessage } from "../services/widget/widgetChat.service";
 import { listConversationMessages } from "../services/meta/conversation.service";

@@ -1,9 +1,9 @@
 import { Readable } from "stream";
 import { logger } from "../../utils/logger";
 import { AppError } from "../../middlewares/errorHandler.middleware";
-
-const MEDIA_URL_CACHE = new Map<string, { url: string; expiresAt: number }>();
-const CACHE_TTL_MS = 60 * 60 * 1000; // Cache for 1 hour (Meta URLs usually last 5 mins to 24 hours)
+import { cache } from "../../utils/cache";
+import { env } from "../../config/env";
+import { metaClient } from "../../utils/apiClient";
 
 /**
  * Unified "Smart Resolver" for Meta Media.
@@ -15,95 +15,77 @@ export async function getMetaMediaUrl(
   platform: "messenger" | "whatsapp" = "whatsapp",
   fallbackUrl?: string,
 ): Promise<string> {
-  const cacheKey = `${platform}:${id}`;
-  const now = Date.now();
-  const cached = MEDIA_URL_CACHE.get(cacheKey);
+  const cacheKey = `meta:media:${platform}:${id}`;
 
-  if (cached && cached.expiresAt > now) {
-    return cached.url;
-  }
+  return cache.getOrSet(
+    cacheKey,
+    async () => {
+      try {
+        let url = "";
 
-  try {
-    let url = "";
+        if (platform === "messenger") {
+          // Query the /attachments edge specifically.
+          const { data } = await metaClient.get(`/${id}/attachments`, {
+            params: { access_token: accessToken },
+          });
 
-    if (platform === "messenger") {
-      // DEFINITIVE PRODUCTION PATH: Query the /attachments edge specifically.
-      // v21.0 is the recommended stable version for this endpoint in 2024/2025.
-      const response = await fetch(
-        `https://graph.facebook.com/v25.0/${id}/attachments?access_token=${accessToken}`,
-      );
+          const result = data as { data: any[] };
+          const att = result.data?.[0];
 
-      if (response.ok) {
-        const result = (await response.json()) as { data: any[] };
-        const att = result.data?.[0];
+          // Primary resolution path
+          let pathUsed = "";
+          if (att?.file_url) {
+            url = att.file_url;
+            pathUsed = "file_url";
+          } else if (att?.image_data?.url) {
+            url = att.image_data.url;
+            pathUsed = "image_data";
+          } else if (att?.video_data?.url) {
+            url = att.video_data.url;
+            pathUsed = "video_data";
+          } else if (att?.payload?.url) {
+            url = att.payload.url;
+            pathUsed = "payload";
+          }
 
-        // Primary resolution path
-        let pathUsed = "";
-        if (att?.file_url) {
-          url = att.file_url;
-          pathUsed = "file_url";
-        } else if (att?.image_data?.url) {
-          url = att.image_data.url;
-          pathUsed = "image_data";
-        } else if (att?.video_data?.url) {
-          url = att.video_data.url;
-          pathUsed = "video_data";
-        } else if (att?.payload?.url) {
-          url = att.payload.url;
-          pathUsed = "payload";
+          if (url) {
+            logger.info("meta.media.messenger_refresh_success", { id, pathUsed });
+          }
+
+          // Final API fallback if the specialized /attachments edge failed
+          if (!url) {
+            const fallbackRes = await metaClient.get(`/${id}`, {
+              params: { access_token: accessToken },
+            });
+            url = (fallbackRes.data as any).url;
+          }
+        } else {
+          // WhatsApp-Specific: Resolve Media Object ID
+          const { data } = await metaClient.get(`/${id}`, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          });
+          url = (data as { url: string }).url;
         }
 
-        if (url) {
-          logger.info("meta.media.messenger_refresh_success", { id, pathUsed });
+        // FINAL PRODUCTION FALLBACK:
+        if (!url && fallbackUrl) {
+          logger.info("meta.media.using_metadata_fallback", { platform, id });
+          url = fallbackUrl;
         }
-      } else {
-        const errorData = (await response.json()) as any;
-        logger.warn("meta.media.messenger_refresh_failed", { id, error: errorData });
-      }
 
-      // Final API fallback if the specialized /attachments edge failed
-      if (!url) {
-        const fallbackRes = await fetch(`https://graph.facebook.com/v25.0/${id}?access_token=${accessToken}`);
-        if (fallbackRes.ok) {
-          const fbData = (await fallbackRes.json()) as any;
-          url = fbData.url;
+        if (!url) {
+          throw new AppError(`Failed to resolve ${platform} media URL for ID: ${id}`, 404);
         }
+
+        return url;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error("meta.media.resolve_failed", { platform, id, error: msg });
+        throw err;
       }
-    } else {
-      // WhatsApp-Specific: Resolve Media Object ID
-      const response = await fetch(`https://graph.facebook.com/v25.0/${id}`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-
-      if (response.ok) {
-        const data = (await response.json()) as { url: string };
-        url = data.url;
-      }
-    }
-
-    // FINAL PRODUCTION FALLBACK:
-    // If we have a fallbackUrl from DB metadata, use it if Meta refresh failed.
-    if (!url && fallbackUrl) {
-      logger.info("meta.media.using_metadata_fallback", { platform, id });
-      url = fallbackUrl;
-    }
-
-    if (!url) {
-      throw new AppError(`Failed to resolve ${platform} media URL for ID: ${id}`, 404);
-    }
-
-    // Cache the resolved URL (Production standard: 1 hour)
-    MEDIA_URL_CACHE.set(cacheKey, {
-      url,
-      expiresAt: now + CACHE_TTL_MS,
-    });
-
-    return url;
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    logger.error("meta.media.resolve_failed", { platform, id, error: msg });
-    throw err;
-  }
+    },
+    3600 // 1 hour TTL
+  );
 }
 
 /**

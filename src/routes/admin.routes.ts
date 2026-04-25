@@ -1,8 +1,6 @@
-import { Router } from "express";
+import { Router, Request, Response } from "express";
 import {
-  // loginAdmin,
   registerAdmin,
-  // logoutAdmin,
   createManager,
   getBillingSettings,
   updateBillingSettings,
@@ -26,14 +24,21 @@ import {
 import {
   authenticateToken,
   requireAdmin,
-  // refreshToken,
-  logout,
 } from "../middlewares/auth.middleware";
-import {
-  validateAdminRegistration,
-  validateUserLogin,
-  validateUserRegistration,
-} from "../middlewares/validation.middleware";
+import { validate } from "../middlewares/validate.middleware";
+import { 
+  createAdminManagerSchema,
+  updateBillingSettingsSchema,
+  updateBusinessUsageSchema,
+  adminBusinessIdParamSchema
+} from "../validations/admin.validation";
+import { 
+  registerUserSchema, 
+  updateUserSchema, 
+  userIdParamSchema, 
+  userListQuerySchema 
+} from "../validations/user.validation";
+import { facebookAnalyticsSchema } from "../validations/facebook.validation";
 import { authLimiter, adminLimiter } from "../middlewares/rateLimit.middleware";
 import { getLeads } from "../controllers/lead.controller";
 import {
@@ -44,21 +49,13 @@ import {
 
 const adminRoutes = Router();
 
-// Admin authentication routes with rate limiting and validation
-
-// adminRoutes.post("/login", authLimiter, validateUserLogin, loginAdmin);
-
-// Token management routes
-// adminRoutes.post("/refresh", refreshToken);
-// adminRoutes.post("/logout", logoutAdmin);
-
 // Admin-only routes (require authentication and admin role)
 adminRoutes.use(authenticateToken, requireAdmin);
 
 adminRoutes.post(
   "/addAdmin",
   authLimiter,
-  validateAdminRegistration,
+  validate(createAdminManagerSchema),
   registerAdmin,
 );
 
@@ -66,7 +63,7 @@ adminRoutes.post(
 adminRoutes.post(
   "/create-manager",
   adminLimiter,
-  validateAdminRegistration,
+  validate(createAdminManagerSchema),
   createManager,
 );
 
@@ -74,33 +71,35 @@ adminRoutes.post(
 adminRoutes.post(
   "/create-user",
   adminLimiter,
-  validateUserRegistration,
+  validate(registerUserSchema),
   registerUser,
 );
 
 // User management with admin rate limiting
-adminRoutes.get("/users", adminLimiter, getUsers);
-adminRoutes.get("/users/:id", adminLimiter, getUserByIdController);
-adminRoutes.put("/users/:id", adminLimiter, updateUser);
+adminRoutes.get("/users", adminLimiter, validate(userListQuerySchema), getUsers);
+adminRoutes.get("/users/:id", adminLimiter, validate(userIdParamSchema), getUserByIdController);
+adminRoutes.put("/users/:id", adminLimiter, validate(updateUserSchema), updateUser);
 adminRoutes.patch(
   "/users/:id/deactivate",
   adminLimiter,
+  validate(userIdParamSchema),
   deactivateUserController,
 );
 adminRoutes.patch(
   "/users/:id/reactivate",
   adminLimiter,
+  validate(userIdParamSchema),
   reactivateUserController,
 );
-adminRoutes.delete("/users/:id", adminLimiter, permanentlyDeleteUserController);
+adminRoutes.delete("/users/:id", adminLimiter, validate(userIdParamSchema), permanentlyDeleteUserController);
 
 // Admin Settings management
 adminRoutes.get("/settings/billing", adminLimiter, getBillingSettings);
-adminRoutes.post("/settings/billing", adminLimiter, updateBillingSettings);
+adminRoutes.post("/settings/billing", adminLimiter, validate(updateBillingSettingsSchema), updateBillingSettings);
 
 // Business Profile Billing Management
-adminRoutes.post("/billing/profiles/:id/reset", adminLimiter, resetBusinessUsage);
-adminRoutes.patch("/billing/profiles/:id/usage", adminLimiter, updateBusinessUsage);
+adminRoutes.post("/billing/profiles/:id/reset", adminLimiter, validate(adminBusinessIdParamSchema), resetBusinessUsage);
+adminRoutes.patch("/billing/profiles/:id/usage", adminLimiter, validate(updateBusinessUsageSchema), updateBusinessUsage);
 
 // Lead management
 adminRoutes.get("/leads", adminLimiter, getLeads);
@@ -111,6 +110,7 @@ adminRoutes.get("/assignments", adminLimiter, getAllUserAssignmentsController);
 adminRoutes.delete(
   "/assignments/:id",
   adminLimiter,
+  validate(adminBusinessIdParamSchema),
   removeUserAssignmentController,
 );
 
@@ -118,48 +118,34 @@ adminRoutes.delete(
 adminRoutes.get(
   "/facebook/analytics",
   adminLimiter,
-  async (req: any, res: any) => {
-    try {
-      const { days = 30 } = req.query;
-      const analytics = await getAdminAnalytics(parseInt(days as string));
-      res.json({ data: analytics });
-    } catch (error: any) {
-      console.error("Get admin Facebook analytics error:", error.message);
-      res.status(500).json({ error: error.message });
-    }
+  validate(facebookAnalyticsSchema),
+  async (req: Request, res: Response) => {
+    const { days } = req.query as any;
+    const analytics = await getAdminAnalytics(days);
+    res.json({ data: analytics });
   },
 );
 
 adminRoutes.get(
   "/facebook/users/:userId/accounts",
   adminLimiter,
-  async (req: any, res: any) => {
-    try {
-      const { userId } = req.params;
-      const accounts = await getUserFacebookAccounts(parseInt(userId));
-      res.json({ data: accounts });
-    } catch (error: any) {
-      console.error("Get user Facebook accounts error:", error.message);
-      res.status(500).json({ error: error.message });
-    }
+  async (req: Request, res: Response) => {
+    const userId = parseInt(req.params.userId as any);
+    const accounts = await getUserFacebookAccounts(userId);
+    res.json({ data: accounts });
   },
 );
 
 adminRoutes.delete(
   "/facebook/accounts/:id",
   adminLimiter,
-  async (req: any, res: any) => {
-    try {
-      const { id } = req.params;
-      await deactivateFacebookAccount(parseInt(id));
-      res.json({
-        success: true,
-        message: "Facebook account deactivated successfully",
-      });
-    } catch (error: any) {
-      console.error("Deactivate Facebook account error:", error.message);
-      res.status(500).json({ error: error.message });
-    }
+  async (req: Request, res: Response) => {
+    const id = parseInt(req.params.id as any);
+    await deactivateFacebookAccount(id);
+    res.json({
+      success: true,
+      message: "Facebook account deactivated successfully",
+    });
   },
 );
 

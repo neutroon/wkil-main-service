@@ -1,5 +1,5 @@
 import prisma from "../../config/prisma";
-import { redisClient } from "../../config/redis";
+import { cache } from "../../utils/cache";
 import { logger } from "../../utils/logger";
 
 const CACHE_TTL_SECONDS = 86400; // 24 hours (safe because of active invalidation)
@@ -11,13 +11,9 @@ const CACHE_TTL_SECONDS = 86400; // 24 hours (safe because of active invalidatio
 export async function isKnownFacebookPage(pageId: string): Promise<boolean> {
   const cacheKey = `cache:known_page:${pageId}`;
   
-  try {
-    const cached = await redisClient.get(cacheKey);
-    if (cached) {
-      return cached === "1";
-    }
-  } catch (error) {
-    logger.warn("webhook_cache.redis_get_error", { error: String(error) });
+  const cached = await cache.get<string>(cacheKey);
+  if (cached !== null) {
+    return cached === "1";
   }
 
   // Cache miss, check DB
@@ -27,12 +23,7 @@ export async function isKnownFacebookPage(pageId: string): Promise<boolean> {
   });
 
   const isKnown = !!knownPage;
-
-  try {
-    await redisClient.set(cacheKey, isKnown ? "1" : "0", "EX", CACHE_TTL_SECONDS);
-  } catch (error) {
-    logger.warn("webhook_cache.redis_set_error", { error: String(error) });
-  }
+  await cache.set(cacheKey, isKnown ? "1" : "0", CACHE_TTL_SECONDS);
 
   return isKnown;
 }
@@ -44,13 +35,9 @@ export async function isKnownFacebookPage(pageId: string): Promise<boolean> {
 export async function isKnownWhatsAppAccount(phoneNumberId: string): Promise<boolean> {
   const cacheKey = `cache:known_wa:${phoneNumberId}`;
   
-  try {
-    const cached = await redisClient.get(cacheKey);
-    if (cached) {
-      return cached === "1";
-    }
-  } catch (error) {
-    logger.warn("webhook_cache.redis_get_error", { error: String(error) });
+  const cached = await cache.get<string>(cacheKey);
+  if (cached !== null) {
+    return cached === "1";
   }
 
   // Cache miss, check DB
@@ -60,12 +47,7 @@ export async function isKnownWhatsAppAccount(phoneNumberId: string): Promise<boo
   });
 
   const isKnown = !!knownAccount;
-
-  try {
-    await redisClient.set(cacheKey, isKnown ? "1" : "0", "EX", CACHE_TTL_SECONDS);
-  } catch (error) {
-    logger.warn("webhook_cache.redis_set_error", { error: String(error) });
-  }
+  await cache.set(cacheKey, isKnown ? "1" : "0", CACHE_TTL_SECONDS);
 
   return isKnown;
 }
@@ -75,12 +57,8 @@ export async function isKnownWhatsAppAccount(phoneNumberId: string): Promise<boo
  */
 export async function invalidateFacebookPageCache(pageId: string): Promise<void> {
   const cacheKey = `cache:known_page:${pageId}`;
-  try {
-    await redisClient.del(cacheKey);
-    logger.info("webhook_cache.invalidated_page", { pageId });
-  } catch (error) {
-    logger.warn("webhook_cache.redis_del_error", { error: String(error) });
-  }
+  await cache.delete(cacheKey);
+  logger.info("webhook_cache.invalidated_page", { pageId });
 }
 
 /**
@@ -88,12 +66,8 @@ export async function invalidateFacebookPageCache(pageId: string): Promise<void>
  */
 export async function invalidateWhatsAppAccountCache(phoneNumberId: string): Promise<void> {
   const cacheKey = `cache:known_wa:${phoneNumberId}`;
-  try {
-    await redisClient.del(cacheKey);
-    logger.info("webhook_cache.invalidated_wa", { phoneNumberId });
-  } catch (error) {
-    logger.warn("webhook_cache.redis_del_error", { error: String(error) });
-  }
+  await cache.delete(cacheKey);
+  logger.info("webhook_cache.invalidated_wa", { phoneNumberId });
 }
 
 /**
@@ -105,12 +79,10 @@ export async function isDuplicateWebhook(externalId: string): Promise<boolean> {
   if (!externalId) return false;
   const cacheKey = `lock:webhook:${externalId}`;
   
-  try {
-    // SET with NX (Only if not exists) and EX (Expiration)
-    const result = await redisClient.set(cacheKey, "1", "EX", 30, "NX");
-    return result === null; 
-  } catch (error) {
-    logger.warn("webhook_cache.lock_error", { error: String(error) });
-    return false; // Fail open (allow processing) if Redis is unstable
-  }
+  // We use redisClient directly for atomic SET NX since the cache utility
+  // currently doesn't expose the raw SET response for NX.
+  // This is acceptable as it's a specific atomic operation.
+  const { redisClient } = await import("../../config/redis");
+  const result = await redisClient.set(cacheKey, "1", "EX", 30, "NX");
+  return result === null; 
 }

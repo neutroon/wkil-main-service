@@ -119,49 +119,10 @@ facebookRoutes.get(
     // Use the provided token or find the most recent active one from DB
     const pages = await getUserPages(access_token, userId);
 
-    // Identify the target account for syncing
-    let internalFacebookAccountId: number | null = null;
-
-    if (facebook_account_id) {
-      const rawAccountId = String(facebook_account_id).trim();
-      const numericAccountId = Number(rawAccountId);
-
-      if (
-        Number.isSafeInteger(numericAccountId) &&
-        numericAccountId > 0 &&
-        numericAccountId <= 2147483647
-      ) {
-        const accountById = await prisma.facebookAccount.findFirst({
-          where: { id: numericAccountId, userId, isActive: true },
-          select: { id: true },
-        });
-        if (accountById) internalFacebookAccountId = accountById.id;
-      }
-
-      if (!internalFacebookAccountId) {
-        const accountByFacebookUserId =
-          await prisma.facebookAccount.findFirst({
-            where: { facebookUserId: rawAccountId, userId, isActive: true },
-            select: { id: true },
-          });
-        if (accountByFacebookUserId)
-          internalFacebookAccountId = accountByFacebookUserId.id;
-      }
-    } else {
-      // Default to the most recently used/active account for this user
-      const recentAccount = await prisma.facebookAccount.findFirst({
-        where: { userId, isActive: true },
-        orderBy: { lastUsedAt: "desc" },
-        select: { id: true },
-      });
-      if (recentAccount) {
-        internalFacebookAccountId = recentAccount.id;
-      }
-    }
-
     // Sync pages to DB if we have a valid account identifier
-    if (internalFacebookAccountId) {
-      await saveFacebookPages(internalFacebookAccountId, pages);
+    if (facebook_account_id) {
+      // facebook_account_id is already coerced to a number by Zod
+      await saveFacebookPages(facebook_account_id, pages);
     }
 
     res.json({ data: pages });
@@ -212,7 +173,7 @@ facebookRoutes.post(
     });
 
     // Log activity
-    let activityAccountId = facebookAccountId ? parseInt(facebookAccountId as string) : null;
+    let activityAccountId = facebookAccountId;
     if (!activityAccountId) {
       const page = await prisma.facebookPage.findFirst({
         where: { pageId },
@@ -377,17 +338,14 @@ facebookRoutes.post(
     // Verify the account belongs to the user
     const account = await getUserFacebookAccounts(userId);
     const targetAccount = account.find(
-      (acc) => acc.id === parseInt(facebookAccountId as string)
+      (acc) => acc.id === facebookAccountId
     );
 
     if (!targetAccount) {
       throw new AppError("Facebook account not found", 404);
     }
 
-    const updatedAccount = await switchDevice(
-      parseInt(facebookAccountId as string),
-      deviceInfo,
-    );
+    const updatedAccount = await switchDevice(facebookAccountId, deviceInfo);
     res.json({ data: updatedAccount });
   }
 );
@@ -398,18 +356,18 @@ facebookRoutes.delete(
   authenticateToken,
   validate(facebookIdParamSchema),
   async (req: Request, res: Response) => {
-    const { id } = req.params;
+    const { id } = req.params as any;
     const userId = (req as any).user.id;
 
     // Verify the account belongs to the user
     const account = await getUserFacebookAccounts(userId);
-    const targetAccount = account.find((acc) => acc.id === parseInt(id));
+    const targetAccount = account.find((acc) => acc.id === id);
 
     if (!targetAccount) {
       throw new AppError("Facebook account not found", 404);
     }
 
-    await deactivateFacebookAccount(parseInt(id));
+    await deactivateFacebookAccount(id);
     res.json({ success: true, message: "Account deactivated successfully" });
   }
 );
@@ -540,7 +498,7 @@ facebookRoutes.post(
   authenticateToken,
   validate(facebookPrivateReplySchema),
   async (req: Request, res: Response) => {
-    const messageId = parseInt(req.params.messageId as any, 10);
+    const { messageId } = req.params as any;
     const { message } = req.body;
 
     // 1. Resolve the source message and its conversation

@@ -17,7 +17,7 @@ export const userAssignmentSchema = z.object({
  */
 export const analyticsQuerySchema = z.object({
   query: z.object({
-    days: z.string().regex(/^\d+$/).transform(Number).optional(),
+    days: z.coerce.number().optional(),
     includeInactive: z.string().transform(v => v === "true").optional(),
   }),
 });
@@ -27,7 +27,7 @@ export const analyticsQuerySchema = z.object({
  */
 export const idParamSchema = z.object({
   params: z.object({
-    id: z.string().regex(/^\d+$/, "ID must be numeric"),
+    id: z.coerce.number(),
   }),
 });
 

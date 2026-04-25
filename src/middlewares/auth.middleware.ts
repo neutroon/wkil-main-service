@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import prisma from "../config/prisma";
+import { AppError } from "./errorHandler.middleware";
 
 const JWT_SECRET = process.env.JWT_SECRET || "supersecret";
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || "refreshsecret";
@@ -132,10 +133,7 @@ export const authenticateToken = async (
     }
 
     if (!token) {
-      return res.status(401).json({
-        error: "Access token required",
-        code: "NO_TOKEN",
-      });
+      throw new AppError("Access token required", 401, true, "NO_TOKEN");
     }
 
     const decoded = jwt.verify(token, JWT_SECRET) as any;
@@ -150,10 +148,7 @@ export const authenticateToken = async (
     });
 
     if (!user) {
-      return res.status(401).json({
-        error: "Invalid token - user not found or deactivated",
-        code: "USER_NOT_FOUND",
-      });
+      throw new AppError("Invalid token - user not found or deactivated", 401, true, "USER_NOT_FOUND");
     }
 
     req.user = {
@@ -167,15 +162,9 @@ export const authenticateToken = async (
     next();
   } catch (error: any) {
     if (error.name === "TokenExpiredError") {
-      return res.status(401).json({
-        error: "Token expired",
-        code: "TOKEN_EXPIRED",
-      });
+      throw new AppError("Token expired", 401, true, "TOKEN_EXPIRED");
     }
-    return res.status(403).json({
-      error: "Invalid token",
-      code: "INVALID_TOKEN",
-    });
+    throw new AppError("Invalid token", 403, true, "INVALID_TOKEN");
   }
 };
 
@@ -189,10 +178,7 @@ export const refreshToken = async (
     const refreshToken = req.cookies?.refreshToken;
 
     if (!refreshToken) {
-      return res.status(401).json({
-        error: "Refresh token required",
-        code: "NO_REFRESH_TOKEN",
-      });
+      throw new AppError("Refresh token required", 401, true, "NO_REFRESH_TOKEN");
     }
 
     const decoded = jwt.verify(refreshToken, JWT_REFRESH_SECRET) as any;
@@ -204,10 +190,7 @@ export const refreshToken = async (
     });
 
     if (!user) {
-      return res.status(401).json({
-        error: "Invalid refresh token",
-        code: "INVALID_REFRESH_TOKEN",
-      });
+      throw new AppError("Invalid refresh token", 401, true, "INVALID_REFRESH_TOKEN");
     }
 
     // Generate new tokens
@@ -234,15 +217,9 @@ export const refreshToken = async (
     });
   } catch (error: any) {
     if (error.name === "TokenExpiredError") {
-      return res.status(401).json({
-        error: "Refresh token expired",
-        code: "REFRESH_TOKEN_EXPIRED",
-      });
+      throw new AppError("Refresh token expired", 401, true, "REFRESH_TOKEN_EXPIRED");
     }
-    return res.status(403).json({
-      error: "Invalid refresh token",
-      code: "INVALID_REFRESH_TOKEN",
-    });
+    throw new AppError("Invalid refresh token", 403, true, "INVALID_REFRESH_TOKEN");
   }
 };
 
@@ -258,10 +235,7 @@ export const requireAdmin = (
   next: NextFunction
 ) => {
   if (!req.user || !["super_admin", "admin"].includes(req.user.role)) {
-    return res.status(403).json({
-      error: "Admin access required",
-      code: "ADMIN_REQUIRED",
-    });
+    throw new AppError("Admin access required", 403, true, "ADMIN_REQUIRED");
   }
   next();
 };
@@ -371,11 +345,9 @@ export const requireVerified = (
   }
 
   if (!req.user.isEmailVerified) {
-    return res.status(403).json({
-      error: "Email verification required",
-      code: "EMAIL_NOT_VERIFIED",
-      email: req.user.email,
-    });
+    const error = new AppError("Email verification required", 403, true, "EMAIL_NOT_VERIFIED") as any;
+    error.email = req.user.email;
+    throw error;
   }
   next();
 };

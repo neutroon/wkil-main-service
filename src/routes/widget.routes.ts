@@ -10,7 +10,7 @@ import {
 import { computeBusinessChatReply } from "../services/chat/businessChatReply.service";
 import { toPromptMessages, historyToLlmTurns } from "../services/chat/conversationTurns";
 import { getConversationHistory } from "../services/meta/conversation.service";
-import { logger } from "../utils/logger";
+
 import { validate } from "../middlewares/validate.middleware";
 import { 
   widgetInstallSchema, 

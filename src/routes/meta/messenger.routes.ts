@@ -22,6 +22,7 @@ import { paginationSchema, idPaginationSchema, idParamSchema } from "../../valid
 import { decryptFacebookSecret } from "../../utils/tokenCrypto";
 import { uploadMessengerMedia } from "../../services/meta/metaUpload.service";
 import multer from "multer";
+import { env } from "../../config/env";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 16 * 1024 * 1024 } }); // 16MB limit
 
@@ -94,7 +95,7 @@ messengerRoutes.post("/conversations/:id/media", authenticateToken, upload.singl
   }
 );
 
-const isDev = process.env.NODE_ENV !== "production";
+const isDev = env.NODE_ENV !== "production";
 
 
 
@@ -256,7 +257,7 @@ messengerRoutes.post(
 // ─── Webhook Routes ───────────────────────────────────────────────────────────
 
 messengerRoutes.get("/webhook", (req: Request, res: Response) => {
-  const VERIFY_TOKEN = process.env.MESSENGER_VERIFY_TOKEN;
+  const VERIFY_TOKEN = env.MESSENGER_VERIFY_TOKEN;
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
@@ -291,7 +292,7 @@ messengerRoutes.post("/webhook", async (req: Request, res: Response) => {
       !verifyMetaWebhookSignature(
         rawBody as Buffer,
         signature,
-        process.env.FB_APP_SECRET || "",
+        env.FB_APP_SECRET || "",
       )
     ) {
       logger.error("messenger.webhook.invalid_signature");

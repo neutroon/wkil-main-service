@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import jwt from "jsonwebtoken";
+
 import { authenticateToken } from "../../middlewares/auth.middleware";
 import { logger } from "../../utils/logger";
 import prisma from "../../config/prisma";
@@ -11,7 +11,6 @@ import {
 } from "../../services/meta/conversation.service";
 import {
   sendWhatsAppReply,
-  sendWhatsAppAction,
 } from "../../services/meta/whatsapp.service";
 import {
   sendMessengerReply,
@@ -32,10 +31,7 @@ import {
 } from "../../validations/conversation.validation";
 import { sendWhatsAppTemplateSchema } from "../../validations/meta.validation";
 import { AppError } from "../../middlewares/errorHandler.middleware";
-import {
-  getMetaMediaUrl,
-  streamMetaMedia,
-} from "../../services/meta/metaMedia.service";
+
 import {
   paginationSchema,
   idPaginationSchema,

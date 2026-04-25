@@ -10,10 +10,14 @@ import {
   refreshToken,
 } from "../middlewares/auth.middleware";
 import { authLimiter, securityActionLimiter } from "../middlewares/rateLimit.middleware";
-import {
-  validateUserLogin,
-  validateUserRegistration,
-} from "../middlewares/validation.middleware";
+import { validate } from "../middlewares/validate.middleware";
+import { 
+  loginSchema, 
+  registerSchema, 
+  forgotPasswordSchema, 
+  resetPasswordSchema,
+  verifyEmailSchema
+} from "../validations/auth.validation";
 import * as authController from "../controllers/auth.controller";
 
 const authRoutes = Router();
@@ -21,16 +25,43 @@ const authRoutes = Router();
 authRoutes.post(
   "/register",
   authLimiter,
-  validateUserRegistration,
+  validate(registerSchema),
   registerUser
 );
-authRoutes.post("/login", authLimiter, validateUserLogin, loginUserController);
+
+authRoutes.post(
+  "/login", 
+  authLimiter, 
+  validate(loginSchema), 
+  loginUserController
+);
 
 // Identity Lifecycle Routes (Production Grade)
-authRoutes.get("/verify-email", authController.verifyEmail);
-authRoutes.post("/forgot-password", securityActionLimiter, authController.forgotPassword);
-authRoutes.post("/reset-password", authController.resetPassword);
-authRoutes.post("/resend-verification", securityActionLimiter, authController.resendVerification);
+authRoutes.get(
+  "/verify-email", 
+  validate(verifyEmailSchema), 
+  authController.verifyEmail
+);
+
+authRoutes.post(
+  "/forgot-password", 
+  securityActionLimiter, 
+  validate(forgotPasswordSchema), 
+  authController.forgotPassword
+);
+
+authRoutes.post(
+  "/reset-password", 
+  validate(resetPasswordSchema), 
+  authController.resetPassword
+);
+
+authRoutes.post(
+  "/resend-verification", 
+  securityActionLimiter, 
+  validate(forgotPasswordSchema), // Reuse forgotPassword schema (just needs email)
+  authController.resendVerification
+);
 
 // Token management routes
 authRoutes.post("/refresh", refreshToken);

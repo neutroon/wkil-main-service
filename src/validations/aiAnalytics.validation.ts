@@ -6,7 +6,7 @@ import { z } from "zod";
  */
 export const aiAnalyticsQuerySchema = z.object({
   query: z.object({
-    days: z.string().regex(/^\d+$/).transform(Number).optional(),
-    businessProfileId: z.string().regex(/^\d+$/).transform(Number).optional(),
+    days: z.coerce.number().optional(),
+    businessProfileId: z.coerce.number().optional(),
   }),
 });

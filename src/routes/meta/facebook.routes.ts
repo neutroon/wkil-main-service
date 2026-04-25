@@ -756,16 +756,31 @@ facebookRoutes.post(
         );
 
         const mirrorId = `mirror_${dmRes.id}`;
-        await saveMessage(messengerConv.id, "agent", message, {
-          externalId: mirrorId,
-          isPrivate: true,
-          origin: "facebook_comment_reply",
-          mediaMetadata: {
-            origin: "facebook_comment_reply",
-            postId: sourceMsg.conversation.postId,
-            commentId: sourceMsg.externalId
-          }
+        const existingMirror = await prisma.conversationMessage.findUnique({
+          where: { externalId: mirrorId },
         });
+
+        if (!existingMirror) {
+          const mirroredMsg = await saveMessage(messengerConv.id, "agent", message, {
+            externalId: mirrorId,
+            isPrivate: true,
+            origin: "facebook_comment_reply",
+            mediaMetadata: {
+              origin: "facebook_comment_reply",
+              postId: sourceMsg.conversation.postId,
+              commentId: sourceMsg.externalId,
+            },
+          });
+
+          // ELITE TIER: Socket Emit for Mirror Thread (Real-time continuity)
+          emitToBusiness(page.businessProfileId!, "new_message", {
+            conversationId: messengerConv.id,
+            message: mirroredMsg,
+          });
+          emitToConversation(messengerConv.id, "new_message", {
+            message: mirroredMsg,
+          });
+        }
       } catch (mirrorErr: any) {
         logger.warn("facebook.routes.mirror_failed_soft", { error: mirrorErr.message });
       }

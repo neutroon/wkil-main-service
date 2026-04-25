@@ -1,126 +1,106 @@
 import { Router, Request, Response } from "express";
-import jwt from "jsonwebtoken";
 import prisma from "../../config/prisma";
 import { decryptFacebookSecret } from "../../utils/tokenCrypto";
 import { getMetaMediaUrl } from "../../services/meta/metaMedia.service";
 import { logger } from "../../utils/logger";
+import { authenticateToken } from "../../middlewares/auth.middleware";
+import { validate } from "../../middlewares/validate.middleware";
+import { metaMediaSchema } from "../../validations/metaMedia.validation";
+import { AppError } from "../../middlewares/errorHandler.middleware";
 
 const mediaRoutes = Router();
 
 /**
  * GET /v1/meta/media/:conversationId/:mediaId
  * Securely fetches and streams media from Meta.
- * Supports token-based query authentication for browser tags.
  */
 mediaRoutes.get(
   "/:conversationId/:mediaId",
+  authenticateToken,
+  validate(metaMediaSchema),
   async (req: Request, res: Response) => {
-    try {
-      const conversationId = parseInt(req.params.conversationId, 10);
-      const mediaId = req.params.mediaId;
+    const userId = (req as any).user.id;
+    const conversationId = parseInt(req.params.conversationId, 10);
+    const mediaId = req.params.mediaId;
 
-      if (isNaN(conversationId) || !mediaId) {
-        return res.status(400).json({ error: "Invalid parameters" });
-      }
+    // 1. Ownership Verification
+    const phoneNumberIds = await getUserPhoneNumberIds(userId);
+    const conversation = await prisma.conversation.findFirst({
+      where: { id: conversationId, pageId: { in: phoneNumberIds } },
+    });
 
-      // 1. Unified Authentication (Header, Cookie, or Query)
-      let token = req.headers.authorization?.startsWith("Bearer ") 
-        ? req.headers.authorization.split(" ")[1] 
-        : (req.cookies?.accessToken || (req.query.token as string));
-
-      if (!token) return res.status(401).json({ error: "Access token required" });
-
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || "supersecret") as any;
-      const userId = decoded.id;
-
-      // 2. Ownership Verification
-      const phoneNumberIds = await getUserPhoneNumberIds(userId);
-      const conversation = await prisma.conversation.findFirst({
-        where: { id: conversationId, pageId: { in: phoneNumberIds } }
-      });
-
-      if (!conversation) {
-        return res.status(404).json({ error: "Access denied or media not found" });
-      }
-
-      // 3. Platform Credential Discovery
-      let accessToken = "";
-      if (conversation.channel === "whatsapp") {
-        const account = await prisma.whatsAppAccount.findFirst({
-          where: { phoneNumberId: conversation.pageId, isActive: true },
-          select: { accessToken: true }
-        });
-        if (account) accessToken = decryptFacebookSecret(account.accessToken);
-      } else {
-        const page = await prisma.facebookPage.findFirst({
-          where: { pageId: conversation.pageId, isActive: true },
-          select: { pageAccessToken: true }
-        });
-        if (page) accessToken = decryptFacebookSecret(page.pageAccessToken);
-      }
-
-      if (!accessToken) return res.status(401).json({ error: "Meta credentials missing" });
-
-      // 4. Resolve & Stream
-      let resolveId = mediaId;
-
-      // Primary Lookup: Find the message in DB to get externalId and metadata fallback
-      const msg = await prisma.conversationMessage.findFirst({
-        where: { conversationId, mediaId }
-      });
-
-      if (conversation.channel === "messenger" && msg?.externalId) {
-        resolveId = msg.externalId;
-      }
-    
-
-      const url = await getMetaMediaUrl(
-        resolveId, 
-        accessToken, 
-        conversation.channel as any,
-        (msg?.mediaMetadata as any)?.url
-      );
-
-      const response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
-      if (!response.ok) throw new Error(`Meta binary fetch failed: ${response.status}`);
-
-      const contentType = response.headers.get("content-type");
-      if (contentType) res.setHeader("Content-Type", contentType);
-      
-      // PRODUCTION HEADERS: Support Cross-Origin and Streaming
-      res.setHeader("Access-Control-Allow-Origin", "*");
-      res.setHeader("Vary", "Origin");
-      res.setHeader("Content-Disposition", "inline");
-      res.setHeader("Accept-Ranges", "bytes");
-      res.setHeader("Cache-Control", "public, max-age=3600");
-
-      if (response.body) {
-        // Stream the response directly to the client
-        const readableStream = response.body as any; // node-fetch body is a Readable stream in Node
-        if (typeof readableStream.pipe === 'function') {
-          readableStream.pipe(res);
-        } else {
-          // Fallback for different fetch implementations
-          const reader = response.body.getReader();
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            res.write(value);
-          }
-          res.end();
-        }
-      } else {
-        res.status(500).json({ error: "Empty response from Meta" });
-      }
-
-    } catch (e: any) {
-      if (e.name === "TokenExpiredError" || e.name === "JsonWebTokenError") {
-        return res.status(401).json({ error: "Session expired, please refresh" });
-      }
-      logger.error("meta.media_proxy_failed", { error: e.message });
-      res.status(500).json({ error: "Internal media proxy error" });
+    if (!conversation) {
+      throw new AppError("Access denied or media not found", 404);
     }
-  }
+
+    // 2. Platform Credential Discovery
+    let accessToken = "";
+    if (conversation.channel === "whatsapp") {
+      const account = await prisma.whatsAppAccount.findFirst({
+        where: { phoneNumberId: conversation.pageId, isActive: true },
+        select: { accessToken: true },
+      });
+      if (account) accessToken = decryptFacebookSecret(account.accessToken);
+    } else {
+      const page = await prisma.facebookPage.findFirst({
+        where: { pageId: conversation.pageId, isActive: true },
+        select: { pageAccessToken: true },
+      });
+      if (page) accessToken = decryptFacebookSecret(page.pageAccessToken);
+    }
+
+    if (!accessToken) throw new AppError("Meta credentials missing", 401);
+
+    // 3. Resolve & Stream
+    let resolveId = mediaId;
+
+    const msg = await prisma.conversationMessage.findFirst({
+      where: { conversationId, mediaId },
+    });
+
+    if (conversation.channel === "messenger" && msg?.externalId) {
+      resolveId = msg.externalId;
+    }
+
+    const url = await getMetaMediaUrl(
+      resolveId,
+      accessToken,
+      conversation.channel as any,
+      (msg?.mediaMetadata as any)?.url,
+    );
+
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!response.ok)
+      throw new AppError(`Meta binary fetch failed: ${response.status}`, 502);
+
+    const contentType = response.headers.get("content-type");
+    if (contentType) res.setHeader("Content-Type", contentType);
+
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Vary", "Origin");
+    res.setHeader("Content-Disposition", "inline");
+    res.setHeader("Accept-Ranges", "bytes");
+    res.setHeader("Cache-Control", "public, max-age=3600");
+
+    if (response.body) {
+      const readableStream = response.body as any;
+      if (typeof readableStream.pipe === "function") {
+        readableStream.pipe(res);
+      } else {
+        const reader = response.body.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          res.write(value);
+        }
+        res.end();
+      }
+    } else {
+      throw new AppError("Empty response from Meta", 502);
+    }
+  },
 );
 
 // Helper function to get phone number IDs the user identifies with
@@ -157,14 +137,12 @@ async function getUserPhoneNumberIds(userId: number): Promise<string[]> {
 
   const ids = new Set<string>();
 
-  // From own profiles
   user.businessProfiles.forEach((bp: any) => {
     bp.whatsAppAccounts.forEach((wa: any) => ids.add(wa.phoneNumberId));
     bp.facebookPages.forEach((fp: any) => ids.add(fp.pageId));
     bp.widgetInstalls.forEach((wi: any) => ids.add(`widget:${wi.id}`));
   });
 
-  // From managed users' profiles
   user.managedUsers.forEach((mgmt: any) => {
     mgmt.user.businessProfiles.forEach((bp: any) => {
       bp.whatsAppAccounts.forEach((wa: any) => ids.add(wa.phoneNumberId));

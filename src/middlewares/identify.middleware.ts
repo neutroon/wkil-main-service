@@ -1,7 +1,8 @@
 import { Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 
-const JWT_SECRET = process.env.JWT_SECRET || "supersecret";
+import { env } from "../config/env";
+const JWT_SECRET = env.JWT_SECRET;
 
 /**
  * Middleware to populate req.user if a valid token is present.

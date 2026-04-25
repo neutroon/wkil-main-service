@@ -23,7 +23,6 @@ import {
   sendPrivateReply,
 } from "../../services/meta/facebook.service";
 import {
-  getOrCreateConversation,
   saveMessage,
 } from "../../services/meta/conversation.service";
 import { decryptFacebookSecret } from "../../utils/tokenCrypto";

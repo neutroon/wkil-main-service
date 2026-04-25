@@ -18,7 +18,7 @@ export const widgetInstallSchema = z.object({
  */
 export const updateWidgetInstallSchema = z.object({
   params: z.object({
-    id: z.string().regex(/^\d+$/, "ID must be numeric"),
+    id: z.coerce.number(),
   }),
   body: z.object({
     allowedOrigins: z.union([z.string(), z.array(z.string())]).optional(),
@@ -44,8 +44,8 @@ export const widgetConversationQuerySchema = z.object({
  */
 export const approveDraftSchema = z.object({
   params: z.object({
-    id: z.string().regex(/^\d+$/, "id must be numeric"),
-    mid: z.string().regex(/^\d+$/, "mid must be numeric"),
+    id: z.coerce.number(),
+    mid: z.coerce.number(),
   }),
   body: z.object({
     editedContent: z.string().optional(),
@@ -58,7 +58,7 @@ export const approveDraftSchema = z.object({
  */
 export const widgetReplySchema = z.object({
   params: z.object({
-    id: z.string().regex(/^\d+$/, "id must be numeric"),
+    id: z.coerce.number(),
   }),
   body: z.object({
     text: z.string().min(1, "text is required").max(4000),
@@ -70,6 +70,6 @@ export const widgetReplySchema = z.object({
  */
 export const widgetIdParamSchema = z.object({
   params: z.object({
-    id: z.string().regex(/^\d+$/, "id must be numeric"),
+    id: z.coerce.number(),
   }),
 });

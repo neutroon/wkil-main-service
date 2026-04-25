@@ -1,48 +1,8 @@
 import { VertexAI } from "@google-cloud/vertexai";
 import { AppError } from "../middlewares/errorHandler.middleware";
-
-// Validate environment variables
-if (
-  !process.env.GOOGLE_CLOUD_PROJECT_ID ||
-  !process.env.GOOGLE_APPLICATION_CREDENTIALS
-) {
-  throw new AppError("Missing Google Cloud configuration in .env file", 500);
-}
-
-// Validate required environment variables
-const requiredEnvVars = [
-  "GOOGLE_CLOUD_PROJECT_ID",
-  "GOOGLE_APPLICATION_CREDENTIALS",
-  "CLOUDINARY_CLOUD_NAME",
-  "CLOUDINARY_API_KEY",
-  "CLOUDINARY_API_SECRET",
-];
-
-const missing = requiredEnvVars.filter((v) => !process.env[v]);
-if (missing.length > 0) {
-  throw new AppError(
-    `Missing required environment variables: ${missing.join(", ")}`,
-    500
-  );
-}
-
-// Debug: Log environment variables
-console.log("Vertex AI Config:");
-console.log(
-  "GOOGLE_CLOUD_PROJECT_ID:",
-  process.env.GOOGLE_CLOUD_PROJECT_ID ? "Set" : "Not set"
-);
-console.log(
-  "GOOGLE_CLOUD_LOCATION:",
-  process.env.GOOGLE_CLOUD_LOCATION ? "Set" : "Not set"
-);
-console.log(
-  "GOOGLE_APPLICATION_CREDENTIALS:",
-  process.env.GOOGLE_APPLICATION_CREDENTIALS ? "Set" : "Not set"
-);
-
-const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID;
-const location = process.env.GOOGLE_CLOUD_LOCATION || "us-central1";
+import { env } from "./env";
+const projectId = env.GOOGLE_CLOUD_PROJECT_ID;
+const location = env.GOOGLE_CLOUD_LOCATION || "us-central1";
 
 const vertexAI = new VertexAI({ project: projectId, location });
 

@@ -1,11 +1,12 @@
 import { VertexAI } from "@google-cloud/vertexai";
+import { AppError } from "../middlewares/errorHandler.middleware";
 
 // Validate environment variables
 if (
   !process.env.GOOGLE_CLOUD_PROJECT_ID ||
   !process.env.GOOGLE_APPLICATION_CREDENTIALS
 ) {
-  throw new Error("Missing Google Cloud configuration in .env file");
+  throw new AppError("Missing Google Cloud configuration in .env file", 500);
 }
 
 // Validate required environment variables
@@ -19,8 +20,9 @@ const requiredEnvVars = [
 
 const missing = requiredEnvVars.filter((v) => !process.env[v]);
 if (missing.length > 0) {
-  throw new Error(
-    `Missing required environment variables: ${missing.join(", ")}`
+  throw new AppError(
+    `Missing required environment variables: ${missing.join(", ")}`,
+    500
   );
 }
 

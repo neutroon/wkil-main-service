@@ -9,7 +9,6 @@ import {
 } from "./conversation.service";
 import { computeBusinessChatReply } from "../chat/businessChatReply.service";
 import { historyToLlmTurns, toPromptMessages } from "../chat/conversationTurns";
-// No change to socket imports here as they are now at top
 import {
   getFacebookUserProfile,
   getFacebookPostUrl,
@@ -22,8 +21,8 @@ export type MetaPlatform = "messenger" | "whatsapp" | "visual_production" | "vis
 
 export interface MetaMessageJob {
   platform: MetaPlatform;
-  identifier: string; // pageId for messenger, phoneNumberId for whatsapp
-  senderId: string; // customer PSID or phone number
+  identifier: string;
+  senderId: string;
   messageText: string;
   externalId?: string;
   type?: string;
@@ -35,811 +34,316 @@ export interface MetaMessageJob {
   customerName?: string;
   commentId?: string;
   postId?: string;
-  parentId?: string; // NEW: Track parent comment for deep context
+  parentId?: string;
   senderName?: string;
   businessProfileId?: number;
   conversationId?: number;
   isPrivate?: boolean;
 }
 
-// ELITE TIER: Spam & Burst Shield
-// Prevents AI loops or user spam from draining API credits.
-const SPAM_GUARD_CACHE = new Map<string, { count: number; lastMessageAt: number }>();
-const SPAM_LIMIT = 3; // Max 3 messages per cooldown
-const SPAM_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+interface IdentityResolution {
+  businessProfileId: number;
+  businessProfile: any;
+  accessToken: string;
+  responseMode: "AUTO" | "MANUAL";
+  pageSettings: {
+    commentAutoDmEnabled?: boolean;
+    commentPublicGreeting?: string;
+  } | null;
+}
+
+/**
+ * Identity & Account Resolver
+ */
+async function resolveAccountIdentity(job: MetaMessageJob): Promise<IdentityResolution> {
+  const { platform, identifier } = job;
+
+  if (platform === "messenger") {
+    const page = await prisma.facebookPage.findFirst({
+      where: { pageId: identifier, isActive: true },
+      include: {
+        businessProfile: {
+          include: {
+            externalDataSources: { where: { isActive: true } },
+            crmIntegrations: { where: { isActive: true }, take: 1 },
+          },
+        },
+      },
+    });
+
+    if (!page || !page.businessProfileId) {
+      throw new UnrecoverableError(`Messenger page ${identifier} is not connected to a profile.`);
+    }
+
+    return {
+      businessProfileId: page.businessProfileId,
+      businessProfile: page.businessProfile,
+      accessToken: decryptFacebookSecret(page.pageAccessToken),
+      responseMode: (page.responseMode || page.businessProfile!.responseMode) as "AUTO" | "MANUAL",
+      pageSettings: {
+        commentAutoDmEnabled: page.commentAutoDmEnabled,
+        commentPublicGreeting: page.commentPublicGreeting,
+      },
+    };
+  } else {
+    const account = await prisma.whatsAppAccount.findFirst({
+      where: { phoneNumberId: identifier, isActive: true },
+      include: {
+        businessProfile: {
+          include: {
+            externalDataSources: { where: { isActive: true } },
+            crmIntegrations: { where: { isActive: true }, take: 1 },
+          },
+        },
+      },
+    });
+
+    if (!account || !account.businessProfileId) {
+      throw new UnrecoverableError(`WhatsApp account ${identifier} is not connected to a profile.`);
+    }
+
+    return {
+      businessProfileId: account.businessProfileId,
+      businessProfile: account.businessProfile,
+      accessToken: decryptFacebookSecret(account.accessToken),
+      responseMode: account.businessProfile!.responseMode as "AUTO" | "MANUAL",
+      pageSettings: null,
+    };
+  }
+}
+
+/**
+ * Customer Identity Resolver
+ */
+async function resolveCustomerProfile(job: MetaMessageJob, accessToken: string) {
+  const { platform, senderId, identifier, senderName, customerName } = job;
+  let name = customerName;
+  let avatar: string | undefined;
+
+  if (platform === "messenger" && !name) {
+    try {
+      const profilePromise = getFacebookUserProfile(senderId, identifier, accessToken);
+      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 8000));
+      const profile: any = await Promise.race([profilePromise, timeoutPromise]);
+
+      if (profile?.name && String(profile.name).toLowerCase() !== "null") {
+        name = profile.name;
+        avatar = profile.picture?.data?.url;
+      }
+    } catch (e: any) {
+      logger.warn("meta.processor.profile_fetch_skipped", { senderId, reason: e.message });
+    }
+  }
+
+  return {
+    name: name || senderName || "Guest Customer",
+    avatar: avatar || undefined
+  };
+}
 
 /**
  * High-Resilience Unified Meta Processor.
- * Handles the end-to-end lifecycle of an inbound message from any Meta platform.
  */
 export async function processMetaMessage(job: MetaMessageJob) {
-  const {
-    platform,
-    identifier,
-    senderId,
-    messageText,
-    externalId,
-    type,
-    mediaId,
-    mediaMetadata,
-  } = job;
-
-  // 1. Resolve Account/Profile
-  let businessProfileId: number;
-  let accessToken: string;
-  let responseMode: "AUTO" | "MANUAL";
-  let businessProfile: any;
+  const { platform, identifier, senderId, messageText, externalId, type, mediaId, mediaMetadata } = job;
 
   try {
-    if (platform === "messenger") {
-      const page = await prisma.facebookPage.findFirst({
-        where: { pageId: identifier, isActive: true },
-        include: {
-          businessProfile: {
-            include: {
-              externalDataSources: { where: { isActive: true } },
-              crmIntegrations: { where: { isActive: true }, take: 1 },
-            },
-          },
-        },
-      });
-      if (!page || !page.businessProfileId) {
-        logger.warn("meta.processor.page_not_found", {
-          platform: "messenger",
-          pageId: identifier,
-          reason: "Page is not connected to any business profile.",
-        });
-        // UnrecoverableError: BullMQ will NOT retry, but WILL show it in Mission Control.
-        // This is the correct pattern for permanent, non-retryable failures.
-        throw new UnrecoverableError(
-          `Messenger page ${identifier} is not connected to any business profile. Cannot process.`,
-        );
-      }
-      businessProfileId = page.businessProfileId;
-      businessProfile = page.businessProfile!;
-      accessToken = decryptFacebookSecret(page.pageAccessToken);
+    // 1. Resolve Identity
+    const { businessProfileId, businessProfile, accessToken, responseMode, pageSettings } = await resolveAccountIdentity(job);
 
-      // Page-level mode overrides global profile mode
-      responseMode = (page.responseMode ||
-        page.businessProfile!.responseMode) as any;
+    // 2. Idempotency Check
+    if (externalId) {
+      const { isDuplicateWebhook } = await import("./webhookCache.service");
+      if (await isDuplicateWebhook(externalId)) return;
 
-      // Store settings for later use in automation loops
-      (job as any).pageSettings = {
-        commentAutoDmEnabled: page.commentAutoDmEnabled,
-        commentPublicGreeting: page.commentPublicGreeting,
-      };
-    } else {
-      const account = await prisma.whatsAppAccount.findFirst({
-        where: { phoneNumberId: identifier, isActive: true },
-        include: {
-          businessProfile: {
-            include: {
-              externalDataSources: { where: { isActive: true } },
-              crmIntegrations: { where: { isActive: true }, take: 1 },
-            },
-          },
-        },
-      });
-      if (!account || !account.businessProfileId) {
-        logger.warn("meta.processor.account_not_found", {
-          platform: "whatsapp",
-          phoneNumberId: identifier,
-          reason: "WhatsApp account is not connected to any business profile.",
-        });
-        // UnrecoverableError: BullMQ will NOT retry, but WILL show it in Mission Control.
-        throw new UnrecoverableError(
-          `WhatsApp account ${identifier} is not connected to any business profile. Cannot process.`,
-        );
-      }
-      businessProfileId = account.businessProfileId;
-      businessProfile = account.businessProfile!;
-      accessToken = decryptFacebookSecret(account.accessToken);
-      responseMode = account.businessProfile!.responseMode as any;
-    }
-  } catch (err: any) {
-    logger.error("meta.processor.identity_failed", {
-      platform,
-      identifier,
-      error: err.message,
-    });
-    throw err; // Re-throw for genuine unexpected errors (DB down, decryption failure, etc.)
-  }
-
-  logger.info("meta.processor.started", {
-    platform,
-    businessProfileId,
-    senderId,
-    msgType: type || "text",
-    externalId,
-  });
-
-  /* 
-  // 1b. ELITE TIER: Spam Shield (Burst Protection)
-  const spamKey = `${businessProfileId}_${senderId}`;
-  const now = Date.now();
-  const userData = SPAM_GUARD_CACHE.get(spamKey);
-
-  if (userData) {
-    // If within cooldown period
-    if (now - userData.lastMessageAt < SPAM_COOLDOWN_MS) {
-      if (userData.count >= SPAM_LIMIT) {
-        logger.warn("meta.processor.spam_shield_activated", { senderId, businessProfileId });
-        return; // Ignore silently
-      }
-      userData.count += 1;
-      userData.lastMessageAt = now;
-    } else {
-      // Cooldown expired, reset
-      SPAM_GUARD_CACHE.set(spamKey, { count: 1, lastMessageAt: now });
-    }
-  } else {
-    // First message from this user
-    SPAM_GUARD_CACHE.set(spamKey, { count: 1, lastMessageAt: now });
-  }
-  */
-
-  // 1b. ELITE IDEMPOTENCY GUARD: Prevent race conditions (Double AI Replies)
-  if (externalId) {
-    const { isDuplicateWebhook } = await import("./webhookCache.service");
-    const isDuplicate = await isDuplicateWebhook(externalId);
-    
-    if (isDuplicate) {
-      logger.warn("meta.processor.duplicate_event_blocked", { externalId, platform });
-      return; // Stop processing immediately if another instance is already handling this
+      const existing = await prisma.conversationMessage.findFirst({ where: { externalId }, select: { id: true } });
+      if (existing) return;
     }
 
-    // Secondary check against DB (for persistence)
-    const existing = await prisma.conversationMessage.findFirst({
-      where: { externalId },
-      select: { id: true },
-    });
-    if (existing) {
-      logger.warn("meta.processor.duplicate_event_already_processed", { externalId, platform });
-      return;
-    }
-  }
-  // If this is a scheduled public reply, we skip AI/Conversation logic and go straight to delivery.
-  if (type === "FACEBOOK_COMMENT_PUBLIC_REPLY") {
-    try {
+    // 3. Early Returns
+    if (type === "FACEBOOK_COMMENT_PUBLIC_REPLY") {
       const { replyToComment } = await import("./facebook.service");
-      await replyToComment({
-        commentId: job.commentId!,
-        message: messageText,
-        accessToken,
-        pageId: identifier,
-        businessProfileId,
-      });
-      logger.info("meta.processor.public_greeting_delivered", {
-        commentId: job.commentId,
-      });
+      await replyToComment({ commentId: job.commentId!, message: messageText, accessToken, pageId: identifier, businessProfileId });
       return;
-    } catch (err: any) {
-      logger.error("meta.processor.public_greeting_failed", {
-        commentId: job.commentId,
-        error: err.message,
-      });
-
-      // UI SIGNAL: Notify the dashboard that the public greeting FAILED
-      if (job.businessProfileId) {
-        const { syncJobStatus } = await import("../socketSync.service");
-        syncJobStatus({
-          businessProfileId: job.businessProfileId,
-          jobId: job.conversationId?.toString() || "unknown",
-          status: "FAILED",
-          error: err.message
-        });
-      }
-
-      throw err; // Re-throw to allow queue retry
-    }
-  }
-
-  try {
-    // 2. Resolve Customer Profile (with strict timeout for Messenger)
-    let customerNameSet: string | undefined = job.customerName;
-    let customerAvatarSet: string | undefined;
-
-    if (platform === "messenger" && !customerNameSet) {
-      // IDENTITY LOOKUP (Messenger specific)
-      try {
-        // Enforce 8s timeout to prevent queue hang
-        const profilePromise = getFacebookUserProfile(
-          senderId,
-          identifier,
-          accessToken,
-        );
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("Timeout")), 8000),
-        );
-
-        const profile: any = await Promise.race([
-          profilePromise,
-          timeoutPromise,
-        ]);
-
-        // Production Guard: Validate name is present and not the literal string "null"
-        if (
-          profile &&
-          profile.name &&
-          String(profile.name).toLowerCase() !== "null"
-        ) {
-          customerNameSet = profile.name;
-          customerAvatarSet = profile.picture?.data?.url;
-        } else if (job.senderName) {
-          customerNameSet = job.senderName;
-        }
-      } catch (e: any) {
-        logger.warn("meta.processor.profile_fetch_skipped", {
-          senderId,
-          reason: e.message,
-        });
-        customerNameSet = job.senderName || "Guest Customer"; // Fallback to avoid hanging
-      } finally {
-        // Double-check for absolute safety
-        if (
-          !customerNameSet ||
-          String(customerNameSet).toLowerCase() === "null"
-        ) {
-          customerNameSet = job.senderName || "Guest Customer";
-        }
-      }
     }
 
-    // 3. Sync Conversation
+    // 4. Resolve Context & Sync
+    const { name: customerName, avatar: customerAvatar } = await resolveCustomerProfile(job, accessToken);
     const isComment = !!job.commentId;
-    const conversation = await getOrCreateConversation(
-      identifier,
-      senderId,
-      businessProfileId,
-      {
-        channel: isComment ? "facebook_comment" : platform,
-        customerName: customerNameSet,
-        customerAvatar: customerAvatarSet,
-        customerPhone: platform === "whatsapp" ? senderId : undefined,
-        externalId: job.commentId,
-        postId: (job as any).postId,
-        sourceCommentText: isComment ? messageText : undefined,
-      },
-    );
+    
+    const conversation = await getOrCreateConversation(identifier, senderId, businessProfileId, {
+      channel: isComment ? "facebook_comment" : platform,
+      customerName,
+      customerAvatar,
+      customerPhone: platform === "whatsapp" ? senderId : undefined,
+      externalId: job.commentId,
+      postId: job.postId,
+      sourceCommentText: isComment ? messageText : undefined,
+    });
 
-    // 4. Save User Message & Emit to UI
-    const finalType = type || "text";
-    const finalContent = messageText || "";
-
-    const isPrivate = platform === "messenger" ? true : (job.isPrivate ?? false);
-
-    const userSaved = await saveMessage(conversation.id, "user", finalContent, {
+    const userSaved = await saveMessage(conversation.id, "user", messageText || "", {
       externalId,
-      type: finalType,
+      type: type || "text",
       mediaId,
       mediaMetadata,
-      isPrivate,
+      isPrivate: platform === "messenger" ? true : (job.isPrivate ?? false),
     });
 
-    // 5. Response Mode & AI Toggle Guards
-    if (responseMode === "MANUAL") {
-      logger.info("meta.processor.manual_mode_hold", {
-        conversationId: conversation.id,
-      });
-      return;
-    }
+    if (responseMode === "MANUAL" || !(conversation as any).aiEnabled) return;
 
-    if (!(conversation as any).aiEnabled) {
-      logger.info("meta.processor.ai_disabled_for_conversation", {
-        conversationId: conversation.id,
-      });
-      // If AI is disabled for this specific thread, we stop here.
-      // This allows sales agents to take 100% manual control.
-      return;
-    }
-
-    // 6. Compute AI Reply
-    const historyRows = await getConversationHistory(
-      conversation.id,
-      userSaved.createdAt,
-      job.postId,
-    );
+    // 5. AI Reply Generation
+    const historyRows = await getConversationHistory(conversation.id, userSaved.createdAt, job.postId);
     const historyTurns = historyToLlmTurns(toPromptMessages(historyRows));
 
-    // ELITE TIER: Fetch deep context (Post Text + Media) for Facebook Comments
-    // We pass this as structured data for the System Prompt, not as a message prefix.
-    let postContext: { content: string; media?: string; parentContext?: string } | undefined;
-
-    if (isComment) {
-      const postId = (job as any).postId;
-      const parentId = job.parentId;
-
-      const promises: Promise<any>[] = [];
-      if (postId) promises.push(getPostContext(postId, accessToken));
-      if (parentId) promises.push(getCommentText(parentId, accessToken));
-
-      const [pContext, parContext] = await Promise.all(promises);
-      
-      if (pContext) {
-        postContext = { 
-          content: pContext.content, 
-          media: pContext.media,
-          parentContext: parContext || undefined 
-        };
-      }
+    let postContext: any;
+    if (isComment && job.postId) {
+      const { getPostContext, getCommentText } = await import("./facebook.service");
+      const [pContext, parContext] = await Promise.all([
+        getPostContext(job.postId, accessToken),
+        job.parentId ? getCommentText(job.parentId, accessToken) : Promise.resolve(null)
+      ]);
+      if (pContext) postContext = { content: pContext.content, media: pContext.media, parentContext: parContext || undefined };
     }
 
-    // Emit "AI Typing" for better UX
     const { syncTypingStatus } = await import("../socketSync.service");
-    syncTypingStatus({
-      businessProfileId,
-      conversationId: conversation.id,
-      isTyping: true
-    });
+    syncTypingStatus({ businessProfileId, conversationId: conversation.id, isTyping: true });
 
     const reply = await computeBusinessChatReply({
       businessProfile,
-      messageText: finalContent,
+      messageText: messageText || "",
       historyTurns,
       channel: isComment ? "facebook_comment" : (platform as any),
       customerPhone: platform === "whatsapp" ? senderId : undefined,
-      mediaInfo: mediaId
-        ? { id: mediaId, type: type || "image", url: mediaMetadata?.url }
-        : undefined,
+      mediaInfo: mediaId ? { id: mediaId, type: type || "image", url: mediaMetadata?.url } : undefined,
       postContext,
     });
 
-    syncTypingStatus({
-      businessProfileId,
-      conversationId: conversation.id,
-      isTyping: false
-    });
+    syncTypingStatus({ businessProfileId, conversationId: conversation.id, isTyping: false });
 
     if (reply.action === "RESOLVE_CONVERSATION") {
-      await prisma.conversation.update({
-        where: { id: conversation.id },
-        data: { status: "RESOLVED" },
-      });
+      await prisma.conversation.update({ where: { id: conversation.id }, data: { status: "RESOLVED" } });
       return;
     }
 
-    // 7. Save AI Choice (Draft or Sent)
+    // 6. Delivery Orchestration
     const isAutoMode = responseMode === "AUTO";
-    const pageSettings = (job as any).pageSettings;
-    const isAutoDmAllowed = pageSettings?.commentAutoDmEnabled === true;
-
-    // The status for the PRIVATE part of the reply
-    let privateStatus = isAutoMode ? "SENT" : "PENDING_REVIEW";
-    if (reply.action === "HANDOFF_TO_HUMAN") privateStatus = "PENDING_REVIEW";
-    
-    // If it's a comment and it's a SALES_DM intent, but Auto-DM is disabled, 
-    // we MUST downgrade to PENDING_REVIEW so it doesn't look like it was sent.
-    if (isComment && reply.intent === "SALES_DM" && !isAutoDmAllowed) {
-      privateStatus = "PENDING_REVIEW";
-    }
-
-    // Public greetings are generally allowed if Auto mode is on
+    const privateStatus = (isAutoMode && reply.action !== "HANDOFF_TO_HUMAN") ? "SENT" : "PENDING_REVIEW";
     const publicStatus = isAutoMode ? "SENT" : "PENDING_REVIEW";
-
-    // Legacy status for downstream logic (will be used for delivery check)
-    const status = privateStatus; 
-
-    // Standard fallback logic for general chat
     const mainContent = (reply.privateContent || reply.content || "").trim();
 
-    // If it's a comment, we might have dual content settings
-    // (pageSettings is already defined at line 399)
-
-    // A. The "Core" Response (Usually the Private DM or standard reply)
-    let modelSaved: any = null;
+    // A. Save Model Messages
+    let modelSaved: any;
     if (mainContent.length > 0 || reply.action === "HANDOFF_TO_HUMAN") {
-      const isPrivate = platform === "messenger" ? true : (isComment && reply.intent === "SALES_DM");
-
       modelSaved = await saveMessage(conversation.id, "model", mainContent, {
         status: privateStatus,
         aiReasoning: reply.reasoning,
-        handoffCategory:
-          isComment && reply.intent === "SALES_DM"
-            ? "PRIVATE_DM_REPLY"
-            : reply.handoffCategory,
-        intent: reply.intent, // Persist detected intent
-        isPrivate,
-        origin: isComment ? "facebook_comment_reply" : undefined,
-      });
-
-    } else {
-      logger.info("meta.processor.empty_main_content_skipped", {
-        conversationId: conversation.id,
+        handoffCategory: (isComment && reply.intent === "SALES_DM") ? "PRIVATE_DM_REPLY" : reply.handoffCategory,
         intent: reply.intent,
-        reasoning: reply.reasoning,
+        isPrivate: platform === "messenger" ? true : (isComment && reply.intent === "SALES_DM"),
+        origin: isComment ? "facebook_comment_reply" : undefined,
       });
     }
 
-    // B. The "Public" Greeting (Only for comments)
-    let publicSaved: any = null;
-    if (
-      isComment &&
-      (reply.publicContent || pageSettings?.commentPublicGreeting)
-    ) {
-      const publicTxt = (
-        reply.publicContent ||
-        pageSettings?.commentPublicGreeting ||
-        "Thanks {name}! Check your DMs."
-      )
-        .replace(/{name}|{{name}}/g, customerNameSet || "there")
-        .trim();
-
+    let publicSaved: any;
+    if (isComment && (reply.publicContent || pageSettings?.commentPublicGreeting)) {
+      const publicTxt = (reply.publicContent || pageSettings?.commentPublicGreeting || "Thanks {name}!").replace(/{name}/g, customerName).trim();
       if (publicTxt.length > 0) {
         publicSaved = await saveMessage(conversation.id, "model", publicTxt, {
           status: publicStatus,
           handoffCategory: "PUBLIC_COMMENT_REPLY",
-          intent: reply.intent, // Tag with same intent
+          intent: reply.intent,
           isPrivate: false,
           origin: "facebook_comment_public_reply",
         });
-
-      } else {
-        logger.info("meta.processor.empty_public_content_skipped", {
-          conversationId: conversation.id,
-        });
       }
     }
 
-    // C. Resolve Post URL if missing (New Contextual Header requirement)
-    if (isComment && job.postId && !conversation.postUrl) {
-      try {
-        const postUrl = await getFacebookPostUrl(job.postId, accessToken);
-        if (postUrl) {
-          await prisma.conversation.update({
-            where: { id: conversation.id },
-            data: { postUrl },
-          });
-          // Update local conversation object for subsequent emits if needed
-          conversation.postUrl = postUrl;
-        }
-      } catch (err: any) {
-        logger.warn("facebook.processor.post_url_resolve_failed", {
-          error: err.message,
-        });
-      }
-    }
-
-    // 8. Platform Delivery (if AUTO)
+    // B. Platform Delivery
     if (isAutoMode && reply.handoffCategory !== "SYSTEM_ERROR") {
-      try {
-        if (platform === "messenger") {
+      const { mirrorCommentReplyToMessenger, syncMessageStatus } = await import("./metaDelivery.service");
+
+      if (platform === "messenger") {
+        const { sendPrivateReply, replyToComment } = await import("./facebook.service");
+        
+        if (isComment) {
+          if (reply.intent === "IGNORE") return;
+
+          likeComment({ commentId: job.commentId!, accessToken, pageId: identifier }).catch(() => {});
+
+          if (publicStatus === "SENT" && publicSaved) {
+            await replyToComment({ commentId: job.commentId!, message: publicSaved.content, accessToken, pageId: identifier, businessProfileId })
+              .then(res => res && syncMessageStatus(publicSaved.id, businessProfileId, conversation.id, { externalId: res.id }))
+              .catch(() => syncMessageStatus(publicSaved.id, businessProfileId, conversation.id, { status: "FAILED" }));
+          }
+
+          if (privateStatus === "SENT" && modelSaved) {
+            if (reply.intent === "SALES_DM") {
+              await sendPrivateReply({ commentId: job.commentId!, message: mainContent, accessToken, pageId: identifier, businessProfileId })
+                .then(async res => {
+                  if (res?.id && res.id !== "ALREADY_REPLIED") {
+                    await syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, { externalId: res.id });
+                    await mirrorCommentReplyToMessenger({ pageId: identifier, senderId, businessProfileId, messageId: res.id, content: mainContent, intent: reply.intent, reasoning: reply.reasoning, postId: job.postId, commentId: job.commentId, role: "model" });
+                  }
+                })
+                .catch(() => syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, { status: "FAILED" }));
+            } else {
+              await replyToComment({ commentId: job.commentId!, message: mainContent, accessToken, pageId: identifier, businessProfileId })
+                .then(res => res && syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, { externalId: res.id }))
+                .catch(() => syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, { status: "FAILED" }));
+            }
+          }
+        } else if (modelSaved && privateStatus === "SENT") {
           const { sendMessengerReply } = await import("./messenger.service");
-          const { sendPrivateReply, replyToComment } =
-            await import("./facebook.service");
-
-          if (isComment) {
-            // INTENT-AWARE DELIVERY
-            const intent = reply.intent || "SALES_DM";
-
-            if (intent === "IGNORE") {
-              logger.info("meta.processor.ignore_intent", {
-                commentId: job.commentId,
-              });
-              return;
-            }
-
-            // 10. ELITE DELIVERY ORCHESTRATION
-            const { 
-              mirrorCommentReplyToMessenger, 
-              syncMessageStatus 
-            } = await import("./metaDelivery.service");
-
-            // ── ELITE TIER: Engagement - Always like the comment if Auto mode is on ──
-            if (isAutoMode) {
-              likeComment({
-                commentId: job.commentId!,
-                accessToken,
-                pageId: job.identifier,
-              }).catch((err) =>
-                logger.warn("meta.processor.auto_like_failed", {
-                  error: err.message,
-                }),
-              );
-            }
-
-            // 1. Intent-Aware Public Greeting
-            if (publicStatus === "SENT" && publicSaved && reply.intent === "SALES_DM") {
-              try {
-                const publicText = publicSaved.content || "Thanks! Check your DMs.";
-                const pubRes = await replyToComment({
-                  commentId: job.commentId!,
-                  message: publicText,
-                  accessToken,
-                  pageId: job.identifier,
-                  businessProfileId,
-                });
-
-                if (pubRes?.id) {
-                  await syncMessageStatus(publicSaved.id, businessProfileId, conversation.id, {
-                    externalId: pubRes.id,
-                  });
-                }
-              } catch (pubErr: any) {
-                logger.error("meta.processor.public_greeting_failed", { error: pubErr.message });
-                await syncMessageStatus(publicSaved.id, businessProfileId, conversation.id, {
-                  status: "FAILED",
-                });
-              }
-            }
-
-            // 2. Delivery of the "Core" Answer (Private DM vs Public Comment)
-            if (privateStatus === "SENT" && mainContent) {
-              const intent = reply.intent || "SALES_DM";
-
-              if (intent === "SALES_DM") {
-                // SCENARIO A: User asked for details -> Send Private DM
-                try {
-                  const dmRes: any = await sendPrivateReply({
-                    commentId: job.commentId!,
-                    message: mainContent,
-                    accessToken,
-                    pageId: job.identifier,
-                    businessProfileId,
-                  });
-
-                  if (dmRes?.id && dmRes.id !== "ALREADY_REPLIED") {
-                    await syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, {
-                      externalId: dmRes.id,
-                    });
-
-                    // Selective Mirroring to Messenger Thread
-                    await mirrorCommentReplyToMessenger({
-                      pageId: job.identifier,
-                      senderId,
-                      businessProfileId,
-                      messageId: dmRes.id,
-                      content: mainContent,
-                      intent: reply.intent,
-                      reasoning: reply.reasoning,
-                      postId: job.postId,
-                      commentId: job.commentId,
-                      role: "model",
-                    });
-                  } else if (dmRes?.id === "ALREADY_REPLIED") {
-                    await syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, {
-                      status: "FAILED",
-                    });
-                  }
-                } catch (dmErr: any) {
-                  logger.error("meta.processor.private_dm_failed", { error: dmErr.message });
-                  await syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, {
-                    status: "FAILED",
-                  });
-                }
-              } else {
-                // SCENARIO B: General Engagement (Hello/Nice) -> Send as Public Comment Reply
-                try {
-                  const pubReplyRes = await replyToComment({
-                    commentId: job.commentId!,
-                    message: mainContent,
-                    accessToken,
-                    pageId: job.identifier,
-                    businessProfileId,
-                  });
-
-                  if (pubReplyRes?.id) {
-                    await syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, {
-                      externalId: pubReplyRes.id,
-                    });
-                  }
-                } catch (pubErr: any) {
-                  logger.error("meta.processor.general_public_reply_failed", { error: pubErr.message });
-                  await syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, {
-                    status: "FAILED",
-                  });
-                }
-              }
-            }
-          } else if (mainContent && privateStatus === "SENT") {
-            // Standard Messenger Reply (Direct Message)
-            try {
-              const fbRes: any = await sendMessengerReply(senderId, mainContent, accessToken);
-              if (fbRes?.message_id) {
-                const { syncMessageStatus } = await import("./metaDelivery.service");
-                await syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, {
-                  externalId: fbRes.message_id,
-                });
-              }
-            } catch (dmErr: any) {
-              logger.error("meta.processor.messenger_dm_failed", { error: dmErr.message });
-              const { syncMessageStatus } = await import("./metaDelivery.service");
-              await syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, {
-                status: "FAILED",
-              });
-            }
-          }
-        } else if (mainContent && privateStatus === "SENT") {
-          const { sendWhatsAppReply } = await import("./whatsapp.service");
-          const waRes: any = await sendWhatsAppReply(
-            senderId,
-            mainContent,
-            identifier,
-            accessToken,
-          );
-          const mid = waRes?.messages?.[0]?.id;
-          if (mid)
-            await prisma.conversationMessage.update({
-              where: { id: modelSaved.id },
-              data: { externalId: mid },
-            });
+          await sendMessengerReply(senderId, mainContent, accessToken)
+            .then(res => res?.message_id && syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, { externalId: res.message_id }))
+            .catch(() => syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, { status: "FAILED" }));
         }
-
-        // ── Attachment Delivery ────────────────────────────────────────────────
-        // Meta's Private Reply API for Comments (v17+) does NOT support media/attachments.
-        // We only allow attachments for direct Messenger DMs or WhatsApp.
-        if (reply.attachment?.assetName && !isComment) {
-          const { resolveAssetForChannel } =
-            await import("../media/mediaLibrary.service");
-          const resolved = await resolveAssetForChannel(
-            reply.attachment.assetName,
-            businessProfileId,
-            platform as any,
-            identifier,
-          );
-
-          if (resolved) {
-            if (platform === "whatsapp") {
-              if (resolved.mediaId) {
-                const { sendWhatsAppMedia } =
-                  await import("./whatsapp.service");
-                await sendWhatsAppMedia(
-                  senderId,
-                  resolved.mediaId,
-                  resolved.mediaType,
-                  identifier,
-                  accessToken,
-                  reply.attachment.caption ?? undefined,
-                );
-              } else if (resolved.url) {
-                // Graceful fallback: send the public URL as a text message
-                const { sendWhatsAppReply: sendWaText } =
-                  await import("./whatsapp.service");
-                await sendWaText(
-                  senderId,
-                  `${reply.attachment.caption || "Here's the file"}: ${resolved.url}`,
-                  identifier,
-                  accessToken,
-                );
-              }
-            } else if (platform === "messenger" && resolved.mediaId) {
-              const { sendMessengerMedia } =
-                await import("./messenger.service");
-              await sendMessengerMedia(
-                senderId,
-                resolved.mediaId,
-                resolved.mediaType as any,
-                accessToken,
-              );
-            }
-            // Save attachment as a distinct message bubble for inbox display
-            const savedAttach = await saveMessage(
-              conversation.id,
-              "model",
-              reply.attachment.caption ?? "",
-              {
-                type: resolved.mediaType,
-                mediaId: resolved.mediaId,
-                status: privateStatus,
-              },
-            );
-          } else {
-            logger.warn("meta.processor.attachment_not_found", {
-              assetName: reply.attachment.assetName,
-              businessProfileId,
-            });
-          }
-        } else if (reply.attachment?.assetName && isComment) {
-          logger.info("meta.processor.attachment_skipped_for_comment", {
-            conversationId: conversation.id,
-            reason: "Meta Private Reply API for comments does not support media attachments."
-          });
-        }
-      } catch (sendErr: any) {
-        logger.error("meta.processor.delivery_failed", {
-          platform,
-          error: sendErr.message,
-        });
+      } else if (platform === "whatsapp" && modelSaved && privateStatus === "SENT") {
+        const { sendWhatsAppReply } = await import("./whatsapp.service");
+        await sendWhatsAppReply(senderId, mainContent, identifier, accessToken)
+          .then(res => res?.messages?.[0]?.id && prisma.conversationMessage.update({ where: { id: modelSaved.id }, data: { externalId: res.messages[0].id } }));
       }
-    }
-
-    // 9. Feedback Loop
-    if (reply.handoffCategory === "SYSTEM_ERROR") {
-      const { syncSystemError } = await import("../socketSync.service");
-      syncSystemError({
-        businessProfileId,
-        conversationId: conversation.id,
-        reason: reply.reasoning
-      });
     }
   } catch (err: any) {
-    logger.error("meta.processor.process_failed", {
-      platform,
-      identifier,
-      senderId,
-      error: err.message,
-    });
+    if (err instanceof UnrecoverableError) throw err;
+    logger.error("meta.processor.failure", { platform, identifier, error: err.message });
+    throw err;
   }
 }
 
 /**
  * PRODUCTION-GRADE: Background Visual Processor
- * Executed by the MetaQueue worker to handle heavy AI image generation/refinement.
  */
 export async function processVisualJob(payload: any) {
-  const { 
-    type, 
-    businessProfileId, 
-    userId, 
-    prompt, 
-    instruction, 
-    assetId, 
-    postId,
-    senderId,
-    messageText,
-    mediaId
-  } = payload;
-
-  // 1. Normalize Payload (Support both unified names and MetaMessageJob field aliases)
+  const { type, businessProfileId, userId, prompt, instruction, assetId, postId, senderId, messageText, mediaId } = payload;
   const normalizedType = type === "visual_production" ? "generate" : (type === "visual_refine" ? "refine" : type);
   const normalizedUserId = Number(userId || senderId);
   const normalizedPrompt = prompt || messageText;
   const normalizedInstruction = instruction || messageText;
   const normalizedAssetId = Number(assetId || mediaId);
 
-  logger.info("visual_processor.job_picked", { 
-    type: normalizedType, 
-    businessProfileId, 
-    userId: normalizedUserId, 
-    postId 
-  });
-
   try {
     const { createGeminiVisual, refineGeminiVisual } = await import("../media/geminiVisual.service");
-
     let resultAsset;
     if (normalizedType === "generate") {
       resultAsset = await createGeminiVisual({
-        userId: normalizedUserId,
         businessProfileId,
+        userId: normalizedUserId,
         userPrompt: normalizedPrompt,
         postId,
       });
-    } else if (normalizedType === "refine") {
+    } else {
       resultAsset = await refineGeminiVisual({
-        userId: normalizedUserId,
         businessProfileId,
+        userId: normalizedUserId,
         assetId: normalizedAssetId,
         instruction: normalizedInstruction,
         postId,
       });
     }
-
-    // Push real-time update to the dashboard
-    const { syncVisualUpdate } = await import("../socketSync.service");
-    syncVisualUpdate({
-      businessProfileId,
-      postId,
-      visualData: {
-        asset: resultAsset,
-        type: normalizedType,
-        status: "completed"
-      }
-    });
-
-    logger.info("visual_processor.job_completed", { type, businessProfileId, assetId: resultAsset?.id });
-
+    logger.info("visual_processor.complete", { assetId: resultAsset.id });
   } catch (err: any) {
-    logger.error("visual_processor.job_failed", { type, businessProfileId, error: err.message });
-    
-    // Notify UI of failure so it can stop the loader
-    const { syncJobStatus } = await import("../socketSync.service");
-    syncJobStatus({
-      businessProfileId: businessProfileId,
-      jobId: postId,
-      status: "FAILED",
-      error: err.message || "Unknown Job Error"
-    });
-
-    throw err; // Re-throw for queue retry logic
+    logger.error("visual_processor.failed", { error: err.message });
+    throw err;
   }
 }

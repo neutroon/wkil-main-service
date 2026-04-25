@@ -9,6 +9,7 @@ import {
 } from "./conversation.service";
 import { computeBusinessChatReply } from "../chat/businessChatReply.service";
 import { historyToLlmTurns, toPromptMessages } from "../chat/conversationTurns";
+import { AppError } from "../../middlewares/errorHandler.middleware";
 
 const FALLBACK_REPLY =
   "Sorry, we can't respond right now. Please try again or contact the business directly.";
@@ -32,7 +33,7 @@ export async function sendMessengerReply(
 
   if (!response.ok) {
     const error = await response.json();
-    throw new Error(`Messenger Send API error: ${JSON.stringify(error)}`);
+    throw new AppError(`Messenger Send API error: ${JSON.stringify(error)}`, 502);
   }
 
   return response.json();
@@ -66,7 +67,7 @@ export async function sendMessengerMedia(
 
   if (!response.ok) {
     const error = await response.json();
-    throw new Error(`Messenger Media Send API error: ${JSON.stringify(error)}`);
+    throw new AppError(`Messenger Media Send API error: ${JSON.stringify(error)}`, 502);
   }
 
   return response.json();

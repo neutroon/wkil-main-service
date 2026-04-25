@@ -458,20 +458,7 @@ export const replyToComment = async (
 /**
  * Fetches the permalink_url for a Facebook post.
  */
-export const getFacebookPostUrl = async (
-  postId: string,
-  accessToken?: string,
-): Promise<string | null> => {
-  try {
-    const token =
-      accessToken || (await getPageAccessToken(postId.split("_")[0]));
-    const url = `${FB_API}/${postId}?fields=permalink_url&access_token=${token}`;
-    const { data } = await metaClient.get(url);
-    return data.permalink_url;
-  } catch (error: any) {
-    return null;
-  }
-};
+
 
 /**
  * ELITE TIER: Social Engagement - Liking a comment.

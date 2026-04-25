@@ -2,7 +2,7 @@ import { Router, Request, Response } from "express";
 import prisma from "../../config/prisma";
 import { decryptFacebookSecret } from "../../utils/tokenCrypto";
 import { getMetaMediaUrl } from "../../services/meta/metaMedia.service";
-import { logger } from "../../utils/logger";
+
 import { authenticateToken } from "../../middlewares/auth.middleware";
 import { validate } from "../../middlewares/validate.middleware";
 import { metaMediaSchema } from "../../validations/metaMedia.validation";

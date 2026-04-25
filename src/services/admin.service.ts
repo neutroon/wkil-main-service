@@ -1,5 +1,6 @@
 import bcrypt from "bcrypt";
 import prisma from "../config/prisma";
+import { AppError } from "../middlewares/errorHandler.middleware";
 import {
   generateAccessToken,
   generateRefreshToken,
@@ -15,7 +16,7 @@ const createAdmin = async (name: string, email: string, password: string) => {
   });
 
   if (existingAdmin) {
-    throw new Error("Admin already exists");
+    throw new AppError("Admin already exists", 409);
   }
 
   return prisma.user.create({

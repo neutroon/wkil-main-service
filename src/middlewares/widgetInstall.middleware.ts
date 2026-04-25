@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import prisma from "../config/prisma";
+import { env } from "../config/env";
 import type { WidgetInstall } from "@prisma/client";
 
 export function parseAllowedOrigins(value: unknown): string[] {
@@ -28,7 +29,7 @@ async function widgetInstallAndCorsImpl(
   res: Response,
   next: NextFunction,
 ): Promise<void> {
-  const isProduction = process.env.NODE_ENV === "production";
+  const isProduction = env.NODE_ENV === "production";
   const origin = req.headers.origin;
 
   const siteKeyHeader = String(req.headers["x-widget-site-key"] ?? "").trim();

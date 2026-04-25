@@ -7,7 +7,6 @@ import {
   listConversationMessages,
   saveMessage,
 } from "../services/meta/conversation.service";
-import { emitToConversation, emitToBusiness } from "../utils/socket";
 import { computeBusinessChatReply } from "../services/chat/businessChatReply.service";
 import { toPromptMessages, historyToLlmTurns } from "../services/chat/conversationTurns";
 import { getConversationHistory } from "../services/meta/conversation.service";
@@ -356,13 +355,6 @@ widgetRoutes.post("/conversations/:id/messages", async (req: Request, res: Respo
 
     const saved = await saveMessage(id, "model", text.trim());
     
-    // Notify Visitor (Web Widget) and Admin (Dashboard) about the admin reply
-    emitToConversation(id, "new_message", { message: saved });
-    emitToBusiness(conversation.businessProfileId, "new_message", {
-      conversationId: id,
-      message: saved
-    });
-
     // Update conversation timestamp
     await prisma.conversation.update({
       where: { id },
@@ -445,15 +437,6 @@ widgetRoutes.put(
         });
       });
 
-      // Notify sockets
-      emitToBusiness(conversation.businessProfileId, "message_updated", {
-        conversationId: conversation.id,
-        message: updatedMsg,
-      });
-      emitToConversation(conversation.id, "new_message", {
-        message: updatedMsg,
-      });
-
       return res.status(200).json({ data: updatedMsg });
     } catch (e: any) {
       logger.error("widget.hitl.approve_error", { error: e.message });
@@ -484,11 +467,6 @@ widgetRoutes.delete(
       if (!msg) return res.status(404).json({ error: "Draft not found" });
 
       await prisma.conversationMessage.delete({ where: { id: messageId } });
-
-      emitToBusiness(conversation.businessProfileId, "message_deleted", {
-        conversationId,
-        messageId
-      });
 
       return res.json({ success: true });
     } catch (e: any) {
@@ -585,15 +563,6 @@ widgetRoutes.post(
           aiReasoning: reply.reasoning,
           handoffCategory: reply.handoffCategory,
         },
-      });
-
-      // Notify
-      emitToBusiness(conversation.businessProfileId, "new_message", {
-        conversationId: conversation.id,
-        message: saved,
-      });
-      emitToConversation(conversation.id, "new_message", {
-        message: saved,
       });
 
       return res.status(201).json({ data: saved });

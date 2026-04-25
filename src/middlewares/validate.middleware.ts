@@ -14,11 +14,16 @@ export const validate = <T extends ZodObject<any>>(schema: T) => {
       params: req.params,
     });
 
-    // 2. Map validated data back to the request.
-    // We cast the whole request to 'any' just for the assignment to avoid
-    // Express's rigid internal type constraints (like ParamsDictionary),
-    // but the local 'validated' variable remains fully typed.
-    Object.assign(req, validated);
+    // 2. Map validated data back to the request using defineProperty 
+    // to bypass read-only getters in Express 5 (like req.query and req.params)
+    Object.keys(validated).forEach((key) => {
+      Object.defineProperty(req, key, {
+        value: (validated as any)[key],
+        writable: true,
+        configurable: true,
+        enumerable: true,
+      });
+    });
 
     return next();
   };

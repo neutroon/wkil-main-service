@@ -1,5 +1,6 @@
 import prisma from "../config/prisma";
 import { logger } from "../utils/logger";
+import { AppError } from "../middlewares/errorHandler.middleware";
 
 import { DEFAULT_BILLING_MULTIPLIER } from "../config/billing";
 
@@ -59,7 +60,7 @@ export const getBillingMultiplier = async (): Promise<number> => {
 
 export const updateBillingMultiplier = async (multiplier: number): Promise<void> => {
   if (multiplier < 1) {
-    throw new Error("Multiplier cannot be less than 1.0");
+    throw new AppError("Multiplier cannot be less than 1.0", 400);
   }
   await updateSystemSetting("billing_multiplier", multiplier.toString());
 };

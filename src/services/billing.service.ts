@@ -92,7 +92,7 @@ export async function assertQuotaAvailable(
   const cached = QUOTA_CACHE[userId];
   if (cached && cached.expiresAt > Date.now()) {
     if (cached.isOverQuota) {
-      throw new Error(`AI credit quota exceeded. Please upgrade.`);
+      throw new AppError(`AI credit quota exceeded. Please upgrade.`, 402);
     }
     return;
   }
@@ -103,7 +103,7 @@ export async function assertQuotaAvailable(
   });
 
   if (!user) {
-    throw new Error("User not found");
+    throw new AppError("User not found", 404);
   }
 
   // Priority: 1. Admin Override (monthlyCreditQuota) 2. Plan Limit

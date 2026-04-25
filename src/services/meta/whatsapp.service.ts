@@ -10,8 +10,7 @@ import { computeBusinessChatReply } from "../chat/businessChatReply.service";
 import { historyToLlmTurns, toPromptMessages } from "../chat/conversationTurns";
 import { AppError } from "../../middlewares/errorHandler.middleware";
 
-const FALLBACK_REPLY =
-  "Sorry, we can't respond right now. Please try again or contact the business directly.";
+
 
 /**
  * Send a text reply via WhatsApp Cloud API (v25.0).
@@ -252,7 +251,7 @@ export async function handleWhatsAppMessage(
 
     // 2. Save User Message turn
     const historyRows = await getConversationHistory(conversation.id);
-    const userSaved = await saveMessage(conversation.id, "user", messageText, {
+    await saveMessage(conversation.id, "user", messageText, {
       externalId: wamid,
       type,
       mediaId,
@@ -343,7 +342,7 @@ export async function handleWhatsAppMessage(
     // UI Failure Signal
     if (account.businessProfileId && conversation) {
       const errorMsg = `Internal Technical Failure: ${message}`;
-      const failMsg = await saveMessage(conversation.id, "model", errorMsg, {
+      await saveMessage(conversation.id, "model", errorMsg, {
         status: "FAILED",
         aiReasoning: message,
         handoffCategory: "SYSTEM_ERROR",

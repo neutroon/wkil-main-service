@@ -29,6 +29,18 @@ export const errorHandler = (
     method: req.method,
   });
 
+  // Handle Zod Validation Errors
+  if (err.name === "ZodError" || err.constructor.name === "ZodError") {
+    return res.status(400).json({
+      status: "fail",
+      message: "Validation failed",
+      errors: err.errors.map((e: any) => ({
+        path: e.path.join("."),
+        message: e.message,
+      })),
+    });
+  }
+
   if (process.env.NODE_ENV === "development") {
     res.status(err.statusCode).json({
       status: err.status,

@@ -291,8 +291,9 @@ export async function recordAiUsage(params: {
     });
 
     // Notify Frontend to refresh credits in real-time
-    const { emitToBusiness } = await import("../utils/socket");
-    emitToBusiness(businessProfileId || 0, "credits_updated", {
+    const { syncCreditsUpdate } = await import("./socketSync.service");
+    syncCreditsUpdate({
+      businessProfileId: businessProfileId || 0,
       userId,
       creditsUsed,
       totalCreditsUsed: (await prisma.user.findUnique({ where: { id: userId }, select: { monthlyCreditsUsed: true } }))?.monthlyCreditsUsed || 0

@@ -1,7 +1,6 @@
 import { UnrecoverableError } from "bullmq";
 import prisma from "../../config/prisma";
 import { logger } from "../../utils/logger";
-import { emitToBusiness, emitToConversation } from "../../utils/socket";
 import { decryptFacebookSecret } from "../../utils/tokenCrypto";
 import {
   getOrCreateConversation,
@@ -179,17 +178,23 @@ export async function processMetaMessage(job: MetaMessageJob) {
   }
   */
 
-  // 1b. IDEMPOTENCY GUARD: Prevent duplicate processing of the same message/comment
+  // 1b. ELITE IDEMPOTENCY GUARD: Prevent race conditions (Double AI Replies)
   if (externalId) {
+    const { isDuplicateWebhook } = await import("./webhookCache.service");
+    const isDuplicate = await isDuplicateWebhook(externalId);
+    
+    if (isDuplicate) {
+      logger.warn("meta.processor.duplicate_event_blocked", { externalId, platform });
+      return; // Stop processing immediately if another instance is already handling this
+    }
+
+    // Secondary check against DB (for persistence)
     const existing = await prisma.conversationMessage.findFirst({
       where: { externalId },
       select: { id: true },
     });
     if (existing) {
-      logger.warn("meta.processor.duplicate_event_detected", {
-        externalId,
-        platform,
-      });
+      logger.warn("meta.processor.duplicate_event_already_processed", { externalId, platform });
       return;
     }
   }
@@ -216,10 +221,12 @@ export async function processMetaMessage(job: MetaMessageJob) {
 
       // UI SIGNAL: Notify the dashboard that the public greeting FAILED
       if (job.businessProfileId) {
-        emitToBusiness(job.businessProfileId, "job_failed", {
-          conversationId: job.conversationId,
-          type: "FACEBOOK_COMMENT_PUBLIC_REPLY",
-          error: err.message,
+        const { syncJobStatus } = await import("../socketSync.service");
+        syncJobStatus({
+          businessProfileId: job.businessProfileId,
+          jobId: job.conversationId?.toString() || "unknown",
+          status: "FAILED",
+          error: err.message
         });
       }
 
@@ -309,12 +316,6 @@ export async function processMetaMessage(job: MetaMessageJob) {
       isPrivate,
     });
 
-    emitToBusiness(businessProfileId, "new_message", {
-      conversationId: conversation.id,
-      message: userSaved,
-    });
-    emitToConversation(conversation.id, "new_message", { message: userSaved });
-
     // 5. Response Mode & AI Toggle Guards
     if (responseMode === "MANUAL") {
       logger.info("meta.processor.manual_mode_hold", {
@@ -364,9 +365,11 @@ export async function processMetaMessage(job: MetaMessageJob) {
     }
 
     // Emit "AI Typing" for better UX
-    emitToBusiness(businessProfileId, "customer_typing", { 
-      conversationId: conversation.id, 
-      typing: true 
+    const { syncTypingStatus } = await import("../socketSync.service");
+    syncTypingStatus({
+      businessProfileId,
+      conversationId: conversation.id,
+      isTyping: true
     });
 
     const reply = await computeBusinessChatReply({
@@ -381,9 +384,10 @@ export async function processMetaMessage(job: MetaMessageJob) {
       postContext,
     });
 
-    emitToBusiness(businessProfileId, "customer_typing", { 
-      conversationId: conversation.id, 
-      typing: false 
+    syncTypingStatus({
+      businessProfileId,
+      conversationId: conversation.id,
+      isTyping: false
     });
 
     if (reply.action === "RESOLVE_CONVERSATION") {
@@ -438,13 +442,6 @@ export async function processMetaMessage(job: MetaMessageJob) {
         origin: isComment ? "facebook_comment_reply" : undefined,
       });
 
-      emitToBusiness(businessProfileId, "new_message", {
-        conversationId: conversation.id,
-        message: modelSaved,
-      });
-      emitToConversation(conversation.id, "new_message", {
-        message: modelSaved,
-      });
     } else {
       logger.info("meta.processor.empty_main_content_skipped", {
         conversationId: conversation.id,
@@ -476,13 +473,6 @@ export async function processMetaMessage(job: MetaMessageJob) {
           origin: "facebook_comment_public_reply",
         });
 
-        emitToBusiness(businessProfileId, "new_message", {
-          conversationId: conversation.id,
-          message: publicSaved,
-        });
-        emitToConversation(conversation.id, "new_message", {
-          message: publicSaved,
-        });
       } else {
         logger.info("meta.processor.empty_public_content_skipped", {
           conversationId: conversation.id,
@@ -501,25 +491,12 @@ export async function processMetaMessage(job: MetaMessageJob) {
           });
           // Update local conversation object for subsequent emits if needed
           conversation.postUrl = postUrl;
-
-          // Emit sync to UI
-          emitToBusiness(businessProfileId, "conversation_updated", {
-            id: conversation.id,
-            postUrl,
-          });
         }
       } catch (err: any) {
         logger.warn("facebook.processor.post_url_resolve_failed", {
           error: err.message,
         });
       }
-    }
-
-    if (status === "PENDING_REVIEW") {
-      emitToBusiness(businessProfileId, "draft_received", {
-        conversationId: conversation.id,
-        message: modelSaved,
-      });
     }
 
     // 8. Platform Delivery (if AUTO)
@@ -541,6 +518,12 @@ export async function processMetaMessage(job: MetaMessageJob) {
               return;
             }
 
+            // 10. ELITE DELIVERY ORCHESTRATION
+            const { 
+              mirrorCommentReplyToMessenger, 
+              syncMessageStatus 
+            } = await import("./metaDelivery.service");
+
             // ── ELITE TIER: Engagement - Always like the comment if Auto mode is on ──
             if (isAutoMode) {
               likeComment({
@@ -555,7 +538,6 @@ export async function processMetaMessage(job: MetaMessageJob) {
             }
 
             // 1. Intent-Aware Public Greeting
-            // We only send the "Greeting" (e.g. Check your DMs) if we are actually going to DM them.
             if (publicStatus === "SENT" && publicSaved && reply.intent === "SALES_DM") {
               try {
                 const publicText = publicSaved.content || "Thanks! Check your DMs.";
@@ -568,27 +550,14 @@ export async function processMetaMessage(job: MetaMessageJob) {
                 });
 
                 if (pubRes?.id) {
-                  const updatedPublic = await prisma.conversationMessage.update({
-                    where: { id: publicSaved.id },
-                    data: { externalId: pubRes.id },
-                  });
-                  emitToBusiness(businessProfileId, "new_message", {
-                    conversationId: conversation.id,
-                    message: updatedPublic,
+                  await syncMessageStatus(publicSaved.id, businessProfileId, conversation.id, {
+                    externalId: pubRes.id,
                   });
                 }
               } catch (pubErr: any) {
-                logger.error("meta.processor.public_greeting_failed", {
-                  commentId: job.commentId,
-                  error: pubErr.message,
-                });
-                const failedPublic = await prisma.conversationMessage.update({
-                  where: { id: publicSaved.id },
-                  data: { status: "FAILED" },
-                });
-                emitToBusiness(businessProfileId, "new_message", {
-                  conversationId: conversation.id,
-                  message: failedPublic,
+                logger.error("meta.processor.public_greeting_failed", { error: pubErr.message });
+                await syncMessageStatus(publicSaved.id, businessProfileId, conversation.id, {
+                  status: "FAILED",
                 });
               }
             }
@@ -609,81 +578,32 @@ export async function processMetaMessage(job: MetaMessageJob) {
                   });
 
                   if (dmRes?.id && dmRes.id !== "ALREADY_REPLIED") {
-                    const updatedModel = await prisma.conversationMessage.update({
-                      where: { id: modelSaved.id },
-                      data: { externalId: dmRes.id },
-                    });
-                    emitToBusiness(businessProfileId, "new_message", {
-                      conversationId: conversation.id,
-                      message: updatedModel,
+                    await syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, {
+                      externalId: dmRes.id,
                     });
 
                     // Selective Mirroring to Messenger Thread
-                    try {
-                      const messengerConv = await getOrCreateConversation(
-                        job.identifier,
-                        senderId,
-                        businessProfileId,
-                        { channel: "messenger" },
-                      );
-                      const mirrorId = `mirror_${dmRes.id}`;
-                      const existingMirror = await prisma.conversationMessage.findUnique({
-                        where: { externalId: mirrorId },
-                      });
-
-                      if (!existingMirror) {
-                        const mirroredMsg = await saveMessage(
-                          messengerConv.id,
-                          "model",
-                          mainContent,
-                          {
-                            externalId: mirrorId,
-                            intent: reply.intent,
-                            aiReasoning: reply.reasoning,
-                            isPrivate: true,
-                            origin: "facebook_comment_reply",
-                            mediaMetadata: {
-                              origin: "facebook_comment_reply",
-                              postId: job.postId,
-                              commentId: job.commentId,
-                            },
-                          },
-                        );
-                        emitToBusiness(businessProfileId, "new_message", {
-                          conversationId: messengerConv.id,
-                          message: mirroredMsg,
-                        });
-                        emitToConversation(messengerConv.id, "new_message", {
-                          message: mirroredMsg,
-                        });
-                      }
-                    } catch (mirrorErr: any) {
-                      logger.warn("meta.processor.mirror_failed_soft", {
-                        error: mirrorErr.message,
-                      });
-                    }
-                  } else if (dmRes?.id === "ALREADY_REPLIED") {
-                    const failedModel = await prisma.conversationMessage.update({
-                      where: { id: modelSaved.id },
-                      data: { status: "FAILED" },
+                    await mirrorCommentReplyToMessenger({
+                      pageId: job.identifier,
+                      senderId,
+                      businessProfileId,
+                      messageId: dmRes.id,
+                      content: mainContent,
+                      intent: reply.intent,
+                      reasoning: reply.reasoning,
+                      postId: job.postId,
+                      commentId: job.commentId,
+                      role: "model",
                     });
-                    emitToBusiness(businessProfileId, "new_message", {
-                      conversationId: conversation.id,
-                      message: failedModel,
+                  } else if (dmRes?.id === "ALREADY_REPLIED") {
+                    await syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, {
+                      status: "FAILED",
                     });
                   }
                 } catch (dmErr: any) {
-                  logger.error("meta.processor.private_dm_failed", {
-                    commentId: job.commentId,
-                    error: dmErr.message,
-                  });
-                  const failedModel = await prisma.conversationMessage.update({
-                    where: { id: modelSaved.id },
-                    data: { status: "FAILED" },
-                  });
-                  emitToBusiness(businessProfileId, "new_message", {
-                    conversationId: conversation.id,
-                    message: failedModel,
+                  logger.error("meta.processor.private_dm_failed", { error: dmErr.message });
+                  await syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, {
+                    status: "FAILED",
                   });
                 }
               } else {
@@ -698,43 +618,35 @@ export async function processMetaMessage(job: MetaMessageJob) {
                   });
 
                   if (pubReplyRes?.id) {
-                    const updatedModel = await prisma.conversationMessage.update({
-                      where: { id: modelSaved.id },
-                      data: { externalId: pubReplyRes.id },
-                    });
-                    emitToBusiness(businessProfileId, "new_message", {
-                      conversationId: conversation.id,
-                      message: updatedModel,
+                    await syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, {
+                      externalId: pubReplyRes.id,
                     });
                   }
                 } catch (pubErr: any) {
-                  logger.error("meta.processor.general_public_reply_failed", {
-                    commentId: job.commentId,
-                    error: pubErr.message,
-                  });
-                  const failedModel = await prisma.conversationMessage.update({
-                    where: { id: modelSaved.id },
-                    data: { status: "FAILED" },
-                  });
-                  emitToBusiness(businessProfileId, "new_message", {
-                    conversationId: conversation.id,
-                    message: failedModel,
+                  logger.error("meta.processor.general_public_reply_failed", { error: pubErr.message });
+                  await syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, {
+                    status: "FAILED",
                   });
                 }
               }
             }
           } else if (mainContent && privateStatus === "SENT") {
             // Standard Messenger Reply (Direct Message)
-            const fbRes: any = await sendMessengerReply(
-              senderId,
-              mainContent,
-              accessToken,
-            );
-            if (fbRes?.message_id)
-              await prisma.conversationMessage.update({
-                where: { id: modelSaved.id },
-                data: { externalId: fbRes.message_id },
+            try {
+              const fbRes: any = await sendMessengerReply(senderId, mainContent, accessToken);
+              if (fbRes?.message_id) {
+                const { syncMessageStatus } = await import("./metaDelivery.service");
+                await syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, {
+                  externalId: fbRes.message_id,
+                });
+              }
+            } catch (dmErr: any) {
+              logger.error("meta.processor.messenger_dm_failed", { error: dmErr.message });
+              const { syncMessageStatus } = await import("./metaDelivery.service");
+              await syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, {
+                status: "FAILED",
               });
+            }
           }
         } else if (mainContent && privateStatus === "SENT") {
           const { sendWhatsAppReply } = await import("./whatsapp.service");
@@ -810,14 +722,6 @@ export async function processMetaMessage(job: MetaMessageJob) {
                 status: privateStatus,
               },
             );
-
-            emitToBusiness(businessProfileId, "new_message", {
-              conversationId: conversation.id,
-              message: savedAttach,
-            });
-            emitToConversation(conversation.id, "new_message", {
-              message: savedAttach,
-            });
           } else {
             logger.warn("meta.processor.attachment_not_found", {
               assetName: reply.attachment.assetName,
@@ -840,9 +744,11 @@ export async function processMetaMessage(job: MetaMessageJob) {
 
     // 9. Feedback Loop
     if (reply.handoffCategory === "SYSTEM_ERROR") {
-      emitToBusiness(businessProfileId, "system_critical_error", {
+      const { syncSystemError } = await import("../socketSync.service");
+      syncSystemError({
+        businessProfileId,
         conversationId: conversation.id,
-        reason: reply.reasoning,
+        reason: reply.reasoning
       });
     }
   } catch (err: any) {
@@ -909,11 +815,15 @@ export async function processVisualJob(payload: any) {
     }
 
     // Push real-time update to the dashboard
-    emitToBusiness(businessProfileId, "visual_updated", {
-      type: normalizedType, // Speak the frontend's language (generate/refine)
+    const { syncVisualUpdate } = await import("../socketSync.service");
+    syncVisualUpdate({
+      businessProfileId,
       postId,
-      asset: resultAsset,
-      status: "completed"
+      visualData: {
+        asset: resultAsset,
+        type: normalizedType,
+        status: "completed"
+      }
     });
 
     logger.info("visual_processor.job_completed", { type, businessProfileId, assetId: resultAsset?.id });
@@ -922,11 +832,12 @@ export async function processVisualJob(payload: any) {
     logger.error("visual_processor.job_failed", { type, businessProfileId, error: err.message });
     
     // Notify UI of failure so it can stop the loader
-    emitToBusiness(businessProfileId, "visual_updated", {
-      type,
-      postId,
-      status: "failed",
-      error: err.message
+    const { syncJobStatus } = await import("../socketSync.service");
+    syncJobStatus({
+      businessProfileId: businessProfileId,
+      jobId: postId,
+      status: "FAILED",
+      error: err.message || "Unknown Job Error"
     });
 
     throw err; // Re-throw for queue retry logic

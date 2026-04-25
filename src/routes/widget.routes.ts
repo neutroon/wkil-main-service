@@ -11,6 +11,16 @@ import { computeBusinessChatReply } from "../services/chat/businessChatReply.ser
 import { toPromptMessages, historyToLlmTurns } from "../services/chat/conversationTurns";
 import { getConversationHistory } from "../services/meta/conversation.service";
 import { logger } from "../utils/logger";
+import { validate } from "../middlewares/validate.middleware";
+import { 
+  widgetInstallSchema, 
+  updateWidgetInstallSchema, 
+  widgetConversationQuerySchema,
+  approveDraftSchema,
+  widgetReplySchema,
+  widgetIdParamSchema
+} from "../validations/widgetAuth.validation";
+import { AppError } from "../middlewares/errorHandler.middleware";
 
 const widgetRoutes = Router();
 
@@ -31,32 +41,20 @@ async function authorizeProfile(
 }
 
 /** POST /v1/widget/installs — create widget; returns publicSiteKey for embed. */
-widgetRoutes.post("/installs", async (req: Request, res: Response) => {
-  try {
+widgetRoutes.post(
+  "/installs", 
+  validate(widgetInstallSchema),
+  async (req: Request, res: Response) => {
     const userId = (req as any).user.id as number;
-    const { businessProfileId, allowedOrigins, label } = req.body as {
-      businessProfileId?: number;
-      allowedOrigins?: unknown;
-      label?: string;
-    };
-
-    if (
-      businessProfileId === undefined ||
-      typeof businessProfileId !== "number"
-    ) {
-      return res.status(400).json({ error: "businessProfileId is required" });
-    }
+    const { businessProfileId, allowedOrigins, label } = req.body;
 
     const origins = parseAllowedOrigins(allowedOrigins);
     if (origins.length === 0) {
-      return res.status(400).json({
-        error:
-          "allowedOrigins must be a non-empty array of origin strings (e.g. https://example.com)",
-      });
+      throw new AppError("allowedOrigins must be a non-empty array of origin strings", 400);
     }
 
     if (!(await authorizeProfile(userId, businessProfileId))) {
-      return res.status(403).json({ error: "Business profile not found" });
+      throw new AppError("Business profile not found", 403);
     }
 
     const install = await prisma.widgetInstall.create({
@@ -65,7 +63,7 @@ widgetRoutes.post("/installs", async (req: Request, res: Response) => {
         businessProfileId,
         publicSiteKey: newPublicSiteKey(),
         allowedOrigins: origins,
-        label: label && typeof label === "string" ? label.slice(0, 200) : null,
+        label: label || null,
       },
     });
 
@@ -75,95 +73,67 @@ widgetRoutes.post("/installs", async (req: Request, res: Response) => {
       embedNote:
         "Send X-Widget-Site-Key on every request (including CORS preflight). Conversation pageId convention: widget:{installId}.",
     });
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return res.status(500).json({ error: msg });
   }
-});
+);
 
 /** GET /v1/widget/installs */
 widgetRoutes.get("/installs", async (req: Request, res: Response) => {
-  try {
-    const userId = (req as any).user.id as number;
-    const installs = await prisma.widgetInstall.findMany({
-      where: { userId },
-      orderBy: { createdAt: "desc" },
-    });
-    return res.json({ data: installs });
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return res.status(500).json({ error: msg });
-  }
+  const userId = (req as any).user.id as number;
+  const installs = await prisma.widgetInstall.findMany({
+    where: { userId },
+    orderBy: { createdAt: "desc" },
+  });
+  return res.json({ data: installs });
 });
 
 /** DELETE /v1/widget/installs/:id/hard — remove row (cannot be undone) */
 widgetRoutes.delete(
   "/installs/:id/hard",
+  validate(widgetIdParamSchema),
   async (req: Request, res: Response) => {
-    try {
-      const userId = (req as any).user.id as number;
-      const id = parseInt(req.params.id, 10);
-      if (isNaN(id)) {
-        return res.status(400).json({ error: "Invalid id" });
-      }
-
-      const existing = await prisma.widgetInstall.findFirst({
-        where: { id, userId },
-      });
-      if (!existing) {
-        return res.status(404).json({ error: "Install not found" });
-      }
-
-      await prisma.widgetInstall.delete({ where: { id } });
-
-      return res.json({ success: true });
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      return res.status(500).json({ error: msg });
-    }
-  },
-);
-
-/** PATCH /v1/widget/installs/:id */
-widgetRoutes.patch("/installs/:id", async (req: Request, res: Response) => {
-  try {
     const userId = (req as any).user.id as number;
     const id = parseInt(req.params.id, 10);
-    if (isNaN(id)) {
-      return res.status(400).json({ error: "Invalid id" });
-    }
 
     const existing = await prisma.widgetInstall.findFirst({
       where: { id, userId },
     });
     if (!existing) {
-      return res.status(404).json({ error: "Install not found" });
+      throw new AppError("Install not found", 404);
     }
 
-    const { allowedOrigins, label, isActive } = req.body as {
-      allowedOrigins?: unknown;
-      label?: string;
-      isActive?: boolean;
-    };
+    await prisma.widgetInstall.delete({ where: { id } });
 
-    const data: {
-      allowedOrigins?: object;
-      label?: string | null;
-      isActive?: boolean;
-    } = {};
+    return res.json({ success: true });
+  }
+);
+
+/** PATCH /v1/widget/installs/:id */
+widgetRoutes.patch(
+  "/installs/:id", 
+  validate(updateWidgetInstallSchema),
+  async (req: Request, res: Response) => {
+    const userId = (req as any).user.id as number;
+    const id = parseInt(req.params.id, 10);
+
+    const existing = await prisma.widgetInstall.findFirst({
+      where: { id, userId },
+    });
+    if (!existing) {
+      throw new AppError("Install not found", 404);
+    }
+
+    const { allowedOrigins, label, isActive } = req.body;
+    const data: any = {};
 
     if (allowedOrigins !== undefined) {
       const origins = parseAllowedOrigins(allowedOrigins);
       if (origins.length === 0) {
-        return res.status(400).json({
-          error: "allowedOrigins must be a non-empty array when provided",
-        });
+        throw new AppError("allowedOrigins must be a non-empty array when provided", 400);
       }
       data.allowedOrigins = origins;
     }
     if (label !== undefined) {
-      data.label =
-        typeof label === "string" ? label.slice(0, 200) : null;
+      data.label = label || null;
     }
     if (isActive !== undefined) {
       data.isActive = Boolean(isActive);
@@ -175,26 +145,22 @@ widgetRoutes.patch("/installs/:id", async (req: Request, res: Response) => {
     });
 
     return res.json({ success: true, install: updated });
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return res.status(500).json({ error: msg });
   }
-});
+);
 
 /** DELETE /v1/widget/installs/:id — soft-deactivate */
-widgetRoutes.delete("/installs/:id", async (req: Request, res: Response) => {
-  try {
+widgetRoutes.delete(
+  "/installs/:id", 
+  validate(widgetIdParamSchema),
+  async (req: Request, res: Response) => {
     const userId = (req as any).user.id as number;
     const id = parseInt(req.params.id, 10);
-    if (isNaN(id)) {
-      return res.status(400).json({ error: "Invalid id" });
-    }
 
     const existing = await prisma.widgetInstall.findFirst({
       where: { id, userId },
     });
     if (!existing) {
-      return res.status(404).json({ error: "Install not found" });
+      throw new AppError("Install not found", 404);
     }
 
     await prisma.widgetInstall.update({
@@ -203,17 +169,16 @@ widgetRoutes.delete("/installs/:id", async (req: Request, res: Response) => {
     });
 
     return res.json({ success: true });
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return res.status(500).json({ error: msg });
   }
-});
+);
 
 /** GET /v1/widget/conversations — list web chats for user's businesses */
-widgetRoutes.get("/conversations", async (req: Request, res: Response) => {
-  try {
+widgetRoutes.get(
+  "/conversations", 
+  validate(widgetConversationQuerySchema),
+  async (req: Request, res: Response) => {
     const userId = (req as any).user.id as number;
-    const { page = 1, limit = 20 } = req.query;
+    const { page, limit } = req.query as any;
     const skip = (Number(page) - 1) * Number(limit);
 
     // Resolve all business profiles owned by this user
@@ -273,22 +238,17 @@ widgetRoutes.get("/conversations", async (req: Request, res: Response) => {
         totalPages: Math.ceil(total / Number(limit)),
       },
     });
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return res.status(500).json({ error: msg });
   }
-});
+);
 
 /** GET /v1/widget/conversations/:id/messages */
-widgetRoutes.get("/conversations/:id/messages", async (req: Request, res: Response) => {
-  try {
+widgetRoutes.get(
+  "/conversations/:id/messages", 
+  validate(widgetIdParamSchema),
+  async (req: Request, res: Response) => {
     const userId = (req as any).user.id as number;
     const id = parseInt(req.params.id, 10);
-    const { page = 1, limit = 50 } = req.query;
-
-    if (isNaN(id)) {
-      return res.status(400).json({ error: "Invalid conversation id" });
-    }
+    const { limit = 50 } = req.query;
 
     const conversation = await prisma.conversation.findFirst({
       where: {
@@ -304,7 +264,7 @@ widgetRoutes.get("/conversations/:id/messages", async (req: Request, res: Respon
     });
 
     if (!conversation) {
-      return res.status(404).json({ error: "Conversation not found" });
+      throw new AppError("Conversation not found", 404);
     }
 
     const cursor = req.query.cursor ? parseInt(req.query.cursor as string, 10) : undefined;
@@ -315,26 +275,17 @@ widgetRoutes.get("/conversations/:id/messages", async (req: Request, res: Respon
       cursor,
     );
     return res.json(messages);
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return res.status(500).json({ error: msg });
   }
-});
+);
 
 /** POST /v1/widget/conversations/:id/messages — reply to web chat */
-widgetRoutes.post("/conversations/:id/messages", async (req: Request, res: Response) => {
-  try {
+widgetRoutes.post(
+  "/conversations/:id/messages", 
+  validate(widgetReplySchema),
+  async (req: Request, res: Response) => {
     const userId = (req as any).user.id as number;
     const id = parseInt(req.params.id, 10);
-    const { text } = req.body as { text: string };
-
-    if (isNaN(id)) {
-      return res.status(400).json({ error: "Invalid conversation id" });
-    }
-
-    if (!text || !text.trim()) {
-      return res.status(400).json({ error: "text is required" });
-    }
+    const { text } = req.body;
 
     const conversation = await prisma.conversation.findFirst({
       where: {
@@ -350,7 +301,7 @@ widgetRoutes.post("/conversations/:id/messages", async (req: Request, res: Respo
     });
 
     if (!conversation) {
-      return res.status(404).json({ error: "Conversation not found" });
+      throw new AppError("Conversation not found", 404);
     }
 
     const saved = await saveMessage(id, "model", text.trim());
@@ -362,86 +313,73 @@ widgetRoutes.post("/conversations/:id/messages", async (req: Request, res: Respo
     });
 
     return res.status(201).json({ data: saved });
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return res.status(500).json({ error: msg });
   }
-});
+);
 
 /** PUT /v1/widget/conversations/:id/messages/:mid/approve — approve a draft */
 widgetRoutes.put(
   "/conversations/:id/messages/:mid/approve",
+  validate(approveDraftSchema),
   async (req: Request, res: Response): Promise<any> => {
-    try {
-      const userId = (req as any).user.id as number;
-      const conversationId = parseInt(req.params.id, 10);
-      const messageId = parseInt(req.params.mid, 10);
-      const { editedContent } = req.body as { editedContent?: string };
+    const userId = (req as any).user.id as number;
+    const conversationId = parseInt(req.params.id, 10);
+    const messageId = parseInt(req.params.mid, 10);
+    const { editedContent } = req.body;
 
-      if (isNaN(conversationId) || isNaN(messageId)) {
-        return res.status(400).json({ error: "Invalid IDs" });
-      }
+    // Auth: ensure conversation belongs to a profile owned by user
+    const conversation = await prisma.conversation.findFirst({
+      where: {
+        id: conversationId,
+        businessProfile: { userId },
+        channel: "web",
+      },
+    });
 
-      // Auth: ensure conversation belongs to a profile owned by user
-      const conversation = await prisma.conversation.findFirst({
-        where: {
-          id: conversationId,
-          businessProfile: { userId },
-          channel: "web",
-        },
-      });
+    if (!conversation) {
+      throw new AppError("Conversation not found or access denied.", 404);
+    }
 
-      if (!conversation) {
-        return res
-          .status(404)
-          .json({ error: "Conversation not found or access denied." });
-      }
+    const message = await prisma.conversationMessage.findUnique({
+      where: { id: messageId },
+    });
 
-      const message = await prisma.conversationMessage.findUnique({
-        where: { id: messageId },
-      });
+    if (!message || message.conversationId !== conversationId) {
+      throw new AppError("Message not found.", 404);
+    }
 
-      if (!message || message.conversationId !== conversationId) {
-        return res.status(404).json({ error: "Message not found." });
-      }
+    const finalContent = editedContent || message.content;
+    const isEdited = editedContent && editedContent !== message.content;
 
-      const finalContent = editedContent || message.content;
-      const isEdited = editedContent && editedContent !== message.content;
-
-      // Update message transactionally
-      const updatedMsg = await prisma.$transaction(async (tx) => {
-        if (isEdited) {
-          await tx.aiCorrection.create({
-            data: {
-              messageId: message.id,
-              originalAiText: message.content,
-              humanEditedText: finalContent,
-            },
-          });
-        }
-
-        // Re-open conversation if resolved
-        if (conversation.status === "RESOLVED") {
-          await tx.conversation.update({
-            where: { id: conversationId },
-            data: { status: "OPEN" },
-          });
-        }
-
-        return await tx.conversationMessage.update({
-          where: { id: messageId },
+    // Update message transactionally
+    const updatedMsg = await prisma.$transaction(async (tx) => {
+      if (isEdited) {
+        await tx.aiCorrection.create({
           data: {
-            content: finalContent,
-            status: isEdited ? "EDITED_AND_SENT" : "SENT",
+            messageId: message.id,
+            originalAiText: message.content,
+            humanEditedText: finalContent,
           },
         });
-      });
+      }
 
-      return res.status(200).json({ data: updatedMsg });
-    } catch (e: any) {
-      logger.error("widget.hitl.approve_error", { error: e.message });
-      return res.status(500).json({ error: e.message });
-    }
+      // Re-open conversation if resolved
+      if (conversation.status === "RESOLVED") {
+        await tx.conversation.update({
+          where: { id: conversationId },
+          data: { status: "OPEN" },
+        });
+      }
+
+      return await tx.conversationMessage.update({
+        where: { id: messageId },
+        data: {
+          content: finalContent,
+          status: isEdited ? "EDITED_AND_SENT" : "SENT",
+        },
+      });
+    });
+
+    return res.status(200).json({ data: updatedMsg });
   }
 );
 
@@ -449,29 +387,25 @@ widgetRoutes.put(
 widgetRoutes.delete(
   "/conversations/:id/messages/:mid",
   async (req: Request, res: Response): Promise<any> => {
-    try {
-      const userId = (req as any).user.id as number;
-      const conversationId = parseInt(req.params.id, 10);
-      const messageId = parseInt(req.params.mid, 10);
+    const userId = (req as any).user.id as number;
+    const conversationId = parseInt(req.params.id, 10);
+    const messageId = parseInt(req.params.mid, 10);
 
-      const conversation = await prisma.conversation.findFirst({
-        where: { id: conversationId, businessProfile: { userId }, channel: "web" }
-      });
+    const conversation = await prisma.conversation.findFirst({
+      where: { id: conversationId, businessProfile: { userId }, channel: "web" }
+    });
 
-      if (!conversation) return res.status(404).json({ error: "Not found" });
+    if (!conversation) throw new AppError("Not found", 404);
 
-      const msg = await prisma.conversationMessage.findFirst({
-        where: { id: messageId, conversationId, status: "PENDING_REVIEW" }
-      });
+    const msg = await prisma.conversationMessage.findFirst({
+      where: { id: messageId, conversationId, status: "PENDING_REVIEW" }
+    });
 
-      if (!msg) return res.status(404).json({ error: "Draft not found" });
+    if (!msg) throw new AppError("Draft not found", 404);
 
-      await prisma.conversationMessage.delete({ where: { id: messageId } });
+    await prisma.conversationMessage.delete({ where: { id: messageId } });
 
-      return res.json({ success: true });
-    } catch (e: any) {
-      return res.status(500).json({ error: e.message });
-    }
+    return res.json({ success: true });
   }
 );
 
@@ -479,97 +413,81 @@ widgetRoutes.delete(
 widgetRoutes.patch(
   "/conversations/:id/read",
   async (req: Request, res: Response): Promise<any> => {
-    try {
-      const userId = (req as any).user.id as number;
-      const id = parseInt(req.params.id, 10);
+    const userId = (req as any).user.id as number;
+    const id = parseInt(req.params.id, 10);
 
-      const conversation = await prisma.conversation.findFirst({
-        where: { id, businessProfile: { userId }, channel: "web" }
-      });
+    const conversation = await prisma.conversation.findFirst({
+      where: { id, businessProfile: { userId }, channel: "web" }
+    });
 
-      if (!conversation) return res.status(404).json({ error: "Not found" });
+    if (!conversation) throw new AppError("Not found", 404);
 
-      await prisma.conversation.update({
-        where: { id },
-        data: { updatedAt: new Date() }
-      });
+    await prisma.conversation.update({
+      where: { id },
+      data: { updatedAt: new Date() }
+    });
 
-      return res.json({ success: true });
-    } catch (e: any) {
-      return res.status(500).json({ error: e.message });
-    }
+    return res.json({ success: true });
   }
 );
 
 /** POST /v1/widget/conversations/:id/suggest — trigger AI suggestion */
 widgetRoutes.post(
   "/conversations/:id/suggest",
+  validate(widgetIdParamSchema),
   async (req: Request, res: Response): Promise<any> => {
-    try {
-      const userId = (req as any).user.id as number;
-      const conversationId = parseInt(req.params.id, 10);
+    const userId = (req as any).user.id as number;
+    const conversationId = parseInt(req.params.id, 10);
 
-      if (isNaN(conversationId)) {
-        return res.status(400).json({ error: "Invalid IDs" });
-      }
-
-      // Auth
-      const conversation = await prisma.conversation.findFirst({
-        where: {
-          id: conversationId,
-          businessProfile: { userId },
-          channel: "web",
-        },
-        include: { 
-          businessProfile: {
-            include: {
-              externalDataSources: { where: { isActive: true } },
-              crmIntegrations: { where: { isActive: true }, take: 1 },
-            }
-          } 
-        },
-      });
-
-      if (!conversation) {
-        return res
-          .status(404)
-          .json({ error: "Conversation not found or access denied." });
-      }
-
-      const historyRows = await getConversationHistory(conversationId);
-      if (historyRows.length === 0) {
-        return res
-          .status(400)
-          .json({ error: "No history found for suggesting." });
-      }
-
-      const lastUserMsg = historyRows[historyRows.length - 1];
-      const historyForPrompt = toPromptMessages(historyRows);
-      const historyTurns = historyToLlmTurns(historyForPrompt);
-
-      const reply = await computeBusinessChatReply({
-        businessProfile: conversation.businessProfile,
-        messageText: lastUserMsg?.content || "",
-        historyTurns,
+    // Auth
+    const conversation = await prisma.conversation.findFirst({
+      where: {
+        id: conversationId,
+        businessProfile: { userId },
         channel: "web",
-      });
+      },
+      include: { 
+        businessProfile: {
+          include: {
+            externalDataSources: { where: { isActive: true } },
+            crmIntegrations: { where: { isActive: true }, take: 1 },
+          }
+        } 
+      },
+    });
 
-      const saved = await prisma.conversationMessage.create({
-        data: {
-          conversationId: conversation.id,
-          role: "model",
-          content: reply.content || "",
-          status: "PENDING_REVIEW",
-          aiReasoning: reply.reasoning,
-          handoffCategory: reply.handoffCategory,
-        },
-      });
-
-      return res.status(201).json({ data: saved });
-    } catch (e: any) {
-      logger.error("widget.suggest_error", { error: e.message });
-      return res.status(500).json({ error: e.message });
+    if (!conversation) {
+      throw new AppError("Conversation not found or access denied.", 404);
     }
+
+    const historyRows = await getConversationHistory(conversationId);
+    if (historyRows.length === 0) {
+      throw new AppError("No history found for suggesting.", 400);
+    }
+
+    const lastUserMsg = historyRows[historyRows.length - 1];
+    const historyForPrompt = toPromptMessages(historyRows);
+    const historyTurns = historyToLlmTurns(historyForPrompt);
+
+    const reply = await computeBusinessChatReply({
+      businessProfile: conversation.businessProfile,
+      messageText: lastUserMsg?.content || "",
+      historyTurns,
+      channel: "web",
+    });
+
+    const saved = await prisma.conversationMessage.create({
+      data: {
+        conversationId: conversation.id,
+        role: "model",
+        content: reply.content || "",
+        status: "PENDING_REVIEW",
+        aiReasoning: reply.reasoning,
+        handoffCategory: reply.handoffCategory,
+      },
+    });
+
+    return res.status(201).json({ data: saved });
   }
 );
 

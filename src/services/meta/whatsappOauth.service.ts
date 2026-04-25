@@ -2,6 +2,7 @@ import { encryptFacebookSecret } from "../../utils/tokenCrypto";
 import { logger } from "../../utils/logger";
 import prisma from "../../config/prisma";
 import { AppError } from "../../middlewares/errorHandler.middleware";
+import { env } from "../../config/env";
 
 const GRAPH_API = "https://graph.facebook.com/v25.0";
 // Meta Cloud API and Embedded Signup onboarding (Tech Provider) v25.0.
@@ -80,8 +81,8 @@ async function exchangeCodeForTokenOnce(
 }
 
 export async function exchangeCodeForToken(code: string, redirectUri?: string): Promise<string> {
-  const appId = process.env.FB_APP_ID;
-  const appSecret = process.env.FB_APP_SECRET;
+  const appId = env.FB_APP_ID;
+  const appSecret = env.FB_APP_SECRET;
 
   if (!appId || !appSecret) {
     throw new AppError("FB_APP_ID and FB_APP_SECRET must be set in environment", 500);
@@ -151,9 +152,9 @@ export async function exchangeCodeForToken(code: string, redirectUri?: string): 
 // ─── Step 2: Discover all WABA accounts & phone numbers for this token ─────────
 
 export async function discoverWabaAccounts(token: string): Promise<WabaAccount[]> {
-  const appId = process.env.FB_APP_ID;
-  const appSecret = process.env.FB_APP_SECRET;
-  const systemUserToken = process.env.FB_SYSTEM_USER_ACCESS_TOKEN?.trim();
+  const appId = env.FB_APP_ID;
+  const appSecret = env.FB_APP_SECRET;
+  const systemUserToken = env.FB_SYSTEM_USER_ACCESS_TOKEN?.trim();
   if (!appId || !appSecret) {
     throw new AppError("FB_APP_ID and FB_APP_SECRET must be set in environment", 500);
   }

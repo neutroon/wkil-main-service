@@ -14,95 +14,83 @@ import {
   saveMessage,
   getOrCreateConversation,
 } from "../../services/meta/conversation.service";
-import { handleMessengerMessage } from "../../services/meta/messenger.service";
-import { decryptFacebookSecret } from "../../utils/tokenCrypto";
-import multer from "multer";
-import { uploadMessengerMedia } from "../../services/meta/metaUpload.service";
 import { sendMessengerMedia } from "../../services/meta/messenger.service";
-
-const messengerRoutes = Router();
+import { AppError } from "../../middlewares/errorHandler.middleware";
+import { validate } from "../../middlewares/validate.middleware";
+import { sendMessengerReplySchema } from "../../validations/meta.validation";
+import { paginationSchema, idPaginationSchema, idParamSchema } from "../../validations/shared.validation";
+import { decryptFacebookSecret } from "../../utils/tokenCrypto";
+import { uploadMessengerMedia } from "../../services/meta/metaUpload.service";
+import multer from "multer";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 16 * 1024 * 1024 } }); // 16MB limit
 
+const messengerRoutes = Router();
+
 /**
  * POST /v1/messenger/conversations/:id/media
- * Uploads media to Meta and sends it to the customer.
  */
-messengerRoutes.post(
-  "/conversations/:id/media",
-  authenticateToken,
-  upload.single("file"),
-  async (req: Request, res: Response): Promise<any> => {
-    try {
-      const userId = (req as any).user.id as number;
-      const conversationId = parseInt(req.params.id, 10);
-      const file = req.file;
-      const messageText = req.body.messageText || "";
+messengerRoutes.post("/conversations/:id/media", authenticateToken, upload.single("file"), validate(idParamSchema), async (req: Request, res: Response) => {
+  const userId = (req as any).user.id as number;
+  const { id: conversationId } = req.params as any;
+    const file = req.file;
+    const messageText = req.body.messageText || "";
 
-      if (!file) {
-        return res.status(400).json({ error: "No file uploaded" });
-      }
+    if (!file) throw new AppError("No file uploaded", 400);
 
-      // 1. Ownership Check
-      const conversation = await prisma.conversation.findUnique({
-        where: { id: conversationId },
-        include: { businessProfile: true }
-      });
+    // 1. Ownership Check
+    const conversation = await prisma.conversation.findUnique({
+      where: { id: conversationId },
+      include: { businessProfile: true }
+    });
 
-      if (!conversation || conversation.businessProfile.userId !== userId) {
-        return res.status(403).json({ error: "Access denied or conversation not found" });
-      }
-
-      // 2. Token Resolution
-      const page = await prisma.facebookPage.findFirst({
-        where: { pageId: conversation.pageId, isActive: true },
-        select: { pageAccessToken: true }
-      });
-
-      if (!page) {
-        return res.status(404).json({ error: "Facebook Page not found" });
-      }
-
-      const pageAccessToken = decryptFacebookSecret(page.pageAccessToken);
-
-      // 3. Upload to Meta
-      const attachmentId = await uploadMessengerMedia(
-        conversation.pageId,
-        pageAccessToken,
-        file.buffer,
-        file.originalname,
-        file.mimetype
-      );
-
-      // 4. Send via Meta
-      const type = file.mimetype.startsWith("image") ? "image" : file.mimetype.startsWith("video") ? "video" : file.mimetype.startsWith("audio") ? "audio" : "file";
-      const platformRes = await sendMessengerMedia(
-        conversation.senderId,
-        attachmentId,
-        type as any,
-        pageAccessToken
-      );
-
-      const mid = (platformRes as any)?.message_id;
-
-      // 5. Save to DB
-      const sentMsg = await saveMessage(conversationId, "agent", messageText, {
-        externalId: mid,
-        type,
-        mediaId: attachmentId,
-        mediaMetadata: { 
-          mimeType: file.mimetype, 
-          filename: file.originalname, 
-          size: file.size 
-        }
-      });
-
-      res.json(sentMsg);
-
-    } catch (err: any) {
-      logger.error("messenger.send_media.failed", { error: err.message });
-      res.status(500).json({ error: err.message });
+    if (!conversation || conversation.businessProfile.userId !== userId) {
+      throw new AppError("Access denied or conversation not found", 403);
     }
+
+    // 2. Token Resolution
+    const page = await prisma.facebookPage.findFirst({
+      where: { pageId: conversation.pageId, isActive: true },
+      select: { pageAccessToken: true }
+    });
+
+    if (!page) throw new AppError("Facebook Page not found", 404);
+
+    const pageAccessToken = decryptFacebookSecret(page.pageAccessToken);
+
+    // 3. Upload to Meta
+    const attachmentId = await uploadMessengerMedia(
+      conversation.pageId,
+      pageAccessToken,
+      file.buffer,
+      file.originalname,
+      file.mimetype
+    );
+
+    // 4. Send via Meta
+    const type = file.mimetype.startsWith("image") ? "image" : file.mimetype.startsWith("video") ? "video" : file.mimetype.startsWith("audio") ? "audio" : "file";
+    const platformRes = await sendMessengerMedia(
+      conversation.senderId,
+      attachmentId,
+      type as any,
+      pageAccessToken
+    );
+
+    const mid = (platformRes as any)?.message_id;
+
+    // 5. Save to DB
+    const sentMsg = await saveMessage(conversationId, "agent", messageText, {
+      externalId: mid,
+      type,
+      mediaId: attachmentId,
+      mediaMetadata: { 
+        mimeType: file.mimetype, 
+        filename: file.originalname, 
+        size: file.size 
+      }
+    });
+
+    return res.json(sentMsg);
   }
 );
 
@@ -111,18 +99,6 @@ const isDev = process.env.NODE_ENV !== "production";
 
 
 // ─── Shared Helpers ───────────────────────────────────────────────────────────
-
-function parsePagination(
-  query: Record<string, unknown>,
-  defaultLimit = 20,
-): { page: number; limit: number } {
-  const page = Math.max(1, parseInt(String(query.page ?? "1"), 10) || 1);
-  const limit = Math.min(
-    100,
-    Math.max(1, parseInt(String(query.limit ?? String(defaultLimit)), 10) || defaultLimit),
-  );
-  return { page, limit };
-}
 
 async function getUserFacebookPageIds(userId: number): Promise<string[]> {
   // 1. Resolve all BusinessProfiles owned by this user
@@ -147,192 +123,134 @@ async function getUserFacebookPageIds(userId: number): Promise<string[]> {
 
 // ─── API Routes (Authenticated) ───────────────────────────────────────────────
 
-/** List paginated Messenger/Comment conversations. */
-messengerRoutes.get(
-  "/",
-  authenticateToken,
-  async (req: Request, res: Response) => {
-    try {
-      const userId = (req as any).user.id as number;
-      const { page, limit } = parsePagination(req.query as Record<string, unknown>);
-      // Accept a 'channel' query param to allow fetching messenger or facebook_comment separately
-      const channelParam = req.query.channel as string | undefined;
-      const channel = channelParam === "facebook_comment" ? "facebook_comment" : "messenger";
-      const result = await listMessengerConversations(userId, page, limit, channel);
-      return res.json(result);
-    } catch (error: any) {
-      logger.error("messenger.conversations.list_failed", { error: error.message });
-      return res.status(500).json({ error: error.message });
-    }
-  },
-);
+messengerRoutes.get("/", authenticateToken, validate(paginationSchema), async (req: Request, res: Response) => {
+  const userId = (req as any).user.id as number;
+  const { page, limit, channel: channelParam } = req.query as any;
+  const channel = channelParam === "facebook_comment" ? "facebook_comment" : "messenger";
+  
+  const result = await listMessengerConversations(userId, page, limit, channel);
+  return res.json(result);
+});
 
-/** Get messages for a Messenger conversation. */
-messengerRoutes.get(
-  "/:id/messages",
-  authenticateToken,
-  async (req: Request, res: Response) => {
-    try {
-      const userId = (req as any).user.id as number;
-      const conversationId = parseInt(req.params.id, 10);
+messengerRoutes.get("/:id/messages", authenticateToken, validate(idPaginationSchema), async (req: Request, res: Response) => {
+  const userId = (req as any).user.id as number;
+  const { id: conversationId } = req.params as any;
+  const { limit, cursor } = req.query as any;
 
-      const pageIds = await getUserFacebookPageIds(userId);
-      const conversation = await getMessengerConversationForUser(conversationId, pageIds);
-      if (!conversation) {
-        return res.status(404).json({ error: "Conversation not found" });
-      }
+  const pageIds = await getUserFacebookPageIds(userId);
+  const conversation = await getMessengerConversationForUser(conversationId, pageIds);
+  if (!conversation) throw new AppError("Conversation not found", 404);
 
-      const { limit } = parsePagination(req.query as Record<string, unknown>, 50);
-      const cursor = req.query.cursor ? parseInt(req.query.cursor as string, 10) : undefined;
-      const result = await listConversationMessages(conversationId, limit, cursor);
+  const result = await listConversationMessages(conversationId, limit, cursor);
 
-      // Enrich with page name
-      const pageInfo = await prisma.facebookPage.findFirst({
-        where: { pageId: conversation.pageId },
-        select: { pageName: true },
-      });
+  const pageInfo = await prisma.facebookPage.findFirst({
+    where: { pageId: conversation.pageId },
+    select: { pageName: true },
+  });
 
-      return res.json({
-        conversation: {
-          id: conversation.id,
-          businessProfileId: conversation.businessProfileId,
-          pageId: conversation.pageId,
-          pageName: pageInfo?.pageName ?? conversation.pageId,
-          senderId: conversation.senderId,
-          channel: conversation.channel,
-          createdAt: conversation.createdAt,
-          updatedAt: conversation.updatedAt,
-        },
-        ...result,
-      });
-    } catch (error: any) {
-      logger.error("messenger.conversations.messages_failed", { error: error.message });
-      return res.status(500).json({ error: error.message });
-    }
-  },
-);
+  return res.json({
+    conversation: {
+      ...conversation,
+      pageName: pageInfo?.pageName ?? conversation.pageId,
+    },
+    ...result,
+  });
+});
 
 /** Send a reply to a Messenger conversation. */
 messengerRoutes.post(
-  "/:id/messages",
+  "/conversations/:id/messages",
   authenticateToken,
+  validate(idParamSchema),
+  validate(sendMessengerReplySchema),
   async (req: Request, res: Response) => {
-    try {
-      const userId = (req as any).user.id as number;
-      const conversationId = parseInt(req.params.id, 10);
-      const { text } = req.body as { text?: string };
+    const userId = (req as any).user.id as number;
+    const { id: conversationId } = req.params as any;
+    const { message: text } = req.body;
 
-      if (!text?.trim()) {
-        return res.status(400).json({ error: "text is required" });
+    // 1. Context Resolution
+    const conversation = await prisma.conversation.findUnique({
+      where: { id: conversationId },
+    });
+
+    if (!conversation) throw new AppError("Conversation not found", 404);
+
+    const page = await prisma.facebookPage.findFirst({
+      where: { pageId: conversation.pageId, isActive: true },
+    });
+
+    if (!page) throw new AppError("Facebook Page not found", 404);
+
+    const pageAccessToken = decryptFacebookSecret(page.pageAccessToken);
+    const trimmedText = text.trim();
+
+    // ── ELITE TIER: Hardened Delivery via Service Layer ──
+    let fbData: any;
+    const isPrivateRequest = req.body.isPrivate === true;
+
+    if (conversation.channel === "facebook_comment") {
+      if (!conversation.externalId) {
+        throw new AppError("The Facebook Comment ID for this thread was not correctly synced.", 400);
       }
 
-      const pageIds = await getUserFacebookPageIds(userId);
-      const conversation = await getMessengerConversationForUser(conversationId, pageIds);
-      if (!conversation) {
-        return res.status(404).json({ error: "Conversation not found" });
-      }
-
-      const page = await prisma.facebookPage.findFirst({
-        where: { pageId: conversation.pageId, isActive: true },
-      });
-
-      if (!page) {
-        return res.status(404).json({ error: "Facebook Page not found" });
-      }
-
-      const pageAccessToken = decryptFacebookSecret(page.pageAccessToken);
-      const trimmedText = text.trim();
-
-      // ── ELITE TIER: Hardened Delivery via Service Layer ──
-      let fbData: any;
-      const isPrivateRequest = req.body.isPrivate === true;
-
-      try {
-        if (conversation.channel === "facebook_comment") {
-          // Validation Guard: Ensure we have the Comment ID to reply to
-          if (!conversation.externalId) {
-            logger.error("messenger.manual_reply_failed.missing_id", { 
-              conversationId: conversation.id,
-              reason: "externalId is null for a facebook_comment" 
-            });
-            return res.status(400).json({ 
-              error: "Comment ID missing", 
-              detail: "The Facebook Comment ID for this thread was not correctly synced. Please try again after refreshing the thread." 
-            });
-          }
-
-          if (isPrivateRequest) {
-            const { sendPrivateReply } = await import("../../services/meta/facebook.service");
-            fbData = await sendPrivateReply({
-              commentId: conversation.externalId,
-              message: trimmedText,
-              accessToken: pageAccessToken,
-              pageId: page.pageId,
-              businessProfileId: page.businessProfileId!
-            });
-          } else {
-            const { replyToComment } = await import("../../services/meta/facebook.service");
-            fbData = await replyToComment({
-              commentId: conversation.externalId,
-              message: trimmedText,
-              accessToken: pageAccessToken,
-              pageId: page.pageId,
-            });
-          }
-        } else {
-          const { sendMessengerReply } = await import("../../services/meta/messenger.service");
-          fbData = await sendMessengerReply(conversation.senderId, trimmedText, pageAccessToken);
-        }
-      } catch (apiErr: any) {
-        logger.error("messenger.manual_reply.api_failed", { 
-          conversationId, 
-          error: apiErr.message 
+      if (isPrivateRequest) {
+        const { sendPrivateReply } = await import("../../services/meta/facebook.service");
+        fbData = await sendPrivateReply({
+          commentId: conversation.externalId,
+          message: trimmedText,
+          accessToken: pageAccessToken,
+          pageId: page.pageId,
+          businessProfileId: page.businessProfileId!
         });
-        return res.status(502).json({ 
-          error: "Meta API error", 
-          detail: apiErr.message || "Unknown error occurred during delivery" 
+      } else {
+        const { replyToComment } = await import("../../services/meta/facebook.service");
+        fbData = await replyToComment({
+          commentId: conversation.externalId,
+          message: trimmedText,
+          accessToken: pageAccessToken,
+          pageId: page.pageId,
         });
       }
-
-      // 2. Persist locally & Emit
-      const mid = fbData.id || fbData.message_id;
-      const saved = await saveMessage(conversationId, "agent", trimmedText, {
-        externalId: mid?.toString(),
-        status: "SENT",
-        isPrivate: isPrivateRequest,
-        origin: conversation.channel === "facebook_comment" ? "facebook_comment_reply" : undefined
-      });
-
-      // 3. Selective Mirroring for Private Replies to Comments
-      if (conversation.channel === "facebook_comment" && isPrivateRequest && mid && mid !== "ALREADY_REPLIED") {
-        try {
-          const { mirrorCommentReplyToMessenger } = await import("../../services/meta/metaDelivery.service");
-          await mirrorCommentReplyToMessenger({
-            pageId: page.pageId,
-            senderId: conversation.senderId,
-            businessProfileId: page.businessProfileId!,
-            messageId: mid.toString(),
-            content: trimmedText,
-            postId: conversation.postId ?? undefined,
-            commentId: conversation.externalId ?? undefined,
-            role: "agent"
-          });
-        } catch (mirrorErr: any) {
-          logger.warn("messenger.manual_reply.mirror_failed_soft", { error: mirrorErr.message });
-        }
-      } else if (mid === "ALREADY_REPLIED") {
-        const { syncMessageStatus } = await import("../../services/meta/metaDelivery.service");
-        await syncMessageStatus(saved.id, conversation.businessProfileId, conversation.id, {
-          status: "FAILED"
-        });
-      }
-
-      return res.status(201).json({ data: saved });
-    } catch (error: any) {
-      logger.error("messenger.conversations.send_failed", { error: error.message });
-      return res.status(500).json({ error: error.message });
+    } else {
+      const { sendMessengerReply } = await import("../../services/meta/messenger.service");
+      fbData = await sendMessengerReply(conversation.senderId, trimmedText, pageAccessToken);
     }
-  },
+
+    // 2. Persist locally & Emit
+    const mid = fbData.id || fbData.message_id;
+    const saved = await saveMessage(conversationId, "agent", trimmedText, {
+      externalId: mid?.toString(),
+      status: "SENT",
+      isPrivate: isPrivateRequest,
+      origin: conversation.channel === "facebook_comment" ? "facebook_comment_reply" : undefined
+    });
+
+    // 3. Selective Mirroring for Private Replies to Comments
+    if (conversation.channel === "facebook_comment" && isPrivateRequest && mid && mid !== "ALREADY_REPLIED") {
+      try {
+        const { mirrorCommentReplyToMessenger } = await import("../../services/meta/metaDelivery.service");
+        await mirrorCommentReplyToMessenger({
+          pageId: page.pageId,
+          senderId: conversation.senderId,
+          businessProfileId: page.businessProfileId!,
+          messageId: mid.toString(),
+          content: trimmedText,
+          postId: conversation.postId ?? undefined,
+          commentId: conversation.externalId ?? undefined,
+          role: "agent"
+        });
+      } catch (mirrorErr: any) {
+        logger.warn("messenger.manual_reply.mirror_failed_soft", { error: mirrorErr.message });
+      }
+    } else if (mid === "ALREADY_REPLIED") {
+      const { syncMessageStatus } = await import("../../services/meta/metaDelivery.service");
+      await syncMessageStatus(saved.id, conversation.businessProfileId, conversation.id, {
+        status: "FAILED"
+      });
+    }
+
+    return res.status(201).json({ data: saved });
+  }
 );
 
 // ─── Webhook Routes ───────────────────────────────────────────────────────────

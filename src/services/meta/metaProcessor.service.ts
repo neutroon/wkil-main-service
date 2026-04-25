@@ -554,9 +554,14 @@ export async function processMetaMessage(job: MetaMessageJob) {
                 });
 
                 if (pubRes?.id) {
-                  await prisma.conversationMessage.update({
+                  const updatedPublic = await prisma.conversationMessage.update({
                     where: { id: publicSaved.id },
                     data: { externalId: pubRes.id },
+                  });
+                  // UI SYNC: Update the bubble with the real Meta ID
+                  emitToBusiness(businessProfileId, "new_message", {
+                    conversationId: conversation.id,
+                    message: updatedPublic,
                   });
                 }
                 logger.info("meta.processor.public_greeting_delivered", {
@@ -567,9 +572,14 @@ export async function processMetaMessage(job: MetaMessageJob) {
                   commentId: job.commentId,
                   error: pubErr.message,
                 });
-                await prisma.conversationMessage.update({
+                const failedPublic = await prisma.conversationMessage.update({
                   where: { id: publicSaved.id },
                   data: { status: "FAILED" },
+                });
+                // UI SYNC: Mark the bubble as failed
+                emitToBusiness(businessProfileId, "new_message", {
+                  conversationId: conversation.id,
+                  message: failedPublic,
                 });
               }
             }
@@ -586,10 +596,16 @@ export async function processMetaMessage(job: MetaMessageJob) {
                 });
 
                 if (dmRes?.id && dmRes.id !== "ALREADY_REPLIED") {
-                  await prisma.conversationMessage.update({
+                  const updatedModel = await prisma.conversationMessage.update({
                     where: { id: modelSaved.id },
                     data: { externalId: dmRes.id },
                   });
+                  // UI SYNC: Update the bubble with the real Meta ID
+                  emitToBusiness(businessProfileId, "new_message", {
+                    conversationId: conversation.id,
+                    message: updatedModel,
+                  });
+
                   logger.info("meta.processor.private_dm_sent", {
                     senderId,
                     commentId: job.commentId,
@@ -665,9 +681,14 @@ export async function processMetaMessage(job: MetaMessageJob) {
                   logger.info("meta.processor.private_dm_skipped_already_sent", {
                     commentId: job.commentId,
                   });
-                  await prisma.conversationMessage.update({
+                  const failedModel = await prisma.conversationMessage.update({
                     where: { id: modelSaved.id },
                     data: { status: "FAILED" }, // Mark as failed/skipped so user knows it wasn't sent again
+                  });
+                  // UI SYNC: Mark the bubble as failed
+                  emitToBusiness(businessProfileId, "new_message", {
+                    conversationId: conversation.id,
+                    message: failedModel,
                   });
                 } else {
                   logger.warn("meta.processor.private_dm_delivery_status_ambiguous", {
@@ -679,9 +700,14 @@ export async function processMetaMessage(job: MetaMessageJob) {
                   commentId: job.commentId,
                   error: dmErr.message,
                 });
-                await prisma.conversationMessage.update({
+                const failedModel = await prisma.conversationMessage.update({
                   where: { id: modelSaved.id },
                   data: { status: "FAILED" },
+                });
+                // UI SYNC: Mark the bubble as failed
+                emitToBusiness(businessProfileId, "new_message", {
+                  conversationId: conversation.id,
+                  message: failedModel,
                 });
               }
             }

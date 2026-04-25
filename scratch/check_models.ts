@@ -1,35 +1,63 @@
 import { GoogleGenAI } from "@google/genai";
 import * as dotenv from "dotenv";
+
+/**
+ * AI Infrastructure Diagnostic Tool
+ * Verifies model availability and SDK handshake for Google Gemini.
+ */
+
 dotenv.config();
 
-const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
+const API_KEY = process.env.GEMINI_API_KEY;
 
-async function listModels() {
-  try {
-    // Note: The @google/genai SDK might not have a direct listModels yet in all versions
-    // but we can try to fetch them or check the documentation.
-    // Actually, let's use a simple fetch if needed, 
-    // or check the typical names.
-    console.log("Checking model availability...");
-    
-    // Attempting a very basic call to check if a model exists
-    const models = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash", "gemini-3-flash"];
-    
-    for (const m of models) {
-        try {
-            // In v1.46.0, we use genAI.models directly
-            const response = await (genAI as any).models.generateContent({
-                model: m,
-                contents: [{ role: "user", parts: [{ text: "hi" }] }]
-            });
-            console.log(`Model check: ${m} - OK (Response received)`);
-        } catch (e: any) {
-            console.log(`Model check: ${m} - FAILED: ${e.message}`);
-        }
-    }
-  } catch (error) {
-    console.error("Error listing models:", error);
-  }
+if (!API_KEY) {
+  console.error("CRITICAL ERROR: GEMINI_API_KEY is not defined in the environment.");
+  process.exit(1);
 }
 
-listModels();
+const client = new GoogleGenAI({ apiKey: API_KEY });
+
+async function verifyModelAvailability() {
+  console.log("--- Starting AI Infrastructure Diagnostic ---");
+  
+  // Production-ready models to verify
+  const modelsToTest = [
+    "gemini-2.0-flash", 
+    "gemini-2.0-flash-lite-preview-02-05", 
+    "gemini-1.5-flash", 
+    "gemini-1.5-pro"
+  ];
+
+  const results: { model: string; status: "PASS" | "FAIL"; details: string }[] = [];
+
+  for (const modelId of modelsToTest) {
+    try {
+      // Direct health check: Generate a minimal token response
+      await client.models.generateContent({
+        model: modelId,
+        contents: [{ role: "user", parts: [{ text: "ping" }] }]
+      });
+
+      results.push({ 
+        model: modelId, 
+        status: "PASS", 
+        details: "Handshake successful" 
+      });
+    } catch (error: any) {
+      results.push({ 
+        model: modelId, 
+        status: "FAIL", 
+        details: error.message 
+      });
+    }
+  }
+
+  // Generate structured report
+  console.table(results);
+  console.log("--- Diagnostic Complete ---");
+}
+
+verifyModelAvailability().catch((err) => {
+  console.error("UNEXPECTED SYSTEM FAILURE:", err.message);
+  process.exit(1);
+});

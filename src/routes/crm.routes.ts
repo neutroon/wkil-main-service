@@ -1,63 +1,61 @@
-import { Router } from "express";
+import { Router, Request, Response, NextFunction } from "express";
 import { authenticateToken } from "../middlewares/auth.middleware";
 import prisma from "../config/prisma";
-import { Request, Response } from "express";
+import { validate } from "../middlewares/validate.middleware";
+import { crmIntegrationSchema, getCrmSchema, deleteCrmSchema } from "../validations/crm.validation";
+import { AppError } from "../middlewares/errorHandler.middleware";
 
 const crmRoutes = Router();
 
 // Middleware to ensure user owns the business profile
-const authorizeBusinessProfile = async (req: Request, res: Response, next: Function) => {
-  try {
-    const userId = (req as any).user.id;
-    const profileId = parseInt(req.params.profileId);
-    
-    if (isNaN(profileId)) {
-      return res.status(400).json({ error: "Invalid profile ID" });
-    }
+const authorizeBusinessProfile = async (req: Request, res: Response, next: NextFunction) => {
+  const userId = (req as any).user.id;
+  const profileId = parseInt(req.params.profileId);
+  
+  const profile = await prisma.businessProfile.findUnique({
+    where: { id: profileId, userId },
+  });
 
-    const profile = await prisma.businessProfile.findUnique({
-      where: { id: profileId, userId },
-    });
-
-    if (!profile) {
-      return res.status(403).json({ error: "Unauthorized access to business profile" });
-    }
-
-    next();
-  } catch (error) {
-    res.status(500).json({ error: "Server error during authorization" });
+  if (!profile) {
+    throw new AppError("Unauthorized access to business profile", 403);
   }
+
+  next();
 };
 
 // Get all integrations for a profile
-crmRoutes.get("/business-profiles/:profileId", authenticateToken, authorizeBusinessProfile, async (req: Request, res: Response) => {
-  try {
+crmRoutes.get(
+  "/business-profiles/:profileId", 
+  authenticateToken, 
+  validate(getCrmSchema),
+  authorizeBusinessProfile, 
+  async (req: Request, res: Response) => {
     const profileId = parseInt(req.params.profileId);
     const integrations = await prisma.crmIntegration.findMany({
       where: { businessProfileId: profileId },
     });
     return res.json(integrations);
-  } catch (e: any) {
-    return res.status(500).json({ error: e.message });
   }
-});
+);
 
 // Configure or update an external CRM integration (Webhook/SaaS)
-crmRoutes.post("/business-profiles/:profileId", authenticateToken, authorizeBusinessProfile, async (req: Request, res: Response) => {
-  try {
+crmRoutes.post(
+  "/business-profiles/:profileId", 
+  authenticateToken, 
+  validate(crmIntegrationSchema),
+  authorizeBusinessProfile, 
+  async (req: Request, res: Response) => {
     const profileId = parseInt(req.params.profileId);
     const { provider, webhookUrl, apiKey, fieldMapping } = req.body;
 
-    if (!provider) {
-        return res.status(400).json({ error: "Provider (e.g. 'webhook') is required" });
-    }
+    // Find existing integration to get its ID for upsert
+    const existing = await prisma.crmIntegration.findFirst({
+      where: { businessProfileId: profileId, provider }
+    });
 
-    // Upsert a single CRM integration per provider type
     const integration = await prisma.crmIntegration.upsert({
       where: {
-        id: await prisma.crmIntegration.findFirst({
-            where: { businessProfileId: profileId, provider }
-        }).then((result: any) => result?.id || 0)
+        id: existing?.id || 0
       },
       update: {
         webhookUrl,
@@ -76,14 +74,16 @@ crmRoutes.post("/business-profiles/:profileId", authenticateToken, authorizeBusi
     });
 
     return res.json({ success: true, integration });
-  } catch (e: any) {
-    return res.status(500).json({ error: e.message });
   }
-});
+);
 
 // Delete an external CRM integration
-crmRoutes.delete("/business-profiles/:profileId/:integrationId", authenticateToken, authorizeBusinessProfile, async (req: Request, res: Response) => {
-  try {
+crmRoutes.delete(
+  "/business-profiles/:profileId/:integrationId", 
+  authenticateToken, 
+  validate(deleteCrmSchema),
+  authorizeBusinessProfile, 
+  async (req: Request, res: Response) => {
     const profileId = parseInt(req.params.profileId);
     const integrationId = parseInt(req.params.integrationId);
 
@@ -92,9 +92,7 @@ crmRoutes.delete("/business-profiles/:profileId/:integrationId", authenticateTok
     });
 
     return res.json({ success: true });
-  } catch (e: any) {
-    return res.status(500).json({ error: e.message });
   }
-});
+);
 
 export default crmRoutes;

@@ -2,13 +2,14 @@ import { Router, Request, Response } from "express";
 import { validate } from "../middlewares/validate.middleware";
 import { sentimentSchema } from "../validations/sentiment.validation";
 import { AppError } from "../middlewares/errorHandler.middleware";
+import { env } from "../config/env";
 
 // Environment variable for ML service
 const ML_SERVICE_URL =
-  process.env.ML_SERVICE_URL || "https://ml.pagespilot.com/sentiment/analyze";
+  env.ML_SERVICE_URL || "https://ml.pagespilot.com/sentiment/analyze";
 
 // Optional API key (if you secure the ML service in the future)
-const ML_API_KEY = process.env.ML_API_KEY || "";
+const ML_API_KEY = env.ML_API_KEY || "";
 
 const router = Router();
 

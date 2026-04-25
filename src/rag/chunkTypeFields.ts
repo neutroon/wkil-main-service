@@ -1,4 +1,4 @@
-import { BusinessProfile } from "@prisma/client";
+
 
 export const CHUNK_TYPE_FIELDS: Record<string, string[]> = {
   identity: ["name", "identity", "voice", "tone", "targetAudience"],

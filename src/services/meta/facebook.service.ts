@@ -7,6 +7,7 @@ import {
   encryptFacebookSecret,
 } from "../../utils/tokenCrypto";
 import { invalidateFacebookPageCache } from "./webhookCache.service";
+import { AppError } from "../../middlewares/errorHandler.middleware";
 
 const FB_API = process.env.FB_API_URL;
 
@@ -190,7 +191,7 @@ function decryptFacebookPageForResponse<P extends { pageAccessToken: string }>(
 
 export const generateAuthUrl = (params: FacebookAuthUrlParams): string => {
   if (!process.env.FB_APP_ID) {
-    throw new Error("Facebook App ID not configured");
+    throw new AppError("Facebook App ID not configured", 500);
   }
 
   const scope = [
@@ -261,7 +262,7 @@ export const exchangeCodeForToken = async (params: FacebookTokenParams) => {
   return callGraphApiWithRetry("exchange_token", async () => {
     try {
       if (!FB_API || !process.env.FB_APP_ID || !process.env.FB_APP_SECRET) {
-        throw new Error("Missing Facebook configuration");
+        throw new AppError("Missing Facebook configuration", 500);
       }
 
       const tokenUrl = `${FB_API}/oauth/access_token`;
@@ -279,7 +280,7 @@ export const exchangeCodeForToken = async (params: FacebookTokenParams) => {
     } catch (error: unknown) {
       const mapped = mapFacebookGraphError(error);
       logger.error("facebook.oauth.token_exchange_failed", mapped);
-      throw new Error(mapped.message);
+      throw new AppError(mapped.message, 502);
     }
   });
 };
@@ -347,7 +348,7 @@ export const getUserPages = async (
     } catch (error: unknown) {
       const mapped = mapFacebookGraphError(error);
       logger.error("facebook.pages.fetch_failed", mapped);
-      throw new Error(mapped.message);
+      throw new AppError(mapped.message, 502);
     }
   });
 };
@@ -361,8 +362,9 @@ export const getPageAccessToken = async (pageId: string): Promise<string> => {
   });
 
   if (!page) {
-    throw new Error(
+    throw new AppError(
       `Page with ID ${pageId} not found in database or is inactive.`,
+      404
     );
   }
 
@@ -402,7 +404,7 @@ export const createPost = async (params: FacebookPostParams) => {
       logger.error("facebook.post.create_failed", mapped);
       const codePart =
         mapped.code !== undefined ? ` (code: ${mapped.code})` : "";
-      throw new Error(`${mapped.message}${codePart}`);
+      throw new AppError(`${mapped.message}${codePart}`, 502);
     }
   });
 };
@@ -427,7 +429,7 @@ export const schedulePost = async (
     const mapped = mapFacebookGraphError(error);
     logger.error("facebook.post.schedule_failed", mapped);
     const codePart = mapped.code !== undefined ? ` (code: ${mapped.code})` : "";
-    throw new Error(`${mapped.message}${codePart}`);
+    throw new AppError(`${mapped.message}${codePart}`, 502);
   }
 };
 
@@ -441,7 +443,7 @@ export const getPagePosts = async (pageId: string, accessToken?: string) => {
     } catch (error: unknown) {
       const mapped = mapFacebookGraphError(error);
       logger.error("facebook.posts.fetch_failed", mapped);
-      throw new Error(mapped.message);
+      throw new AppError(mapped.message, 502);
     }
   });
 };
@@ -483,7 +485,7 @@ export const getPageDetails = async (
     } catch (error: unknown) {
       const mapped = mapFacebookGraphError(error);
       logger.error("facebook.page.fetch_details_failed", mapped);
-      throw new Error(mapped.message);
+      throw new AppError(mapped.message, 502);
     }
   });
 };
@@ -497,7 +499,7 @@ export const getPostComments = async (postId: string, accessToken: string) => {
     } catch (error: unknown) {
       const mapped = mapFacebookGraphError(error);
       logger.error("facebook.comments.fetch_failed", mapped);
-      throw new Error(mapped.message);
+      throw new AppError(mapped.message, 502);
     }
   });
 };
@@ -566,7 +568,7 @@ export const replyToComment = async (params: FacebookCommentParams & { pageId?: 
       isRetryable: mapped.isRetryable, subcode: mapped.subcode,
       commentId, pageId: activePageId 
     });
-    throw new Error(mapped.message);
+    throw new AppError(mapped.message, 502);
   }
 };
 
@@ -691,7 +693,7 @@ export const deleteFacebookPost = async (
       }
 
       if (!token) {
-        throw new Error("Access token required for post deletion");
+        throw new AppError("Access token required for post deletion", 401);
       }
 
       const url = `${FB_API}/${postId}?access_token=${token}`;
@@ -801,7 +803,7 @@ export const sendPrivateReply = async (params: FacebookPrivateReplyParams & { pa
       isRetryable: mapped.isRetryable, subcode: mapped.subcode,
       commentId, pageId: activePageId 
     });
-    throw new Error(mapped.message);
+    throw new AppError(mapped.message, 502);
   }
 };
 
@@ -851,8 +853,9 @@ export const saveFacebookToken = async (
       select: { userId: true },
     });
     if (existing && existing.userId !== userId) {
-      throw new Error(
+      throw new AppError(
         "This Facebook account is already linked to another user. Log in as that user or disconnect the account first.",
+        403
       );
     }
 
@@ -911,9 +914,9 @@ export const saveFacebookToken = async (
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     logger.error("facebook.token.save_failed", { error: msg });
-    throw error instanceof Error
+    throw error instanceof AppError
       ? error
-      : new Error("Failed to save Facebook token");
+      : new AppError(msg, 500);
   }
 };
 
@@ -941,7 +944,7 @@ export const getUserFacebookAccounts = async (userId: number) => {
     logger.error("facebook.accounts.fetch_failed", {
       error: error instanceof Error ? error.message : String(error),
     });
-    throw new Error("Failed to get Facebook accounts");
+    throw new AppError("Failed to get Facebook accounts", 500);
   }
 };
 
@@ -994,7 +997,7 @@ export const saveFacebookPages = async (
     logger.error("facebook.pages.save_failed", {
       error: error instanceof Error ? error.message : String(error),
     });
-    throw new Error("Failed to save Facebook pages");
+    throw new AppError("Failed to save Facebook pages", 500);
   }
 };
 async function subscribePageToWebhook(pageAccessToken: string, pageId: string) {
@@ -1154,7 +1157,7 @@ export const getUserAnalytics = async (userId: number, days: number = 30) => {
     logger.error("facebook.analytics.user_fetch_failed", {
       error: error instanceof Error ? error.message : String(error),
     });
-    throw new Error("Failed to get user analytics");
+    throw new AppError("Failed to get user analytics", 500);
   }
 };
 
@@ -1234,7 +1237,7 @@ export const getAdminAnalytics = async (days: number = 30) => {
     logger.error("facebook.analytics.admin_fetch_failed", {
       error: error instanceof Error ? error.message : String(error),
     });
-    throw new Error("Failed to get admin analytics");
+    throw new AppError("Failed to get admin analytics", 500);
   }
 };
 
@@ -1260,7 +1263,7 @@ export const switchDevice = async (
     logger.error("facebook.device.switch_failed", {
       error: error instanceof Error ? error.message : String(error),
     });
-    throw new Error("Failed to switch device");
+    throw new AppError("Failed to switch device", 500);
   }
 };
 
@@ -1293,7 +1296,7 @@ export const deactivateFacebookAccount = async (facebookAccountId: number) => {
     logger.error("facebook.account.deactivate_failed", {
       error: error instanceof Error ? error.message : String(error),
     });
-    throw new Error("Failed to deactivate Facebook account");
+    throw new AppError("Failed to deactivate Facebook account", 500);
   }
 };
 
@@ -1308,7 +1311,7 @@ export const deactivateFacebookPage = async (
     });
 
     if (!page) {
-      throw new Error("Page not found or unauthorized");
+      throw new AppError("Page not found or unauthorized", 404);
     }
 
     // Try to revoke permissions on Facebook directly
@@ -1350,6 +1353,6 @@ export const deactivateFacebookPage = async (
     logger.error("facebook.page.deactivate_failed", {
       error: error instanceof Error ? error.message : String(error),
     });
-    throw new Error("Failed to disconnect Facebook page");
+    throw new AppError("Failed to disconnect Facebook page", 500);
   }
 };

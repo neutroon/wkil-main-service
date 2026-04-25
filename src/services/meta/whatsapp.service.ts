@@ -8,7 +8,6 @@ import {
 } from "./conversation.service";
 import { computeBusinessChatReply } from "../chat/businessChatReply.service";
 import { historyToLlmTurns, toPromptMessages } from "../chat/conversationTurns";
-import { emitToBusiness, emitToConversation } from "../../utils/socket";
 
 const FALLBACK_REPLY =
   "Sorry, we can't respond right now. Please try again or contact the business directly.";
@@ -259,15 +258,6 @@ export async function handleWhatsAppMessage(
       mediaMetadata,
     });
 
-    // Notify UI immediately
-    emitToBusiness(account.businessProfileId, "new_message", {
-      conversationId: conversation.id,
-      message: userSaved,
-    });
-    emitToConversation(conversation.id, "new_message", {
-      message: userSaved,
-    });
-
     // 3. AI Mode Check (Manual Mode Exit)
     if (businessProfile.responseMode === "MANUAL") {
       logger.info("whatsapp.manual_mode_skip", {
@@ -316,22 +306,6 @@ export async function handleWhatsAppMessage(
       },
     );
 
-    // Pulse UI
-    emitToBusiness(account.businessProfileId, "new_message", {
-      conversationId: conversation.id,
-      message: modelSaved,
-    });
-    emitToConversation(conversation.id, "new_message", {
-      message: modelSaved,
-    });
-
-    if (status === "PENDING_REVIEW") {
-      emitToBusiness(account.businessProfileId, "draft_received", {
-        conversationId: conversation.id,
-        message: modelSaved,
-      });
-    }
-
     // 6. Send API call if AUTO
     if (
       status === "SENT" &&
@@ -357,14 +331,6 @@ export async function handleWhatsAppMessage(
         logger.error("whatsapp.reply_send_failed", { error: sendErr.message });
       }
     }
-
-    // 7. Critical UI Notification for System Errors
-    if (reply.handoffCategory === "SYSTEM_ERROR") {
-      emitToBusiness(account.businessProfileId, "system_critical_error", {
-        conversationId: conversation.id,
-        reason: reply.reasoning,
-      });
-    }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error("whatsapp.handle_failed", {
@@ -380,14 +346,6 @@ export async function handleWhatsAppMessage(
         status: "FAILED",
         aiReasoning: message,
         handoffCategory: "SYSTEM_ERROR",
-      });
-      emitToBusiness(account.businessProfileId, "new_message", {
-        conversationId: conversation.id,
-        message: failMsg,
-      });
-      emitToBusiness(account.businessProfileId, "system_critical_error", {
-        conversationId: conversation.id,
-        reason: message,
       });
     }
   }

@@ -226,30 +226,12 @@ whatsappRoutes.post("/webhook", async (req: Request, res: Response) => {
         if (Array.isArray(statuses)) {
           for (const status of statuses) {
             const { id: wamid, status: newStatus } = status;
-
-            try {
-              const msg = await prisma.conversationMessage.findUnique({
-                where: { externalId: wamid },
-                select: {
-                  id: true,
-                  conversation: {
-                    select: { businessProfileId: true, id: true },
-                  },
-                },
-              });
-
-              if (msg) {
-                const updatedMsg = await prisma.conversationMessage.update({
-                  where: { id: msg.id },
-                  data: { status: newStatus.toUpperCase() },
-                });
-              }
-            } catch (e) {
-              logger.warn("whatsapp.webhook.status_update_failed", {
-                wamid,
-                error: String(e),
-              });
-            }
+            enqueueMetaJob({
+              platform: "whatsapp",
+              type: "status_update",
+              externalId: wamid,
+              statusEvent: newStatus.toUpperCase()
+            } as any);
           }
         }
 

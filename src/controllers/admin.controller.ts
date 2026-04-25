@@ -1,13 +1,13 @@
 import prisma from "../config/prisma";
 import { clearQuotaCache } from "../services/billing.service";
 import { createAdmin } from "../services/admin.service";
-import { createUser, updateUserRole } from "../services/user.service";
+import { createUser } from "../services/user.service";
 import {
   getBillingMultiplier,
   updateBillingMultiplier,
 } from "../services/settings.service";
 import { Request, Response } from "express";
-import { AppError } from "../middlewares/errorHandler.middleware";
+
 
 const registerAdmin = async (req: Request, res: Response) => {
   const { name, email, password } = req.body;

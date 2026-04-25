@@ -5,7 +5,10 @@ import { listConversationMessages } from "../services/meta/conversation.service"
 import type { WidgetRequest } from "../middlewares/widgetInstall.middleware";
 import { widgetInstallAndCors } from "../middlewares/widgetInstall.middleware";
 import { validate } from "../middlewares/validate.middleware";
-import { widgetChatSchema, widgetHistorySchema } from "../validations/widget.validation";
+import {
+  widgetChatSchema,
+  widgetHistorySchema,
+} from "../validations/widget.validation";
 import { AppError } from "../middlewares/errorHandler.middleware";
 
 const widgetPublicRoutes = Router();
@@ -35,7 +38,7 @@ widgetPublicRoutes.post(
       reply: result.reply,
       conversationId: result.conversationId,
     });
-  }
+  },
 );
 
 /**
@@ -99,9 +102,7 @@ widgetPublicRoutes.get(
       conversationId: convId,
       ...result,
     });
-  }
+  },
 );
-
-export default widgetPublicRoutes;
 
 export default widgetPublicRoutes;

@@ -145,11 +145,15 @@ export const syncMediaStatus = (params: {
   businessProfileId: number;
   assetId: number;
   status: string;
+  platform?: string;
+  identifier?: string;
   url?: string;
 }) => {
   emitToBusiness(params.businessProfileId, "media_sync_status", {
     assetId: params.assetId,
     status: params.status,
+    platform: params.platform,
+    identifier: params.identifier,
     url: params.url
   });
 };

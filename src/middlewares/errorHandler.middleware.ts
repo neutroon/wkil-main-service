@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { ZodError } from "zod";
+import { env } from "../config/env";
 import { logger } from "../utils/logger";
 
 export class AppError extends Error {
@@ -27,7 +28,7 @@ export const errorHandler = (
 
   // Log error
   logger.error(err.message, {
-    stack: process.env.NODE_ENV === "development" ? err.stack : undefined,
+    stack: env.NODE_ENV === "development" ? err.stack : undefined,
     path: req.path,
     method: req.method,
   });
@@ -50,7 +51,7 @@ export const errorHandler = (
     (err as any).statusCode = 400; // Most Prisma errors are bad requests/conflicts
   }
 
-  if (process.env.NODE_ENV === "development") {
+  if (env.NODE_ENV === "development") {
     res.status(err.statusCode).json({
       status: err.status,
       error: err,
@@ -77,7 +78,7 @@ export const errorHandler = (
         debug: {
           name: err.name,
           message: err.message,
-          stack: process.env.NODE_ENV === "development" ? err.stack : undefined,
+          stack: undefined,
         }
       });
     }

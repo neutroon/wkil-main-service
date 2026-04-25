@@ -14,10 +14,7 @@ export const paginationSchema = z.object({
       .string()
       .optional()
       .transform((val) => Math.min(100, Math.max(1, parseInt(val || "20", 10) || 20))),
-    cursor: z
-      .string()
-      .optional()
-      .transform((val) => (val ? parseInt(val, 10) : undefined)),
+    cursor: z.coerce.number().optional(),
     channel: z.string().optional(),
   }),
 });
@@ -28,7 +25,7 @@ export const paginationSchema = z.object({
  */
 export const idParamSchema = z.object({
   params: z.object({
-    id: z.string().regex(/^\d+$/).transform(Number),
+    id: z.coerce.number(),
   }),
 });
 
@@ -37,7 +34,7 @@ export const idParamSchema = z.object({
  */
 export const idPaginationSchema = z.object({
   params: z.object({
-    id: z.string().regex(/^\d+$/).transform(Number),
+    id: z.coerce.number(),
   }),
   query: z.object({
     page: z
@@ -48,9 +45,6 @@ export const idPaginationSchema = z.object({
       .string()
       .optional()
       .transform((val) => Math.min(100, Math.max(1, parseInt(val || "20", 10) || 20))),
-    cursor: z
-      .string()
-      .optional()
-      .transform((val) => (val ? parseInt(val, 10) : undefined)),
+    cursor: z.coerce.number().optional(),
   }),
 });

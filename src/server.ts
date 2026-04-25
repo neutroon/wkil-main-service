@@ -1,4 +1,4 @@
-import "dotenv/config";
+import { env } from "./config/env";
 import { createServer } from "http";
 import app from "./app";
 import { initSocket } from "./utils/socket";
@@ -9,11 +9,11 @@ import {
   productionWorker 
 } from "./queues/meta.queue";
 import { startMediaRefreshJob } from "./jobs/mediaRefresh.job";
-import { socialWorker } from "./workers/social.worker"; // Initialize BullMQ Worker
+import { socialWorker } from "./workers/social.worker"; 
 import { logger } from "./utils/logger";
 import prisma from "./config/prisma";
 
-const PORT = Number(process.env.PORT) || 8080;
+const { PORT } = env;
 
 const httpServer = createServer(app);
 initSocket(httpServer);

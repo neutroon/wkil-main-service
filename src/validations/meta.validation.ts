@@ -6,7 +6,7 @@ import { z } from "zod";
  */
 export const sendMessengerReplySchema = z.object({
   params: z.object({
-    id: z.string().regex(/^\d+$/, "ID must be numeric"),
+    id: z.coerce.number(),
   }),
   body: z.object({
     message: z.string().min(1, "Message is required").max(2000),
@@ -21,7 +21,7 @@ export const sendMessengerReplySchema = z.object({
  */
 export const sendWhatsAppReplySchema = z.object({
   params: z.object({
-    id: z.string().regex(/^\d+$/, "ID must be numeric"),
+    id: z.coerce.number(),
   }),
   body: z.object({
     message: z.string().min(1, "Message is required").max(4000),
@@ -36,7 +36,7 @@ export const sendWhatsAppReplySchema = z.object({
  */
 export const sendWhatsAppTemplateSchema = z.object({
   params: z.object({
-    id: z.string().regex(/^\d+$/, "ID must be numeric"),
+    id: z.coerce.number(),
   }),
   body: z.object({
     templateName: z.string().min(1, "Template name is required"),

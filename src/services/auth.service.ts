@@ -3,6 +3,7 @@ import prisma from "../config/prisma";
 import { hashToken, generateRandomToken } from "../utils/tokenCrypto";
 import { sendVerificationEmail, sendPasswordResetEmail } from "./mail.service";
 import { logger } from "../utils/logger";
+import { AppError } from "../middlewares/errorHandler.middleware";
 
 /**
  * Production-grade Identity Lifecycle Service
@@ -26,7 +27,7 @@ export const verifyEmail = async (token: string) => {
 
   if (!user) {
     logger.warn("Verification failed: Token mismatch or expired", { hashedToken });
-    throw new Error("Invalid or expired verification token");
+    throw new AppError("Invalid or expired verification token", 400);
   }
 
   logger.info("Verification target user identified", { 
@@ -105,7 +106,7 @@ export const resetPassword = async (token: string, newPassword: string) => {
   });
 
   if (!user) {
-    throw new Error("Invalid or expired password reset token");
+    throw new AppError("Invalid or expired password reset token", 400);
   }
 
   const hashedPassword = await bcrypt.hash(newPassword, 10);
@@ -142,7 +143,7 @@ export const resendVerification = async (email: string) => {
 
   if (user.lastVerificationSentAt && (now.getTime() - user.lastVerificationSentAt.getTime() < cooldownPeriod)) {
     const remaining = Math.ceil((cooldownPeriod - (now.getTime() - user.lastVerificationSentAt.getTime())) / 1000);
-    throw new Error(`Please wait ${remaining} seconds before requesting another email.`);
+    throw new AppError(`Please wait ${remaining} seconds before requesting another email.`, 429);
   }
 
   const verificationToken = generateRandomToken();

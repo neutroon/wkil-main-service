@@ -2,8 +2,10 @@ import { mailer } from "../config/mail";
 import { logger } from "../utils/logger";
 import { AppError } from "../middlewares/errorHandler.middleware";
 
-const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
-const MAIL_FROM = process.env.MAIL_FROM || '"PagesPilot" <noreply@pagespilot.com>';
+import { env } from "../config/env";
+
+const FRONTEND_URL = env.FRONTEND_URL;
+const MAIL_FROM = env.MAIL_FROM;
 
 /**
  * Production-grade Mailing Service

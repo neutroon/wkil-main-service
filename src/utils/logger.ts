@@ -1,3 +1,5 @@
+import { env } from "../config/env";
+
 type LogLevel = "info" | "warn" | "error" | "debug";
 
 class Logger {
@@ -24,7 +26,7 @@ class Logger {
   }
 
   debug(message: string, meta?: any) {
-    if (process.env.NODE_ENV !== "production") {
+    if (env.NODE_ENV !== "production") {
       console.log(this.formatMessage("debug", message, meta));
     }
   }

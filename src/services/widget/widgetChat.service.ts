@@ -14,8 +14,7 @@ import {
 import type { WidgetInstall } from "@prisma/client";
 import { AppError } from "../../middlewares/errorHandler.middleware";
 
-const FALLBACK_REPLY =
-  "Sorry, we can't respond right now. Please try again or contact the business directly.";
+
 
 function pageIdForWidget(installId: number): string {
   return `widget:${installId}`;
@@ -61,7 +60,7 @@ export async function processWidgetChatMessage(params: {
   });
 
   const historyRows = await getConversationHistory(conversation.id);
-  const userMsg = await saveMessage(conversation.id, "user", message);
+  await saveMessage(conversation.id, "user", message);
 
   const historyForPrompt = toPromptMessages(historyRows);
   historyForPrompt.push({ role: "user", content: message });

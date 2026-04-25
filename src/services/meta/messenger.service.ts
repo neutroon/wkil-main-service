@@ -11,8 +11,7 @@ import { computeBusinessChatReply } from "../chat/businessChatReply.service";
 import { historyToLlmTurns, toPromptMessages } from "../chat/conversationTurns";
 import { AppError } from "../../middlewares/errorHandler.middleware";
 
-const FALLBACK_REPLY =
-  "Sorry, we can't respond right now. Please try again or contact the business directly.";
+
 
 export async function sendMessengerReply(
   recipientId: string,
@@ -196,7 +195,7 @@ export async function handleMessengerMessage(
     });
 
     // 2. Save User Message turn
-    const userSaved = await saveMessage(conversation.id, "user", messageText, {
+    await saveMessage(conversation.id, "user", messageText, {
       externalId,
       type: type || "text",
       mediaId,
@@ -295,7 +294,7 @@ export async function handleMessengerMessage(
     // UI Failure Signal
     if (page.businessProfileId && conversation) {
       const errorMsg = `Internal Technical Failure: ${message}`;
-      const failMsg = await saveMessage(conversation.id, "model", errorMsg, {
+      await saveMessage(conversation.id, "model", errorMsg, {
         status: "FAILED",
         aiReasoning: message,
         handoffCategory: "SYSTEM_ERROR",

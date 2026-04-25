@@ -1,4 +1,5 @@
 import prisma from "../../config/prisma";
+import { AppError } from "../../middlewares/errorHandler.middleware";
 
 const HISTORY_LIMIT = 10;
 
@@ -290,7 +291,7 @@ export async function listConversationMessages(
     select: { id: true, senderId: true, pageId: true, channel: true }
   });
 
-  if (!mainConv) throw new Error("Conversation not found");
+  if (!mainConv) throw new AppError("Conversation not found", 404);
 
   const messages = await prisma.conversationMessage.findMany({
     where: {

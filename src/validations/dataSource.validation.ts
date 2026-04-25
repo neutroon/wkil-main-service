@@ -6,7 +6,7 @@ import { z } from "zod";
  */
 export const dataSourceSchema = z.object({
   params: z.object({
-    profileId: z.string().regex(/^\d+$/, "profileId must be numeric"),
+    profileId: z.coerce.number(),
   }),
   body: z.object({
     name: z.string().min(1, "Name is required"),
@@ -26,8 +26,8 @@ export const dataSourceSchema = z.object({
  */
 export const updateDataSourceSchema = z.object({
   params: z.object({
-    profileId: z.string().regex(/^\d+$/, "profileId must be numeric"),
-    sourceId: z.string().regex(/^\d+$/, "sourceId must be numeric"),
+    profileId: z.coerce.number(),
+    sourceId: z.coerce.number(),
   }),
   body: z.object({
     name: z.string().min(1).optional(),
@@ -46,7 +46,7 @@ export const updateDataSourceSchema = z.object({
  */
 export const getDataSourceSchema = z.object({
   params: z.object({
-    profileId: z.string().regex(/^\d+$/, "profileId must be numeric"),
+    profileId: z.coerce.number(),
   }),
 });
 
@@ -55,7 +55,7 @@ export const getDataSourceSchema = z.object({
  */
 export const deleteDataSourceSchema = z.object({
   params: z.object({
-    profileId: z.string().regex(/^\d+$/, "profileId must be numeric"),
-    sourceId: z.string().regex(/^\d+$/, "sourceId must be numeric"),
+    profileId: z.coerce.number(),
+    sourceId: z.coerce.number(),
   }),
 });

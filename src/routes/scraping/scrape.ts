@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import axios from "axios";
+import { internalClient } from "../../utils/apiClient";
 import {
   discoverStrategicLinks,
   extractBusinessIdentity,
@@ -21,7 +21,7 @@ OnboardingRouter.post(
     const userId = (req as any).user.id;
 
     // 1. scrape the main page
-    const homeScrapeRes = await axios.post(SCRAPING_SERVICE_URL, { url });
+    const homeScrapeRes = await internalClient.post(SCRAPING_SERVICE_URL, { url });
     const homeMarkdown = homeScrapeRes.data.content.markdown;
 
     // 2. AI choose the important links
@@ -31,7 +31,7 @@ OnboardingRouter.post(
 
     // 3. if we found links, we will do Batch Scrape
     if (strategicLinks && strategicLinks.length > 0) {
-      const batchScrapeRes = await axios.post(
+      const batchScrapeRes = await internalClient.post(
         `${SCRAPING_SERVICE_URL}/batch`,
         { urls: strategicLinks },
       );

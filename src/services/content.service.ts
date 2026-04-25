@@ -1,6 +1,7 @@
 import { generateContent } from "../config/gemini";
 import { imageModel } from "../config/vertexai";
 import cloudinary from "../config/cloudinary";
+import { AppError } from "../middlewares/errorHandler.middleware";
 
 export interface ContentGenerationRequest {
   topic: string;
@@ -39,7 +40,7 @@ export const generatePostContent = async (
   } = request;
 
   if (!topic) {
-    throw new Error("Topic is required");
+    throw new AppError("Topic is required", 400);
   }
 
   console.log(
@@ -52,8 +53,9 @@ export const generatePostContent = async (
   const validLengths = ["short", "medium", "long"];
 
   if (!validLengths.includes(length)) {
-    throw new Error(
+    throw new AppError(
       `Invalid length. Must be one of: ${validLengths.join(", ")}`,
+      400
     );
   }
 
@@ -67,11 +69,11 @@ export const generatePostContent = async (
   // (Assuming you have businessProfileId available if logged in)
 
   if (!generatedText) {
-    throw new Error("No response received from Gemini");
+    throw new AppError("No response received from Gemini", 502);
   }
 
   if (generatedText.trim().length === 0) {
-    throw new Error("Empty response from Gemini");
+    throw new AppError("Empty response from Gemini", 502);
   }
 
   // Parse the response to extract content, hashtags, and image suggestion
@@ -201,20 +203,20 @@ async function generateImageWithImagen(prompt: string): Promise<Buffer> {
       !result.response.candidates ||
       result.response.candidates.length === 0
     ) {
-      throw new Error("No image generated from Imagen");
+      throw new AppError("No image generated from Imagen", 502);
     }
 
     const imageBase64 =
       result.response.candidates[0].content.parts[0].inlineData?.data;
 
     if (!imageBase64) {
-      throw new Error("No image data returned from Imagen");
+      throw new AppError("No image data returned from Imagen", 502);
     }
 
     const imageBuffer = Buffer.from(imageBase64, "base64");
 
     if (!imageBuffer || imageBuffer.length === 0) {
-      throw new Error("Empty image buffer returned");
+      throw new AppError("Empty image buffer returned", 502);
     }
 
     console.log(
@@ -222,8 +224,7 @@ async function generateImageWithImagen(prompt: string): Promise<Buffer> {
     );
     return imageBuffer;
   } catch (error: any) {
-    console.error("[ContentService] Image generation error:", error.message);
-    throw new Error(`Failed to generate image: ${error.message}`);
+    throw new AppError(`Failed to generate image: ${error.message}`, 502);
   }
 }
 
@@ -241,7 +242,7 @@ async function uploadBufferToCloudinary(
         } else if (result) {
           resolve({ url: result.secure_url, publicId: result.public_id });
         } else {
-          reject(new Error("No result from Cloudinary upload"));
+          reject(new AppError("No result from Cloudinary upload", 502));
         }
       },
     );

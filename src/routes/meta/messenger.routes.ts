@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import { Prisma } from "@prisma/client";
+
 import prisma from "../../config/prisma";
 import { enqueueMetaJob } from "../../queues/meta.queue";
 import { logger } from "../../utils/logger";
@@ -12,7 +12,6 @@ import {
   listConversationMessages,
   getMessengerConversationForUser,
   saveMessage,
-  getOrCreateConversation,
 } from "../../services/meta/conversation.service";
 import { sendMessengerMedia } from "../../services/meta/messenger.service";
 import { AppError } from "../../middlewares/errorHandler.middleware";
@@ -165,7 +164,7 @@ messengerRoutes.post(
   validate(idParamSchema),
   validate(sendMessengerReplySchema),
   async (req: Request, res: Response) => {
-    const userId = (req as any).user.id as number;
+
     const { id: conversationId } = req.params as any;
     const { message: text } = req.body;
 

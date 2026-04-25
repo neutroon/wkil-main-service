@@ -4,6 +4,7 @@ import prisma from "../config/prisma";
 import { createPost } from "../services/meta/facebook.service";
 import { logger } from "../utils/logger";
 import { SocialPublishJob } from "../queues/social.queue";
+import { AppError } from "../middlewares/errorHandler.middleware";
 
 /**
  * Enterprise-Grade Social Media Worker.
@@ -50,7 +51,7 @@ export const socialWorker = new Worker(
           where: { businessProfileId, isActive: true }
         });
 
-        if (!page) throw new Error("No active Facebook page connected for this business.");
+        if (!page) throw new AppError("No active Facebook page connected for this business.", 404);
 
         const result = await createPost({
           pageId: page.pageId,
@@ -61,7 +62,7 @@ export const socialWorker = new Worker(
 
         logger.info("social_worker.facebook_published", { postId, fbPostId: result.id });
       } else {
-        throw new Error(`Platform ${platform} not supported yet.`);
+        throw new AppError(`Platform ${platform} not supported yet.`, 400);
       }
 
       // 4. Mark as Published

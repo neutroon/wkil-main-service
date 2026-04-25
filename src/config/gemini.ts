@@ -11,7 +11,7 @@ import { AppError } from "../middlewares/errorHandler.middleware";
 
 import { env } from "../config/env";
 
-const { GEMINI_API_KEY, NODE_ENV } = env;
+const { GEMINI_API_KEY } = env;
 
 // Initialize Google Generative AI
 export const genAI = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
@@ -420,14 +420,11 @@ export function buildExternalQueryTools(dataSources: any[]): Tool[] {
 
   const functionDeclarations = dataSources.map((ds) => {
     let properties: any = {};
-    let required: string[] = [];
-
     if (
       ds.expectedParamsSchema &&
       typeof ds.expectedParamsSchema === "object"
     ) {
       properties = buildDynamicProperties(ds.expectedParamsSchema);
-      required = Object.keys(properties);
     }
 
     return {

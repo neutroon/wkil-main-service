@@ -9,18 +9,12 @@ import {
 import { logger } from "../utils/logger";
 import { AppError } from "../middlewares/errorHandler.middleware";
 
-if (process.env.NODE_ENV !== "production") {
-  logger.debug("gemini.config", {
-    geminiApiKeySet: Boolean(process.env.GEMINI_API_KEY),
-  });
-}
+import { env } from "../config/env";
 
-if (!process.env.GEMINI_API_KEY) {
-  throw new AppError("GEMINI_API_KEY environment variable is required", 500);
-}
+const { GEMINI_API_KEY, NODE_ENV } = env;
 
 // Initialize Google Generative AI
-export const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+export const genAI = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 
 /**
  * Types for precise token usage and billing tracking (Gemini Production Standard).

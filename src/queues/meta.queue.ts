@@ -41,7 +41,9 @@ export type MetaJobType =
   | "messaging"
   | "visual_production"
   | "media_sync"
-  | "media_refresh_scanner";
+  | "media_refresh_scanner"
+  | "status_update"
+  | "typing_indicator";
 
 export interface MetaEngineJob {
   type: MetaJobType;

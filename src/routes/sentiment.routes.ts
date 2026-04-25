@@ -1,5 +1,7 @@
 import { Router, Request, Response } from "express";
-// import fetch from "node-fetch";
+import { validate } from "../middlewares/validate.middleware";
+import { sentimentSchema } from "../validations/sentiment.validation";
+import { AppError } from "../middlewares/errorHandler.middleware";
 
 // Environment variable for ML service
 const ML_SERVICE_URL =
@@ -10,13 +12,11 @@ const ML_API_KEY = process.env.ML_API_KEY || "";
 
 const router = Router();
 
-router.post("/", async (req: Request, res: Response) => {
-  try {
+router.post(
+  "/", 
+  validate(sentimentSchema),
+  async (req: Request, res: Response) => {
     const { text } = req.body;
-
-    if (!text || text.trim().length < 1) {
-      return res.status(400).json({ error: "Text is required" });
-    }
 
     // Build payload for ML service
     const payload = {
@@ -36,18 +36,12 @@ router.post("/", async (req: Request, res: Response) => {
     const mlData = await mlRes.json();
 
     if (!mlRes.ok) {
-      return res.status(500).json({
-        error: "ML service failed",
-        details: mlData,
-      });
+      throw new AppError("ML service failed", 500);
     }
 
     // Send back result
     return res.json({ sentiment: mlData });
-  } catch (error) {
-    console.error("Sentiment integration error:", error);
-    return res.status(500).json({ error: "Internal server error" });
   }
-});
+);
 
-module.exports = router;
+export default router;

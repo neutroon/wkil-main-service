@@ -2,7 +2,7 @@ import { Readable } from "stream";
 import { logger } from "../../utils/logger";
 import { AppError } from "../../middlewares/errorHandler.middleware";
 import { cache } from "../../utils/cache";
-import { env } from "../../config/env";
+
 import { metaClient } from "../../utils/apiClient";
 
 /**

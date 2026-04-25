@@ -8,8 +8,9 @@ import {
 } from "../../utils/tokenCrypto";
 import { invalidateFacebookPageCache } from "./webhookCache.service";
 import { AppError } from "../../middlewares/errorHandler.middleware";
+import { env } from "../../config/env";
 
-const FB_API = process.env.FB_API_URL;
+const FB_API = env.FB_API_URL;
 
 // ELITE TIER: In-memory cache for post content to avoid redundant Graph API calls
 const POST_CONTEXT_CACHE = new Map<string, { content: string; media?: string; expiresAt: number }>();
@@ -119,7 +120,7 @@ export async function validateTokenHealth(accessToken: string): Promise<{
   error?: string;
 }> {
   try {
-    const appAccessToken = `${process.env.FB_APP_ID}|${process.env.FB_APP_SECRET}`;
+    const appAccessToken = `${env.FB_APP_ID}|${env.FB_APP_SECRET}`;
     const response = await axios.get(`${FB_API}/debug_token`, {
       params: {
         input_token: accessToken,
@@ -190,7 +191,7 @@ function decryptFacebookPageForResponse<P extends { pageAccessToken: string }>(
 }
 
 export const generateAuthUrl = (params: FacebookAuthUrlParams): string => {
-  if (!process.env.FB_APP_ID) {
+  if (!env.FB_APP_ID) {
     throw new AppError("Facebook App ID not configured", 500);
   }
 
@@ -203,7 +204,7 @@ export const generateAuthUrl = (params: FacebookAuthUrlParams): string => {
     "pages_manage_engagement",
   ];
 
-  return `https://www.facebook.com/v25.0/dialog/oauth?client_id=${process.env.FB_APP_ID}&redirect_uri=${params.redirect_uri}&scope=${scope.join(",")}&response_type=code`;
+  return `https://www.facebook.com/v25.0/dialog/oauth?client_id=${env.FB_APP_ID}&redirect_uri=${params.redirect_uri}&scope=${scope.join(",")}&response_type=code`;
 };
 
 /**
@@ -261,14 +262,14 @@ const callGraphApiWithRetry = async <T>(
 export const exchangeCodeForToken = async (params: FacebookTokenParams) => {
   return callGraphApiWithRetry("exchange_token", async () => {
     try {
-      if (!FB_API || !process.env.FB_APP_ID || !process.env.FB_APP_SECRET) {
+      if (!FB_API || !env.FB_APP_ID || !env.FB_APP_SECRET) {
         throw new AppError("Missing Facebook configuration", 500);
       }
 
       const tokenUrl = `${FB_API}/oauth/access_token`;
       const requestParams = {
-        client_id: process.env.FB_APP_ID,
-        client_secret: process.env.FB_APP_SECRET,
+        client_id: env.FB_APP_ID,
+        client_secret: env.FB_APP_SECRET,
         redirect_uri: params.redirect_uri,
         code: params.code,
       };

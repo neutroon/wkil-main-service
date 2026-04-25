@@ -16,7 +16,6 @@ import {
 } from "../../services/meta/conversation.service";
 import { handleMessengerMessage } from "../../services/meta/messenger.service";
 import { decryptFacebookSecret } from "../../utils/tokenCrypto";
-import { emitToBusiness, emitToConversation } from "../../utils/socket";
 import multer from "multer";
 import { uploadMessengerMedia } from "../../services/meta/metaUpload.service";
 import { sendMessengerMedia } from "../../services/meta/messenger.service";
@@ -96,15 +95,6 @@ messengerRoutes.post(
           filename: file.originalname, 
           size: file.size 
         }
-      });
-
-      // 6. Broadcast
-      emitToBusiness(conversation.businessProfileId, "new_message", {
-        conversationId,
-        message: sentMsg
-      });
-      emitToConversation(conversationId, "new_message", {
-        message: sentMsg
       });
 
       res.json(sentMsg);
@@ -316,57 +306,26 @@ messengerRoutes.post(
       // 3. Selective Mirroring for Private Replies to Comments
       if (conversation.channel === "facebook_comment" && isPrivateRequest && mid && mid !== "ALREADY_REPLIED") {
         try {
-          const messengerConv = await getOrCreateConversation(
-            page.pageId,
-            conversation.senderId,
-            page.businessProfileId!,
-            { channel: "messenger" }
-          );
-
-          const mirrorId = `mirror_${mid}`;
-          const existingMirror = await prisma.conversationMessage.findUnique({
-            where: { externalId: mirrorId }
+          const { mirrorCommentReplyToMessenger } = await import("../../services/meta/metaDelivery.service");
+          await mirrorCommentReplyToMessenger({
+            pageId: page.pageId,
+            senderId: conversation.senderId,
+            businessProfileId: page.businessProfileId!,
+            messageId: mid.toString(),
+            content: trimmedText,
+            postId: conversation.postId ?? undefined,
+            commentId: conversation.externalId ?? undefined,
+            role: "agent"
           });
-
-          if (!existingMirror) {
-            const mirroredMsg = await saveMessage(messengerConv.id, "agent", trimmedText, {
-              externalId: mirrorId,
-              isPrivate: true,
-              origin: "facebook_comment_reply",
-              mediaMetadata: {
-                origin: "facebook_comment_reply",
-                postId: conversation.postId,
-                commentId: conversation.externalId
-              }
-            });
-
-            // ELITE TIER: Socket Emit for Mirror Thread (Real-time continuity)
-            emitToBusiness(conversation.businessProfileId, "new_message", {
-              conversationId: messengerConv.id,
-              message: mirroredMsg,
-            });
-            emitToConversation(messengerConv.id, "new_message", {
-              message: mirroredMsg,
-            });
-          }
         } catch (mirrorErr: any) {
           logger.warn("messenger.manual_reply.mirror_failed_soft", { error: mirrorErr.message });
         }
       } else if (mid === "ALREADY_REPLIED") {
-        // Correct the status if Meta already handled this comment privately
-        await prisma.conversationMessage.update({
-          where: { id: saved.id },
-          data: { status: "FAILED" }
+        const { syncMessageStatus } = await import("../../services/meta/metaDelivery.service");
+        await syncMessageStatus(saved.id, conversation.businessProfileId, conversation.id, {
+          status: "FAILED"
         });
       }
-
-      emitToBusiness(conversation.businessProfileId, "new_message", {
-        conversationId: conversation.id,
-        message: saved,
-      });
-      emitToConversation(conversation.id, "new_message", {
-        message: saved,
-      });
 
       return res.status(201).json({ data: saved });
     } catch (error: any) {
@@ -519,9 +478,11 @@ messengerRoutes.post("/webhook", async (req: Request, res: Response) => {
                 select: { id: true, businessProfileId: true }
              });
              if (conversation) {
-                emitToBusiness(conversation.businessProfileId, "customer_typing", {
+                const { syncTypingStatus } = await import("../../services/socketSync.service");
+                syncTypingStatus({
+                   businessProfileId: conversation.businessProfileId,
                    conversationId: conversation.id,
-                   typing: action === "typing_on"
+                   isTyping: action === "typing_on"
                 });
              }
              continue;
@@ -547,10 +508,12 @@ messengerRoutes.post("/webhook", async (req: Request, res: Response) => {
                    data: { status: "READ" }
                 });
 
-                emitToBusiness(conversation.businessProfileId, "message_status_updated", {
+                const { syncBulkMessageStatus } = await import("../../services/socketSync.service");
+                syncBulkMessageStatus({
+                   businessProfileId: conversation.businessProfileId,
                    conversationId: conversation.id,
                    status: "READ",
-                   watermark
+                   metadata: { watermark }
                 });
              }
              continue;

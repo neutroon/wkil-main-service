@@ -46,7 +46,7 @@ export const businessProfileSchema = z.object({
  */
 export const updateBusinessProfileSchema = z.object({
   params: z.object({
-    id: z.string().regex(/^\d+$/, "ID must be numeric"),
+    id: z.coerce.number(),
   }),
   body: businessProfileSchema.shape.body.partial(),
 });

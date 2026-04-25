@@ -6,7 +6,7 @@ import { z } from "zod";
  */
 export const uploadMediaSchema = z.object({
   body: z.object({
-    businessProfileId: z.string().regex(/^\d+$/, "businessProfileId must be numeric"),
+    businessProfileId: z.coerce.number(),
     name: z.string().min(2, "Name must be at least 2 characters"),
     instructions: z.string().min(10, "Instructions must be at least 10 characters"),
   }),
@@ -18,7 +18,7 @@ export const uploadMediaSchema = z.object({
  */
 export const updateMediaSchema = z.object({
   params: z.object({
-    id: z.string().regex(/^\d+$/, "ID must be numeric"),
+    id: z.coerce.number(),
   }),
   body: z.object({
     name: z.string().min(2).optional(),
@@ -32,9 +32,9 @@ export const updateMediaSchema = z.object({
  */
 export const aiGenerateSchema = z.object({
   body: z.object({
-    businessProfileId: z.number().int().positive(),
+    businessProfileId: z.coerce.number(),
     prompt: z.string().min(5, "Prompt is too short"),
-    postId: z.number().int().optional(),
+    postId: z.coerce.number().optional(),
   }),
 });
 
@@ -44,10 +44,10 @@ export const aiGenerateSchema = z.object({
  */
 export const aiRefineSchema = z.object({
   body: z.object({
-    businessProfileId: z.number().int().positive(),
-    assetId: z.number().int().positive(),
+    businessProfileId: z.coerce.number(),
+    assetId: z.coerce.number(),
     instruction: z.string().min(5, "Instruction is too short"),
-    postId: z.number().int().optional(),
+    postId: z.coerce.number().optional(),
   }),
 });
 
@@ -56,6 +56,15 @@ export const aiRefineSchema = z.object({
  */
 export const mediaIdParamSchema = z.object({
   params: z.object({
-    id: z.string().regex(/^\d+$/, "ID must be numeric"),
+    id: z.coerce.number(),
+  }),
+});
+
+/**
+ * Media List Query Schema
+ */
+export const mediaListQuerySchema = z.object({
+  query: z.object({
+    businessProfileId: z.coerce.number(),
   }),
 });

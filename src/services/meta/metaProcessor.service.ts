@@ -11,9 +11,6 @@ import { computeBusinessChatReply } from "../chat/businessChatReply.service";
 import { historyToLlmTurns, toPromptMessages } from "../chat/conversationTurns";
 import {
   getFacebookUserProfile,
-  getFacebookPostUrl,
-  getPostContext,
-  getCommentText,
   likeComment,
 } from "./facebook.service";
 

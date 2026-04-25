@@ -13,20 +13,17 @@ import {
 } from "../controllers/manager.controller";
 import {
   authenticateToken,
-  requireManagerOrAdmin,
   requireAdmin,
   requireManagerAccess,
 } from "../middlewares/auth.middleware";
+import { validate } from "../middlewares/validate.middleware";
 import {
-  validateUserAssignment,
-  validateUserId,
-  validateAssignmentId,
-  validateAnalyticsQuery,
-  validateDeviceInfo,
-  validateManagerAssignment,
-} from "../middlewares/roleValidation.middleware";
+  userAssignmentSchema,
+  analyticsQuerySchema,
+  idParamSchema,
+} from "../validations/manager.validation";
+import { registerSchema } from "../validations/auth.validation";
 import { managerLimiter } from "../middlewares/rateLimit.middleware";
-import { validateUserRegistration } from "../middlewares/validation.middleware";
 import { registerUser } from "../controllers/user.controller";
 
 const managerRoutes = Router();
@@ -38,8 +35,8 @@ managerRoutes.use(authenticateToken);
 managerRoutes.post(
   "/create-user",
   managerLimiter,
-  validateUserRegistration,
-  registerUser
+  validate(registerSchema),
+  registerUser,
 );
 
 // Manager dashboard and overview
@@ -47,8 +44,8 @@ managerRoutes.get("/dashboard", managerLimiter, getManagerDashboardController);
 managerRoutes.get(
   "/my-users",
   managerLimiter,
-  validateAnalyticsQuery,
-  getMyManagedUsers
+  validate(analyticsQuerySchema),
+  getMyManagedUsers,
 );
 managerRoutes.get("/my-managers", managerLimiter, getMyManagers);
 
@@ -56,53 +53,53 @@ managerRoutes.get("/my-managers", managerLimiter, getMyManagers);
 managerRoutes.get(
   "/my-users/:id",
   managerLimiter,
-  validateUserId,
+  validate(idParamSchema),
   requireManagerAccess,
-  getManagedUserById
+  getManagedUserById,
 );
 managerRoutes.get(
   "/my-users/:id/analytics",
   managerLimiter,
-  validateUserId,
-  validateAnalyticsQuery,
+  validate(idParamSchema),
+  validate(analyticsQuerySchema),
   requireManagerAccess,
-  getManagedUserAnalytics
+  getManagedUserAnalytics,
 );
 managerRoutes.patch(
   "/my-users/:id/deactivate",
   managerLimiter,
-  validateUserId,
+  validate(idParamSchema),
   requireManagerAccess,
-  deactivateManagedUser
+  deactivateManagedUser,
 );
 managerRoutes.patch(
   "/my-users/:id/reactivate",
   managerLimiter,
-  validateUserId,
+  validate(idParamSchema),
   requireManagerAccess,
-  reactivateManagedUser
+  reactivateManagedUser,
 );
 
 // Admin-only: User assignment management
 managerRoutes.post(
   "/assign-user",
   managerLimiter,
-  validateUserAssignment,
-  validateManagerAssignment,
-  assignUserToManagerController
+  validate(userAssignmentSchema),
+  requireAdmin,
+  assignUserToManagerController,
 );
 managerRoutes.get(
   "/assignments",
   managerLimiter,
   requireAdmin,
-  getAllUserAssignmentsController
+  getAllUserAssignmentsController,
 );
 managerRoutes.delete(
   "/assignments/:id",
   managerLimiter,
-  validateAssignmentId,
+  validate(idParamSchema),
   requireAdmin,
-  removeUserAssignmentController
+  removeUserAssignmentController,
 );
 
 export default managerRoutes;

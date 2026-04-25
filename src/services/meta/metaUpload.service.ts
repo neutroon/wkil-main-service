@@ -1,6 +1,3 @@
-import axios from "axios";
-
-import { logger } from "../../utils/logger";
 import { AppError } from "../../middlewares/errorHandler.middleware";
 
 /**

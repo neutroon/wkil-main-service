@@ -22,12 +22,11 @@ import {
   switchDevice,
   sendPrivateReply,
 } from "../../services/meta/facebook.service";
-import { 
-  getOrCreateConversation, 
+import {
+  getOrCreateConversation,
   saveMessage,
 } from "../../services/meta/conversation.service";
 import { decryptFacebookSecret } from "../../utils/tokenCrypto";
-import { emitToBusiness, emitToConversation } from "../../utils/socket";
 import { logger } from "../../utils/logger";
 import { authenticateToken } from "../../middlewares/auth.middleware";
 import {
@@ -355,7 +354,10 @@ facebookRoutes.get(
       const { postId } = req.params;
       const { access_token } = req.query;
 
-      const result = await getPostComments(postId, access_token as string || "");
+      const result = await getPostComments(
+        postId,
+        (access_token as string) || "",
+      );
       res.json(result);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
@@ -650,7 +652,8 @@ facebookRoutes.patch(
     try {
       const userId = (req as AuthRequest).user.id;
       const { pageId } = req.params;
-      const { responseMode, commentAutoDmEnabled, commentPublicGreeting } = req.body;
+      const { responseMode, commentAutoDmEnabled, commentPublicGreeting } =
+        req.body;
 
       // Verify the page belongs to this user
       const page = await prisma.facebookPage.findFirst({
@@ -664,9 +667,16 @@ facebookRoutes.patch(
       const updated = await prisma.facebookPage.update({
         where: { id: page.id },
         data: {
-          responseMode: responseMode !== undefined ? responseMode : page.responseMode,
-          commentAutoDmEnabled: commentAutoDmEnabled !== undefined ? commentAutoDmEnabled : page.commentAutoDmEnabled,
-          commentPublicGreeting: commentPublicGreeting !== undefined ? commentPublicGreeting : page.commentPublicGreeting,
+          responseMode:
+            responseMode !== undefined ? responseMode : page.responseMode,
+          commentAutoDmEnabled:
+            commentAutoDmEnabled !== undefined
+              ? commentAutoDmEnabled
+              : page.commentAutoDmEnabled,
+          commentPublicGreeting:
+            commentPublicGreeting !== undefined
+              ? commentPublicGreeting
+              : page.commentPublicGreeting,
         },
       });
 
@@ -689,38 +699,48 @@ facebookRoutes.post(
       const { message } = req.body;
 
       if (!messageId || !message) {
-        return res.status(400).json({ error: "messageId and message are required" });
+        return res
+          .status(400)
+          .json({ error: "messageId and message are required" });
       }
 
       // 1. Resolve the source message and its conversation
       const sourceMsg = await prisma.conversationMessage.findUnique({
         where: { id: messageId },
-        include: { 
+        include: {
           conversation: {
-            include: { businessProfile: true }
-          } 
-        }
+            include: { businessProfile: true },
+          },
+        },
       });
 
       if (!sourceMsg || !sourceMsg.externalId) {
-        return res.status(404).json({ error: "Source comment not found or missing externalId" });
+        return res
+          .status(404)
+          .json({ error: "Source comment not found or missing externalId" });
       }
 
       if (sourceMsg.conversation.channel !== "facebook_comment") {
-        return res.status(400).json({ error: "Private replies are only supported for Facebook Comments" });
+        return res
+          .status(400)
+          .json({
+            error: "Private replies are only supported for Facebook Comments",
+          });
       }
 
       // 2. Resolve Page Token
       const page = await prisma.facebookPage.findFirst({
-        where: { 
-          pageId: sourceMsg.conversation.pageId, 
+        where: {
+          pageId: sourceMsg.conversation.pageId,
           businessProfileId: sourceMsg.conversation.businessProfileId,
-          isActive: true 
-        }
+          isActive: true,
+        },
       });
 
       if (!page) {
-        return res.status(404).json({ error: "Associated Facebook Page not found" });
+        return res
+          .status(404)
+          .json({ error: "Associated Facebook Page not found" });
       }
 
       const accessToken = decryptFacebookSecret(page.pageAccessToken);
@@ -731,75 +751,54 @@ facebookRoutes.post(
         message,
         accessToken,
         pageId: page.pageId,
-        businessProfileId: page.businessProfileId!
+        businessProfileId: page.businessProfileId!,
       });
 
       if (!dmRes?.id) {
-        throw new Error("Meta API failed to return a message ID for private reply");
+        throw new Error(
+          "Meta API failed to return a message ID for private reply",
+        );
       }
 
       // 4. Save the reply in the Comment Thread
-      const saved = await saveMessage(sourceMsg.conversationId, "agent", message, {
-        externalId: dmRes.id,
-        status: "SENT",
-        isPrivate: true,
-        origin: "facebook_comment_reply"
-      });
+      const saved = await saveMessage(
+        sourceMsg.conversationId,
+        "agent",
+        message,
+        {
+          externalId: dmRes.id,
+          status: "SENT",
+          isPrivate: true,
+          origin: "facebook_comment_reply",
+        },
+      );
 
       // 5. Selective Mirroring to Messenger Thread
       try {
-        const messengerConv = await getOrCreateConversation(
-          page.pageId,
-          sourceMsg.conversation.senderId,
-          page.businessProfileId!,
-          { channel: "messenger" }
-        );
-
-        const mirrorId = `mirror_${dmRes.id}`;
-        const existingMirror = await prisma.conversationMessage.findUnique({
-          where: { externalId: mirrorId },
+        const { mirrorCommentReplyToMessenger } =
+          await import("../../services/meta/metaDelivery.service");
+        await mirrorCommentReplyToMessenger({
+          pageId: page.pageId,
+          senderId: sourceMsg.conversation.senderId,
+          businessProfileId: page.businessProfileId!,
+          messageId: dmRes.id,
+          content: message,
+          postId: sourceMsg.conversation.postId ?? undefined,
+          commentId: sourceMsg.externalId ?? undefined,
+          role: "agent",
         });
-
-        if (!existingMirror) {
-          const mirroredMsg = await saveMessage(messengerConv.id, "agent", message, {
-            externalId: mirrorId,
-            isPrivate: true,
-            origin: "facebook_comment_reply",
-            mediaMetadata: {
-              origin: "facebook_comment_reply",
-              postId: sourceMsg.conversation.postId,
-              commentId: sourceMsg.externalId,
-            },
-          });
-
-          // ELITE TIER: Socket Emit for Mirror Thread (Real-time continuity)
-          emitToBusiness(page.businessProfileId!, "new_message", {
-            conversationId: messengerConv.id,
-            message: mirroredMsg,
-          });
-          emitToConversation(messengerConv.id, "new_message", {
-            message: mirroredMsg,
-          });
-        }
       } catch (mirrorErr: any) {
-        logger.warn("facebook.routes.mirror_failed_soft", { error: mirrorErr.message });
+        logger.warn("facebook.routes.mirror_failed_soft", {
+          error: mirrorErr.message,
+        });
       }
-
-      // 6. Emit to UI
-      emitToBusiness(page.businessProfileId!, "new_message", {
-        conversationId: sourceMsg.conversationId,
-        message: saved,
-      });
-      emitToConversation(sourceMsg.conversationId, "new_message", {
-        message: saved,
-      });
 
       res.json({ success: true, data: saved });
     } catch (error: any) {
       logger.error("facebook.private_reply_failed", { error: error.message });
       res.status(500).json({ error: error.message });
     }
-  }
+  },
 );
 
 export default facebookRoutes;

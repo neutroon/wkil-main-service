@@ -314,7 +314,7 @@ messengerRoutes.post(
       });
 
       // 3. Selective Mirroring for Private Replies to Comments
-      if (conversation.channel === "facebook_comment" && isPrivateRequest && mid) {
+      if (conversation.channel === "facebook_comment" && isPrivateRequest && mid && mid !== "ALREADY_REPLIED") {
         try {
           const messengerConv = await getOrCreateConversation(
             page.pageId,
@@ -324,19 +324,40 @@ messengerRoutes.post(
           );
 
           const mirrorId = `mirror_${mid}`;
-          await saveMessage(messengerConv.id, "agent", trimmedText, {
-            externalId: mirrorId,
-            isPrivate: true,
-            origin: "facebook_comment_reply",
-            mediaMetadata: {
-              origin: "facebook_comment_reply",
-              postId: conversation.postId,
-              commentId: conversation.externalId
-            }
+          const existingMirror = await prisma.conversationMessage.findUnique({
+            where: { externalId: mirrorId }
           });
+
+          if (!existingMirror) {
+            const mirroredMsg = await saveMessage(messengerConv.id, "agent", trimmedText, {
+              externalId: mirrorId,
+              isPrivate: true,
+              origin: "facebook_comment_reply",
+              mediaMetadata: {
+                origin: "facebook_comment_reply",
+                postId: conversation.postId,
+                commentId: conversation.externalId
+              }
+            });
+
+            // ELITE TIER: Socket Emit for Mirror Thread (Real-time continuity)
+            emitToBusiness(conversation.businessProfileId, "new_message", {
+              conversationId: messengerConv.id,
+              message: mirroredMsg,
+            });
+            emitToConversation(messengerConv.id, "new_message", {
+              message: mirroredMsg,
+            });
+          }
         } catch (mirrorErr: any) {
           logger.warn("messenger.manual_reply.mirror_failed_soft", { error: mirrorErr.message });
         }
+      } else if (mid === "ALREADY_REPLIED") {
+        // Correct the status if Meta already handled this comment privately
+        await prisma.conversationMessage.update({
+          where: { id: saved.id },
+          data: { status: "FAILED" }
+        });
       }
 
       emitToBusiness(conversation.businessProfileId, "new_message", {

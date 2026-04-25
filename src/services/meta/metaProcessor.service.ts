@@ -39,6 +39,12 @@ export interface MetaMessageJob {
   businessProfileId?: number;
   conversationId?: number;
   isPrivate?: boolean;
+  
+  // Status & Typing fields
+  statusEvent?: "DELIVERED" | "READ";
+  mids?: string[];
+  watermark?: number;
+  isTyping?: boolean;
 }
 
 interface IdentityResolution {
@@ -148,6 +154,65 @@ export async function processMetaMessage(job: MetaMessageJob) {
   const { platform, identifier, senderId, messageText, externalId, type, mediaId, mediaMetadata } = job;
 
   try {
+    // --- BACKGROUND EVENTS BRANCH ---
+    if (type === "status_update") {
+      const { statusEvent, mids, watermark } = job;
+      if (platform === "whatsapp" && externalId && statusEvent) {
+        await prisma.conversationMessage.updateMany({
+          where: { externalId },
+          data: { status: statusEvent }
+        });
+      } else if (platform === "messenger") {
+        const conversation = await prisma.conversation.findFirst({
+          where: { pageId: identifier, senderId, channel: "messenger" },
+          select: { id: true, businessProfileId: true }
+        });
+        if (conversation) {
+          if (statusEvent === "READ" && watermark) {
+            await prisma.conversationMessage.updateMany({
+              where: {
+                conversationId: conversation.id,
+                role: "model",
+                status: { not: "READ" },
+                createdAt: { lte: new Date(watermark) }
+              },
+              data: { status: "READ" }
+            });
+            const { syncBulkMessageStatus } = await import("../socketSync.service");
+            syncBulkMessageStatus({
+              businessProfileId: conversation.businessProfileId,
+              conversationId: conversation.id,
+              status: "READ",
+              metadata: { watermark }
+            });
+          } else if (statusEvent === "DELIVERED" && mids?.length) {
+            await prisma.conversationMessage.updateMany({
+              where: { externalId: { in: mids } },
+              data: { status: "DELIVERED" }
+            });
+          }
+        }
+      }
+      return;
+    }
+
+    if (type === "typing_indicator") {
+      const conversation = await prisma.conversation.findFirst({
+        where: { pageId: identifier, senderId, channel: "messenger" },
+        select: { id: true, businessProfileId: true }
+      });
+      if (conversation) {
+        const { syncTypingStatus } = await import("../socketSync.service");
+        syncTypingStatus({
+          businessProfileId: conversation.businessProfileId,
+          conversationId: conversation.id,
+          isTyping: job.isTyping ?? false
+        });
+      }
+      return;
+    }
+    // --- END BACKGROUND EVENTS BRANCH ---
+
     // 1. Resolve Identity
     const { businessProfileId, businessProfile, accessToken, responseMode, pageSettings } = await resolveAccountIdentity(job);
 

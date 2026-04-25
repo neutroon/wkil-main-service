@@ -9,7 +9,6 @@ import {
 } from "./conversation.service";
 import { computeBusinessChatReply } from "../chat/businessChatReply.service";
 import { historyToLlmTurns, toPromptMessages } from "../chat/conversationTurns";
-import { emitToBusiness, emitToConversation } from "../../utils/socket";
 
 const FALLBACK_REPLY =
   "Sorry, we can't respond right now. Please try again or contact the business directly.";
@@ -203,15 +202,6 @@ export async function handleMessengerMessage(
       mediaMetadata,
     });
 
-    // Notify UI immediately
-    emitToBusiness(page.businessProfileId, "new_message", {
-      conversationId: conversation.id,
-      message: userSaved,
-    });
-    emitToConversation(conversation.id, "new_message", {
-      message: userSaved,
-    });
-
     // 3. AI Mode Check (Manual Mode Exit)
     if (businessProfile.responseMode === "MANUAL") {
       logger.info("messenger.manual_mode_skip", { conversationId: conversation.id });
@@ -259,22 +249,6 @@ export async function handleMessengerMessage(
       },
     );
 
-    // Pulse UI
-    emitToBusiness(page.businessProfileId, "new_message", {
-      conversationId: conversation.id,
-      message: modelSaved,
-    });
-    emitToConversation(conversation.id, "new_message", {
-      message: modelSaved,
-    });
-
-    if (status === "PENDING_REVIEW") {
-      emitToBusiness(page.businessProfileId, "draft_received", {
-        conversationId: conversation.id,
-        message: modelSaved,
-      });
-    }
-
     // 6. Send API call if AUTO
     if (
       status === "SENT" &&
@@ -302,9 +276,11 @@ export async function handleMessengerMessage(
 
     // 7. Critical UI Notification for System Errors
     if (reply.handoffCategory === "SYSTEM_ERROR") {
-      emitToBusiness(page.businessProfileId, "system_critical_error", {
+      const { syncSystemError } = await import("../socketSync.service");
+      syncSystemError({
+        businessProfileId: page.businessProfileId,
         conversationId: conversation.id,
-        reason: reply.reasoning,
+        reason: reply.reasoning
       });
     }
   } catch (err: unknown) {
@@ -323,13 +299,16 @@ export async function handleMessengerMessage(
         aiReasoning: message,
         handoffCategory: "SYSTEM_ERROR",
       });
-      emitToBusiness(page.businessProfileId, "new_message", {
+      const { syncSystemError, syncMediaStatus } = await import("../socketSync.service");
+      syncSystemError({
+        businessProfileId: page.businessProfileId,
         conversationId: conversation.id,
-        message: failMsg,
+        reason: message
       });
-      emitToBusiness(page.businessProfileId, "system_critical_error", {
-        conversationId: conversation.id,
-        reason: message,
+      syncMediaStatus({
+        businessProfileId: page.businessProfileId,
+        assetId: conversation.id,
+        status: "SYNC_FAILED"
       });
     }
   } finally {

@@ -5,15 +5,13 @@ import { logger } from "../utils/logger";
 import { chunkBusinessProfile } from "./chunker";
 import { CHUNK_TYPE_FIELDS } from "./chunkTypeFields";
 import { applySimilarityThreshold } from "./similarityThreshold";
+import { env } from "../config/env";
 
 const DEFAULT_RAG_MIN_SIMILARITY = 0.25;
 const MAX_CHUNK_CHARS = 2000;
 
-function ragMinSimilarity(): number {
-  const raw = process.env.RAG_MIN_SIMILARITY;
-  if (raw === undefined || raw === "") return DEFAULT_RAG_MIN_SIMILARITY;
-  const n = Number(raw);
-  return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : DEFAULT_RAG_MIN_SIMILARITY;
+export function getRagSimilarityThreshold(): number {
+  return env.RAG_MIN_SIMILARITY ?? DEFAULT_RAG_MIN_SIMILARITY;
 }
 
 function truncateChunkContent(content: string, maxChars: number): string {
@@ -137,7 +135,7 @@ export async function retrieveRelevantChunks(
   topK: number = 5,
   options?: { minSimilarity?: number; fetchLimit?: number },
 ): Promise<{ chunkType: string; content: string; similarity: number }[]> {
-  const minSimilarity = options?.minSimilarity ?? ragMinSimilarity();
+  const minSimilarity = options?.minSimilarity ?? getRagSimilarityThreshold();
   const fetchLimit =
     options?.fetchLimit ?? Math.min(50, Math.max(topK * 5, 15));
 

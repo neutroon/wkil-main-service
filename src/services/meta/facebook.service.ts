@@ -1,6 +1,5 @@
 import { metaClient } from "../../utils/apiClient";
 import prisma from "../../config/prisma";
-import { mapFacebookGraphError } from "../../utils/facebookGraphError";
 import { logger } from "../../utils/logger";
 import {
   decryptFacebookSecret,
@@ -8,13 +7,10 @@ import {
 } from "../../utils/tokenCrypto";
 import { invalidateFacebookPageCache } from "./webhookCache.service";
 import { AppError } from "../../middlewares/errorHandler.middleware";
+import { cache } from "../../utils/cache";
 import { env } from "../../config/env";
 
 const FB_API = env.FB_API_URL;
-
-// ELITE TIER: In-memory cache for post content to avoid redundant Graph API calls
-const POST_CONTEXT_CACHE = new Map<string, { content: string; media?: string; expiresAt: number }>();
-const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 
 export interface FacebookAuthUrlParams {
   redirect_uri: string;
@@ -106,8 +102,6 @@ export interface DeviceInfo {
   browser: string;
   device: string;
 }
-
-export { mapFacebookGraphError } from "../../utils/facebookGraphError";
 
 /**
  * Validates the health of a Meta Access Token using the /debug_token endpoint.
@@ -297,7 +291,7 @@ export const getPageAccessToken = async (pageId: string): Promise<string> => {
   if (!page) {
     throw new AppError(
       `Page with ID ${pageId} not found in database or is inactive.`,
-      404
+      404,
     );
   }
 
@@ -405,23 +399,28 @@ function scopeCommentId(id: string, pageId?: string): string {
   // If it already has an underscore, it's already scoped (e.g. POSTID_COMMENTID)
   // We MUST trust this prefix, especially for Ads or Crossposts.
   if (id.includes("_")) return id;
-  
+
   // Fallback: If it's a raw ID and we HAVE a pageId, apply the scoping
   if (pageId) {
     return `${pageId}_${id}`;
   }
-  
+
   return id;
 }
 
 /**
  * ELITE TIER: Resilient Comment Reply with Token Pivoting.
- * If the current token fails or doesn't match the prefix, we attempt to find 
+ * If the current token fails or doesn't match the prefix, we attempt to find
  * the 'right' token for the content owner in our DB.
  */
-export const replyToComment = async (params: FacebookCommentParams & { pageId?: string; businessProfileId?: number }) => {
+export const replyToComment = async (
+  params: FacebookCommentParams & {
+    pageId?: string;
+    businessProfileId?: number;
+  },
+) => {
   const { commentId, message, accessToken, pageId, businessProfileId } = params;
-  
+
   let activeToken = accessToken;
   let activePageId = pageId;
 
@@ -433,12 +432,14 @@ export const replyToComment = async (params: FacebookCommentParams & { pageId?: 
     if (prefix !== pageId) {
       const ownerPage = await prisma.facebookPage.findFirst({
         where: { pageId: prefix, businessProfileId, isActive: true },
-        select: { pageAccessToken: true, pageId: true }
+        select: { pageAccessToken: true, pageId: true },
       });
-      
+
       if (ownerPage) {
-        logger.info("facebook.delivery.public_pivot_triggered", { 
-          from: pageId, to: ownerPage.pageId, commentId 
+        logger.info("facebook.delivery.public_pivot_triggered", {
+          from: pageId,
+          to: ownerPage.pageId,
+          commentId,
         });
         activeToken = decryptFacebookSecret(ownerPage.pageAccessToken);
         activePageId = ownerPage.pageId;
@@ -447,10 +448,10 @@ export const replyToComment = async (params: FacebookCommentParams & { pageId?: 
   }
 
   const scopedId = scopeCommentId(commentId, activePageId);
-  const { data } = await metaClient.post(
-    `${FB_API}/${scopedId}/comments`,
-    { message, access_token: activeToken }
-  );
+  const { data } = await metaClient.post(`${FB_API}/${scopedId}/comments`, {
+    message,
+    access_token: activeToken,
+  });
   return data;
 };
 
@@ -475,15 +476,16 @@ export const getFacebookPostUrl = async (
 /**
  * ELITE TIER: Social Engagement - Liking a comment.
  */
-export const likeComment = async (params: FacebookLikeParams & { pageId?: string }) => {
+export const likeComment = async (
+  params: FacebookLikeParams & { pageId?: string },
+) => {
   const { commentId, accessToken, pageId } = params;
   const scopedId = scopeCommentId(commentId, pageId);
-  
+
   try {
-    const { data } = await metaClient.post(
-      `${FB_API}/${scopedId}/likes`,
-      { access_token: accessToken }
-    );
+    const { data } = await metaClient.post(`${FB_API}/${scopedId}/likes`, {
+      access_token: accessToken,
+    });
     return data;
   } catch (error: any) {
     return null;
@@ -493,10 +495,13 @@ export const likeComment = async (params: FacebookLikeParams & { pageId?: string
 /**
  * ELITE TIER: Fetches text of a specific comment for thread context.
  */
-export const getCommentText = async (commentId: string, accessToken: string): Promise<string | null> => {
+export const getCommentText = async (
+  commentId: string,
+  accessToken: string,
+): Promise<string | null> => {
   try {
     const { data } = await metaClient.get(
-      `${FB_API}/${commentId}?fields=message&access_token=${accessToken}`
+      `${FB_API}/${commentId}?fields=message&access_token=${accessToken}`,
     );
     return data.message || null;
   } catch (err: any) {
@@ -509,38 +514,34 @@ export const getCommentText = async (commentId: string, accessToken: string): Pr
  */
 export const getPostContext = async (
   postId: string,
-  accessToken?: string
+  accessToken?: string,
 ): Promise<{ content: string; media?: string } | null> => {
-  // 1. Check Cache
-  const cached = POST_CONTEXT_CACHE.get(postId);
-  if (cached && cached.expiresAt > Date.now()) {
-    return { content: cached.content, media: cached.media };
-  }
+  const cacheKey = `fb:post:context:${postId}`;
 
-  try {
-    const token = accessToken || (await getPageAccessToken(postId.split("_")[0]));
-    const url = `${FB_API}/${postId}?fields=message,attachments{media_type,description}&access_token=${token}`;
-    const { data } = await metaClient.get(url);
+  return cache.getOrSet(
+    cacheKey,
+    async () => {
+      try {
+        const token =
+          accessToken || (await getPageAccessToken(postId.split("_")[0]));
+        const url = `${env.FB_API_URL}/${postId}?fields=message,attachments{media_type,description}&access_token=${token}`;
+        const { data } = await metaClient.get(url);
 
-    const content = data.message || "";
-    let mediaDesc = "";
+        const content = data.message || "";
+        let mediaDesc = "";
 
-    if (data.attachments?.data?.[0]) {
-      const att = data.attachments.data[0];
-      mediaDesc = `[Type: ${att.media_type || "image"}${att.description ? `, Desc: ${att.description}` : ""}]`;
-    }
+        if (data.attachments?.data?.[0]) {
+          const att = data.attachments.data[0];
+          mediaDesc = `[Type: ${att.media_type || "image"}${att.description ? `, Desc: ${att.description}` : ""}]`;
+        }
 
-    // 2. Update Cache
-    POST_CONTEXT_CACHE.set(postId, {
-      content,
-      media: mediaDesc,
-      expiresAt: Date.now() + CACHE_TTL_MS
-    });
-
-    return { content, media: mediaDesc };
-  } catch (error: any) {
-    return null;
-  }
+        return { content, media: mediaDesc };
+      } catch (error: any) {
+        return null;
+      }
+    },
+    3600, // 1 hour TTL
+  );
 };
 
 /**
@@ -593,34 +594,41 @@ export const validateAccessToken = async (
  * ELITE TIER: Resilient Private Reply with Token Pivoting.
  * Note: Each comment can only be replied to privately ONCE.
  */
-export const sendPrivateReply = async (params: FacebookPrivateReplyParams & { pageId?: string; businessProfileId?: number }) => {
+export const sendPrivateReply = async (
+  params: FacebookPrivateReplyParams & {
+    pageId?: string;
+    businessProfileId?: number;
+  },
+) => {
   const { commentId, message, accessToken, pageId, businessProfileId } = params;
 
   let activeToken = accessToken;
   let activePageId = pageId;
 
   // ── ELITE TIER: Surgical Token Pivoting ──
-  // We prioritize the Page owner of the comment. 
+  // We prioritize the Page owner of the comment.
   // For Comments, the prefix is usually the Post ID, not the Page ID.
   // We only pivot if we determine the current token/page is definitely not the owner AND we can find a better match.
   if (commentId.includes("_") && businessProfileId) {
     const parts = commentId.split("_");
-    const potentialPageId = parts[0]; 
+    const potentialPageId = parts[0];
 
     // If we're not using the owner's token already, try to find a matching page in our DB.
     if (activePageId !== potentialPageId) {
       const ownerPage = await prisma.facebookPage.findFirst({
-        where: { 
+        where: {
           OR: [{ pageId: potentialPageId }, { pageId: activePageId }],
-          businessProfileId, 
-          isActive: true 
+          businessProfileId,
+          isActive: true,
         },
-        select: { pageAccessToken: true, pageId: true }
+        select: { pageAccessToken: true, pageId: true },
       });
-      
+
       if (ownerPage && ownerPage.pageId !== activePageId) {
-        logger.info("facebook.delivery.private_pivot_triggered", { 
-          from: activePageId, to: ownerPage.pageId, commentId 
+        logger.info("facebook.delivery.private_pivot_triggered", {
+          from: activePageId,
+          to: ownerPage.pageId,
+          commentId,
         });
         activeToken = decryptFacebookSecret(ownerPage.pageAccessToken);
         activePageId = ownerPage.pageId;
@@ -634,16 +642,16 @@ export const sendPrivateReply = async (params: FacebookPrivateReplyParams & { pa
       `${FB_API}/me/messages?access_token=${activeToken}`,
       {
         recipient: { comment_id: scopedId },
-        message: { text: message }
-      }
+        message: { text: message },
+      },
     );
-    
-    logger.info("facebook.delivery.private_success", { 
-      commentId, 
+
+    logger.info("facebook.delivery.private_success", {
+      commentId,
       recipient: scopedId,
-      messageId: data.message_id
+      messageId: data.message_id,
     });
-    
+
     return { id: data.message_id, ...data };
   } catch (error: any) {
     // If it's an AppError thrown by the metaClient interceptor, we just rethrow it.
@@ -688,7 +696,7 @@ export const saveFacebookToken = async (
     if (existing && existing.userId !== userId) {
       throw new AppError(
         "This Facebook account is already linked to another user. Log in as that user or disconnect the account first.",
-        403
+        403,
       );
     }
 
@@ -718,9 +726,9 @@ export const saveFacebookToken = async (
         pages: {
           updateMany: {
             where: {},
-            data: { isActive: true }
-          }
-        }
+            data: { isActive: true },
+          },
+        },
       },
       create: {
         userId,
@@ -747,9 +755,7 @@ export const saveFacebookToken = async (
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     logger.error("facebook.token.save_failed", { error: msg });
-    throw error instanceof AppError
-      ? error
-      : new AppError(msg, 500);
+    throw error instanceof AppError ? error : new AppError(msg, 500);
   }
 };
 
@@ -1047,7 +1053,7 @@ export const getAdminAnalytics = async (days: number = 30) => {
         orderBy: { date: "desc" },
       }),
       prisma.businessProfile.aggregate({
-        _sum: { monthlyTokensUsed: true }
+        _sum: { monthlyTokensUsed: true },
       }),
     ]);
 
@@ -1151,7 +1157,7 @@ export const deactivateFacebookPage = async (
     try {
       const account = await prisma.facebookAccount.findFirst({
         where: { id: page.facebookAccountId, isActive: true },
-        select: { accessToken: true }
+        select: { accessToken: true },
       });
 
       if (account) {

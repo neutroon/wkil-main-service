@@ -1,7 +1,7 @@
 import { Queue, Worker, Job } from "bullmq";
 import { bullConnection } from "../config/redis";
 import { logger } from "../utils/logger";
-import prisma from "../config/prisma";
+
 import {
   processMetaMessage,
   processVisualJob,

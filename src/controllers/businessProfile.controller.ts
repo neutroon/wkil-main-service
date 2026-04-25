@@ -8,7 +8,7 @@ import {
 import { uploadToR2 } from "../services/media/r2Storage.service";
 import { randomUUID } from "crypto";
 import path from "path";
-import { logger } from "../utils/logger";
+
 import { AppError } from "../middlewares/errorHandler.middleware";
 
 interface Faq {

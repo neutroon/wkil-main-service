@@ -9,6 +9,7 @@ import { redisClient } from "../../config/redis";
 import { authenticateToken } from "../../middlewares/auth.middleware";
 import { isKnownWhatsAppAccount, invalidateWhatsAppAccountCache } from "../../services/meta/webhookCache.service";
 import { encryptFacebookSecret } from "../../utils/tokenCrypto";
+import { cache } from "../../utils/cache";
 import conversationsRoutes from "./conversations.routes";
 import {
   exchangeCodeForToken,
@@ -104,34 +105,7 @@ whatsappRoutes.post("/conversations/:id/media", authenticateToken, upload.single
 });
 
 const isDev = env.NODE_ENV !== "production";
-const OAUTH_EXCHANGE_REF_TTL_MS = 10 * 60 * 1000;
-const OAUTH_EXCHANGE_REF_MAX_ENTRIES = 500;
-const oauthPreviewTokenCache = new Map<
-  string,
-  { userId: number; accessToken: string; createdAt: number }
->();
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-
-
-function pruneOauthPreviewTokenCache(now: number): void {
-  for (const [key, value] of oauthPreviewTokenCache.entries()) {
-    if (now - value.createdAt > OAUTH_EXCHANGE_REF_TTL_MS) {
-      oauthPreviewTokenCache.delete(key);
-    }
-  }
-
-  // Keep cache bounded in long-running processes.
-  if (oauthPreviewTokenCache.size <= OAUTH_EXCHANGE_REF_MAX_ENTRIES) return;
-  const overflow = oauthPreviewTokenCache.size - OAUTH_EXCHANGE_REF_MAX_ENTRIES;
-  const oldestEntries = [...oauthPreviewTokenCache.entries()]
-    .sort((a, b) => a[1].createdAt - b[1].createdAt)
-    .slice(0, overflow);
-  for (const [key] of oldestEntries) {
-    oauthPreviewTokenCache.delete(key);
-  }
-}
+const OAUTH_EXCHANGE_REF_TTL_SEC = 10 * 60; // 10 minutes
 
 // ─── Webhook verification (GET) ───────────────────────────────────────────────
 // Meta calls this once when you save the webhook URL in the Developer Console.
@@ -387,15 +361,15 @@ whatsappRoutes.get("/oauth/phone-numbers", authenticateToken, async (req: Reques
   const userId = (req as any).user.id as number;
   const { code } = req.query;
   const redirectUri = typeof req.query.redirectUri === "string" ? req.query.redirectUri : undefined;
-  const now = Date.now();
-  pruneOauthPreviewTokenCache(now);
-  
-  if (!code) throw new AppError("code is required", 400);
-
   const accessToken = await exchangeCodeForToken(code as string, redirectUri);
   const accounts = await discoverWabaAccounts(accessToken);
   const exchangeRef = randomUUID();
-  oauthPreviewTokenCache.set(exchangeRef, { userId, accessToken, createdAt: now });
+  
+  await cache.set(
+    `wa:oauth:ref:${exchangeRef}`,
+    { userId, accessToken },
+    OAUTH_EXCHANGE_REF_TTL_SEC
+  );
 
   return res.json({ data: accounts, exchangeRef });
 });
@@ -412,8 +386,6 @@ whatsappRoutes.get("/oauth/phone-numbers", authenticateToken, async (req: Reques
 whatsappRoutes.post("/oauth", authenticateToken, async (req: Request, res: Response) => {
   const userId = (req as any).user.id;
   const { code, phoneNumberId, businessProfileId, redirectUri, exchangeRef } = req.body;
-  const now = Date.now();
-  pruneOauthPreviewTokenCache(now);
 
   if (!phoneNumberId || (!code && !exchangeRef)) {
     throw new AppError("phoneNumberId is required and either code or exchangeRef must be provided", 400);
@@ -421,13 +393,10 @@ whatsappRoutes.post("/oauth", authenticateToken, async (req: Request, res: Respo
 
   let accessToken: string | undefined;
   if (exchangeRef && typeof exchangeRef === "string") {
-    const cached = oauthPreviewTokenCache.get(exchangeRef);
-    if (cached) {
-      const expired = now - cached.createdAt > OAUTH_EXCHANGE_REF_TTL_MS;
-      if (!expired && cached.userId === userId) {
-        accessToken = cached.accessToken;
-        oauthPreviewTokenCache.delete(exchangeRef);
-      }
+    const cached = await cache.get<{ userId: number; accessToken: string }>(`wa:oauth:ref:${exchangeRef}`);
+    if (cached && cached.userId === userId) {
+      accessToken = cached.accessToken;
+      await cache.delete(`wa:oauth:ref:${exchangeRef}`);
     }
   }
 

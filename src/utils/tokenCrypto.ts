@@ -1,4 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
+import { AppError } from "../middlewares/errorHandler.middleware";
 
 const PREFIX = "enc:v1:";
 const ALGO = "aes-256-gcm";
@@ -32,13 +33,14 @@ export function decryptFacebookSecret(stored: string): string {
   if (!stored.startsWith(PREFIX)) return stored;
   const key = getFacebookTokenEncryptionKey();
   if (!key) {
-    throw new Error(
+    throw new AppError(
       "FB_TOKEN_ENCRYPTION_KEY is required to decrypt Facebook tokens",
+      500
     );
   }
   const raw = Buffer.from(stored.slice(PREFIX.length), "base64");
   if (raw.length < 12 + 16) {
-    throw new Error("Invalid encrypted token payload");
+    throw new AppError("Invalid encrypted token payload", 401);
   }
   const iv = raw.subarray(0, 12);
   const tag = raw.subarray(12, 28);

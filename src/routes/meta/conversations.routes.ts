@@ -12,7 +12,6 @@ import {
 import { sendWhatsAppReply, sendWhatsAppAction } from "../../services/meta/whatsapp.service";
 import { sendMessengerReply, sendMessengerAction } from "../../services/meta/messenger.service";
 import { decryptFacebookSecret } from "../../utils/tokenCrypto";
-import { emitToBusiness, emitToConversation } from "../../utils/socket";
 import { computeBusinessChatReply } from "../../services/chat/businessChatReply.service";
 import { toPromptMessages, historyToLlmTurns } from "../../services/chat/conversationTurns";
 import { getConversationHistory } from "../../services/meta/conversation.service";
@@ -238,10 +237,6 @@ conversationsRoutes.patch(
         data: { readAt: new Date() }, 
       });
 
-      emitToBusiness(conversation.businessProfileId, "conversation_read", {
-        conversationId: conversation.id,
-      });
-
       return res.json({ success: true });
     } catch (error: any) {
       logger.error("meta.conversations.read_failed", { error: error.message });
@@ -321,12 +316,6 @@ conversationsRoutes.patch(
         data: { aiEnabled: enabled }
       });
 
-      // Notify all connected agents of the state change
-      emitToBusiness(conversation.businessProfileId, "ai_toggle_updated", {
-        conversationId: updated.id,
-        aiEnabled: updated.aiEnabled
-      });
-
       logger.info("meta.conversation.ai_toggle", { 
         conversationId, 
         enabled, 
@@ -371,11 +360,6 @@ conversationsRoutes.patch(
         data: { status }
       });
 
-      emitToBusiness(conversation.businessProfileId, "conversation_status_updated", {
-        conversationId: updated.id,
-        status: updated.status
-      });
-
       return res.json({ data: updated });
     } catch (error: any) {
       return res.status(500).json({ error: "Failed to update status" });
@@ -408,15 +392,11 @@ conversationsRoutes.delete(
 
       if (!conversation) return res.status(404).json({ error: "Not found" });
 
-      await prisma.conversation.delete({
-        where: { id: conversationId }
+      const deleted = await prisma.conversation.delete({
+        where: { id: conversationId },
       });
 
-      emitToBusiness(conversation.businessProfileId, "conversation_deleted", {
-        conversationId
-      });
-
-      return res.json({ success: true });
+      return res.json({ success: true, message: "Conversation deleted." });
     } catch (error: any) {
       return res.status(500).json({ error: "Failed to delete conversation" });
     }
@@ -501,14 +481,6 @@ conversationsRoutes.post(
       // 2. Persist ONLY if API call succeeded
       const saved = await saveMessage(conversationId, "agent", trimmedText, {
         externalId: wamid
-      });
-
-      emitToBusiness(conversation.businessProfileId, "new_message", {
-        conversationId: conversation.id,
-        message: saved,
-      });
-      emitToConversation(conversation.id, "new_message", {
-        message: saved,
       });
 
       logger.info("whatsapp.conversations.human_sent", {
@@ -620,14 +592,6 @@ conversationsRoutes.post(
       // 2. Persist to DB
       // We save the textPreview (what the user saw in the UI) as the content
       const saved = await saveMessage(conversationId, "agent", textPreview || `[Template: ${templateName}]`);
-
-      emitToBusiness(conversation.businessProfileId, "new_message", {
-        conversationId: conversation.id,
-        message: saved,
-      });
-      emitToConversation(conversation.id, "new_message", {
-        message: saved,
-      });
 
       return res.status(201).json({ data: saved });
     } catch (error: any) {
@@ -757,15 +721,6 @@ conversationsRoutes.put(
 
       const updatedMsgFull = await prisma.conversationMessage.findUnique({ where: { id: message.id }});
 
-      // 3. Notify sockets
-      emitToBusiness(conversation.businessProfileId, "message_updated", {
-        conversationId: conversation.id,
-        message: updatedMsgFull,
-      });
-      emitToConversation(conversation.id, "new_message", {
-        message: updatedMsgFull,
-      });
-
       return res.status(200).json({ data: updatedMsgFull });
     } catch (error: any) {
       logger.error("hitl.approve_error", { error: error.message });
@@ -806,11 +761,6 @@ conversationsRoutes.delete(
       if (!msg) return res.status(404).json({ error: "Draft not found" });
 
       await prisma.conversationMessage.delete({ where: { id: messageId } });
-
-      emitToBusiness(conversation.businessProfileId, "message_deleted", {
-        conversationId,
-        messageId
-      });
 
       return res.json({ success: true });
     } catch (e: any) {
@@ -904,15 +854,6 @@ conversationsRoutes.post(
           aiReasoning: reply.reasoning,
           handoffCategory: reply.handoffCategory
         }
-      });
-
-      // 5. Notify
-      emitToBusiness(conversation.businessProfileId, "new_message", {
-        conversationId: conversation.id,
-        message: saved,
-      });
-      emitToConversation(conversation.id, "new_message", {
-        message: saved,
       });
 
       return res.status(201).json({ data: saved });

@@ -33,10 +33,7 @@ export const generatePostContent = async (
   const {
     topic,
     length = "medium",
-    keywords = [],
-    context = "",
     generateImage = false,
-    businessProfile,
   } = request;
 
   if (!topic) {
@@ -63,7 +60,7 @@ export const generatePostContent = async (
   const prompt = buildPostPrompt(request);
 
   // Generate content using Gemini with enhanced error handling
-  const { text: generatedText, usage } = await generateContent(prompt);
+  const { text: generatedText } = await generateContent(prompt);
 
   // Log usage via new service if you want to track it for individual posts
   // (Assuming you have businessProfileId available if logged in)

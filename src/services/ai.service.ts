@@ -1,6 +1,7 @@
 import { generateContent } from "../config/gemini";
 import { logger } from "../utils/logger";
 import { assertQuotaAvailable, recordAiUsage } from "./billing.service";
+import { AppError } from "../middlewares/errorHandler.middleware";
 
 async function discoverStrategicLinks(
   userId: number,
@@ -122,7 +123,7 @@ async function extractBusinessIdentity(
 
     if (!result) {
       logger.error("ai.extractBusinessIdentity.empty_result");
-      throw new Error("Gemini returned an empty response during business identity extraction.");
+      throw new AppError("Gemini returned an empty response during business identity extraction.", 502);
     }
 
     // Record ACTUAL usage
@@ -145,11 +146,11 @@ async function extractBusinessIdentity(
       logger.error("AI Business Identity Extraction Failed: PERMISSION_DENIED (403).", {
         message: "Your Google project has been denied access to the Gemini API. Contact support or check billing/project status."
       });
-      throw new Error("GEMINI_ACCESS_DENIED: Your project has been denied access to the AI services. Please check your Google Cloud/AI Studio billing or project status.");
+      throw new AppError("GEMINI_ACCESS_DENIED: Your project has been denied access to the AI services. Please check your Google Cloud/AI Studio billing or project status.", 403);
     }
 
     logger.error("Error analyzing markdown with Gemini:", { error: error.message });
-    throw new Error(`Failed to extract business identity: ${error.message}`);
+    throw new AppError(`Failed to extract business identity: ${error.message}`, 502);
   }
 }
 

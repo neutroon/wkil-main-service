@@ -541,111 +541,147 @@ export async function processMetaMessage(job: MetaMessageJob) {
               return;
             }
 
-            // 1. SCHEDULE Durable Public Greeting (Durable Jitter)
-            // Human-like response simulation (20 to 45 seconds) to avoid robotic instant replies
+            // 1. Immediate Public Greeting
             if (publicStatus === "SENT" && publicSaved) {
-              const publicText = publicSaved.content || "Thanks! Check your DMs.";
-              const delaySec = 20 + Math.floor(Math.random() * 25);
-              const nextAttemptAt = new Date(Date.now() + delaySec * 1000);
+              try {
+                const publicText = publicSaved.content || "Thanks! Check your DMs.";
+                const pubRes = await replyToComment({
+                  commentId: job.commentId!,
+                  message: publicText,
+                  accessToken,
+                  pageId: job.identifier,
+                  businessProfileId,
+                });
 
-              const { enqueueMetaJob } = await import("../../queues/meta.queue");
-              await enqueueMetaJob({
-                ...job,
-                delaySeconds: delaySec,
-                platform: "messenger",
-                identifier: job.identifier,
-                senderId: job.senderId,
-                type: "FACEBOOK_COMMENT_PUBLIC_REPLY",
-                messageText: publicText,
-                businessProfileId,
-                conversationId: conversation.id,
-              });
-              logger.info("meta.processor.public_greeting_scheduled", {
-                commentId: job.commentId,
-                delaySec,
-              });
-
-              // UI SIGNAL: Notify the dashboard that a public greeting is scheduled
-              emitToBusiness(businessProfileId, "job_scheduled", {
-                conversationId: conversation.id,
-                type: "FACEBOOK_COMMENT_PUBLIC_REPLY",
-                nextAttemptAt,
-              });
+                if (pubRes?.id) {
+                  await prisma.conversationMessage.update({
+                    where: { id: publicSaved.id },
+                    data: { externalId: pubRes.id },
+                  });
+                }
+                logger.info("meta.processor.public_greeting_delivered", {
+                  commentId: job.commentId,
+                });
+              } catch (pubErr: any) {
+                logger.error("meta.processor.public_greeting_failed", {
+                  commentId: job.commentId,
+                  error: pubErr.message,
+                });
+                await prisma.conversationMessage.update({
+                  where: { id: publicSaved.id },
+                  data: { status: "FAILED" },
+                });
+              }
             }
 
             // 2. Sending Private DM ONLY if intent is SALES_DM AND the setting is enabled for this page
             if (privateStatus === "SENT" && mainContent) {
-              const dmRes: any = await sendPrivateReply({
-                commentId: job.commentId!,
-                message: mainContent,
-                accessToken,
-                pageId: job.identifier,
-                businessProfileId, // ELITE TOKEN PIVOTING
-              });
-
-              if (dmRes?.id && dmRes.id !== "ALREADY_REPLIED") {
-                await prisma.conversationMessage.update({
-                  where: { id: modelSaved.id },
-                  data: { externalId: dmRes.id },
-                });
-                logger.info("meta.processor.private_dm_sent", {
-                  senderId,
-                  commentId: job.commentId,
-                  messageId: dmRes.id
+              try {
+                const dmRes: any = await sendPrivateReply({
+                  commentId: job.commentId!,
+                  message: mainContent,
+                  accessToken,
+                  pageId: job.identifier,
+                  businessProfileId, // ELITE TOKEN PIVOTING
                 });
 
-                // ── ELITE TIER: Selective Mirroring ( Inbox Continuity ) ──
-                // We mirror only the Private Reply to the main Messenger thread for Image 2 continuity.
-                try {
-                  const messengerConv = await getOrCreateConversation(
-                    job.identifier,
-                    senderId,
-                    businessProfileId,
-                    { channel: "messenger" }
-                  );
- 
-                  // Only mirror if it doesn't already exist in the Messenger thread
-                  const mirrorId = `mirror_${dmRes.id}`;
-                  const existingMirror = await prisma.conversationMessage.findUnique({
-                    where: { externalId: mirrorId }
+                if (dmRes?.id && dmRes.id !== "ALREADY_REPLIED") {
+                  await prisma.conversationMessage.update({
+                    where: { id: modelSaved.id },
+                    data: { externalId: dmRes.id },
                   });
- 
-                  if (!existingMirror) {
-                    await saveMessage(messengerConv.id, "model", mainContent, {
-                      externalId: mirrorId,
-                      intent: reply.intent,
-                      aiReasoning: reply.reasoning,
-                      isPrivate: true,
-                      origin: "facebook_comment_reply",
-                      mediaMetadata: { 
-                        origin: "facebook_comment_reply", 
-                        postId: job.postId,
-                        commentId: job.commentId
-                      }
+                  logger.info("meta.processor.private_dm_sent", {
+                    senderId,
+                    commentId: job.commentId,
+                    messageId: dmRes.id,
+                  });
+
+                  // ── ELITE TIER: Selective Mirroring ( Inbox Continuity ) ──
+                  // We mirror only the Private Reply to the main Messenger thread for Image 2 continuity.
+                  try {
+                    const messengerConv = await getOrCreateConversation(
+                      job.identifier,
+                      senderId,
+                      businessProfileId,
+                      { channel: "messenger" },
+                    );
+
+                    // Only mirror if it doesn't already exist in the Messenger thread
+                    const mirrorId = `mirror_${dmRes.id}`;
+                    const existingMirror = await prisma.conversationMessage.findUnique({
+                      where: { externalId: mirrorId },
                     });
-                    logger.info("meta.processor.private_mirror_created", {
-                      messengerConvId: messengerConv.id,
-                      messageId: mirrorId
+
+                    if (!existingMirror) {
+                      const mirroredMsg = await saveMessage(
+                        messengerConv.id,
+                        "model",
+                        mainContent,
+                        {
+                          externalId: mirrorId,
+                          intent: reply.intent,
+                          aiReasoning: reply.reasoning,
+                          isPrivate: true,
+                          origin: "facebook_comment_reply",
+                          mediaMetadata: {
+                            origin: "facebook_comment_reply",
+                            postId: job.postId,
+                            commentId: job.commentId,
+                          },
+                        },
+                      );
+
+                      // ELITE TIER: Socket Emit for Mirror Thread (Real-time continuity)
+                      emitToBusiness(businessProfileId, "new_message", {
+                        conversationId: messengerConv.id,
+                        message: mirroredMsg,
+                      });
+                      emitToConversation(messengerConv.id, "new_message", {
+                        message: mirroredMsg,
+                      });
+
+                      logger.info("meta.processor.private_mirror_created", {
+                        messengerConvId: messengerConv.id,
+                        messageId: mirrorId,
+                      });
+                    }
+                  } catch (mirrorErr: any) {
+                    logger.warn("meta.processor.mirror_failed_soft", {
+                      error: mirrorErr.message,
                     });
                   }
-                } catch (mirrorErr: any) {
-                  logger.warn("meta.processor.mirror_failed_soft", { error: mirrorErr.message });
+
+                  // ELITE TIER: Engagement - Like the comment after successful reply
+                  likeComment({
+                    commentId: job.commentId!,
+                    accessToken,
+                    pageId: job.identifier,
+                  }).catch((err) =>
+                    logger.warn("meta.processor.auto_like_failed", {
+                      error: err.message,
+                    }),
+                  );
+                } else if (dmRes?.id === "ALREADY_REPLIED") {
+                  logger.info("meta.processor.private_dm_skipped_already_sent", {
+                    commentId: job.commentId,
+                  });
+                  await prisma.conversationMessage.update({
+                    where: { id: modelSaved.id },
+                    data: { status: "FAILED" }, // Mark as failed/skipped so user knows it wasn't sent again
+                  });
+                } else {
+                  logger.warn("meta.processor.private_dm_delivery_status_ambiguous", {
+                    commentId: job.commentId,
+                  });
                 }
-
-                // ELITE TIER: Engagement - Like the comment after successful reply
-                likeComment({
-                  commentId: job.commentId!,
-                  accessToken,
-                  pageId: job.identifier
-                }).catch(err => logger.warn("meta.processor.auto_like_failed", { error: err.message }));
-
-              } else if (dmRes?.id === "ALREADY_REPLIED") {
-                logger.info("meta.processor.private_dm_skipped_already_sent", {
-                  commentId: job.commentId
+              } catch (dmErr: any) {
+                logger.error("meta.processor.private_dm_failed", {
+                  commentId: job.commentId,
+                  error: dmErr.message,
                 });
-              } else {
-                logger.warn("meta.processor.private_dm_delivery_status_ambiguous", {
-                  commentId: job.commentId
+                await prisma.conversationMessage.update({
+                  where: { id: modelSaved.id },
+                  data: { status: "FAILED" },
                 });
               }
             }

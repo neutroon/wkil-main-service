@@ -392,61 +392,42 @@ messengerRoutes.post("/webhook", async (req: Request, res: Response) => {
           // 2a. Handle Typing Indicators from Customer
           if (event.sender_action) {
              const action = event.sender_action; // "typing_on" or "typing_off"
-             const conversation = await prisma.conversation.findFirst({
-                where: { pageId, senderId, channel: "messenger" },
-                select: { id: true, businessProfileId: true }
-             });
-             if (conversation) {
-                const { syncTypingStatus } = await import("../../services/socketSync.service");
-                syncTypingStatus({
-                   businessProfileId: conversation.businessProfileId,
-                   conversationId: conversation.id,
-                   isTyping: action === "typing_on"
-                });
-             }
+             enqueueMetaJob({
+               platform: "messenger",
+               type: "typing_indicator",
+               identifier: pageId,
+               senderId,
+               isTyping: action === "typing_on"
+             } as any);
              continue;
           }
 
           // 2b. Handle Read Receipts from Customer
           if (event.read) {
              const watermark = event.read.watermark;
-             const conversation = await prisma.conversation.findFirst({
-                where: { pageId, senderId, channel: "messenger" },
-                select: { id: true, businessProfileId: true }
-             });
-             if (conversation) {
-                // Find all model messages in this conversation sent before the watermark
-                // and mark them as READ.
-                await prisma.conversationMessage.updateMany({
-                   where: { 
-                      conversationId: conversation.id, 
-                      role: "model",
-                      status: { not: "READ" },
-                      createdAt: { lte: new Date(watermark) }
-                   },
-                   data: { status: "READ" }
-                });
-
-                const { syncBulkMessageStatus } = await import("../../services/socketSync.service");
-                syncBulkMessageStatus({
-                   businessProfileId: conversation.businessProfileId,
-                   conversationId: conversation.id,
-                   status: "READ",
-                   metadata: { watermark }
-                });
-             }
+             enqueueMetaJob({
+               platform: "messenger",
+               type: "status_update",
+               identifier: pageId,
+               senderId,
+               statusEvent: "READ",
+               watermark
+             } as any);
              continue;
           }
 
           // 2c. Handle Message Deliveries
           if (event.delivery) {
              const mids = event.delivery.mids;
-             if (Array.isArray(mids)) {
-                await prisma.conversationMessage.updateMany({
-                   where: { externalId: { in: mids } },
-                   data: { status: "DELIVERED" }
-                });
-                // Emit update (simplification: we'll just emit the event)
+             if (Array.isArray(mids) && mids.length > 0) {
+               enqueueMetaJob({
+                 platform: "messenger",
+                 type: "status_update",
+                 identifier: pageId,
+                 senderId,
+                 statusEvent: "DELIVERED",
+                 mids
+               } as any);
              }
              continue;
           }

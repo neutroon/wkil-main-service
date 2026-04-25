@@ -1,12 +1,10 @@
 import { Tool } from "@google/genai";
 import { logger } from "../../utils/logger";
 import {
-  generateContent,
   genAI,
   MESSENGER_SAFETY_SETTINGS,
   aiRoutingSchema,
   executeWithFallback,
-  buildCaptureLeadTool,
 } from "../../config/gemini";
 import { pushLeadToCrm } from "../crm/crm.service";
 import { executeExternalQuery } from "../external/externalData.service";

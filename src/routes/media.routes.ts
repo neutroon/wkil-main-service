@@ -11,7 +11,7 @@ import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { r2Client, R2_BUCKET } from "../config/r2";
 import { enqueueMediaSyncJob, enqueueMetaJob } from "../queues/meta.queue";
 import prisma from "../config/prisma";
-import { logger } from "../utils/logger";
+
 import { validate } from "../middlewares/validate.middleware";
 import { 
   uploadMediaSchema,

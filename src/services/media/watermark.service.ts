@@ -1,5 +1,6 @@
 import sharp from "sharp";
 import { logger } from "../../utils/logger";
+import { AppError } from "../../middlewares/errorHandler.middleware";
 
 export type WatermarkPosition = "TOP_LEFT" | "TOP_RIGHT" | "BOTTOM_LEFT" | "BOTTOM_RIGHT" | "CENTER";
 
@@ -32,7 +33,7 @@ export async function applyWatermark(params: {
     ]);
 
     if (!mainMeta.width || !mainMeta.height || !logoMeta.width || !logoMeta.height) {
-      throw new Error("Could not retrieve image metadata for watermarking");
+      throw new AppError("Could not retrieve image metadata for watermarking", 502);
     }
 
     // 1. Calculate Logo Scaling (Target logo to be ~15% of image width)

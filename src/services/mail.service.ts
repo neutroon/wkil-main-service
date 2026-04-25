@@ -1,5 +1,6 @@
 import { mailer } from "../config/mail";
 import { logger } from "../utils/logger";
+import { AppError } from "../middlewares/errorHandler.middleware";
 
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
 const MAIL_FROM = process.env.MAIL_FROM || '"PagesPilot" <noreply@pagespilot.com>';
@@ -40,8 +41,7 @@ export const sendVerificationEmail = async (email: string, name: string, token: 
     });
     logger.info("Verification email sent successfully", { email });
   } catch (error) {
-    logger.error("Failed to send verification email", { email, error });
-    throw new Error("Could not send verification email");
+    throw new AppError("Could not send verification email", 502);
   }
 };
 
@@ -76,7 +76,6 @@ export const sendPasswordResetEmail = async (email: string, name: string, token:
     });
     logger.info("Password reset email sent successfully", { email });
   } catch (error) {
-    logger.error("Failed to send password reset email", { email, error });
-    throw new Error("Could not send password reset email");
+    throw new AppError("Could not send password reset email", 502);
   }
 };

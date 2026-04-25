@@ -12,6 +12,7 @@ import {
   toPromptMessages,
 } from "../chat/conversationTurns";
 import type { WidgetInstall } from "@prisma/client";
+import { AppError } from "../../middlewares/errorHandler.middleware";
 
 const FALLBACK_REPLY =
   "Sorry, we can't respond right now. Please try again or contact the business directly.";
@@ -39,7 +40,7 @@ export async function processWidgetChatMessage(params: {
       },
     });
     if (!verified) {
-      throw new Error("Invalid conversationId for this visitor");
+      throw new AppError("Invalid conversationId for this visitor", 400);
     }
     conversation = verified;
   } else {

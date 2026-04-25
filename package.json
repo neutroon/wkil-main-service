@@ -45,7 +45,8 @@
     "nodemailer": "^8.0.5",
     "os": "^0.1.2",
     "sharp": "^0.34.5",
-    "socket.io": "^4.8.3"
+    "socket.io": "^4.8.3",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/bcrypt": "^6.0.0",

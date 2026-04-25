@@ -27,46 +27,60 @@ const server = httpServer.listen(PORT, "0.0.0.0", async () => {
   startMediaRefreshJob();
 });
 
-// Graceful shutdown
-const shutdown = async () => {
-  logger.info("Shutdown signal received. Starting graceful shutdown...");
-  
-  server.close(async () => {
-    logger.info("HTTP server closed.");
-    
-    try {
-      await prisma.$disconnect();
-      logger.info("Database connection closed.");
-      process.exit(0);
-    } catch (err) {
-      logger.error("Error during database disconnection:", { error: err });
-      process.exit(1);
-    }
-  });
+// Graceful shutdown engine
+const gracefulShutdown = async (signal: string) => {
+  logger.info(`${signal} received. Starting professional graceful shutdown...`);
 
-  // Force close after 10s
-  setTimeout(() => {
-    logger.error("Could not close connections in time, forcefully shutting down");
+  // 1. Force exit fallback (Safety Net)
+  const forceExitTimeout = setTimeout(() => {
+    logger.error("SHUTDOWN TIMEOUT: Forcefully terminating process.");
     process.exit(1);
-  }, 10000);
+  }, 15000);
+
+  try {
+    // 2. Stop accepting new HTTP/Socket requests
+    server.close(() => {
+      logger.info("HTTP & Socket.io server closed.");
+    });
+
+    // 3. Gracefully close BullMQ Workers to prevent job corruption
+    const workers = [expressWorker, productionWorker, socialWorker];
+    for (const worker of workers) {
+      if (worker && typeof worker.close === "function") {
+        await worker.close();
+        logger.info(`Worker ${worker.name || "unnamed"} closed.`);
+      }
+    }
+
+    // 4. Final Disconnect: Database
+    await prisma.$disconnect();
+    logger.info("Database connection closed cleanly.");
+
+    clearTimeout(forceExitTimeout);
+    logger.info("--- Graceful Shutdown Complete ---");
+    process.exit(0);
+  } catch (err: any) {
+    logger.error("CRITICAL SHUTDOWN FAILURE:", { error: err.message });
+    process.exit(1);
+  }
 };
 
-process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
 // Handle unhandled rejections and uncaught exceptions
 process.on("unhandledRejection", (err: any) => {
-  logger.error("UNHANDLED REJECTION! 💥 Shutting down...", {
+  logger.error("UNHANDLED REJECTION! 💥", {
     error: err.message,
     stack: err.stack,
   });
-  shutdown();
+  gracefulShutdown("UNHANDLED_REJECTION");
 });
 
 process.on("uncaughtException", (err: any) => {
-  logger.error("UNCAUGHT EXCEPTION! 💥 Shutting down...", {
+  logger.error("UNCAUGHT EXCEPTION! 💥", {
     error: err.message,
     stack: err.stack,
   });
-  shutdown();
+  gracefulShutdown("UNCAUGHT_EXCEPTION");
 });

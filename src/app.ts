@@ -1,4 +1,5 @@
 import express from "express";
+import { env } from "./config/env";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import adminRoutes from "./routes/admin.routes";
@@ -43,16 +44,7 @@ import missionControlRouter from "./routes/admin/missionControl";
 const app = express();
 
 // Behind ngrok / load balancers Meta sends X-Forwarded-For; required for express-rate-limit
-// IP keys and avoids ERR_ERL_UNEXPECTED_X_FORWARDED_FOR. Set TRUST_PROXY=0 to disable.
-if (process.env.TRUST_PROXY === "0" || process.env.TRUST_PROXY === "false") {
-  app.set("trust proxy", false);
-} else {
-  const n = Number(process.env.TRUST_PROXY);
-  app.set(
-    "trust proxy",
-    Number.isFinite(n) && n >= 0 ? n : 1,
-  );
-}
+app.set("trust proxy", env.TRUST_PROXY);
 
 // ── Global middleware (must come BEFORE all routes) ──────────────────────────
 app.use(securityHeaders);

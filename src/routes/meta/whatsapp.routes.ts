@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import { randomUUID } from "crypto";
-import { Prisma } from "@prisma/client";
+
 import prisma from "../../config/prisma";
 import { enqueueMetaJob } from "../../queues/meta.queue";
 import { logger } from "../../utils/logger";

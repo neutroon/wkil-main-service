@@ -3,10 +3,13 @@ import prisma from "../../config/prisma";
 import { logger } from "../../utils/logger";
 import { r2Client, R2_BUCKET } from "../../config/r2";
 import { generateR2Key, uploadToR2 } from "./r2Storage.service";
-import { uploadWhatsAppMedia, uploadMessengerMedia } from "../meta/metaUpload.service";
+import {
+  uploadWhatsAppMedia,
+  uploadMessengerMedia,
+} from "../meta/metaUpload.service";
 import { decryptFacebookSecret } from "../../utils/tokenCrypto";
 import { enqueueMediaSyncJob } from "../../queues/meta.queue";
-import { emitToBusiness } from "../../utils/socket";
+import { syncMediaStatus } from "../socketSync.service";
 
 // Allowed MIME types and their media type classifications
 const MIME_TO_MEDIA_TYPE: Record<string, "image" | "document" | "video"> = {
@@ -16,11 +19,14 @@ const MIME_TO_MEDIA_TYPE: Record<string, "image" | "document" | "video"> = {
   "image/webp": "image",
   "application/pdf": "document",
   "application/msword": "document",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "document",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+    "document",
   "application/vnd.ms-excel": "document",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "document",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+    "document",
   "application/vnd.ms-powerpoint": "document",
-  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "document",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation":
+    "document",
   "video/mp4": "video",
   "video/quicktime": "video",
 };
@@ -40,7 +46,15 @@ export async function createMediaAsset(params: {
   name: string;
   instructions: string;
 }) {
-  const { businessProfileId, userId, fileBuffer, originalName, mimeType, name, instructions } = params;
+  const {
+    businessProfileId,
+    userId,
+    fileBuffer,
+    originalName,
+    mimeType,
+    name,
+    instructions,
+  } = params;
 
   // 1. Validate ownership
   const profile = await prisma.businessProfile.findFirst({
@@ -54,7 +68,9 @@ export async function createMediaAsset(params: {
 
   // 3. Validate file size
   if (fileBuffer.length > MAX_FILE_SIZE) {
-    throw new Error(`File exceeds maximum size of 25MB (received ${Math.round(fileBuffer.length / 1024 / 1024)}MB)`);
+    throw new Error(
+      `File exceeds maximum size of 25MB (received ${Math.round(fileBuffer.length / 1024 / 1024)}MB)`,
+    );
   }
 
   // 4. Sanitize AI instructions (strip characters that could cause prompt injection)
@@ -118,7 +134,7 @@ export async function registerAssetWithMeta(assetId: number) {
       new GetObjectCommand({
         Bucket: R2_BUCKET,
         Key: asset.r2Key,
-      })
+      }),
     );
     const bodyString = await getObj.Body?.transformToByteArray();
     if (!bodyString) throw new Error("Empty body from R2");
@@ -126,10 +142,15 @@ export async function registerAssetWithMeta(assetId: number) {
 
     // ── Tier-1 Checksum Validation ───────────────────────────────────────────
     if (fileBuffer.length !== asset.fileSizeBytes) {
-      throw new Error(`Data corruption detected: R2 size (${fileBuffer.length}) != DB size (${asset.fileSizeBytes})`);
+      throw new Error(
+        `Data corruption detected: R2 size (${fileBuffer.length}) != DB size (${asset.fileSizeBytes})`,
+      );
     }
   } catch (err: any) {
-    logger.error("media.meta_registration.integrity_check_failed", { assetId, error: err.message });
+    logger.error("media.meta_registration.integrity_check_failed", {
+      assetId,
+      error: err.message,
+    });
     return;
   }
 
@@ -184,17 +205,26 @@ export async function registerAssetWithMeta(assetId: number) {
         },
       });
 
-      logger.info("media.whatsapp.registered", { assetId, phoneId: waAccount.phoneNumberId, mediaId });
-      
-      // Real-time UI notification
-      emitToBusiness(asset.businessProfileId, "media_sync_status", {
+      logger.info("media.whatsapp.registered", {
         assetId,
+        phoneId: waAccount.phoneNumberId,
+        mediaId,
+      });
+
+      // Real-time UI notification
+      syncMediaStatus({
+        businessProfileId: asset.businessProfileId,
+        assetId: asset.id,
         platform: "whatsapp",
         identifier: waAccount.phoneNumberId,
-        status: "SYNCED"
+        status: "SYNCED",
       });
     } catch (err: any) {
-      logger.error("media.whatsapp.registration_failed", { assetId, phoneId: waAccount.phoneNumberId, error: err.message });
+      logger.error("media.whatsapp.registration_failed", {
+        assetId,
+        phoneId: waAccount.phoneNumberId,
+        error: err.message,
+      });
       await prisma.businessProfileMediaSync.upsert({
         where: {
           mediaId_platform_identifier: {
@@ -259,17 +289,26 @@ export async function registerAssetWithMeta(assetId: number) {
         },
       });
 
-      logger.info("media.messenger.registered", { assetId, pageId: fbPage.pageId, attachmentId });
+      logger.info("media.messenger.registered", {
+        assetId,
+        pageId: fbPage.pageId,
+        attachmentId,
+      });
 
       // Real-time UI notification
-      emitToBusiness(asset.businessProfileId, "media_sync_status", {
-        assetId,
+      syncMediaStatus({
+        businessProfileId: asset.businessProfileId,
+        assetId: asset.id,
         platform: "messenger",
         identifier: fbPage.pageId,
-        status: "SYNCED"
+        status: "SYNCED",
       });
     } catch (err: any) {
-      logger.error("media.messenger.registration_failed", { assetId, pageId: fbPage.pageId, error: err.message });
+      logger.error("media.messenger.registration_failed", {
+        assetId,
+        pageId: fbPage.pageId,
+        error: err.message,
+      });
       await prisma.businessProfileMediaSync.upsert({
         where: {
           mediaId_platform_identifier: {
@@ -300,7 +339,7 @@ export async function resolveAssetForChannel(
   assetName: string,
   businessProfileId: number,
   channel: "web" | "whatsapp" | "messenger",
-  identifier?: string // The PageID or PhoneNumberId
+  identifier?: string, // The PageID or PhoneNumberId
 ): Promise<{
   mediaId?: string;
   url?: string;
@@ -320,7 +359,11 @@ export async function resolveAssetForChannel(
   if (!asset) return null;
 
   if (channel === "web") {
-    return { url: asset.publicUrl, mediaType: asset.mediaType, mimeType: asset.mimeType };
+    return {
+      url: asset.publicUrl,
+      mediaType: asset.mediaType,
+      mimeType: asset.mimeType,
+    };
   }
 
   // 1. Precise Identity Lookup (Preferred)
@@ -346,7 +389,10 @@ export async function resolveAssetForChannel(
   }
 
   // 2. Legacy Fallback
-  const legacyId = channel === "whatsapp" ? asset.whatsappMediaId : asset.messengerAttachmentId;
+  const legacyId =
+    channel === "whatsapp"
+      ? asset.whatsappMediaId
+      : asset.messengerAttachmentId;
 
   return {
     mediaId: legacyId ?? undefined,
@@ -360,7 +406,10 @@ export async function resolveAssetForChannel(
  * Soft-deletes a media asset.
  * The R2 file and DB record are preserved for historical message integrity.
  */
-export async function softDeleteAsset(assetId: number, userId: number): Promise<void> {
+export async function softDeleteAsset(
+  assetId: number,
+  userId: number,
+): Promise<void> {
   const asset = await prisma.businessProfileMedia.findFirst({
     where: { id: assetId, userId },
   });
@@ -376,7 +425,10 @@ export async function softDeleteAsset(assetId: number, userId: number): Promise<
 /**
  * Lists all active media assets for a business profile.
  */
-export async function listMediaAssets(businessProfileId: number, userId: number) {
+export async function listMediaAssets(
+  businessProfileId: number,
+  userId: number,
+) {
   return prisma.businessProfileMedia.findMany({
     where: { businessProfileId, userId, isActive: true, deletedAt: null },
     orderBy: { createdAt: "desc" },
@@ -411,5 +463,8 @@ export async function updateMediaAssetMeta(
       .substring(0, 500);
   }
 
-  return prisma.businessProfileMedia.update({ where: { id: assetId }, data: updateData });
+  return prisma.businessProfileMedia.update({
+    where: { id: assetId },
+    data: updateData,
+  });
 }

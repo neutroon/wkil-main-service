@@ -1,6 +1,7 @@
 import { encryptFacebookSecret } from "../../utils/tokenCrypto";
 import { logger } from "../../utils/logger";
 import prisma from "../../config/prisma";
+import { AppError } from "../../middlewares/errorHandler.middleware";
 
 const GRAPH_API = "https://graph.facebook.com/v25.0";
 // Meta Cloud API and Embedded Signup onboarding (Tech Provider) v25.0.
@@ -72,7 +73,7 @@ async function exchangeCodeForTokenOnce(
             : redirectUriForRequest,
       url: url.toString().replace(appSecret, "REDACTED"),
     });
-    throw new Error(msg);
+    throw new AppError(msg, 502);
   }
 
   return data as { access_token: string };
@@ -83,7 +84,7 @@ export async function exchangeCodeForToken(code: string, redirectUri?: string): 
   const appSecret = process.env.FB_APP_SECRET;
 
   if (!appId || !appSecret) {
-    throw new Error("FB_APP_ID and FB_APP_SECRET must be set in environment");
+    throw new AppError("FB_APP_ID and FB_APP_SECRET must be set in environment", 500);
   }
 
   const trimmed = redirectUri?.trim() ?? "";
@@ -134,7 +135,7 @@ export async function exchangeCodeForToken(code: string, redirectUri?: string): 
       return data.access_token;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      lastError = e instanceof Error ? e : new Error(msg);
+      lastError = e instanceof AppError ? e : new AppError(msg, 502);
       const canRetry =
         i < uniqueAttempts.length - 1 && looksLikeRedirectUriMismatch(msg);
       if (!canRetry) throw lastError;
@@ -144,7 +145,7 @@ export async function exchangeCodeForToken(code: string, redirectUri?: string): 
     }
   }
 
-  throw lastError ?? new Error("Token exchange failed");
+  throw lastError ?? new AppError("Token exchange failed", 502);
 }
 
 // ─── Step 2: Discover all WABA accounts & phone numbers for this token ─────────
@@ -154,7 +155,7 @@ export async function discoverWabaAccounts(token: string): Promise<WabaAccount[]
   const appSecret = process.env.FB_APP_SECRET;
   const systemUserToken = process.env.FB_SYSTEM_USER_ACCESS_TOKEN?.trim();
   if (!appId || !appSecret) {
-    throw new Error("FB_APP_ID and FB_APP_SECRET must be set in environment");
+    throw new AppError("FB_APP_ID and FB_APP_SECRET must be set in environment", 500);
   }
 
   // Prefer system user token when available, but fall back to app access token.
@@ -219,7 +220,7 @@ export async function discoverWabaAccounts(token: string): Promise<WabaAccount[]
 
   if (!debugSucceeded || !debugData?.data) {
     logger.error("whatsapp_oauth.waba_discovery_failed", { error: debugData });
-    throw new Error(lastDebugError);
+    throw new AppError(lastDebugError, 502);
   }
 
   const granularScopes = debugData?.data?.granular_scopes || [];
@@ -233,8 +234,9 @@ export async function discoverWabaAccounts(token: string): Promise<WabaAccount[]
   );
 
   if (wabaIds.length === 0) {
-    throw new Error(
+    throw new AppError(
       "No WhatsApp Business Accounts were found in debug_token granular_scopes",
+      404
     );
   }
 
@@ -297,7 +299,7 @@ export async function subscribeWebhook(wabaId: string, token: string): Promise<v
   const data = await res.json() as any;
   if (!res.ok) {
     logger.error("whatsapp_oauth.webhook_subscription_failed", { wabaId, error: data });
-    throw new Error(data?.error?.message || "Webhook subscription failed");
+    throw new AppError(data?.error?.message || "Webhook subscription failed", 502);
   }
 
   logger.info("whatsapp_oauth.webhook_subscribed", { wabaId });

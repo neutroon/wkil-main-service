@@ -3,6 +3,7 @@ import { Server as HTTPServer } from "http";
 import { createAdapter } from "@socket.io/redis-adapter";
 import Redis from "ioredis";
 import { logger } from "./logger";
+import { AppError } from "../middlewares/errorHandler.middleware";
 
 let io: SocketIOServer | null = null;
 
@@ -65,7 +66,7 @@ export function initSocket(server: HTTPServer): SocketIOServer {
 
 export function getIO(): SocketIOServer {
   if (!io) {
-    throw new Error("Socket.io has not been initialized. Call initSocket(server) first.");
+    throw new AppError("Socket.io has not been initialized. Call initSocket(server) first.", 500);
   }
   return io;
 }

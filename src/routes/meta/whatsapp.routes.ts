@@ -16,7 +16,6 @@ import {
   subscribeWebhook,
   saveWhatsAppAccount,
 } from "../../services/meta/whatsappOauth.service";
-import { emitToBusiness, emitToConversation } from "../../utils/socket";
 import multer from "multer";
 import { uploadWhatsAppMedia } from "../../services/meta/metaUpload.service";
 import { sendWhatsAppMedia } from "../../services/meta/whatsapp.service";
@@ -103,15 +102,6 @@ whatsappRoutes.post(
           filename: file.originalname, 
           size: file.size 
         }
-      });
-
-      // 6. Broadcast
-      emitToBusiness(conversation.businessProfileId, "new_message", {
-        conversationId,
-        message: sentMsg
-      });
-      emitToConversation(conversationId, "new_message", {
-        message: sentMsg
       });
 
       res.json(sentMsg);
@@ -289,16 +279,6 @@ whatsappRoutes.post("/webhook", async (req: Request, res: Response) => {
                   where: { id: msg.id },
                   data: { status: newStatus.toUpperCase() },
                 });
-
-                emitToBusiness(
-                  msg.conversation.businessProfileId,
-                  "message_status_updated",
-                  {
-                    conversationId: msg.conversation.id,
-                    messageId: msg.id,
-                    status: updatedMsg.status,
-                  },
-                );
               }
             } catch (e) {
               logger.warn("whatsapp.webhook.status_update_failed", {

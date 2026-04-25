@@ -4,6 +4,7 @@ import { recordAiUsage, assertQuotaAvailable } from "../billing.service";
 import { applyWatermark, WatermarkPosition } from "./watermark.service";
 import { logger } from "../../utils/logger";
 import prisma from "../../config/prisma";
+import { AppError } from "../../middlewares/errorHandler.middleware";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { r2Client, R2_BUCKET } from "../../config/r2";
 
@@ -94,7 +95,7 @@ export async function createGeminiVisual(params: {
     where: { id: businessProfileId, userId },
   });
 
-  if (!profile) throw new Error("Business profile not found");
+  if (!profile) throw new AppError("Business profile not found", 404);
 
   // 2. Pre-flight quota check
   await assertQuotaAvailable(userId, businessProfileId);
@@ -217,8 +218,8 @@ export async function refineGeminiVisual(params: {
     prisma.businessProfileMedia.findFirst({ where: { id: assetId, userId } })
   ]);
 
-  if (!profile) throw new Error("Business profile not found");
-  if (!asset) throw new Error("Source asset not found");
+  if (!profile) throw new AppError("Business profile not found", 404);
+  if (!asset) throw new AppError("Source asset not found", 404);
 
   // 2b. Resilience: Set Post Status to 'generating' immediately
   if (postId) {
@@ -244,11 +245,11 @@ export async function refineGeminiVisual(params: {
         new GetObjectCommand({ Bucket: R2_BUCKET, Key: asset.r2Key })
       );
       const bodyBytes = await getObj.Body?.transformToByteArray();
-      if (!bodyBytes) throw new Error("Source asset data empty");
+      if (!bodyBytes) throw new AppError("Source asset data empty", 502);
       imageBuffer = Buffer.from(bodyBytes);
     } catch (err: any) {
       logger.error("gemini_visual.refine_fetch_failed", { assetId, error: err.message });
-      throw new Error("Failed to fetch source image for refinement.");
+      throw new AppError("Failed to fetch source image for refinement.", 502);
     }
 
     let brandLogoBuffer: Buffer | undefined;

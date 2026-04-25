@@ -1,9 +1,10 @@
 import axios from "axios";
-import FormData from "form-data";
+
 import { logger } from "../../utils/logger";
+import { AppError } from "../../middlewares/errorHandler.middleware";
 
 /**
- * Uploads a file to Meta's Media API for WhatsApp.
+ * Upload a media file to WhatsApp Cloud API.
  * Returns the media ID.
  */
 export async function uploadWhatsAppMedia(
@@ -11,69 +12,81 @@ export async function uploadWhatsAppMedia(
   accessToken: string,
   fileBuffer: Buffer,
   fileName: string,
-  mimeType: string
+  mimeType: string,
 ): Promise<string> {
-  try {
-    const form = new FormData();
-    form.append("file", fileBuffer, { filename: fileName, contentType: mimeType });
-    form.append("type", mimeType.split("/")[0]);
-    form.append("messaging_product", "whatsapp");
+  const formData = new FormData();
+  const blob = new Blob([new Uint8Array(fileBuffer)], { type: mimeType });
+  formData.append("file", blob, fileName);
+  formData.append("messaging_product", "whatsapp");
+  formData.append("type", mimeType);
 
-    const response = await axios.post(
-      `https://graph.facebook.com/v21.0/${phoneNumberId}/media`,
-      form,
-      {
-        headers: {
-          ...form.getHeaders(),
-          Authorization: `Bearer ${accessToken}`,
-        },
-      }
-    );
+  const response = await fetch(
+    `https://graph.facebook.com/v25.0/${phoneNumberId}/media`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: formData,
+    },
+  );
 
-    return response.data.id;
-  } catch (error: any) {
-    const msg = error.response?.data?.error?.message || error.message;
-    logger.error("meta_upload.whatsapp.failed", { error: msg });
-    throw new Error(`WhatsApp upload failed: ${msg}`);
+  if (!response.ok) {
+    const errorData = await response.json();
+    const msg = errorData.error?.message || "Unknown error";
+    throw new AppError(`WhatsApp upload failed: ${msg}`, 502);
   }
+
+  const data = (await response.json()) as { id: string };
+  return data.id;
 }
 
 /**
- * Uploads a file to Meta's Media API for Messenger.
+ * Upload a media file to Messenger API.
  * Returns the attachment_id.
  */
 export async function uploadMessengerMedia(
   pageId: string,
-  accessToken: string,
+  pageAccessToken: string,
   fileBuffer: Buffer,
   fileName: string,
-  mimeType: string
+  mimeType: string,
 ): Promise<string> {
-  try {
-    const form = new FormData();
-    form.append("message", JSON.stringify({
+  const formData = new FormData();
+  const blob = new Blob([new Uint8Array(fileBuffer)], { type: mimeType });
+
+  // Messenger requires a JSON payload + the file in a single multipart request
+  formData.append(
+    "message",
+    JSON.stringify({
       attachment: {
-        type: mimeType.startsWith("image") ? "image" : mimeType.startsWith("video") ? "video" : "file",
-        payload: { is_reusable: true }
-      }
-    }));
-    form.append("filedata", fileBuffer, { filename: fileName, contentType: mimeType });
+        type: mimeType.startsWith("image")
+          ? "image"
+          : mimeType.startsWith("video")
+            ? "video"
+            : mimeType.startsWith("audio")
+              ? "audio"
+              : "file",
+        payload: { is_reusable: true },
+      },
+    }),
+  );
+  formData.append("filedata", blob, fileName);
 
-    const response = await axios.post(
-      `https://graph.facebook.com/v21.0/${pageId}/message_attachments`,
-      form,
-      {
-        headers: {
-          ...form.getHeaders(),
-          Authorization: `Bearer ${accessToken}`,
-        },
-      }
-    );
+  const response = await fetch(
+    `https://graph.facebook.com/v25.0/me/message_attachments?access_token=${pageAccessToken}`,
+    {
+      method: "POST",
+      body: formData,
+    },
+  );
 
-    return response.data.attachment_id;
-  } catch (error: any) {
-    const msg = error.response?.data?.error?.message || error.message;
-    logger.error("meta_upload.messenger.failed", { error: msg });
-    throw new Error(`Messenger upload failed: ${msg}`);
+  if (!response.ok) {
+    const errorData = await response.json();
+    const msg = errorData.error?.message || "Unknown error";
+    throw new AppError(`Messenger upload failed: ${msg}`, 502);
   }
+
+  const data = (await response.json()) as { attachment_id: string };
+  return data.attachment_id;
 }

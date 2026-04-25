@@ -1,5 +1,6 @@
 import prisma from "../../config/prisma";
 import { logger } from "../../utils/logger";
+import { AppError } from "../../middlewares/errorHandler.middleware";
 
 type CanonicalVerification = "verified" | "unverified" | "failed";
 
@@ -60,7 +61,7 @@ export async function executeExternalQuery(
   });
 
   if (!source) {
-    throw new Error(`Data source with id ${sourceId} not found`);
+    throw new AppError(`Data source with id ${sourceId} not found`, 404);
   }
 
   try {

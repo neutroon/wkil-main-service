@@ -26,6 +26,6 @@ export const widgetChatSchema = z.object({
 export const widgetHistorySchema = z.object({
   query: z.object({
     visitorId: z.string().min(1, "visitorId is required"),
-    conversationId: z.string().regex(/^\d+$/, "conversationId must be numeric").optional(),
+    conversationId: z.coerce.number().optional(),
   }),
 });

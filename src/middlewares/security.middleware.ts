@@ -1,4 +1,5 @@
 import helmet from "helmet";
+import { env } from "../config/env";
 import { Request, Response, NextFunction } from "express";
 
 // Security headers configuration
@@ -46,7 +47,7 @@ export const corsOptions = {
       "https://app.pagespilot.com",
     ];
 
-    if (process.env.NODE_ENV === "development") {
+    if (env.NODE_ENV === "development") {
       // In development, allow any localhost origin
       if (origin.includes("localhost") || origin.includes("127.0.0.1")) {
         return callback(null, true);
@@ -135,12 +136,12 @@ export const requestSizeLimit = (
 };
 
 // IP whitelist for admin operations (optional)
-export const adminIPWhitelist = (
+export const requireAdminIP = (
   req: Request,
   res: Response,
   next: NextFunction,
 ) => {
-  const adminIPs = process.env.ADMIN_IP_WHITELIST?.split(",") || [];
+  const adminIPs = env.ADMIN_IP_WHITELIST?.split(",") || [];
 
   if (adminIPs.length === 0) {
     // No whitelist configured, allow all

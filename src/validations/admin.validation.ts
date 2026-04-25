@@ -16,7 +16,7 @@ export const createAdminManagerSchema = z.object({
  */
 export const updateBillingSettingsSchema = z.object({
   body: z.object({
-    billing_multiplier: z.union([z.number(), z.string().regex(/^\d+(\.\d+)?$/).transform(Number)]),
+    billing_multiplier: z.coerce.number(),
   }),
 });
 
@@ -25,10 +25,10 @@ export const updateBillingSettingsSchema = z.object({
  */
 export const updateBusinessUsageSchema = z.object({
   params: z.object({
-    id: z.string().regex(/^\d+$/).transform(Number),
+    id: z.coerce.number(),
   }),
   body: z.object({
-    tokensUsed: z.union([z.number(), z.string().regex(/^\d+$/).transform(Number)]),
+    tokensUsed: z.coerce.number(),
   }),
 });
 
@@ -37,6 +37,6 @@ export const updateBusinessUsageSchema = z.object({
  */
 export const adminBusinessIdParamSchema = z.object({
   params: z.object({
-    id: z.string().regex(/^\d+$/).transform(Number),
+    id: z.coerce.number(),
   }),
 });

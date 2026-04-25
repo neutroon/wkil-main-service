@@ -6,7 +6,7 @@ import { z } from "zod";
  */
 export const toggleAiSchema = z.object({
   params: z.object({
-    id: z.string().regex(/^\d+$/, "ID must be a numeric string"),
+    id: z.coerce.number(),
   }),
   body: z.object({
     enabled: z.boolean({
@@ -21,7 +21,7 @@ export const toggleAiSchema = z.object({
  */
 export const updateStatusSchema = z.object({
   params: z.object({
-    id: z.string().regex(/^\d+$/, "ID must be a numeric string"),
+    id: z.coerce.number(),
   }),
   body: z.object({
     status: z.enum(["OPEN", "RESOLVED", "ARCHIVED"], {
@@ -36,7 +36,7 @@ export const updateStatusSchema = z.object({
  */
 export const sendMessageSchema = z.object({
   params: z.object({
-    id: z.string().regex(/^\d+$/, "ID must be a numeric string"),
+    id: z.coerce.number(),
   }),
   body: z.object({
     message: z.string().min(1, "Message cannot be empty").max(2000, "Message too long"),

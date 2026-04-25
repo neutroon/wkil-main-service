@@ -1,5 +1,6 @@
 import { Readable } from "stream";
 import { logger } from "../../utils/logger";
+import { AppError } from "../../middlewares/errorHandler.middleware";
 
 const MEDIA_URL_CACHE = new Map<string, { url: string; expiresAt: number }>();
 const CACHE_TTL_MS = 60 * 60 * 1000; // Cache for 1 hour (Meta URLs usually last 5 mins to 24 hours)
@@ -88,7 +89,7 @@ export async function getMetaMediaUrl(
     }
 
     if (!url) {
-      throw new Error(`Failed to resolve ${platform} media URL for ID: ${id}`);
+      throw new AppError(`Failed to resolve ${platform} media URL for ID: ${id}`, 404);
     }
 
     // Cache the resolved URL (Production standard: 1 hour)
@@ -118,7 +119,7 @@ export async function streamMetaMedia(
 ) {
   try {
     const response = await fetch(metaUrl);
-    if (!response.ok) throw new Error("Could not stream from Meta");
+    if (!response.ok) throw new AppError("Could not stream from Meta", 502);
 
     const contentType = response.headers.get("content-type");
     if (contentType) res.setHeader("Content-Type", contentType);
@@ -127,7 +128,7 @@ export async function streamMetaMedia(
     if (response.body) {
       Readable.fromWeb(response.body as any).pipe(res);
     } else {
-      throw new Error("Empty response body from Meta");
+      throw new AppError("Empty response body from Meta", 502);
     }
   } catch (err: unknown) {
     logger.error("meta.media.stream_failed", {

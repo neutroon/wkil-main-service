@@ -8,6 +8,7 @@ import { getBillingMultiplier } from "./settings.service";
 import { clearQuotaCache } from "./billing.service";
 import { generateRandomToken, hashToken } from "../utils/tokenCrypto";
 import { sendVerificationEmail } from "./mail.service";
+import { AppError } from "../middlewares/errorHandler.middleware";
 
 export const createUser = async (
   name: string,
@@ -20,7 +21,7 @@ export const createUser = async (
   // Check if user already exists
   const existingUser = await prisma.user.findUnique({ where: { email } });
   if (existingUser) {
-    throw new Error("User already exists");
+    throw new AppError("User already exists", 409);
   }
 
   // Generate verification token (unhashed for email, hashed for DB)
@@ -64,12 +65,12 @@ export const loginUser = async (email: string, password: string) => {
   });
 
   if (!user) {
-    throw new Error("User not found");
+    throw new AppError("User not found", 404);
   }
 
   const valid = await bcrypt.compare(password, user.password);
   if (!valid) {
-    throw new Error("Invalid credentials");
+    throw new AppError("Invalid credentials", 401);
   }
 
   // Generate tokens
@@ -295,7 +296,7 @@ export const assignUserToManager = async (
   });
 
   if (!manager || !["super_admin", "admin", "manager"].includes(manager.role)) {
-    throw new Error("Invalid manager role");
+    throw new AppError("Invalid manager role", 400);
   }
 
   // Verify user exists and is active
@@ -304,7 +305,7 @@ export const assignUserToManager = async (
   });
 
   if (!user) {
-    throw new Error("User not found or inactive");
+    throw new AppError("User not found or inactive", 404);
   }
 
   // Check if assignment already exists
@@ -313,7 +314,7 @@ export const assignUserToManager = async (
   });
 
   if (existingAssignment) {
-    throw new Error("User is already assigned to this manager");
+    throw new AppError("User is already assigned to this manager", 409);
   }
 
   return prisma.userManagement.create({

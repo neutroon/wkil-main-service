@@ -7,6 +7,7 @@ import {
   Schema,
 } from "@google/genai";
 import { logger } from "../utils/logger";
+import { AppError } from "../middlewares/errorHandler.middleware";
 
 if (process.env.NODE_ENV !== "production") {
   logger.debug("gemini.config", {
@@ -15,7 +16,7 @@ if (process.env.NODE_ENV !== "production") {
 }
 
 if (!process.env.GEMINI_API_KEY) {
-  throw new Error("GEMINI_API_KEY environment variable is required");
+  throw new AppError("GEMINI_API_KEY environment variable is required", 500);
 }
 
 // Initialize Google Generative AI
@@ -31,13 +32,24 @@ export interface UsageMetadata {
   totalTokenCount: number;
 }
 
-/**
- * Extended response interface to access runtime usage data for embeddings.
- * Includes common metadata fields discovered at runtime for Gemini-3 series.
- */
 export interface EmbedResponseWithUsage {
   embeddings?: { values: number[] }[];
   usageMetadata?: UsageMetadata;
+}
+
+/**
+ * Strict typing for Multimodal parts (April 2026 SDK Extensions)
+ */
+export interface GeminiPart {
+  text?: string;
+  inlineData?: {
+    data: string;
+    mimeType: string;
+  };
+  fileData?: {
+    fileUri: string;
+    mimeType: string;
+  };
 }
 
 // Model Tier Configuration (April 2026 Production Standards)
@@ -49,9 +61,9 @@ export interface EmbedResponseWithUsage {
 //};
 
 const MODELS = {
-  PRIMARY: "gemini-3-flash-preview",        // Best quality
+  PRIMARY: "gemini-3-flash-preview", // Best quality
   RESERVE: "gemini-3.1-flash-lite-preview", // Cheaper/faster preview
-  STABLE:  "gemini-2.5-flash",              // Non-preview, always available
+  STABLE: "gemini-2.5-flash", // Non-preview, always available
   IMAGE_GEN: "gemini-3.1-flash-image-preview", // Nano Banana 2 (Visual)
 };
 
@@ -62,8 +74,9 @@ export async function executeWithFallback<T>(
   operation: (model: string) => Promise<T>,
   context: string,
   onRetry?: (message: string) => void,
+  customTiers?: string[],
 ): Promise<{ result: T; model: string }> {
-  const tiers = [MODELS.PRIMARY, MODELS.RESERVE, MODELS.STABLE];
+  const tiers = customTiers || [MODELS.PRIMARY, MODELS.RESERVE, MODELS.STABLE];
   let lastError: any;
 
   for (let t = 0; t < tiers.length; t++) {
@@ -111,11 +124,8 @@ export async function executeWithFallback<T>(
           if (parsed.error?.message) errorMessage = parsed.error.message;
         } catch (e) {}
 
-        logger.error(
-          `[GeminiResilience] ${context} Final failure on last tier (${currentModel}):`,
-          { error: errorMessage },
-        );
-        throw new Error(errorMessage);
+        logger.error(`Gemini final failure: ${errorMessage}`);
+        throw new AppError(errorMessage, 502);
       }
     }
   }
@@ -131,6 +141,23 @@ export type AiUsageMetadata = {
 };
 
 // Use Gemini 3.1 Flash (Primary) with 3.0 Fallbacks
+/**
+ * Shared configuration builder for Gemini requests.
+ */
+function buildRequestConfig(params: {
+  temperature: number;
+  responseMimeType?: string;
+  enableSearch?: boolean;
+}) {
+  return {
+    temperature: params.temperature,
+    responseMimeType: params.enableSearch
+      ? "text/plain"
+      : params.responseMimeType || "text/plain",
+    tools: params.enableSearch ? [{ googleSearch: {} }] : undefined,
+  };
+}
+
 async function generateContentStream(
   prompt: string,
   responseMimeType?: string,
@@ -138,13 +165,11 @@ async function generateContentStream(
   onRetry?: (msg: string) => void,
   temperature: number = 0.4,
 ) {
-  const config: any = {
+  const config = buildRequestConfig({
     temperature,
-    responseMimeType: enableSearch
-      ? "text/plain"
-      : responseMimeType || "text/plain",
-    tools: enableSearch ? [{ googleSearch: {} }] : undefined,
-  };
+    responseMimeType,
+    enableSearch,
+  });
 
   return executeWithFallback(
     async (model) => {
@@ -166,13 +191,11 @@ async function generateContent(
   onRetry?: (msg: string) => void,
   temperature: number = 0.4,
 ): Promise<{ text: string; usage: AiUsageMetadata }> {
-  const config: any = {
+  const config = buildRequestConfig({
     temperature,
-    responseMimeType: enableSearch
-      ? "text/plain"
-      : responseMimeType || "text/plain",
-    tools: enableSearch ? [{ googleSearch: {} }] : undefined,
-  };
+    responseMimeType,
+    enableSearch,
+  });
 
   const { result: response, model } = await executeWithFallback(
     async (model) => {
@@ -187,8 +210,8 @@ async function generateContent(
   );
 
   const usage = response.usageMetadata;
-  const grounding = (response as any).candidates?.[0]?.groundingMetadata
-    ?.searchEntryPoint;
+  const grounding =
+    response.candidates?.[0]?.groundingMetadata?.searchEntryPoint;
 
   return {
     text: response.text || "",
@@ -272,24 +295,27 @@ export const aiRoutingSchema: Schema = {
       properties: {
         assetName: {
           type: Type.STRING,
-          description: "Exact name of the asset from the Media Catalog (case-sensitive).",
+          description:
+            "Exact name of the asset from the Media Catalog (case-sensitive).",
         },
         caption: {
           type: Type.STRING,
           nullable: true,
-          description: "Short caption to accompany the file (e.g. 'Here is our product catalog!').",
+          description:
+            "Short caption to accompany the file (e.g. 'Here is our product catalog!').",
         },
       },
     },
   },
-  required: ["action", "reasoning", "intent", "publicContent", "privateContent"],
+  required: [
+    "action",
+    "reasoning",
+    "intent",
+    "publicContent",
+    "privateContent",
+  ],
 };
 
-/**
- * Dynamically builds a Lead Capture tool for Gemini based on custom field mappings.
- * If no custom mapping exists, it defaults to the standard name/email/phone schema.
- */
-// Helper function to recursively build Gemini properties globally for any config tool
 export const buildDynamicProperties = (mapping: any): Record<string, any> => {
   const props: Record<string, any> = {};
   for (const [key, value] of Object.entries(mapping)) {
@@ -337,9 +363,13 @@ export const buildDynamicProperties = (mapping: any): Record<string, any> => {
   return props;
 };
 
-export const DEFAULT_LEAD_CAPTURE_INSTRUCTIONS = "Captures a prospective lead's information. Trigger this ONLY when the user explicitly expresses strong buying intent, asks for a callback, tells you their contact details, or wants to proceed with an action.";
+export const DEFAULT_LEAD_CAPTURE_INSTRUCTIONS =
+  "Captures a prospective lead's information. Trigger this ONLY when the user explicitly expresses strong buying intent, asks for a callback, tells you their contact details, or wants to proceed with an action.";
 
-export function buildCaptureLeadTool(fieldMapping: any, customInstructions?: string): Tool[] {
+export function buildCaptureLeadTool(
+  fieldMapping: any,
+  customInstructions?: string,
+): Tool[] {
   const properties: Record<string, any> = {};
   const required: string[] = [];
 
@@ -348,7 +378,6 @@ export function buildCaptureLeadTool(fieldMapping: any, customInstructions?: str
     typeof fieldMapping === "object" &&
     Object.keys(fieldMapping).length > 0
   ) {
-    // Dynamically build properties based on user configuration
     for (const [key, propConfig] of Object.entries(
       buildDynamicProperties(fieldMapping),
     )) {
@@ -356,7 +385,6 @@ export function buildCaptureLeadTool(fieldMapping: any, customInstructions?: str
       required.push(key);
     }
   } else {
-    // Default Schema Standard
     properties["name"] = {
       type: Type.STRING,
       description: "The full name of the prospect.",
@@ -426,15 +454,8 @@ export function buildExternalQueryTools(dataSources: any[]): Tool[] {
   return [{ functionDeclarations }];
 }
 
-/**
- * Structured generation for Messenger: system instruction + explicit turns.
- * ⚠️ If tools are passed, check response.candidates[0].content.parts
- * for functionCall parts and handle the tool execution loop externally.
- * This function does NOT auto-execute tool calls.
- */
 export async function generateMessengerAssistantReply(params: {
   systemInstruction: string;
-  /** Prior turns only (excludes the latest customer message). */
   historyTurns: { role: "user" | "model"; text?: string; parts?: any[] }[];
   customerMessage: string;
   tools?: Tool[];
@@ -451,132 +472,111 @@ export async function generateMessengerAssistantReply(params: {
     },
   ];
 
-  try {
-    const { result: response, model } = await executeWithFallback(
-      async (model) => {
-        return await genAI.models.generateContent({
-          model,
-          contents,
-          config: {
-            systemInstruction: params.systemInstruction,
-            temperature: params.temperature ?? 0.4,
-            maxOutputTokens: 1024,
-            responseMimeType: "text/plain",
-            safetySettings: MESSENGER_SAFETY_SETTINGS,
-            tools: params.tools,
-          },
-        });
-      },
-      "MessengerAssistant",
-    );
-
-    const usage = response.usageMetadata;
-    const grounding = (response as any).candidates?.[0]?.groundingMetadata
-      ?.searchEntryPoint;
-
-    return {
-      response,
-      usage: {
-        promptTokens: usage?.promptTokenCount || 0,
-        completionTokens: usage?.candidatesTokenCount || 0,
-        totalTokens: usage?.totalTokenCount || 0,
-        groundingCalls: grounding ? 1 : 0,
+  const { result: response, model } = await executeWithFallback(
+    async (model) => {
+      return await genAI.models.generateContent({
         model,
-      },
-    };
-  } catch (error: any) {
-    if (
-      error?.status === 403 ||
-      error?.message?.includes("403") ||
-      error?.message?.includes("PERMISSION_DENIED")
-    ) {
-      logger.error(
-        "Gemini Assistant Permission Denied (403): Your project has been denied access. Check project/billing status.",
-        {
-          error: error.message,
-          tip: "Check AI Studio console for project 'gen-lang-client-0165801924' status.",
+        contents,
+        config: {
+          systemInstruction: params.systemInstruction,
+          temperature: params.temperature ?? 0.4,
+          maxOutputTokens: 1024,
+          responseMimeType: "text/plain",
+          safetySettings: MESSENGER_SAFETY_SETTINGS,
+          tools: params.tools,
         },
-      );
-    }
-    throw error;
-  }
+      });
+    },
+    "MessengerAssistant",
+  );
+
+  const usage = response.usageMetadata;
+  const grounding =
+    response.candidates?.[0]?.groundingMetadata?.searchEntryPoint;
+
+  return {
+    response,
+    usage: {
+      promptTokens: usage?.promptTokenCount || 0,
+      completionTokens: usage?.candidatesTokenCount || 0,
+      totalTokens: usage?.totalTokenCount || 0,
+      groundingCalls: grounding ? 1 : 0,
+      model,
+    },
+  };
 }
 
-// For ingestion — used when embedding chunks
 async function embedTexts(
   texts: string[],
 ): Promise<{ embeddings: number[][]; totalTokens: number }> {
   let totalTokens = 0;
-  const result = await Promise.all(
+
+  const results = await Promise.all(
     texts.map(async (t) => {
-      const res = (await genAI.models.embedContent({
-        model: "gemini-embedding-001",
-        contents: t,
-        config: {
-          taskType: "RETRIEVAL_DOCUMENT",
-          outputDimensionality: 768,
+      const { result: res } = await executeWithFallback(
+        async (model) => {
+          return (await genAI.models.embedContent({
+            model,
+            contents: t,
+            config: {
+              taskType: "RETRIEVAL_DOCUMENT",
+              outputDimensionality: 768,
+            },
+          })) as EmbedResponseWithUsage;
         },
-      })) as EmbedResponseWithUsage;
+        "EmbedTexts",
+        undefined,
+        ["gemini-embedding-001"],
+      );
 
-      const tokens = res.usageMetadata?.totalTokenCount ?? 0;
-      if (!tokens) {
-        logger.warn(
-          `[GeminiBilling] No usageMetadata returned for embedding model. Fallover to 0. Check API version.`,
-        );
-      } else {
-        logger.debug(`[GeminiBilling] Embedding tokens captured: ${tokens}`);
-      }
-
-      totalTokens += tokens;
-      return res;
+      totalTokens += res.usageMetadata?.totalTokenCount ?? 0;
+      return res.embeddings![0].values!;
     }),
   );
-  return {
-    embeddings: result.map((r) => r.embeddings![0].values!),
-    totalTokens,
-  };
+
+  return { embeddings: results, totalTokens };
 }
 
-// For querying — used when embedding user messages
 async function embedQuery(
   text: string,
 ): Promise<{ vector: number[]; totalTokens: number }> {
   if (!text || text.trim().length === 0) {
     return { vector: new Array(768).fill(0), totalTokens: 0 };
   }
-  const result = (await genAI.models.embedContent({
-    model: "gemini-embedding-001",
-    contents: text,
-    config: {
-      taskType: "RETRIEVAL_QUERY",
-      outputDimensionality: 768,
-    },
-  })) as EmbedResponseWithUsage;
 
-  const tokens = result.usageMetadata?.totalTokenCount ?? 0;
+  const { result: res } = await executeWithFallback(
+    async (model) => {
+      return (await genAI.models.embedContent({
+        model,
+        contents: text,
+        config: {
+          taskType: "RETRIEVAL_QUERY",
+          outputDimensionality: 768,
+        },
+      })) as EmbedResponseWithUsage;
+    },
+    "EmbedQuery",
+    undefined,
+    ["gemini-embedding-001"],
+  );
 
   return {
-    vector: result.embeddings![0].values!,
-    totalTokens: tokens,
+    vector: res.embeddings![0].values!,
+    totalTokens: res.usageMetadata?.totalTokenCount ?? 0,
   };
 }
 
 export async function generateVisualContent(params: {
   prompt: string;
-  imageBuffer?: Buffer; // For editing existing images
-  brandLogoBuffer?: Buffer; // For native branding
+  imageBuffer?: Buffer;
+  brandLogoBuffer?: Buffer;
   mimeType?: string;
   brandLogoMimeType?: string;
   onRetry?: (msg: string) => void;
-  aspectRatio?: string; // e.g. "1:1", "16:9", "9:16"
+  aspectRatio?: string;
 }): Promise<{ imageBuffer: Buffer; usage: AiUsageMetadata }> {
-  // Use specialized image generation tier
-  const model = MODELS.IMAGE_GEN;
+  const parts: GeminiPart[] = [{ text: params.prompt }];
 
-  // Prepare contents array
-  const parts: any[] = [{ text: params.prompt }];
-  
-  // If editing, add the base image
   if (params.imageBuffer) {
     parts.push({
       inlineData: {
@@ -586,7 +586,6 @@ export async function generateVisualContent(params: {
     });
   }
 
-  // If branding, add the brand logo as a reference image
   if (params.brandLogoBuffer) {
     parts.push({
       inlineData: {
@@ -596,58 +595,51 @@ export async function generateVisualContent(params: {
     });
   }
 
-  try {
-    const response = await genAI.models.generateContent({
-      model,
-      contents: [{ role: "user", parts }],
-      config: {
-        // High fidelity social parameters for April 2026
-        temperature: 0.7,
-        maxOutputTokens: 2048,
-      },
-    });
-
-    // DEBUG: Log raw response to verify usage reporting structure for image models
-    logger.debug("gemini_visual.raw_response_metadata", { 
-      hasUsage: Boolean(response.usageMetadata),
-      usage: response.usageMetadata,
-      candidateCount: response.candidates?.length
-    });
-
-    const usage = response.usageMetadata;
-
-    // Extract image binary from the multimodal response parts
-    const imagePart = response.candidates?.[0]?.content?.parts?.find(
-      (p: any) => p.inlineData || p.fileData
-    );
-
-    if (!imagePart || (!imagePart.inlineData && !imagePart.fileData)) {
-      throw new Error("No image was generated in the response parts. Safety filter might have triggered.");
-    }
-
-    const base64Data = imagePart.inlineData?.data || (imagePart as any).fileData?.data;
-    if (!base64Data) throw new Error("Image data was empty in the response (Model might have returned a File URI instead of bytes).");
-
-    logger.info("gemini_visual.token_usage", { 
-      promptTokens: usage?.promptTokenCount || 0, 
-      completionTokens: usage?.candidatesTokenCount || 0,
-      model
-    });
-
-    return {
-      imageBuffer: Buffer.from(base64Data, "base64"),
-      usage: {
-        promptTokens: usage?.promptTokenCount || 0,
-        completionTokens: usage?.candidatesTokenCount || 0, // Pixels are counted as output tokens
-        totalTokens: usage?.totalTokenCount || 0,
-        groundingCalls: 0,
+  const { result: response, model } = await executeWithFallback(
+    async (model) => {
+      return await genAI.models.generateContent({
         model,
-      },
-    };
-  } catch (error: any) {
-    logger.error(`[GeminiVisual] Final failure on model ${model}:`, { error: error.message });
-    throw error;
+        contents: [{ role: "user", parts }],
+        config: {
+          temperature: 0.7,
+          maxOutputTokens: 2048,
+        },
+      });
+    },
+    "VisualGeneration",
+    params.onRetry,
+    [MODELS.IMAGE_GEN, MODELS.PRIMARY],
+  );
+
+  const usage = response.usageMetadata;
+  const imagePart = response.candidates?.[0]?.content?.parts?.find(
+    (p: any) => p.inlineData || p.fileData,
+  ) as
+    | { inlineData?: { data: string }; fileData?: { data: string } }
+    | undefined;
+
+  if (!imagePart || (!imagePart.inlineData && !imagePart.fileData)) {
+    throw new AppError(
+      "AI Visual Generation Failed: No image data received",
+      502,
+    );
   }
+
+  const base64Data = imagePart.inlineData?.data || imagePart.fileData?.data;
+  if (!base64Data) {
+    throw new AppError("AI Visual Generation Failed: Buffer empty", 502);
+  }
+
+  return {
+    imageBuffer: Buffer.from(base64Data, "base64"),
+    usage: {
+      promptTokens: usage?.promptTokenCount || 0,
+      completionTokens: usage?.candidatesTokenCount || 0,
+      totalTokens: usage?.totalTokenCount || 0,
+      groundingCalls: 0,
+      model,
+    },
+  };
 }
 
 export { generateContent, generateContentStream, embedTexts, embedQuery };

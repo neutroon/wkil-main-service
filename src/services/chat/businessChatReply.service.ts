@@ -7,7 +7,7 @@ import {
   buildExternalQueryTools,
 } from "../../config/gemini";
 import { runAgentGraph } from "../ai/agentGraph";
-import type { AiRoutingDecision } from "../ai/aiEngine.service";
+import type { AiRoutingDecision } from "../ai/aiEngine.utils";
 import prisma from "../../config/prisma";
 export type { AiRoutingDecision };
 

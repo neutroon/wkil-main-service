@@ -6,7 +6,8 @@ import {
   buildCaptureLeadTool,
   buildExternalQueryTools,
 } from "../../config/gemini";
-import { runAIEngineLoop, type AiRoutingDecision } from "../ai/aiEngine.service";
+import { runAgentGraph } from "../ai/agentGraph";
+import type { AiRoutingDecision } from "../ai/aiEngine.service";
 import prisma from "../../config/prisma";
 export type { AiRoutingDecision };
 
@@ -106,14 +107,15 @@ export async function computeBusinessChatReply(params: {
       ? [{ functionDeclarations: mergedDeclarations }]
       : undefined;
 
-  return runAIEngineLoop({
+  // ── LangGraph Agent (with automatic fallback to legacy loop) ─────────────
+  return runAgentGraph({
     systemInstruction: finalSystemInstruction,
     historyTurns,
-    customerMessage: messageText,
-    tools: finalTools,
+    customerMessage:   messageText,
+    tools:             finalTools,
     businessProfileId: businessProfile.id,
     customerPhone,
     channel,
-    mediaInfo: params.mediaInfo,
+    mediaInfo:         params.mediaInfo,
   });
 }

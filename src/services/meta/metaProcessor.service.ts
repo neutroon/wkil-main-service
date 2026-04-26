@@ -278,6 +278,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
       customerPhone: platform === "whatsapp" ? senderId : undefined,
       mediaInfo: mediaId ? { id: mediaId, type: type || "image", url: mediaMetadata?.url } : undefined,
       postContext,
+      conversationId: conversation.id,
     });
 
     syncTypingStatus({ businessProfileId, conversationId: conversation.id, isTyping: false });

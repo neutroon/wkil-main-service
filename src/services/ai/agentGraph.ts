@@ -22,13 +22,13 @@ import { parseDecisionNode }             from "./nodes/parseDecision";
 import { runGuardrailNode }              from "./nodes/runGuardrail";
 import { hitlInterruptNode }             from "./nodes/hitlInterrupt";
 import { recordUsageNode }               from "./nodes/recordUsage";
-import { DEFAULT_AI_TRUTHFULNESS_POLICY, runAIEngineLoop } from "./aiEngine.service";
+import { DEFAULT_AI_TRUTHFULNESS_POLICY } from "./aiEngine.utils";
 import { assertQuotaAvailable }          from "../billing.service";
 import { logger }                        from "../../utils/logger";
 import prisma                            from "../../config/prisma";
 import { estimateSystemTokens }          from "./contextWindow";
 import type { Tool }                     from "@google/genai";
-import type { AiRoutingDecision, AiTruthfulnessPolicy } from "./aiEngine.service";
+import type { AiRoutingDecision, AiTruthfulnessPolicy } from "./aiEngine.utils";
 
 const MAX_TURNS = 3;
 
@@ -113,52 +113,25 @@ export interface AgentGraphParams {
 }
 
 /**
- * runAgentGraph — drop-in replacement for runAIEngineLoop.
- *
- * Safety features:
- * 1. LANGGRAPH_ENABLED=false in .env → instantly falls back to legacy loop (no deploy needed)
- * 2. Any unhandled graph error → automatic fallback to legacy loop
- * Remove the fallback after 2 weeks of stable production operation.
+ * runAgentGraph — The primary entry point for the LangGraph AI engine.
  */
 export async function runAgentGraph(
   params: AgentGraphParams,
 ): Promise<AiRoutingDecision> {
-  // ── Kill-switch: bypass the graph entirely if disabled ──────────────────
-  const isEnabled = process.env.LANGGRAPH_ENABLED !== "false";
-  if (!isEnabled) {
-    logger.info("ai.graph.disabled_by_flag");
-    return runAIEngineLoop({
-      systemInstruction: params.systemInstruction,
-      historyTurns:      params.historyTurns,
-      customerMessage:   params.customerMessage,
-      tools:             params.tools,
-      businessProfileId: params.businessProfileId,
-      customerPhone:     params.customerPhone,
-      channel:           params.channel as any,
-      policy:            params.policy,
-      mediaInfo:         params.mediaInfo,
-    });
-  }
-
   try {
     return await _runGraph(params);
   } catch (graphError: any) {
-    logger.error("ai.graph.fallback_activated", {
+    logger.error("ai.graph.critical_failure", {
       error: graphError.message,
       businessProfileId: params.businessProfileId,
     });
-    // ── Graceful degradation: fall back to the legacy loop ──────────────
-    return runAIEngineLoop({
-      systemInstruction: params.systemInstruction,
-      historyTurns:      params.historyTurns,
-      customerMessage:   params.customerMessage,
-      tools:             params.tools,
-      businessProfileId: params.businessProfileId,
-      customerPhone:     params.customerPhone,
-      channel:           params.channel as any,
-      policy:            params.policy,
-      mediaInfo:         params.mediaInfo,
-    });
+    // ── Graceful degradation: fall back to human intervention ──────────────
+    return {
+      action: "HANDOFF_TO_HUMAN",
+      handoffCategory: "SYSTEM_ERROR",
+      reasoning: `Critical Graph Failure: ${graphError.message}`,
+      content: "",
+    };
   }
 }
 

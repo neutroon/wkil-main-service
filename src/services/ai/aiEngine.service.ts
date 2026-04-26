@@ -83,7 +83,7 @@ function isVerificationStatus(
   return value === "verified" || value === "unverified" || value === "failed";
 }
 
-function updateEvidenceFromEnvelope(
+export function updateEvidenceFromEnvelope(
   evidence: EvidenceState,
   envelope: ToolResultEnvelope,
   fallbackActionType: string,
@@ -180,7 +180,7 @@ export function sanitizeAiText(text: string): string {
   return sanitized;
 }
 
-function repairAndParseAiResponse(text: string): AiRoutingDecision {
+export function repairAndParseAiResponse(text: string): AiRoutingDecision {
   logger.debug("ai.engine.raw_response_trace", { text });
   let cleaned = text.trim();
   let decision: any = null;
@@ -257,7 +257,7 @@ function repairAndParseAiResponse(text: string): AiRoutingDecision {
   return finalDecision;
 }
 
-function hasExcessiveRepetition(text: string): boolean {
+export function hasExcessiveRepetition(text: string): boolean {
   if (!text || text.length < 50) return false;
   const sanitized = sanitizeAiText(text);
   

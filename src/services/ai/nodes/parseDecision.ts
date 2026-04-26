@@ -73,15 +73,33 @@ export async function parseDecisionNode(
   // ── Detect hallucination loops in the final content ───────────────────────
   const contentToCheck = (decision.content || "") + (decision.reasoning || "");
   if (hasExcessiveRepetition(contentToCheck)) {
-    logger.warn("ai.node.parseDecision.repetition_detected", {
+    // SELF-CORRECTION: If we have turns left, try to let the AI fix itself
+    if (state.turnCount < 3) {
+      logger.warn("ai.node.parseDecision.requesting_correction", {
+        businessProfileId: state.businessProfileId,
+        turnCount: state.turnCount,
+      });
+
+      return {
+        // Request a retry by setting decision to null
+        decision: null as any,
+        // Inject the correction prompt as a new user turn
+        contents: [{
+          role: "user",
+          parts: [{ text: "CRITIQUE: You repeated yourself in the last turn. Please provide a fresh, non-repetitive response and ensure you are not stuck in a loop." }]
+        }]
+      };
+    }
+
+    // Exhausted retries -> Handoff
+    logger.warn("ai.node.parseDecision.repetition_exhausted", {
       businessProfileId: state.businessProfileId,
-      preview: contentToCheck.substring(0, 100),
     });
     return {
       decision: {
         action: "HANDOFF_TO_HUMAN",
         handoffCategory: "AI_LOOP_DETECTED",
-        reasoning: "AI response contained excessive repetition (hallucination guard).",
+        reasoning: "AI response contained excessive repetition after multiple correction attempts.",
         content: "",
       },
     };

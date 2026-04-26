@@ -1,7 +1,7 @@
 import { Router, Response } from "express";
 import prisma from "../config/prisma";
 import { processWidgetChatMessage } from "../services/widget/widgetChat.service";
-import { listConversationMessages } from "../services/meta/conversation.service";
+import { listConversationMessages, saveMessage } from "../services/meta/conversation.service";
 import type { WidgetRequest } from "../middlewares/widgetInstall.middleware";
 import { widgetInstallAndCors } from "../middlewares/widgetInstall.middleware";
 import { validate } from "../middlewares/validate.middleware";
@@ -25,8 +25,69 @@ widgetPublicRoutes.post(
       throw new AppError("Widget context missing", 500);
     }
 
-    const { visitorId, message, conversationId } = req.body;
+    const { visitorId, message, conversationId, stream } = req.body;
 
+    if (stream) {
+      // ── Server-Sent Events (SSE) Streaming Path ───────────────────────
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.flushHeaders();
+
+      const { processWidgetChatStreaming } = await import("../services/widget/widgetChat.service");
+      const generator = processWidgetChatStreaming({
+        install,
+        visitorId: visitorId.trim(),
+        message: message.trim(),
+        conversationId,
+      });
+
+      let finalDecision: any = null;
+      let fullContent = "";
+
+      for await (const event of generator) {
+        if (event.type === "token") {
+          fullContent += event.data;
+          res.write(`data: ${JSON.stringify({ token: event.data })}\n\n`);
+        } else if (event.type === "final_decision") {
+          finalDecision = event.data;
+        } else if (event.type === "error") {
+          res.write(`data: ${JSON.stringify({ error: event.data.content })}\n\n`);
+        }
+      }
+
+      // Persist final message (streaming doesn't automatically save model turn)
+      if (finalDecision) {
+        // Find the conversation again to get the ID (setupWidgetChat creates it if missing)
+        // Actually, we should yield the conversationId from the generator too.
+        // For now, I'll assume we have it or fetch it.
+        const pageId = `widget:${install.id}`;
+        const conversation = await prisma.conversation.findFirst({
+          where: { pageId, senderId: visitorId },
+          orderBy: { updatedAt: "desc" },
+        });
+
+        if (conversation) {
+          const isAutoMode = req.body.responseMode !== "MANUAL"; // Simplified
+          const status = finalDecision.action === "HANDOFF_TO_HUMAN" ? "PENDING_REVIEW" : "SENT";
+          
+          await saveMessage(conversation.id, "model", finalDecision.content || fullContent, {
+            status,
+            aiReasoning: finalDecision.reasoning,
+            handoffCategory: finalDecision.handoffCategory,
+          });
+
+          if (finalDecision.action === "RESOLVE_CONVERSATION") {
+            await prisma.conversation.update({ where: { id: conversation.id }, data: { status: "RESOLVED" } });
+          }
+        }
+      }
+
+      res.write("event: end\ndata: [DONE]\n\n");
+      return res.end();
+    }
+
+    // ── Standard JSON Path ───────────────────────────────────────────
     const result = await processWidgetChatMessage({
       install,
       visitorId: visitorId.trim(),

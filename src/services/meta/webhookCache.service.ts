@@ -73,7 +73,8 @@ export async function invalidateWhatsAppAccountCache(phoneNumberId: string): Pro
 /**
  * ELITE TIER: Atomic deduplication to prevent double AI replies.
  * Returns true if the webhook is currently being processed (idempotency lock).
- * TTL of 30s is enough to cover the AI thinking time.
+ * TTL of 90s is enough to cover the AI thinking time.
+ * Reasoning tag [v4.3]
  */
 export async function isDuplicateWebhook(externalId: string): Promise<boolean> {
   if (!externalId) return false;
@@ -83,6 +84,6 @@ export async function isDuplicateWebhook(externalId: string): Promise<boolean> {
   // currently doesn't expose the raw SET response for NX.
   // This is acceptable as it's a specific atomic operation.
   const { redisClient } = await import("../../config/redis");
-  const result = await redisClient.set(cacheKey, "1", "EX", 30, "NX");
+  const result = await redisClient.set(cacheKey, "1", "EX", 90, "NX");
   return result === null; 
 }

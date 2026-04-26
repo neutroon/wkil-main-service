@@ -77,6 +77,7 @@ export async function callGeminiNode(
           return {
             candidates: finalCandidates,
             usageMetadata: finalUsage,
+            fullText,
             // Add a helper for the functionCalls extractor
             functionCalls: finalCandidates?.[0]?.content?.parts
               ?.filter((p: any) => p.functionCall)
@@ -159,7 +160,11 @@ export async function callGeminiNode(
 
   return {
     // Append the model's response turn to history
-    contents:      [{ role: "model", parts: responseParts }],
+    // Standardize: discard fragmented parts, use the verified aggregated fullText
+    contents:      [{ 
+      role: "model", 
+      parts: [{ text: responseResult.fullText || "" }] 
+    }],
     functionCalls,
     turnCount:     state.turnCount + 1,
     sessionStats:  updatedStats,

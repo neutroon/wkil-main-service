@@ -14,7 +14,7 @@ import { z } from "zod";
 import { logger } from "../../../utils/logger";
 import { pushLeadToCrm } from "../../crm/crm.service";
 import { executeExternalQuery } from "../../external/externalData.service";
-import { updateEvidenceFromEnvelope } from "../aiEngine.service";
+import { updateEvidenceFromEnvelope } from "../aiEngine.utils";
 import type { AgentStateType } from "../agentState";
 
 // ── Zod Schemas for Tool Input Validation ─────────────────────────────────────

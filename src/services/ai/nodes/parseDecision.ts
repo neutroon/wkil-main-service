@@ -30,6 +30,11 @@ export async function parseDecisionNode(
     .map((p) => p.text!)
     .join("")
     .trim();
+  
+  logger.debug("ai.node.parseDecision.text_received", {
+    length: responseText.length,
+    preview: responseText.substring(0, 50) + "..."
+  });
 
   if (!responseText) {
     logger.warn("ai.node.parseDecision.empty_response", {

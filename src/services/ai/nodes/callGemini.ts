@@ -1,0 +1,140 @@
+/**
+ * Node: callGemini
+ *
+ * Calls the Gemini API via the existing executeWithFallback() cascade.
+ * Replaces the try/catch block inside the while-loop.
+ *
+ * Production features:
+ * - 25-second per-call timeout via Promise.race
+ * - Automatic 3-tier model fallback (PRIMARY → RESERVE → STABLE)
+ * - Accumulates token usage into sessionStats for billing
+ * - Routes to HANDOFF_TO_HUMAN on timeout or unrecoverable error
+ */
+import {
+  genAI,
+  executeWithFallback,
+  MESSENGER_SAFETY_SETTINGS,
+  aiRoutingSchema,
+} from "../../../config/gemini";
+import { logger } from "../../../utils/logger";
+import type { AgentStateType } from "../agentState";
+import { windowContents, estimateSystemTokens } from "../contextWindow";
+
+const GEMINI_TIMEOUT_MS = 25_000;
+
+export async function callGeminiNode(
+  state: AgentStateType,
+): Promise<Partial<AgentStateType>> {
+  const systemTokens = estimateSystemTokens(state.systemInstruction);
+  const windowedContents = windowContents(state.contents, systemTokens);
+
+  let responseResult: any;
+  let usedModel = state.sessionStats.modelName;
+
+  try {
+    const raceResult = await Promise.race([
+      executeWithFallback(
+        async (currentModel) => {
+          const r = await genAI.models.generateContent({
+            model: currentModel,
+            contents: windowedContents as any,
+            config: {
+              systemInstruction: state.systemInstruction,
+              temperature: 0.4,
+              maxOutputTokens: 2048,
+              safetySettings: MESSENGER_SAFETY_SETTINGS,
+              tools: state.tools as any,
+              responseMimeType: "application/json",
+              responseSchema: aiRoutingSchema,
+            },
+          });
+          return { result: r, model: currentModel };
+        },
+        "AgentGraph.callGemini",
+      ),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error("GEMINI_TIMEOUT")),
+          GEMINI_TIMEOUT_MS,
+        ),
+      ),
+    ]);
+
+    const { result, model } = raceResult as { result: any; model: string };
+    responseResult = result;
+    usedModel = model;
+  } catch (error: any) {
+    const isTimeout = error.message === "GEMINI_TIMEOUT";
+    logger.error("ai.node.callGemini.failed", {
+      isTimeout,
+      error: error.message,
+      businessProfileId: state.businessProfileId,
+      channel: state.channel,
+    });
+
+    // Route to a terminal HANDOFF decision — downstream nodes handle delivery
+    return {
+      decision: {
+        action: "HANDOFF_TO_HUMAN",
+        handoffCategory: isTimeout ? "SYSTEM_TIMEOUT" : "SYSTEM_ERROR",
+        reasoning: `Gemini ${isTimeout ? "timed out" : "failed"}: ${error.message}`,
+        content: "",
+      },
+      sessionStats: { ...state.sessionStats, modelName: usedModel },
+    };
+  }
+
+  // ── Parse Gemini response structure ────────────────────────────────────────
+  const candidate = responseResult?.candidates?.[0];
+  if (!candidate) {
+    logger.error("ai.node.callGemini.no_candidate", {
+      businessProfileId: state.businessProfileId,
+    });
+    return {
+      decision: {
+        action: "HANDOFF_TO_HUMAN",
+        handoffCategory: "SYSTEM_ERROR",
+        reasoning: "No candidate returned from Gemini.",
+        content: "",
+      },
+    };
+  }
+
+  const responseParts = candidate.content?.parts || [];
+  const functionCalls = (responseResult.functionCalls || []).map((fc: any) => ({
+    id:   fc.id || `${fc.name}_${Date.now()}`,
+    name: fc.name,
+    args: fc.args,
+  }));
+
+  // ── Accumulate token usage (across multi-turn loops) ────────────────────
+  const meta = responseResult?.usageMetadata;
+  const hasGrounding = !!candidate.groundingMetadata?.searchEntryPoint;
+  const updatedStats: typeof state.sessionStats = {
+    ...state.sessionStats,
+    modelName: usedModel,
+    promptTokens:
+      state.sessionStats.promptTokens +
+      (meta?.promptTokenCount ?? meta?.promptTokens ?? 0),
+    completionTokens:
+      state.sessionStats.completionTokens +
+      (meta?.candidatesTokenCount ?? meta?.completionTokens ?? 0),
+    groundingCalls:
+      state.sessionStats.groundingCalls + (hasGrounding ? 1 : 0),
+  };
+
+  logger.info("ai.node.callGemini.success", {
+    model: usedModel,
+    turnCount: state.turnCount + 1,
+    functionCalls: functionCalls.map((f: any) => f.name),
+    businessProfileId: state.businessProfileId,
+  });
+
+  return {
+    // Append the model's response turn to history
+    contents:      [{ role: "model", parts: responseParts }],
+    functionCalls,
+    turnCount:     state.turnCount + 1,
+    sessionStats:  updatedStats,
+  };
+}

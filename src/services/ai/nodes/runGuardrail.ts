@@ -11,7 +11,7 @@
  * This node only runs when hadToolExecution === true (conditional edge).
  */
 import { logger } from "../../../utils/logger";
-import { evaluateGuardrailsForReply } from "../aiEngine.service";
+import { evaluateGuardrailsForReply } from "../aiEngine.utils";
 import type { AgentStateType } from "../agentState";
 
 export async function runGuardrailNode(

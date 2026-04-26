@@ -85,6 +85,7 @@ export async function processWidgetChatMessage(params: {
       messageText: message,
       historyTurns,
       channel: "web",
+      conversationId: conversation.id,
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);

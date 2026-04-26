@@ -231,6 +231,7 @@ async function _runGraph(params: AgentGraphParams): Promise<AiRoutingDecision> {
         groundingCalls:   0,
         modelName:        "gemini-3-flash-preview",
       } as any,
+      decision: null as any,
     },
     {
       configurable: {

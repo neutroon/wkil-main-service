@@ -10,6 +10,7 @@
  * - Accumulates token usage into sessionStats for billing
  * - Routes to HANDOFF_TO_HUMAN on timeout or unrecoverable error
  */
+import { dispatchCustomEvent } from "@langchain/core/callbacks/dispatch";
 import {
   genAI,
   executeWithFallback,
@@ -35,7 +36,7 @@ export async function callGeminiNode(
     const raceResult = await Promise.race([
       executeWithFallback(
         async (currentModel) => {
-          const r = await genAI.models.generateContent({
+          const r = await genAI.models.generateContentStream({
             model: currentModel,
             contents: windowedContents as any,
             config: {
@@ -48,7 +49,35 @@ export async function callGeminiNode(
               responseSchema: aiRoutingSchema,
             },
           });
-          return { result: r, model: currentModel };
+
+          // ── Streaming loop ───────────────────────────────────────────
+          let fullText = "";
+          let finalUsage: any = null;
+          let finalCandidates: any[] = [];
+
+          for await (const chunk of r) {
+            const text = chunk.text;
+            if (text) {
+              fullText += text;
+              // Dispatch token to any listeners (e.g. the web widget)
+              await dispatchCustomEvent("ai_token", { token: text });
+            }
+            if (chunk.usageMetadata) finalUsage = chunk.usageMetadata;
+            if (chunk.candidates) finalCandidates = chunk.candidates;
+          }
+
+          // Reconstruct a response-like object for the rest of the node
+          return {
+            result: {
+              candidates: finalCandidates,
+              usageMetadata: finalUsage,
+              // Add a helper for the functionCalls extractor
+              functionCalls: finalCandidates?.[0]?.content?.parts
+                ?.filter((p: any) => p.functionCall)
+                ?.map((p: any) => p.functionCall) || [],
+            },
+            model: currentModel,
+          };
         },
         "AgentGraph.callGemini",
       ),
@@ -86,6 +115,7 @@ export async function callGeminiNode(
 
   // ── Parse Gemini response structure ────────────────────────────────────────
   const candidate = responseResult?.candidates?.[0];
+
   if (!candidate) {
     logger.error("ai.node.callGemini.no_candidate", {
       businessProfileId: state.businessProfileId,

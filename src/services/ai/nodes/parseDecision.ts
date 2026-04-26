@@ -51,22 +51,6 @@ export async function parseDecisionNode(
     };
   }
 
-  // ── Detect hallucination loops before parsing ─────────────────────────────
-  if (hasExcessiveRepetition(responseText)) {
-    logger.warn("ai.node.parseDecision.repetition_detected", {
-      businessProfileId: state.businessProfileId,
-      preview: responseText.substring(0, 100),
-    });
-    return {
-      decision: {
-        action: "HANDOFF_TO_HUMAN",
-        handoffCategory: "AI_LOOP_DETECTED",
-        reasoning: "AI response contained excessive repetition (hallucination guard).",
-        content: "",
-      },
-    };
-  }
-
   // ── Parse using the existing resilient 3-stage parser ────────────────────
   let decision;
   try {
@@ -81,6 +65,23 @@ export async function parseDecisionNode(
         action: "HANDOFF_TO_HUMAN",
         handoffCategory: "SYSTEM_ERROR",
         reasoning: "AI response parsing failed (potential mid-stream truncation).",
+        content: "",
+      },
+    };
+  }
+
+  // ── Detect hallucination loops in the final content ───────────────────────
+  const contentToCheck = (decision.content || "") + (decision.reasoning || "");
+  if (hasExcessiveRepetition(contentToCheck)) {
+    logger.warn("ai.node.parseDecision.repetition_detected", {
+      businessProfileId: state.businessProfileId,
+      preview: contentToCheck.substring(0, 100),
+    });
+    return {
+      decision: {
+        action: "HANDOFF_TO_HUMAN",
+        handoffCategory: "AI_LOOP_DETECTED",
+        reasoning: "AI response contained excessive repetition (hallucination guard).",
         content: "",
       },
     };

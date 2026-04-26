@@ -21,7 +21,7 @@ import { logger } from "../../../utils/logger";
 import type { AgentStateType } from "../agentState";
 import { windowContents, estimateSystemTokens } from "../contextWindow";
 
-const GEMINI_TIMEOUT_MS = 25_000;
+const GEMINI_TIMEOUT_MS = 35_000;
 
 export async function callGeminiNode(
   state: AgentStateType,
@@ -66,6 +66,13 @@ export async function callGeminiNode(
             if (chunk.candidates) finalCandidates = chunk.candidates;
           }
 
+          // ── Validation: No candidates = Failure ──────────────────────────
+          // If Gemini returns a successful response but no candidates (e.g. safety block),
+          // we throw so executeWithFallback can scale to the next model tier.
+          if (!finalCandidates || finalCandidates.length === 0) {
+            throw new Error("EMPTY_CANDIDATES");
+          }
+
           // Reconstruct a response-like object for the rest of the node
           return {
             result: {
@@ -94,8 +101,11 @@ export async function callGeminiNode(
     usedModel = model;
   } catch (error: any) {
     const isTimeout = error.message === "GEMINI_TIMEOUT";
+    const isEmpty = error.message === "EMPTY_CANDIDATES";
+    
     logger.error("ai.node.callGemini.failed", {
       isTimeout,
+      isEmpty,
       error: error.message,
       businessProfileId: state.businessProfileId,
       channel: state.channel,
@@ -106,7 +116,11 @@ export async function callGeminiNode(
       decision: {
         action: "HANDOFF_TO_HUMAN",
         handoffCategory: isTimeout ? "SYSTEM_TIMEOUT" : "SYSTEM_ERROR",
-        reasoning: `Gemini ${isTimeout ? "timed out" : "failed"}: ${error.message}`,
+        reasoning: isTimeout 
+          ? `Gemini timed out (${GEMINI_TIMEOUT_MS}ms)`
+          : isEmpty 
+            ? "Gemini returned no candidates (potential safety block across all models)."
+            : `Gemini unrecoverable failure: ${error.message}`,
         content: "",
       },
       sessionStats: { ...state.sessionStats, modelName: usedModel },
@@ -114,21 +128,8 @@ export async function callGeminiNode(
   }
 
   // ── Parse Gemini response structure ────────────────────────────────────────
-  const candidate = responseResult?.candidates?.[0];
-
-  if (!candidate) {
-    logger.error("ai.node.callGemini.no_candidate", {
-      businessProfileId: state.businessProfileId,
-    });
-    return {
-      decision: {
-        action: "HANDOFF_TO_HUMAN",
-        handoffCategory: "SYSTEM_ERROR",
-        reasoning: "No candidate returned from Gemini.",
-        content: "",
-      },
-    };
-  }
+  // candidate is guaranteed to exist here because we throw if candidates.length === 0 inside executeWithFallback
+  const candidate = responseResult.candidates[0];
 
   const responseParts = candidate.content?.parts || [];
   const functionCalls = (responseResult.functionCalls || []).map((fc: any) => ({

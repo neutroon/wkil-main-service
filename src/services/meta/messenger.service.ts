@@ -220,6 +220,7 @@ export async function handleMessengerMessage(
       historyTurns,
       channel: "messenger",
       mediaInfo: mediaId ? { id: mediaId, type: type || "image" } : undefined,
+      conversationId: conversation.id,
     });
 
     if (reply.action === "RESOLVE_CONVERSATION") {

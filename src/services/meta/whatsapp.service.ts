@@ -278,6 +278,7 @@ export async function handleWhatsAppMessage(
       channel: "whatsapp",
       customerPhone: from,
       mediaInfo: mediaId ? { id: mediaId, type: type || "image" } : undefined,
+      conversationId: conversation.id,
     });
 
     if (reply.action === "RESOLVE_CONVERSATION") {

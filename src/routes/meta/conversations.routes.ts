@@ -23,6 +23,7 @@ import {
   historyToLlmTurns,
 } from "../../services/chat/conversationTurns";
 import { getConversationHistory } from "../../services/meta/conversation.service";
+import { resumeAgentGraph } from "../../services/ai/agentGraph";
 import { validate } from "../../middlewares/validate.middleware";
 import {
   toggleAiSchema,
@@ -537,6 +538,17 @@ conversationsRoutes.put(
       }
     });
 
+    // 1.5 Resume LangGraph to finalize state (record usage, clear interrupt)
+    try {
+      await resumeAgentGraph(conversation.id, editedContent);
+    } catch (graphErr: any) {
+      logger.warn("meta.hitl.graph_resume_failed", {
+        conversationId,
+        error: graphErr.message,
+        info: "Continuing with dispatch anyway (safety first)"
+      });
+    }
+
     // 2. Dispatch via Meta API
     let externalId: string | undefined;
     if (conversation.channel === "messenger") {
@@ -663,6 +675,8 @@ conversationsRoutes.post(
       messageText: lastUserMsg?.content || "",
       historyTurns,
       channel: (conversation.channel as any) || "whatsapp",
+      conversationId: conversation.id,
+      responseMode: "MANUAL",
     });
 
     const saved = await prisma.conversationMessage.create({

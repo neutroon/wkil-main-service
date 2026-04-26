@@ -37,6 +37,7 @@ export async function computeBusinessChatReply(params: {
   customerPhone?: string;
   mediaInfo?: { id: string; type: string; url?: string };
   postContext?: { content: string; media?: string };
+  conversationId?: number;
 }): Promise<AiRoutingDecision> {
   const {
     businessProfile,
@@ -44,6 +45,7 @@ export async function computeBusinessChatReply(params: {
     historyTurns,
     channel,
     customerPhone,
+    conversationId,
   } = params;
 
   if (!businessProfile.ragIngested) {
@@ -117,5 +119,6 @@ export async function computeBusinessChatReply(params: {
     customerPhone,
     channel,
     mediaInfo:         params.mediaInfo,
+    conversationId,
   });
 }

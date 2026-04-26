@@ -20,7 +20,7 @@ import type {
   AiTruthfulnessPolicy,
   AiEvidenceState,
   DEFAULT_AI_TRUTHFULNESS_POLICY,
-} from "./aiEngine.service";
+} from "./aiEngine.utils";
 
 // ── Re-export convenience types ────────────────────────────────────────────────
 export type { AiRoutingDecision, AiTruthfulnessPolicy, AiEvidenceState };

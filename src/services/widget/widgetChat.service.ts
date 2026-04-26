@@ -26,45 +26,8 @@ export async function processWidgetChatMessage(params: {
   message: string;
   conversationId?: number;
 }): Promise<{ reply: string; conversationId: number; attachment?: { url: string; type: string; caption?: string | null } | null }> {
-  const { install, visitorId, message, conversationId } = params;
-  const pageId = pageIdForWidget(install.id);
-
-  let conversation;
-  if (conversationId !== undefined) {
-    const verified = await prisma.conversation.findFirst({
-      where: {
-        id: conversationId,
-        pageId,
-        senderId: visitorId,
-      },
-    });
-    if (!verified) {
-      throw new AppError("Invalid conversationId for this visitor", 400);
-    }
-    conversation = verified;
-  } else {
-    conversation = await getOrCreateConversation(
-      pageId,
-      visitorId,
-      install.businessProfileId,
-      { channel: "web" },
-    );
-  }
-
-  const businessProfile = await prisma.businessProfile.findUniqueOrThrow({
-    where: { id: install.businessProfileId },
-    include: {
-      externalDataSources: { where: { isActive: true } },
-      crmIntegrations: { where: { isActive: true }, take: 1 },
-    },
-  });
-
-  const historyRows = await getConversationHistory(conversation.id);
-  await saveMessage(conversation.id, "user", message);
-
-  const historyForPrompt = toPromptMessages(historyRows);
-  historyForPrompt.push({ role: "user", content: message });
-  const historyTurns = historyToLlmTurns(historyForPrompt);
+  const { install, message } = params;
+  const { conversation, businessProfile, historyTurns } = await setupWidgetChat(params);
   
   // 3. Early Exit if Manual Mode or AI Disabled for this thread
   if (businessProfile.responseMode === "MANUAL" || conversation.aiEnabled === false) {
@@ -166,6 +129,81 @@ export async function processWidgetChatMessage(params: {
       }
     }
 
-    return { reply: reply.content || "", conversationId: conversation.id, attachment: attachmentForWidget };
+  return { reply: reply.content || "", conversationId: conversation.id, attachment: attachmentForWidget };
   }
 }
+
+/**
+ * Common setup logic for both streaming and non-streaming widget chat paths.
+ */
+async function setupWidgetChat(params: {
+  install: WidgetInstall;
+  visitorId: string;
+  message: string;
+  conversationId?: number;
+}) {
+  const { install, visitorId, message, conversationId } = params;
+  const pageId = pageIdForWidget(install.id);
+
+  let conversation;
+  if (conversationId !== undefined) {
+    const verified = await prisma.conversation.findFirst({
+      where: { id: conversationId, pageId, senderId: visitorId },
+    });
+    if (!verified) throw new AppError("Invalid conversationId for this visitor", 400);
+    conversation = verified;
+  } else {
+    conversation = await getOrCreateConversation(pageId, visitorId, install.businessProfileId, { channel: "web" });
+  }
+
+  const businessProfile = await prisma.businessProfile.findUniqueOrThrow({
+    where: { id: install.businessProfileId },
+    include: {
+      externalDataSources: { where: { isActive: true } },
+      crmIntegrations: { where: { isActive: true }, take: 1 },
+    },
+  });
+
+  const historyRows = await getConversationHistory(conversation.id);
+  await saveMessage(conversation.id, "user", message);
+
+  const historyForPrompt = toPromptMessages(historyRows);
+  historyForPrompt.push({ role: "user", content: message });
+  const historyTurns = historyToLlmTurns(historyForPrompt);
+
+  return { conversation, businessProfile, historyTurns };
+}
+
+/**
+ * processWidgetChatStreaming — Generator for web widget SSE.
+ */
+export async function* processWidgetChatStreaming(params: {
+  install: WidgetInstall;
+  visitorId: string;
+  message: string;
+  conversationId?: number;
+}) {
+  const { install, message } = params;
+  const { conversation, businessProfile, historyTurns } = await setupWidgetChat(params);
+
+  // Mode Check
+  if (businessProfile.responseMode === "MANUAL" || conversation.aiEnabled === false) {
+    yield { type: "status", data: "MANUAL_MODE" };
+    return;
+  }
+
+  const { computeBusinessChatStreaming } = await import("../chat/businessChatReply.service");
+  
+  const stream = computeBusinessChatStreaming({
+    businessProfile,
+    messageText: params.message,
+    historyTurns,
+    channel: "web",
+    conversationId: conversation.id,
+  });
+
+  for await (const event of stream) {
+    yield event;
+  }
+}
+

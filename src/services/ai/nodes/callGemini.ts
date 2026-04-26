@@ -128,7 +128,6 @@ export async function callGeminiNode(
   // candidate is guaranteed to exist here because we throw if candidates.length === 0 inside executeWithFallback
   const candidate = responseResult.candidates[0];
 
-  const responseParts = candidate.content?.parts || [];
   const functionCalls = (responseResult.functionCalls || []).map((fc: any) => ({
     id:   fc.id || `${fc.name}_${Date.now()}`,
     name: fc.name,

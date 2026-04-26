@@ -29,16 +29,17 @@ export type BusinessProfileForChat = Prisma.BusinessProfileGetPayload<{
  * Shared RAG + tool + AI loop used by Messenger, WhatsApp, and web widget.
  * Does not persist messages — callers save user/model turns around this call.
  */
-export async function computeBusinessChatReply(params: {
+export async function prepareAgentParams(params: {
   businessProfile: BusinessProfileForChat;
   messageText: string;
   historyTurns: { role: "user" | "model"; text: string }[];
-  channel: "messenger" | "whatsapp" | "web";
+  channel: "messenger" | "whatsapp" | "web" | "facebook_comment";
   customerPhone?: string;
   mediaInfo?: { id: string; type: string; url?: string };
   postContext?: { content: string; media?: string };
   conversationId?: number;
-}): Promise<AiRoutingDecision> {
+  responseMode?: "AUTO" | "MANUAL";
+}) {
   const {
     businessProfile,
     messageText,
@@ -46,10 +47,11 @@ export async function computeBusinessChatReply(params: {
     channel,
     customerPhone,
     conversationId,
+    responseMode,
   } = params;
 
   if (!businessProfile.ragIngested) {
-    return NOT_INGESTED_REPLY;
+    return { errorDecision: NOT_INGESTED_REPLY };
   }
 
   const relevantChunks = await retrieveRelevantChunks(
@@ -67,12 +69,11 @@ export async function computeBusinessChatReply(params: {
       leadCaptureInstructions: businessProfile.leadCaptureInstructions || undefined,
     },
     context: relevantChunks,
-    channel,
+    channel: channel as any,
     customerPhone,
     postContext: params.postContext,
   });
 
-  // Inject Media Catalog — names + instructions only, NEVER raw platform IDs
   const mediaAssets = await prisma.businessProfileMedia.findMany({
     where: { businessProfileId: businessProfile.id, isActive: true, deletedAt: null },
     select: { name: true, mediaType: true, instructions: true },
@@ -109,16 +110,62 @@ export async function computeBusinessChatReply(params: {
       ? [{ functionDeclarations: mergedDeclarations }]
       : undefined;
 
-  // ── LangGraph Agent (with automatic fallback to legacy loop) ─────────────
-  return runAgentGraph({
-    systemInstruction: finalSystemInstruction,
-    historyTurns,
-    customerMessage:   messageText,
-    tools:             finalTools,
-    businessProfileId: businessProfile.id,
-    customerPhone,
-    channel,
-    mediaInfo:         params.mediaInfo,
-    conversationId,
-  });
+  return {
+    graphParams: {
+      systemInstruction: finalSystemInstruction,
+      historyTurns,
+      customerMessage:   messageText,
+      tools:             finalTools,
+      businessProfileId: businessProfile.id,
+      customerPhone,
+      channel,
+      mediaInfo:         params.mediaInfo,
+      conversationId,
+      responseMode,
+    }
+  };
+}
+
+/**
+ * Standard (non-streaming) AI loop execution.
+ */
+export async function computeBusinessChatReply(params: {
+  businessProfile: BusinessProfileForChat;
+  messageText: string;
+  historyTurns: { role: "user" | "model"; text: string }[];
+  channel: "messenger" | "whatsapp" | "web" | "facebook_comment";
+  customerPhone?: string;
+  mediaInfo?: { id: string; type: string; url?: string };
+  postContext?: { content: string; media?: string };
+  conversationId?: number;
+  responseMode?: "AUTO" | "MANUAL";
+}): Promise<AiRoutingDecision> {
+  const prep = await prepareAgentParams(params);
+  if (prep.errorDecision) return prep.errorDecision;
+
+  return runAgentGraph(prep.graphParams!);
+}
+
+/**
+ * Streaming AI loop execution.
+ */
+export async function* computeBusinessChatStreaming(params: {
+  businessProfile: BusinessProfileForChat;
+  messageText: string;
+  historyTurns: { role: "user" | "model"; text: string }[];
+  channel: "web"; // Currently only web supports streaming
+  customerPhone?: string;
+  conversationId?: number;
+  responseMode?: "AUTO" | "MANUAL";
+}) {
+  const prep = await prepareAgentParams(params);
+  if (prep.errorDecision) {
+    yield { type: "error", data: prep.errorDecision };
+    return;
+  }
+
+  const { streamAgentGraph } = await import("../ai/streamAgent");
+  for await (const event of streamAgentGraph(prep.graphParams!)) {
+    yield event;
+  }
 }

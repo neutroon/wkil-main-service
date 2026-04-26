@@ -113,10 +113,10 @@ export async function callGeminiNode(
         action: "HANDOFF_TO_HUMAN",
         handoffCategory: isTimeout ? "SYSTEM_TIMEOUT" : "SYSTEM_ERROR",
         reasoning: isTimeout 
-          ? `Gemini timed out (${GEMINI_TIMEOUT_MS}ms)`
+          ? `[v4.2] Gemini timed out (${GEMINI_TIMEOUT_MS}ms)`
           : isEmpty 
-            ? "Gemini returned no candidates (potential safety block across all models)."
-            : `Gemini unrecoverable failure: ${error.message}`,
+            ? "[v4.2] Gemini returned no candidates (potential safety block across all models)."
+            : `[v4.2] Gemini unrecoverable failure: ${error.message}`,
         content: "",
       },
       sessionStats: { ...state.sessionStats, modelName: usedModel },

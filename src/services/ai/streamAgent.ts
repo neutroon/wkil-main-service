@@ -14,7 +14,7 @@
 import { agentGraph, type AgentGraphParams } from "./agentGraph";
 import { logger } from "../../utils/logger";
 import prisma from "../../config/prisma";
-import { DEFAULT_AI_TRUTHFULNESS_POLICY } from "./aiEngine.service";
+import { DEFAULT_AI_TRUTHFULNESS_POLICY } from "./aiEngine.utils";
 
 export async function* streamAgentGraph(params: AgentGraphParams) {
   // ── Pre-flight data resolution (same as _runGraph) ────────────────────

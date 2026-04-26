@@ -21,7 +21,7 @@ import { logger } from "../../../utils/logger";
 import type { AgentStateType } from "../agentState";
 import { windowContents, estimateSystemTokens } from "../contextWindow";
 
-const GEMINI_TIMEOUT_MS = 35_000;
+const GEMINI_TIMEOUT_MS = 30_000;
 
 export async function callGeminiNode(
   state: AgentStateType,
@@ -113,10 +113,10 @@ export async function callGeminiNode(
         action: "HANDOFF_TO_HUMAN",
         handoffCategory: isTimeout ? "SYSTEM_TIMEOUT" : "SYSTEM_ERROR",
         reasoning: isTimeout 
-          ? `[v4.2] Gemini timed out (${GEMINI_TIMEOUT_MS}ms)`
+          ? `[v4.3] Gemini timed out (${GEMINI_TIMEOUT_MS}ms)`
           : isEmpty 
-            ? "[v4.2] Gemini returned no candidates (potential safety block across all models)."
-            : `[v4.2] Gemini unrecoverable failure: ${error.message}`,
+            ? "[v4.3] Gemini returned no candidates (potential safety block across all models)."
+            : `[v4.3] Gemini unrecoverable failure: ${error.message}`,
         content: "",
       },
       sessionStats: { ...state.sessionStats, modelName: usedModel },

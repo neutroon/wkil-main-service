@@ -6,7 +6,7 @@ import {
   saveMessage,
 } from "../meta/conversation.service";
 import { computeBusinessChatReply } from "../chat/businessChatReply.service";
-import { AiRoutingDecision } from "../ai/aiEngine.service";
+import { AiRoutingDecision } from "../ai/aiEngine.utils";
 import {
   historyToLlmTurns,
   toPromptMessages,

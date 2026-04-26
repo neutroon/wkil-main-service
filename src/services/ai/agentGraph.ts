@@ -77,6 +77,9 @@ workflow.addConditionalEdges("runTools", (state) => {
 // After parseDecision: if tools were executed, run guardrail check
 //                      otherwise go straight to hitlInterrupt
 workflow.addConditionalEdges("parseDecision", (state) => {
+  // SELF-CORRECTION LOOP: If decision is null, we are requesting a retry (e.g. repetition detected)
+  if (state.decision === null) return "callGemini";
+  
   if (state.hadToolExecution) return "runGuardrail";
   return "hitlInterrupt";
 });

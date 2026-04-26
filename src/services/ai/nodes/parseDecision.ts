@@ -14,7 +14,7 @@ import {
   repairAndParseAiResponse,
   sanitizeAiText,
   hasExcessiveRepetition,
-} from "../aiEngine.service";
+} from "../aiEngine.utils";
 import type { AgentStateType } from "../agentState";
 
 export async function parseDecisionNode(

@@ -34,7 +34,7 @@ export async function callGeminiNode(
 
   try {
     const raceResult = await Promise.race([
-      executeWithFallback(
+      executeWithFallback<any>(
         async (currentModel) => {
           const r = await genAI.models.generateContentStream({
             model: currentModel,
@@ -75,15 +75,12 @@ export async function callGeminiNode(
 
           // Reconstruct a response-like object for the rest of the node
           return {
-            result: {
-              candidates: finalCandidates,
-              usageMetadata: finalUsage,
-              // Add a helper for the functionCalls extractor
-              functionCalls: finalCandidates?.[0]?.content?.parts
-                ?.filter((p: any) => p.functionCall)
-                ?.map((p: any) => p.functionCall) || [],
-            },
-            model: currentModel,
+            candidates: finalCandidates,
+            usageMetadata: finalUsage,
+            // Add a helper for the functionCalls extractor
+            functionCalls: finalCandidates?.[0]?.content?.parts
+              ?.filter((p: any) => p.functionCall)
+              ?.map((p: any) => p.functionCall) || [],
           };
         },
         "AgentGraph.callGemini",
@@ -96,9 +93,8 @@ export async function callGeminiNode(
       ),
     ]);
 
-    const { result, model } = raceResult as { result: any; model: string };
-    responseResult = result;
-    usedModel = model;
+    responseResult = raceResult.result;
+    usedModel = raceResult.model;
   } catch (error: any) {
     const isTimeout = error.message === "GEMINI_TIMEOUT";
     const isEmpty = error.message === "EMPTY_CANDIDATES";

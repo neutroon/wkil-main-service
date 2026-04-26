@@ -13,6 +13,8 @@
  *                      → parseDecision → [runGuardrail] → hitlInterrupt → recordUsage → END
  */
 import { StateGraph, START, END }        from "@langchain/langgraph";
+import { PostgresSaver }               from "@langchain/langgraph-checkpoint-postgres";
+import { Pool }                        from "pg";
 import { AgentState }                    from "./agentState";
 import { callGeminiNode }                from "./nodes/callGemini";
 import { runToolsNode }                  from "./nodes/runTools";
@@ -29,6 +31,15 @@ import type { Tool }                     from "@google/genai";
 import type { AiRoutingDecision, AiTruthfulnessPolicy } from "./aiEngine.service";
 
 const MAX_TURNS = 3;
+
+// ── Persistence Layer (PostgreSQL) ──────────────────────────────────────────
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  max: 10, // Limit connections for checkpointer
+});
+
+export const checkpointer = new PostgresSaver(pool);
 
 // ── Build the Graph ────────────────────────────────────────────────────────────
 
@@ -79,8 +90,8 @@ workflow.addEdge("hitlInterrupt", "recordUsage");
 // Terminal node → END
 workflow.addEdge("recordUsage", END);
 
-// Compile without checkpointer (Phase 2 adds PostgresSaver)
-export const agentGraph = workflow.compile();
+// Compile with Postgres checkpointer for multi-turn persistence
+export const agentGraph = workflow.compile({ checkpointer });
 
 // ── Public API ─────────────────────────────────────────────────────────────────
 
@@ -95,6 +106,7 @@ export interface AgentGraphParams {
   policy?:           Partial<AiTruthfulnessPolicy>;
   responseMode?:     "AUTO" | "MANUAL";
   mediaInfo?:        { id: string; type: string; url?: string };
+  conversationId?:   number;
 }
 
 /**
@@ -183,8 +195,17 @@ async function _runGraph(params: AgentGraphParams): Promise<AiRoutingDecision> {
     { role: "user" as const, parts: userParts },
   ];
 
+  // ── Persistence Setup ──────────────────────────────────────────────────
+  // Ensure checkpointer tables exist (runs once)
+  try {
+    await checkpointer.setup();
+  } catch (err: any) {
+    logger.warn("ai.graph.checkpointer_setup_failed", { error: err.message });
+  }
+
   // ── Invoke the graph ───────────────────────────────────────────────────
-  const threadId = `${params.businessProfileId}_${Date.now()}`;
+  // Use conversationId as the threadId to maintain state across events
+  const threadId = params.conversationId?.toString() || `temp_${Date.now()}`;
 
   const finalState = await agentGraph.invoke(
     {
@@ -219,9 +240,33 @@ async function _runGraph(params: AgentGraphParams): Promise<AiRoutingDecision> {
     },
   );
 
+  return finalState.decision!;
+}
+
+/**
+ * resumeAgentGraph — resumes an interrupted graph with human approval/edits.
+ */
+export async function resumeAgentGraph(
+  conversationId: number,
+  approvedContent: string,
+): Promise<AiRoutingDecision> {
+  const { Command } = await import("@langchain/langgraph");
+
+  const finalState = await agentGraph.invoke(
+    new Command({ resume: approvedContent }),
+    {
+      configurable: {
+        thread_id:     conversationId.toString(),
+        graph_version: "v1",
+      },
+    },
+  );
+
   if (!finalState.decision) {
-    throw new Error("Graph completed without a decision");
+    throw new Error("Graph resumed but failed to produce a decision");
   }
 
-  return finalState.decision;
+  return finalState.decision!;
 }
+
+

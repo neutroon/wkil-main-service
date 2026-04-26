@@ -270,17 +270,16 @@ export function hasExcessiveRepetition(text: string): boolean {
   if (wordPattern.test(sanitized)) return true;
 
   // 3. Block-level loops (A block of text repeating twice)
-  // We check for large chunks (50+ chars) that repeat
-  if (sanitized.length > 200) {
-    const half = Math.floor(sanitized.length / 2);
-    for (let len = 50; len <= half; len++) {
-      for (let i = 0; i <= sanitized.length - len * 2; i++) {
-        const chunk = sanitized.substring(i, i + len);
-        const rest = sanitized.substring(i + len);
-        if (rest.includes(chunk)) {
-          // If a 50+ char block repeats, it's a hallucination/loop
-          return true;
-        }
+  const minBlock = 50;
+  const maxBlock = 100;
+  const checkLen = Math.min(maxBlock, Math.floor(sanitized.length / 2));
+  
+  for (let len = minBlock; len <= checkLen; len++) {
+    for (let i = 0; i <= sanitized.length - len * 2; i++) {
+      const chunk = sanitized.substring(i, i + len);
+      const rest = sanitized.substring(i + len);
+      if (rest.includes(chunk)) {
+        return true;
       }
     }
   }

@@ -21,7 +21,7 @@ import { logger } from "../../../utils/logger";
 import type { AgentStateType } from "../agentState";
 import { windowContents, estimateSystemTokens } from "../contextWindow";
 
-const GEMINI_TIMEOUT_MS = 30_000;
+const GEMINI_TIMEOUT_MS = 60_000;
 
 export async function callGeminiNode(
   state: AgentStateType,

@@ -1,5 +1,6 @@
 import prisma from "../../config/prisma";
 import { AppError } from "../../middlewares/errorHandler.middleware";
+import { getAccessibleProfileIds } from "../user.service";
 
 const HISTORY_LIMIT = 10;
 
@@ -24,6 +25,7 @@ export async function getOrCreateConversation(
     where: {
       pageId,
       senderId,
+      businessProfileId,
       channel: opts?.channel ?? null,
     },
     orderBy: { updatedAt: "desc" }
@@ -186,12 +188,8 @@ export async function listWhatsAppConversations(
   limit = Math.min(limit, MAX_LIMIT);
   const skip = (page - 1) * limit;
 
-  // 1. Resolve all BusinessProfiles owned by this user
-  const profiles = await prisma.businessProfile.findMany({
-    where: { userId },
-    select: { id: true },
-  });
-  const profileIds = profiles.map((p) => p.id);
+  // 1. Resolve all BusinessProfiles this user has access to
+  const profileIds = await getAccessibleProfileIds(userId);
 
   if (profileIds.length === 0) {
     return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
@@ -218,12 +216,14 @@ export async function listWhatsAppConversations(
     prisma.conversation.count({
       where: {
         pageId: { in: phoneNumberIds },
+        businessProfileId: { in: profileIds },
         OR: [{ channel: "whatsapp" }, { channel: null }],
       },
     }),
     prisma.conversation.findMany({
       where: {
         pageId: { in: phoneNumberIds },
+        businessProfileId: { in: profileIds },
         OR: [{ channel: "whatsapp" }, { channel: null }],
       },
       orderBy: { updatedAt: "desc" },
@@ -259,6 +259,8 @@ export async function listWhatsAppConversations(
     updatedAt: c.updatedAt,
     readAt: c.readAt,
     createdAt: c.createdAt,
+    senderId: c.senderId,
+    aiEnabled: c.aiEnabled ?? true,
   }));
 
   return {
@@ -388,12 +390,8 @@ export async function listMessengerConversations(
   limit = Math.min(limit, MAX_LIMIT);
   const skip = (page - 1) * limit;
 
-  // 1. Resolve all BusinessProfiles owned by this user
-  const profiles = await prisma.businessProfile.findMany({
-    where: { userId },
-    select: { id: true },
-  });
-  const profileIds = profiles.map((p) => p.id);
+  // 1. Resolve all BusinessProfiles this user has access to
+  const profileIds = await getAccessibleProfileIds(userId);
 
   if (profileIds.length === 0) {
     return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };

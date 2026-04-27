@@ -285,17 +285,23 @@ export const getPageAccessToken = async (pageId: string): Promise<string> => {
   const page = await prisma.facebookPage.findFirst({
     where: { pageId, isActive: true },
     orderBy: { updatedAt: "desc" },
-    select: { pageAccessToken: true },
+    select: { pageAccessToken: true, pageName: true },
   });
 
   if (!page) {
+    logger.warn("facebook.token.missing", { pageId });
     throw new AppError(
-      `Page with ID ${pageId} not found in database or is inactive.`,
+      `Facebook Page "${pageId}" is not connected or is inactive. Please reconnect it in settings.`,
       404,
     );
   }
 
-  return decryptFacebookSecret(page.pageAccessToken);
+  try {
+    return decryptFacebookSecret(page.pageAccessToken);
+  } catch (err: any) {
+    logger.error("facebook.token.decryption_failed", { pageId, pageName: page.pageName });
+    throw new AppError("Failed to decrypt page access token. Please reconnect the page.", 500);
+  }
 };
 
 // publish post on a page
@@ -660,9 +666,18 @@ export const getFacebookUserProfile = async (
     const cleanPsid = psid.trim();
     const token = accessToken || (await getPageAccessToken(pageId));
     const url = `${FB_API}/${cleanPsid}?fields=name,first_name,last_name,picture&access_token=${token}`;
+    
+    logger.debug("facebook.profile.fetching", { pageId, url: url.replace(token, "HIDDEN") });
+    
     const { data } = await metaClient.get(url);
     return data;
-  } catch (error: unknown) {
+  } catch (error: any) {
+    logger.warn("facebook.profile.fetch_failed", { 
+      pageId, 
+      error: error.message,
+      code: error.code,
+      subcode: error.subcode 
+    });
     return null; // Return null instead of throwing to allow "there" fallback
   }
 };
@@ -1183,8 +1198,9 @@ export const deactivateFacebookPage = async (
       });
     }
 
-    await prisma.facebookPage.update({
-      where: { id: page.id },
+    // Deactivate ALL records for this pageId belonging to this user
+    await prisma.facebookPage.updateMany({
+      where: { pageId, facebookAccount: { userId } },
       data: { isActive: false },
     });
 

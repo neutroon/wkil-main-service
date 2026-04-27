@@ -405,6 +405,16 @@ export async function adminTransferAccount(params: {
 
   // Use a transaction to ensure atomic transfer
   return await prisma.$transaction(async (tx) => {
+    // 0. Clean up target user's existing record for this number (if any)
+    // This prevents the P2002 Unique Constraint error if they previously tried linking it.
+    await tx.whatsAppAccount.deleteMany({
+      where: {
+        userId: targetUserId,
+        phoneNumberId: account.phoneNumberId,
+        id: { not: accountId },
+      },
+    });
+
     // 1. Move the account
     const updatedAccount = await tx.whatsAppAccount.update({
       where: { id: accountId },

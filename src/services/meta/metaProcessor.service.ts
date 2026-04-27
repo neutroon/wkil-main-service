@@ -322,7 +322,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
     }
 
     // B. Platform Delivery
-    if (isAutoMode && reply.handoffCategory !== "SYSTEM_ERROR") {
+    if (isAutoMode && reply.handoffCategory !== "SYSTEM_ERROR" && mainContent.length > 0) {
       const { mirrorCommentReplyToMessenger, syncMessageStatus } = await import("./metaDelivery.service");
 
       if (platform === "messenger") {

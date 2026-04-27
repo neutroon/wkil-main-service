@@ -6,7 +6,7 @@ import { enqueueMetaJob } from "../../queues/meta.queue";
 import { logger } from "../../utils/logger";
 import { verifyMetaWebhookSignature } from "../../utils/metaWebhook";
 import { redisClient } from "../../config/redis";
-import { authenticateToken } from "../../middlewares/auth.middleware";
+import { authenticateToken, requireAdmin } from "../../middlewares/auth.middleware";
 import { isKnownWhatsAppAccount, invalidateWhatsAppAccountCache } from "../../services/meta/webhookCache.service";
 import { encryptFacebookSecret } from "../../utils/tokenCrypto";
 import { cache } from "../../utils/cache";
@@ -17,6 +17,7 @@ import {
   subscribeWebhook,
   unsubscribeWebhook,
   saveWhatsAppAccount,
+  adminTransferAccount,
 } from "../../services/meta/whatsappOauth.service";
 import multer from "multer";
 import { uploadWhatsAppMedia } from "../../services/meta/metaUpload.service";
@@ -575,5 +576,63 @@ function sanitiseAccount(account: any): any {
   const { accessToken: _omit, ...safe } = account;
   return safe;
 }
+
+/**
+ * ADMIN ONLY: List WhatsApp accounts for a specific user.
+ * GET /v1/whatsapp/admin/users/:userId/accounts
+ */
+whatsappRoutes.get(
+  "/admin/users/:userId/accounts",
+  authenticateToken,
+  requireAdmin,
+  async (req: Request, res: Response) => {
+    const { userId } = req.params;
+    const accounts = await prisma.whatsAppAccount.findMany({
+      where: { userId: parseInt(userId) },
+      include: {
+        businessProfile: {
+          select: { name: true },
+        },
+      },
+    });
+
+    return res.json({
+      success: true,
+      data: accounts.map(sanitiseAccount),
+    });
+  },
+);
+
+/**
+ * ADMIN ONLY: Transfer a WhatsApp account to a new user/profile.
+ * POST /v1/whatsapp/admin/transfer
+ */
+whatsappRoutes.post(
+  "/admin/transfer",
+  authenticateToken,
+  requireAdmin,
+  async (req: Request, res: Response) => {
+    const { accountId, targetUserId, targetBusinessProfileId } = req.body;
+
+    if (!accountId || !targetUserId || !targetBusinessProfileId) {
+      throw new AppError(
+        "accountId, targetUserId, and targetBusinessProfileId are required",
+        400,
+      );
+    }
+
+    const result = await adminTransferAccount({
+      accountId: parseInt(accountId),
+      targetUserId: parseInt(targetUserId),
+      targetBusinessProfileId: parseInt(targetBusinessProfileId),
+    });
+
+    return res.json({
+      success: true,
+      message: "Account and conversations transferred successfully",
+      data: result,
+    });
+  },
+);
 
 export default whatsappRoutes;

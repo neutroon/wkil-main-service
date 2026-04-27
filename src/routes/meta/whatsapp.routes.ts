@@ -15,6 +15,7 @@ import {
   exchangeCodeForToken,
   discoverWabaAccounts,
   subscribeWebhook,
+  unsubscribeWebhook,
   saveWhatsAppAccount,
 } from "../../services/meta/whatsappOauth.service";
 import multer from "multer";
@@ -433,6 +434,22 @@ whatsappRoutes.post("/accounts", authenticateToken, async (req: Request, res: Re
 
   const encryptedToken = encryptFacebookSecret(accessToken as string);
 
+  // SECURITY: Check if this phone number is already ACTIVE for another user
+  const existingActive = await prisma.whatsAppAccount.findFirst({
+    where: {
+      phoneNumberId,
+      userId: { not: userId },
+      isActive: true,
+    },
+  });
+
+  if (existingActive) {
+    throw new AppError(
+      "This WhatsApp number is already active for another user. Please have the owner disconnect it first.",
+      403,
+    );
+  }
+
   const account = await prisma.whatsAppAccount.upsert({
     where: { userId_phoneNumberId: { userId, phoneNumberId } },
     create: { userId, phoneNumberId, displayPhoneNumber, wabaId, accessToken: encryptedToken },
@@ -477,6 +494,16 @@ whatsappRoutes.delete("/accounts/:id", authenticateToken, validate(idParamSchema
   });
 
   if (!account) throw new AppError("WhatsApp account not found", 404);
+
+  // Attempt to unsubscribe from Meta directly so the state is cleaned up on their end
+  if (account.wabaId && account.accessToken) {
+    try {
+      const token = decryptFacebookSecret(account.accessToken);
+      await unsubscribeWebhook(account.wabaId, token);
+    } catch (err: any) {
+      logger.warn("whatsapp.account.meta_unsubscribe_failed", { id, error: err.message });
+    }
+  }
 
   await prisma.whatsAppAccount.update({
     where: { id },

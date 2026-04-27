@@ -594,3 +594,45 @@ export const getUserAnalytics = async (userId: number, days: number = 30) => {
     take: days,
   });
 };
+
+export const getAccessibleProfileIds = async (userId: number): Promise<number[]> => {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { role: true }
+  });
+
+  if (!user) return [];
+
+  // Super admins and admins see ALL profiles
+  if (["super_admin", "admin"].includes(user.role)) {
+    const allProfiles = await prisma.businessProfile.findMany({
+      select: { id: true }
+    });
+    return allProfiles.map(p => p.id);
+  }
+
+  // Managers see their own AND their managed users' profiles
+  if (user.role === "manager") {
+    const managedUsers = await prisma.userManagement.findMany({
+      where: { managerId: userId, isActive: true },
+      select: { userId: true }
+    });
+    
+    const userIds = [userId, ...managedUsers.map(m => m.userId)];
+    
+    const profiles = await prisma.businessProfile.findMany({
+      where: { userId: { in: userIds } },
+      select: { id: true }
+    });
+    
+    return profiles.map(p => p.id);
+  }
+
+  // Regular users see only their own
+  const profiles = await prisma.businessProfile.findMany({
+    where: { userId },
+    select: { id: true }
+  });
+  
+  return profiles.map(p => p.id);
+};

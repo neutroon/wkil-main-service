@@ -386,3 +386,56 @@ export async function saveWhatsAppAccount(params: {
   const { accessToken: _omit, ...safe } = account;
   return safe;
 }
+
+/**
+ * ADMIN ONLY: Transfer a WhatsApp account and its history to another user/profile.
+ */
+export async function adminTransferAccount(params: {
+  accountId: number;
+  targetUserId: number;
+  targetBusinessProfileId: number;
+}) {
+  const { accountId, targetUserId, targetBusinessProfileId } = params;
+
+  const account = await prisma.whatsAppAccount.findUnique({
+    where: { id: accountId },
+  });
+
+  if (!account) throw new AppError("WhatsApp account not found", 404);
+
+  // Use a transaction to ensure atomic transfer
+  return await prisma.$transaction(async (tx) => {
+    // 1. Move the account
+    const updatedAccount = await tx.whatsAppAccount.update({
+      where: { id: accountId },
+      data: {
+        userId: targetUserId,
+        businessProfileId: targetBusinessProfileId,
+        isActive: true,
+      },
+    });
+
+    // 2. Move the conversation history
+    // For WhatsApp, pageId is the phoneNumberId
+    const movedConversations = await tx.conversation.updateMany({
+      where: {
+        pageId: account.phoneNumberId,
+      },
+      data: {
+        businessProfileId: targetBusinessProfileId,
+      },
+    });
+
+    logger.info("whatsapp_admin.account_transferred", {
+      accountId,
+      fromUser: account.userId,
+      toUser: targetUserId,
+      conversationsMoved: movedConversations.count,
+    });
+
+    return {
+      account: updatedAccount,
+      conversationsMoved: movedConversations.count,
+    };
+  });
+}

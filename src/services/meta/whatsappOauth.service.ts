@@ -306,6 +306,24 @@ export async function subscribeWebhook(wabaId: string, token: string): Promise<v
   logger.info("whatsapp_oauth.webhook_subscribed", { wabaId });
 }
 
+export async function unsubscribeWebhook(wabaId: string, token: string): Promise<void> {
+  const res = await fetch(`${GRAPH_API}/${wabaId}/subscribed_apps`, {
+    method: "DELETE",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const data = await res.json() as any;
+  if (!res.ok) {
+    logger.warn("whatsapp_oauth.webhook_unsubscription_failed", { wabaId, error: data });
+    // We don't throw here to allow the DB deactivation to proceed even if Meta fails
+  } else {
+    logger.info("whatsapp_oauth.webhook_unsubscribed", { wabaId });
+  }
+}
+
 // ─── Step 4: Save and upsert into DB ──────────────────────────────────────────
 
 export async function saveWhatsAppAccount(params: {
@@ -317,6 +335,22 @@ export async function saveWhatsAppAccount(params: {
   businessProfileId?: number;
 }) {
   const encryptedToken = encryptFacebookSecret(params.accessToken);
+
+  // SECURITY: Check if this phone number is already ACTIVE for another user
+  const existingActive = await prisma.whatsAppAccount.findFirst({
+    where: {
+      phoneNumberId: params.phoneNumberId,
+      userId: { not: params.userId },
+      isActive: true,
+    },
+  });
+
+  if (existingActive) {
+    throw new AppError(
+      "This WhatsApp number is already active for another user. Please have the owner disconnect it first.",
+      403,
+    );
+  }
 
   const account = await prisma.whatsAppAccount.upsert({
     where: {

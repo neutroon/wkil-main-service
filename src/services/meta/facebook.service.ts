@@ -731,6 +731,18 @@ export const saveFacebookToken = async (
       },
     });
 
+    // CRITICAL: Propagate new token to all WhatsApp accounts linked to this user
+    // Since Embedded Signup tokens are often the same as the user token, this ensures 
+    // WhatsApp stays connected even if the user changed their FB password.
+    await prisma.whatsAppAccount.updateMany({
+      where: { userId, isActive: true },
+      data: {
+        accessToken: encAccess,
+        isTokenValid: true,
+        lastValidatedAt: new Date(),
+      }
+    });
+
     // Log the connection activity
     await logFacebookActivity(facebookAccount.id, "account_connected", {
       facebookUserId: userInfo.id,
@@ -794,6 +806,7 @@ export const saveFacebookPages = async (
             category: page.category || null,
             pictureUrl: page.picture?.data?.url || null,
             followersCount: page.followers_count || 0,
+            isActive: true, // Explicitly reactivate on sync
             lastUsedAt: new Date(),
           },
           create: {
@@ -804,8 +817,13 @@ export const saveFacebookPages = async (
             category: page.category || null,
             pictureUrl: page.picture?.data?.url || null,
             followersCount: page.followers_count || 0,
+            isActive: true,
           },
         });
+
+        // Proactively clear cache to ensure new token is used immediately
+        await invalidateFacebookPageCache(page.id).catch(() => {});
+        
         await subscribePageToWebhook(page.access_token, page.id);
 
         return decryptFacebookPageForResponse(saved);

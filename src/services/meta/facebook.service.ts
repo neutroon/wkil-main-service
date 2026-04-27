@@ -678,9 +678,9 @@ export const saveFacebookToken = async (
   try {
     const existing = await prisma.facebookAccount.findUnique({
       where: { facebookUserId: userInfo.id },
-      select: { userId: true },
+      select: { userId: true, isActive: true },
     });
-    if (existing && existing.userId !== userId) {
+    if (existing && existing.isActive && existing.userId !== userId) {
       throw new AppError(
         "This Facebook account is already linked to another user. Log in as that user or disconnect the account first.",
         403,

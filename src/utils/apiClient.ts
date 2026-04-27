@@ -54,7 +54,7 @@ metaClient.interceptors.response.use(
 
     const mapped = mapFacebookGraphError(error);
     
-    logger.error("meta.api.request_failed", {
+    logger.error("meta.api.request_failed_V25_VERIFIED", {
       message: mapped.message,
       code: mapped.code,
       status: mapped.status,

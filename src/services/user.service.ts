@@ -16,10 +16,11 @@ export const createUser = async (
   password: string,
   role: string = "user",
 ) => {
+  const normalizedEmail = email.toLowerCase();
   const hashed = await bcrypt.hash(password, 10);
 
   // Check if user already exists
-  const existingUser = await prisma.user.findUnique({ where: { email } });
+  const existingUser = await prisma.user.findUnique({ where: { email: normalizedEmail } });
   if (existingUser) {
     throw new AppError("User already exists", 409);
   }
@@ -31,7 +32,7 @@ export const createUser = async (
   const user = await prisma.user.create({
     data: {
       name,
-      email,
+      email: normalizedEmail,
       password: hashed,
       role: role as "user" | "admin" | "manager" | "super_admin",
       isEmailVerified: false,
@@ -59,8 +60,9 @@ export const createUser = async (
 };
 
 export const loginUser = async (email: string, password: string) => {
+  const normalizedEmail = email.toLowerCase();
   const user = await prisma.user.findUnique({
-    where: { email },
+    where: { email: normalizedEmail },
     select: { id: true, name: true, email: true, password: true, role: true, isEmailVerified: true, lastVerificationSentAt: true },
   });
 

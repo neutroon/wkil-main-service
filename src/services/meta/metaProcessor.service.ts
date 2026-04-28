@@ -444,12 +444,6 @@ export async function processMetaMessage(job: MetaMessageJob) {
     throw err;
   }
 }
-  } catch (err: any) {
-    if (err instanceof UnrecoverableError) throw err;
-    logger.error("meta.processor.failure", { platform, identifier, error: err.message });
-    throw err;
-  }
-}
 
 /**
  * PRODUCTION-GRADE: Background Visual Processor

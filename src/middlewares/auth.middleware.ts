@@ -46,23 +46,26 @@ export const setAuthCookies = (
   refreshToken: string
 ) => {
   const isProduction = env.NODE_ENV === "production";
+  const isTunnel = env.BACKEND_URL?.includes("ngrok-free.dev") || false;
+
+  // CRITICAL for ngrok: Cross-site cookies require SameSite=None and Secure=true
+  const cookieOptions: any = {
+    httpOnly: true,
+    secure: isProduction || isTunnel,
+    sameSite: isTunnel ? "none" : "lax",
+    path: "/",
+  };
 
   // Access token cookie (short-lived)
   res.cookie("accessToken", accessToken, {
-    httpOnly: true,
-    secure: isProduction,
-    sameSite: isProduction ? "strict" : "lax",
+    ...cookieOptions,
     maxAge: 24 * 60 * 60 * 1000, // 24 hours
-    path: "/",
   });
 
   // Refresh token cookie (long-lived)
   res.cookie("refreshToken", refreshToken, {
-    httpOnly: true,
-    secure: isProduction,
-    sameSite: isProduction ? "strict" : "lax",
+    ...cookieOptions,
     maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-    path: "/",
   });
 };
 
@@ -131,7 +134,7 @@ export const authenticateToken = async (
       token = req.cookies?.accessToken;
     }
 
-    if (!token) {
+    if (!token || token === "undefined" || token === "null") {
       throw new AppError("Access token required", 401, true, "NO_TOKEN");
     }
 
@@ -163,7 +166,8 @@ export const authenticateToken = async (
     if (error.name === "TokenExpiredError") {
       throw new AppError("Token expired", 401, true, "TOKEN_EXPIRED");
     }
-    throw new AppError("Invalid token", 403, true, "INVALID_TOKEN");
+    // Change to 401 for invalid tokens to trigger client-side re-auth
+    throw new AppError("Invalid token", 401, true, "INVALID_TOKEN");
   }
 };
 
@@ -218,7 +222,7 @@ export const refreshToken = async (
     if (error.name === "TokenExpiredError") {
       throw new AppError("Refresh token expired", 401, true, "REFRESH_TOKEN_EXPIRED");
     }
-    throw new AppError("Invalid refresh token", 403, true, "INVALID_REFRESH_TOKEN");
+    throw new AppError("Invalid refresh token", 401, true, "INVALID_REFRESH_TOKEN");
   }
 };
 

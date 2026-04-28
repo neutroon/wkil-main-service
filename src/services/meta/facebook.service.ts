@@ -746,17 +746,19 @@ export const saveFacebookToken = async (
       },
     });
 
-    // CRITICAL: Propagate new token to all WhatsApp accounts linked to this user
-    // Since Embedded Signup tokens are often the same as the user token, this ensures 
-    // WhatsApp stays connected even if the user changed their FB password.
-    await prisma.whatsAppAccount.updateMany({
-      where: { userId, isActive: true },
-      data: {
-        accessToken: encAccess,
-        isTokenValid: true,
-        lastValidatedAt: new Date(),
+    // CRITICAL: Propagate new tokens to all Facebook Pages linked to this user
+    // This fixes the issue where a password change invalidates all page tokens.
+    // By fetching them again using the fresh user token, we restore connectivity.
+    try {
+      const freshPages = await getUserPages(tokenData.access_token, userId);
+      if (freshPages && freshPages.length > 0) {
+        await saveFacebookPages(facebookAccount.id, freshPages);
+        logger.info("facebook.token.pages_refreshed", { userId, count: freshPages.length });
       }
-    });
+    } catch (pageErr: any) {
+      logger.warn("facebook.token.pages_refresh_failed", { userId, error: pageErr.message });
+      // Non-blocking: we still want to return the saved account
+    }
 
     // Log the connection activity
     await logFacebookActivity(facebookAccount.id, "account_connected", {

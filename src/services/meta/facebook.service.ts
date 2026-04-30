@@ -665,12 +665,26 @@ export const getFacebookUserProfile = async (
   try {
     const cleanPsid = psid.trim();
     const token = accessToken || (await getPageAccessToken(pageId));
-    const url = `${FB_API}/${cleanPsid}?fields=name,first_name,last_name,picture&access_token=${token}`;
     
-    logger.debug("facebook.profile.fetching", { pageId, url: url.replace(token, "HIDDEN") });
+    // For Messenger PSIDs, Meta prefers first_name, last_name, and profile_pic
+    const fields = "name,first_name,last_name,profile_pic,picture";
+    const url = `${FB_API}/${cleanPsid}?fields=${fields}&access_token=${token}`;
+    
+    logger.debug("facebook.profile.fetching", { pageId, psid: cleanPsid });
     
     const { data } = await metaClient.get(url);
-    return data;
+
+    // Normalize name and picture for our database
+    const firstName = data.first_name || "";
+    const lastName = data.last_name || "";
+    const fullName = data.name || `${firstName} ${lastName}`.trim();
+    const pictureUrl = data.profile_pic || data.picture?.data?.url;
+
+    return {
+      ...data,
+      name: fullName || "Guest Customer",
+      pictureUrl: pictureUrl || null
+    };
   } catch (error: any) {
     logger.warn("facebook.profile.fetch_failed", { 
       pageId, 
@@ -678,7 +692,7 @@ export const getFacebookUserProfile = async (
       code: error.code,
       subcode: error.subcode 
     });
-    return null; // Return null instead of throwing to allow "there" fallback
+    return null;
   }
 };
 

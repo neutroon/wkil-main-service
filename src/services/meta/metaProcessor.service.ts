@@ -116,32 +116,44 @@ async function resolveAccountIdentity(job: MetaMessageJob): Promise<IdentityReso
 }
 
 /**
- * Customer Identity Resolver
+ * Customer Identity Resolver (Non-Blocking)
+ * In production grade tier, we NEVER block the AI for Meta profile fetches.
+ * We return the best known identity immediately and trigger enrichment in the background.
  */
-async function resolveCustomerProfile(job: MetaMessageJob, accessToken: string) {
-  const { platform, senderId, identifier, senderName, customerName } = job;
-  let name = customerName;
-  let avatar: string | undefined;
-
-  if (platform === "messenger" && !name) {
-    try {
-      const profilePromise = getFacebookUserProfile(senderId, identifier, accessToken);
-      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 8000));
-      const profile: any = await Promise.race([profilePromise, timeoutPromise]);
-
-      if (profile?.name && String(profile.name).toLowerCase() !== "null") {
-        name = profile.name;
-        avatar = profile.picture?.data?.url;
-      }
-    } catch (e: any) {
-      logger.warn("meta.processor.profile_fetch_skipped", { senderId, reason: e.message });
-    }
-  }
-
+function resolveCustomerProfile(job: MetaMessageJob) {
+  const { senderName, customerName } = job;
   return {
-    name: name || senderName || "Guest Customer",
-    avatar: avatar || undefined
+    name: customerName || senderName || "Guest Customer",
+    avatar: undefined
   };
+}
+
+/**
+ * Background Profile Enrichment
+ * Fetches real name/photo from Meta and updates the conversation record.
+ * This happens while the AI is already working on the reply.
+ */
+async function enrichContactInBackground(
+  conversationId: number,
+  senderId: string,
+  pageId: string,
+  accessToken: string
+) {
+  try {
+    const profile = await getFacebookUserProfile(senderId, pageId, accessToken);
+    if (profile?.name && String(profile.name).toLowerCase() !== "null") {
+      await prisma.conversation.update({
+        where: { id: conversationId },
+        data: {
+          customerName: profile.name,
+          customerAvatar: profile.pictureUrl || undefined
+        }
+      });
+      logger.info("meta.processor.profile_enriched_background", { conversationId, name: profile.name });
+    }
+  } catch (e: any) {
+    logger.warn("meta.processor.enrichment_failed", { conversationId, error: e.message });
+  }
 }
 
 /**
@@ -243,18 +255,21 @@ export async function processMetaMessage(job: MetaMessageJob) {
     }
 
     // 4. Resolve Context & Sync
-    const { name: customerName, avatar: customerAvatar } = await resolveCustomerProfile(job, accessToken);
+    const { name: customerName } = resolveCustomerProfile(job);
     const isComment = !!job.commentId;
     
     const conversation = await getOrCreateConversation(identifier, senderId, businessProfileId, {
       channel: isComment ? "facebook_comment" : platform,
       customerName,
-      customerAvatar,
-      customerPhone: platform === "whatsapp" ? senderId : undefined,
       externalId: job.commentId,
       postId: job.postId,
       sourceCommentText: isComment ? messageText : undefined,
     });
+
+    // 5. Trigger Background Enrichment (Messenger only)
+    if (platform === "messenger" && !job.customerName) {
+      enrichContactInBackground(conversation.id, senderId, identifier, accessToken).catch(() => {});
+    }
 
     logger.info("meta.processor.conversation_ready", { 
       conversationId: conversation.id, 

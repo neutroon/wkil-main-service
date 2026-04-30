@@ -39,7 +39,7 @@ export async function getOrCreateConversation(
       updateData.customerPhone = opts.customerPhone;
     }
     // Update name if provided and DIFFERENT (or missing)
-    if (opts?.customerName && opts.customerName !== existing.customerName) {
+    if (opts?.customerName && opts.customerName !== existing.customerName && opts.customerName !== "Guest Customer") {
       updateData.customerName = opts.customerName;
     }
     // Update avatar if provided and different

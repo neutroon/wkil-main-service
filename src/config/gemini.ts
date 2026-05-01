@@ -307,6 +307,7 @@ export const aiRoutingSchema: Schema = {
     "intent",
     "publicContent",
     "privateContent",
+    "attachment",
   ],
 };
 

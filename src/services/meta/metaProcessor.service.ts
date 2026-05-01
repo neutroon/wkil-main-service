@@ -257,15 +257,39 @@ export async function processMetaMessage(job: MetaMessageJob) {
 
     // 4. Resolve Context & Sync
     const { name: customerName } = resolveCustomerProfile(job);
-    const isComment = !!job.commentId;
-    
-    const conversation = await getOrCreateConversation(identifier, senderId, businessProfileId, {
-      channel: isComment ? "facebook_comment" : platform,
-      customerName,
-      externalId: job.commentId,
-      postId: job.postId,
-      sourceCommentText: isComment ? messageText : undefined,
-    });
+    const isComment = !!job.commentId || type === "FACEBOOK_COMMENT";
+    let conversationIdOverride: number | undefined;
+
+    // ── COEXISTENCE: Mirroring Resolution for Comments ──
+    // If this is a reply FROM the admin on Facebook, we need to find the conversation
+    // it belongs to by looking up the parent comment we are replying to.
+    if (job.isFromBusiness && isComment && job.parentId) {
+      const parentMessage = await prisma.conversationMessage.findFirst({
+        where: { externalId: job.parentId },
+        select: { conversationId: true }
+      });
+      if (parentMessage) {
+        conversationIdOverride = parentMessage.conversationId;
+        logger.info("meta.processor.mirroring.parent_conversation_found", { 
+          parentId: job.parentId, 
+          conversationId: conversationIdOverride 
+        });
+      }
+    }
+
+    const conversation = conversationIdOverride 
+      ? await prisma.conversation.findUnique({ where: { id: conversationIdOverride } })
+      : await getOrCreateConversation(identifier, senderId, businessProfileId, {
+          channel: isComment ? "facebook_comment" : platform,
+          customerName,
+          externalId: job.commentId,
+          postId: job.postId,
+          sourceCommentText: isComment ? messageText : undefined,
+        });
+
+    if (!conversation) {
+       throw new UnrecoverableError("Could not resolve conversation for Meta message.");
+    }
 
     // 5. Trigger Background Enrichment (Messenger only)
     if (platform === "messenger" && !job.customerName) {
@@ -339,9 +363,45 @@ export async function processMetaMessage(job: MetaMessageJob) {
     const publicStatus = isAutoMode ? "SENT" : "PENDING_REVIEW";
     const mainContent = (reply.privateContent || reply.content || "").trim();
 
-    // A. Save Model Messages
+    // A. Fetch Media Attachment Details (if AI requested one)
+    let aiMediaAsset: any = null;
+    let syncedMediaId: string | undefined;
+
+    if (reply.attachment && reply.attachment.assetName) {
+      try {
+        const mediaRecord = await prisma.businessProfileMedia.findFirst({
+          where: { 
+            businessProfileId, 
+            name: { equals: reply.attachment.assetName, mode: "insensitive" },
+            isActive: true,
+            deletedAt: null 
+          },
+          include: {
+            syncs: {
+              where: { platform: platform === "messenger" ? "messenger" : "whatsapp", identifier }
+            }
+          }
+        });
+        
+        if (mediaRecord) {
+          aiMediaAsset = mediaRecord;
+          const validSync = mediaRecord.syncs.find(s => s.status === "SYNCED" && (!s.expiresAt || s.expiresAt > new Date()));
+          if (validSync) {
+             syncedMediaId = validSync.externalMediaId;
+          } else {
+             logger.warn("meta.processor.media_not_synced", { assetName: reply.attachment.assetName, platform, identifier });
+          }
+        } else {
+          logger.warn("meta.processor.media_not_found", { assetName: reply.attachment.assetName });
+        }
+      } catch (err) {
+        logger.error("meta.processor.media_fetch_error", { error: String(err) });
+      }
+    }
+
+    // B. Save Model Message
     let modelSaved: any;
-    if (mainContent.length > 0 || reply.action === "HANDOFF_TO_HUMAN") {
+    if (mainContent.length > 0 || aiMediaAsset || reply.action === "HANDOFF_TO_HUMAN") {
       modelSaved = await saveMessage(conversation.id, "model", mainContent, {
         status: privateStatus,
         aiReasoning: reply.reasoning,
@@ -349,8 +409,11 @@ export async function processMetaMessage(job: MetaMessageJob) {
         intent: reply.intent,
         isPrivate: platform === "messenger" ? true : (isComment && reply.intent === "SALES_DM"),
         origin: isComment ? "facebook_comment_reply" : undefined,
+        type: aiMediaAsset ? aiMediaAsset.mediaType : "text",
+        mediaId: syncedMediaId,
+        mediaMetadata: aiMediaAsset ? { url: aiMediaAsset.publicUrl, name: aiMediaAsset.name } : undefined
       });
-      logger.info("meta.processor.model_saved", { messageId: modelSaved.id, status: privateStatus });
+      logger.info("meta.processor.model_saved", { messageId: modelSaved.id, status: privateStatus, hasMedia: !!aiMediaAsset });
     }
 
     let publicSaved: any;
@@ -422,30 +485,47 @@ export async function processMetaMessage(job: MetaMessageJob) {
             }
           }
         } else if (modelSaved && privateStatus === "SENT") {
-          const { sendMessengerReply } = await import("./messenger.service");
-          await sendMessengerReply(senderId, mainContent, accessToken)
-            .then(res => {
-              logger.info("meta.processor.messenger_reply_success", { messageId: res?.message_id });
-              return res?.message_id && syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, { externalId: res.message_id });
-            })
-            .catch((err) => {
-              logger.error("meta.processor.messenger_reply_failed", { error: err.message });
-              return syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, { status: "FAILED" });
-            });
+          const { sendMessengerReply, sendMessengerMedia } = await import("./messenger.service");
+          
+          try {
+            let res: any;
+            if (aiMediaAsset && (syncedMediaId || aiMediaAsset.publicUrl)) {
+              const messengerMediaType = aiMediaAsset.mediaType === "document" ? "file" : aiMediaAsset.mediaType;
+              res = await sendMessengerMedia(senderId, syncedMediaId || null, messengerMediaType, accessToken, aiMediaAsset.publicUrl);
+              logger.info("meta.processor.messenger_media_success", { messageId: res?.message_id });
+              
+              if (mainContent.length > 0) {
+                 res = await sendMessengerReply(senderId, mainContent, accessToken);
+              }
+            } else {
+              res = await sendMessengerReply(senderId, mainContent, accessToken);
+            }
+            logger.info("meta.processor.messenger_reply_success", { messageId: res?.message_id });
+            if (res?.message_id) await syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, { externalId: res.message_id });
+          } catch (err: any) {
+            logger.error("meta.processor.messenger_reply_failed", { error: err.message });
+            await syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, { status: "FAILED" });
+          }
         }
       } else if (platform === "whatsapp" && modelSaved && privateStatus === "SENT") {
         logger.info("meta.processor.delivering_whatsapp", { conversationId: conversation.id });
-        const { sendWhatsAppReply } = await import("./whatsapp.service");
-        await sendWhatsAppReply(senderId, mainContent, identifier, accessToken)
-          .then(res => {
-            const wamid = res?.messages?.[0]?.id;
-            logger.info("meta.processor.whatsapp_reply_success", { wamid });
-            return wamid && prisma.conversationMessage.update({ where: { id: modelSaved.id }, data: { externalId: wamid } });
-          })
-          .catch((err) => {
-            logger.error("meta.processor.whatsapp_reply_failed", { error: err.message });
-            return prisma.conversationMessage.update({ where: { id: modelSaved.id }, data: { status: "FAILED" } });
-          });
+        const { sendWhatsAppReply, sendWhatsAppMedia } = await import("./whatsapp.service");
+        
+        try {
+          let res: any;
+          if (aiMediaAsset && (syncedMediaId || aiMediaAsset.publicUrl)) {
+             res = await sendWhatsAppMedia(senderId, syncedMediaId || null, aiMediaAsset.mediaType, identifier, accessToken, mainContent.length > 0 ? mainContent : undefined, aiMediaAsset.name, aiMediaAsset.publicUrl);
+             logger.info("meta.processor.whatsapp_media_success", { wamid: res?.messages?.[0]?.id });
+          } else {
+             res = await sendWhatsAppReply(senderId, mainContent, identifier, accessToken);
+          }
+          const wamid = res?.messages?.[0]?.id;
+          logger.info("meta.processor.whatsapp_reply_success", { wamid });
+          if (wamid) await prisma.conversationMessage.update({ where: { id: modelSaved.id }, data: { externalId: wamid } });
+        } catch (err: any) {
+          logger.error("meta.processor.whatsapp_reply_failed", { error: err.message });
+          await prisma.conversationMessage.update({ where: { id: modelSaved.id }, data: { status: "FAILED" } });
+        }
       }
     } else {
       logger.info("meta.processor.delivery_skipped", { 

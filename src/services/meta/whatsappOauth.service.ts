@@ -333,15 +333,46 @@ export async function saveWhatsAppAccount(params: {
   displayPhoneNumber: string;
   accessToken: string;
   businessProfileId?: number;
+  connectionMode?: "BUSINESS_API" | "COEXISTENCE";
 }) {
   const encryptedToken = encryptFacebookSecret(params.accessToken);
+  // 1. PROFESSIONAL: Auto-detect the actual connection mode from Meta
+  // We check if the number is still on the 'Biz App' to determine if it's COEXISTENCE.
+  let connectionMode: "COEXISTENCE" | "BUSINESS_API" = params.connectionMode || "BUSINESS_API";
+  try {
+    const metaDetailsResponse = await fetch(
+      `${env.FB_API_URL}/${params.phoneNumberId}?fields=is_on_biz_app`,
+      {
+        headers: { Authorization: `Bearer ${params.accessToken}` },
+      }
+    );
+    const details = await metaDetailsResponse.json();
+    
+    if (details.is_on_biz_app === true) {
+      connectionMode = "COEXISTENCE";
+    } else if (details.is_on_biz_app === false) {
+      connectionMode = "BUSINESS_API";
+    }
+    
+    logger.info("whatsapp_oauth.mode_detected", {
+      phoneNumberId: params.phoneNumberId,
+      isOnBizApp: details.is_on_biz_app,
+      finalMode: connectionMode
+    });
+  } catch (err) {
+    logger.warn("whatsapp_oauth.mode_detection_failed", {
+      phoneNumberId: params.phoneNumberId,
+      error: err instanceof Error ? err.message : String(err)
+    });
+    // Fallback to user intent if detection fails
+  }
 
-  // SECURITY: Check if this phone number is already ACTIVE for another user
+  // 2. Check if number is already active for another user
   const existingActive = await prisma.whatsAppAccount.findFirst({
     where: {
       phoneNumberId: params.phoneNumberId,
-      userId: { not: params.userId },
       isActive: true,
+      userId: { not: params.userId },
     },
   });
 
@@ -365,21 +396,42 @@ export async function saveWhatsAppAccount(params: {
       displayPhoneNumber: params.displayPhoneNumber,
       wabaId: params.wabaId,
       accessToken: encryptedToken,
+      connectionMode,
       ...(params.businessProfileId && { businessProfileId: params.businessProfileId }),
     },
     update: {
       displayPhoneNumber: params.displayPhoneNumber,
       wabaId: params.wabaId,
       accessToken: encryptedToken,
+      connectionMode,
       isActive: true,
       ...(params.businessProfileId && { businessProfileId: params.businessProfileId }),
     },
   });
 
+  // PROFESSIONAL: Auto-register the number to Meta's servers immediately.
+  // This moves the number from 'Pending' to 'Connected' without user intervention.
+  try {
+    await registerWhatsAppPhoneNumber({
+      phoneNumberId: params.phoneNumberId,
+      accessToken: params.accessToken,
+    });
+    logger.info("whatsapp_oauth.auto_registration_success", {
+      phoneNumberId: params.phoneNumberId,
+    });
+  } catch (err: any) {
+    // We log but don't fail the whole setup if registration fails (user can manually fix in dashboard later)
+    logger.warn("whatsapp_oauth.auto_registration_failed", {
+      phoneNumberId: params.phoneNumberId,
+      error: err.message,
+    });
+  }
+
   logger.info("whatsapp_oauth.account_saved", {
     userId: params.userId,
     phoneNumberId: params.phoneNumberId,
     wabaId: params.wabaId,
+    connectionMode,
   });
 
   // Strip the encrypted token before returning
@@ -448,4 +500,44 @@ export async function adminTransferAccount(params: {
       conversationsMoved: movedConversations.count,
     };
   });
+}
+/**
+ * Finalizes the connection by registering the number with Meta's servers.
+ * Required to move a number from 'PENDING' to 'CONNECTED'.
+ */
+async function registerWhatsAppPhoneNumber(params: {
+  phoneNumberId: string;
+  accessToken: string;
+}) {
+  const { phoneNumberId, accessToken } = params;
+  const url = `${env.FB_API_URL}/${phoneNumberId}/register`;
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        pin: "123456", // Default registration PIN; user can change in Meta settings if needed.
+      }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      // If already registered, Meta might return a 400 with a specific subcode.
+      // We check if it's already success.
+      if (data.error?.message?.includes("already registered")) {
+        return { success: true, alreadyRegistered: true };
+      }
+      throw new Error(data.error?.message || "Registration failed");
+    }
+
+    return { success: true };
+  } catch (err) {
+    throw err;
+  }
 }

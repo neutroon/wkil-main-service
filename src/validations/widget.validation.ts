@@ -15,7 +15,8 @@ export const widgetChatSchema = z.object({
     message: z.string()
       .min(1, "message is required")
       .max(MESSAGE_MAX, `message exceeds maximum length of ${MESSAGE_MAX}`),
-    conversationId: z.number().optional(),
+    conversationId: z.number().nullable().optional(),
+    stream: z.boolean().optional(),
   }),
 });
 

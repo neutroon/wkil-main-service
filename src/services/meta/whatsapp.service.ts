@@ -51,14 +51,15 @@ export async function sendWhatsAppReply(
  */
 export async function sendWhatsAppMedia(
   to: string,
-  mediaId: string,
+  mediaId: string | null,
   type: string, // image, audio, video, document
   phoneNumberId: string,
   accessToken: string,
   caption?: string,
   fileName?: string,
+  url?: string,
 ): Promise<any> {
-  const mediaBody: any = { id: mediaId };
+  const mediaBody: any = mediaId ? { id: mediaId } : { link: url };
   if (caption && (type === "image" || type === "video" || type === "document")) {
     mediaBody.caption = caption;
   }

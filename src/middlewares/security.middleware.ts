@@ -49,7 +49,11 @@ export const corsOptions = {
 
     if (env.NODE_ENV === "development") {
       // In development, allow any localhost origin
-      if (origin.includes("localhost") || origin.includes("127.0.0.1")) {
+      if (
+        origin.includes("localhost") ||
+        origin.includes("127.0.0.1") ||
+        origin.includes("trycloudflare.com")
+      ) {
         return callback(null, true);
       }
     }
@@ -62,7 +66,12 @@ export const corsOptions = {
   },
   credentials: true, // Allow cookies
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "X-Requested-With",
+    "ngrok-skip-browser-warning",
+  ],
   exposedHeaders: ["Set-Cookie"],
   maxAge: 86400, // 24 hours
 };

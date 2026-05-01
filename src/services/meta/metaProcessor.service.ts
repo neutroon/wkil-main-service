@@ -36,6 +36,7 @@ export interface MetaMessageJob {
   businessProfileId?: number;
   conversationId?: number;
   isPrivate?: boolean;
+  isFromBusiness?: boolean;
   
   // Status & Typing fields
   statusEvent?: "DELIVERED" | "READ";
@@ -276,7 +277,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
       aiEnabled: (conversation as any).aiEnabled 
     });
 
-    const userSaved = await saveMessage(conversation.id, "user", messageText || "", {
+    const userSaved = await saveMessage(conversation.id, job.isFromBusiness ? "model" : "user", messageText || "", {
       externalId,
       type: type || "text",
       mediaId,
@@ -284,9 +285,9 @@ export async function processMetaMessage(job: MetaMessageJob) {
       isPrivate: platform === "messenger" ? true : (job.isPrivate ?? false),
     });
 
-    if (responseMode === "MANUAL" || !(conversation as any).aiEnabled) {
+    if (job.isFromBusiness || responseMode === "MANUAL" || !(conversation as any).aiEnabled) {
       logger.info("meta.processor.skipping_ai", { 
-        reason: responseMode === "MANUAL" ? "MANUAL_MODE" : "AI_DISABLED_FOR_THREAD" 
+        reason: job.isFromBusiness ? "MIRRORED_MESSAGE" : (responseMode === "MANUAL" ? "MANUAL_MODE" : "AI_DISABLED_FOR_THREAD")
       });
       return;
     }

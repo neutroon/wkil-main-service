@@ -124,6 +124,7 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
     include: {
       faqs: true,
       knowledgeSections: true,
+      whatsAppAccounts: true,
     },
   });
 
@@ -162,6 +163,8 @@ export const getBusinessProfiles = async (req: Request, res: Response) => {
     },
     include: {
       faqs: true,
+      knowledgeSections: true,
+      whatsAppAccounts: true,
       facebookPages: {
         select: {
           pageId: true,
@@ -265,6 +268,7 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
     include: {
       faqs: true,
       knowledgeSections: true,
+      whatsAppAccounts: true,
       facebookPages: {
         select: {
           pageId: true,

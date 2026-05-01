@@ -43,10 +43,15 @@ export async function sendMessengerReply(
  */
 export async function sendMessengerMedia(
   recipientId: string,
-  attachmentId: string,
+  attachmentId: string | null,
   type: "image" | "video" | "audio" | "file",
   pageAccessToken: string,
+  url?: string,
 ) {
+  const payload = attachmentId 
+    ? { attachment_id: attachmentId } 
+    : { url: url, is_reusable: true };
+
   const response = await fetch(
     `https://graph.facebook.com/v25.0/me/messages?access_token=${pageAccessToken}`,
     {
@@ -57,7 +62,7 @@ export async function sendMessengerMedia(
         message: {
           attachment: {
             type: type,
-            payload: { attachment_id: attachmentId },
+            payload: payload,
           },
         },
       }),

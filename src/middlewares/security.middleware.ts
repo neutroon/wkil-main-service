@@ -62,6 +62,12 @@ export const corsOptions = {
       return callback(null, true);
     }
 
+    // Dynamic production fallbacks
+    if (origin.endsWith(".pagespilot.com") || origin.endsWith(".vercel.app") || origin === env.FRONTEND_URL) {
+      return callback(null, true);
+    }
+
+    logger.warn("CORS Blocked:", { origin });
     callback(new Error("Not allowed by CORS"));
   },
   credentials: true, // Allow cookies

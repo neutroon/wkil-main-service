@@ -555,9 +555,9 @@ model SystemSetting {
 model ContentPlan {
   id                Int      @id @default(autoincrement())
   businessProfileId Int
-  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id])
+  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
   userId            Int
-  user              User     @relation(fields: [userId], references: [id])
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   startDate         DateTime
   endDate           DateTime
   goals             String?  // JSON or string (e.g., "Awareness, Lead Gen")

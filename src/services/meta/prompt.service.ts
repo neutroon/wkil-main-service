@@ -116,7 +116,7 @@ Note: No specific background information was found. Strictly follow Rule #8.
   "publicContent": "Optional: Public comment text",
   "privateContent": "Optional: Private DM text for comments",
   "intent": "SALES_DM" | "GREET_ONLY" | "IGNORE" | "NONE",
-  "attachment": { "assetName": "string", "caption": "string" }
+  "attachment": { "assetName": "string", "caption": "string" } | null
 }
 </schema_blueprint>
 

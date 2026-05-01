@@ -217,11 +217,11 @@ whatsappRoutes.post("/webhook", async (req: Request, res: Response) => {
       if (!Array.isArray(entry.changes)) continue;
 
       for (const change of entry.changes) {
-        if (change.field !== "messages") continue;
+        if (change.field !== "messages" && change.field !== "smb_message_echoes" && change.field !== "message_echoes") continue;
 
         const value = change.value;
         const phoneNumberId = value?.metadata?.phone_number_id;
-        const messages = value?.messages;
+        const messages = value?.messages || (value as any)?.message_echoes;
         const contacts = value?.contacts;
         const statuses = (value as any)?.statuses;
 

@@ -214,6 +214,12 @@ export function repairAndParseAiResponse(text: string): AiRoutingDecision {
       const publicContent = cleaned.match(/"publicContent"\s*:\s*"([^"]+)"/)?.[1] || "";
       const privateContent = cleaned.match(/"privateContent"\s*:\s*"([^"]+)"/)?.[1] || "";
       const intent = cleaned.match(/"intent"\s*:\s*"([^"]+)"/)?.[1];
+      
+      let attachment = null;
+      const attachmentRaw = cleaned.match(/"attachment"\s*:\s*({[^}]+})/)?.[1];
+      if (attachmentRaw) {
+        try { attachment = JSON.parse(attachmentRaw); } catch(e) {}
+      }
 
       decision = {
         action: action || "REPLY_AUTO",
@@ -222,6 +228,7 @@ export function repairAndParseAiResponse(text: string): AiRoutingDecision {
         content,
         publicContent,
         privateContent,
+        attachment,
       };
     }
   }

@@ -1,6 +1,7 @@
 import helmet from "helmet";
 import { env } from "../config/env";
 import { Request, Response, NextFunction } from "express";
+import { logger } from "../utils/logger";
 
 // Security headers configuration
 export const securityHeaders = helmet({

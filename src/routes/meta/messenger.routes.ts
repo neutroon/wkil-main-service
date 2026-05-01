@@ -336,9 +336,10 @@ messengerRoutes.post("/webhook", async (req: Request, res: Response) => {
             // Ignore edits, deletes, and self-comments by the page admin.
             if (value.item === "comment" && value.verb === "add") {
               const senderId = value.from?.id;
-              if (senderId === pageId) {
-                logger.debug("facebook.webhook.self_comment_ignored", { pageId, commentId: value.comment_id });
-                continue;
+              const isFromBusiness = senderId === pageId;
+              
+              if (isFromBusiness) {
+                logger.info("facebook.webhook.self_comment_captured_for_mirroring", { pageId, commentId: value.id });
               }
 
               const messageText = value.message;
@@ -367,6 +368,7 @@ messengerRoutes.post("/webhook", async (req: Request, res: Response) => {
                   parentId,
                   messageText,
                   senderName,
+                  isFromBusiness,
                 } as any);
               } else {
 
@@ -431,12 +433,30 @@ messengerRoutes.post("/webhook", async (req: Request, res: Response) => {
              continue;
           }
 
-          // 2d. Handle Inbound Messages
-          if (!event.message || event.message.is_echo) continue;
+          // 2d. Handle Inbound & Mirrored Messages (Echoes)
+          if (!event.message) continue;
 
+          const isFromBusiness = event.message.is_echo === true;
           const messageText = event.message.text;
           const messageMid = event.message.mid;
           const attachments = event.message.attachments;
+          
+          // For echoes, the 'sender' is the Page and 'recipient' is the Customer.
+          // We need to map this to the customer's conversation ID.
+          const actualCustomerId = isFromBusiness ? event.recipient?.id : senderId;
+
+          if (isFromBusiness) {
+            logger.info("messenger.webhook.echo_detected", { 
+              pageId, 
+              recipientId: event.recipient?.id,
+              mid: messageMid 
+            });
+          }
+
+          if (!actualCustomerId) {
+            logger.warn("messenger.webhook.missing_customer_id", { messageMid, isFromBusiness });
+            continue;
+          }
 
           let msgType = "text";
           let mediaId: string | undefined;
@@ -482,12 +502,13 @@ messengerRoutes.post("/webhook", async (req: Request, res: Response) => {
             type: msgType,
             pageId,
             identifier: pageId,
-            senderId,
+            senderId: actualCustomerId,
             messageText,
             externalId: messageMid,
             msgType,
             mediaId: mediaId?.toString(),
-            mediaMetadata
+            mediaMetadata,
+            isFromBusiness,
           } as any);
         }
       }

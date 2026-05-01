@@ -179,6 +179,7 @@ whatsappRoutes.post("/webhook", async (req: Request, res: Response) => {
             messages?: Array<{
               id?: string; // wamid
               from?: string;
+              to?: string; // For mirrored outgoing messages
               type?: string;
               text?: { body?: string };
             }>;
@@ -248,14 +249,21 @@ whatsappRoutes.post("/webhook", async (req: Request, res: Response) => {
         // Status updates (above) are intentionally NOT gated — they relate to
         // already-sent messages and should always be processed. Only inbound
         // message enqueueing is blocked for unknown/disconnected accounts.
-        const isKnown = await isKnownWhatsAppAccount(phoneNumberId);
-        if (!isKnown) {
+        const account = await prisma.whatsAppAccount.findFirst({
+          where: { phoneNumberId, isActive: true }
+        });
+
+        if (!account) {
           logger.warn("whatsapp.webhook.unknown_account_discarded", {
             phoneNumberId,
-            reason: "Account is not connected to any active business profile.",
+            reason: "Account is not connected or inactive.",
           });
-          continue; // Skip enqueueing — no jobs created for unknown accounts
+          continue; 
         }
+
+        // Clean the display number for comparison (digits only)
+        const businessDigits = account.displayPhoneNumber.replace(/\D/g, "");
+
 
         for (const msgData of messages) {
           const msg = msgData as any;
@@ -301,26 +309,40 @@ whatsappRoutes.post("/webhook", async (req: Request, res: Response) => {
             }
           }
 
+          // ── COEXISTENCE DETECTION ──
+          // If 'from' matches the business's own number, it's a mirrored message from the phone app.
+          const fromDigits = from.replace(/\D/g, "");
+          const isFromBusiness = fromDigits === businessDigits;
+          
+          // For mirrored messages, the 'senderId' for our internal conversation mapping 
+          // should be the RECIPIENT (the customer), not the business.
+          const actualCustomerId = isFromBusiness ? msg.to : from;
+
           logger.info("whatsapp.webhook.message_enqueued", {
             phoneNumberId,
             from,
-            customerName,
+            to: msg.to,
+            isFromBusiness,
+            actualCustomerId,
           });
+
+          if (!actualCustomerId) {
+            logger.warn("whatsapp.webhook.missing_customer_id", { wamid, isFromBusiness });
+            continue;
+          }
 
           enqueueMetaJob({
             platform: "whatsapp",
             phoneNumberId,
             identifier: phoneNumberId,
-            from,
-            senderId: from,
+            from: from,
+            senderId: actualCustomerId, 
             messageText,
             wamid,
             externalId: wamid,
             customerName,
             type,
-            msgType: type,
-            mediaId,
-            mediaMetadata,
+            isFromBusiness, 
           } as any);
         }
       }
@@ -369,11 +391,15 @@ whatsappRoutes.get("/oauth/phone-numbers", authenticateToken, async (req: Reques
  */
 whatsappRoutes.post("/oauth", authenticateToken, async (req: Request, res: Response) => {
   const userId = (req as any).user.id;
-  const { code, phoneNumberId, businessProfileId, redirectUri, exchangeRef } = req.body;
+  const { code, phoneNumberId, businessProfileId, redirectUri, exchangeRef, connectionMode } = req.body;
 
   if (!phoneNumberId || (!code && !exchangeRef)) {
     throw new AppError("phoneNumberId is required and either code or exchangeRef must be provided", 400);
   }
+
+  // Validate and normalise connectionMode — default to COEXISTENCE (the primary flow)
+  const resolvedConnectionMode: "BUSINESS_API" | "COEXISTENCE" =
+    connectionMode === "BUSINESS_API" ? "BUSINESS_API" : "COEXISTENCE";
 
   let accessToken: string | undefined;
   if (exchangeRef && typeof exchangeRef === "string") {
@@ -413,6 +439,7 @@ whatsappRoutes.post("/oauth", authenticateToken, async (req: Request, res: Respo
     phoneNumberId,
     displayPhoneNumber,
     accessToken,
+    connectionMode: resolvedConnectionMode,
     businessProfileId: businessProfileId ? z.coerce.number().int().positive().parse(businessProfileId) : undefined,
   });
 
@@ -474,7 +501,9 @@ whatsappRoutes.get("/accounts", authenticateToken, async (req: Request, res: Res
       displayPhoneNumber: true,
       wabaId: true,
       businessProfileId: true,
+      connectionMode: true,
       isActive: true,
+      isTokenValid: true,
       createdAt: true,
       updatedAt: true,
     },

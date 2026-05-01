@@ -321,6 +321,9 @@ model WhatsAppAccount {
   businessProfileId   Int?
   businessProfile     BusinessProfile? @relation(fields: [businessProfileId], references: [id], onDelete: SetNull)
   isActive            Boolean         @default(true)
+  /// How the number was onboarded: "COEXISTENCE" = stays on WBA app simultaneously;
+  /// "BUSINESS_API" = full migration away from the WhatsApp Business App.
+  connectionMode      String          @default("BUSINESS_API") // "BUSINESS_API" | "COEXISTENCE"
   isTokenValid        Boolean         @default(true)  // Result of the last /debug_token check
   lastValidatedAt     DateTime?       // When the token was last checked for health
   createdAt           DateTime        @default(now())

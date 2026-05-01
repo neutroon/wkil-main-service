@@ -14,6 +14,57 @@ import { AppError } from "../middlewares/errorHandler.middleware";
 const widgetPublicRoutes = Router();
 
 widgetPublicRoutes.options("/chat", widgetInstallAndCors);
+widgetPublicRoutes.options("/config", widgetInstallAndCors);
+
+/**
+ * GET /v1/public/widget/config
+ * Returns branding and configuration for the widget based on siteKey.
+ */
+widgetPublicRoutes.get(
+  "/config",
+  widgetInstallAndCors,
+  async (req: WidgetRequest, res: Response) => {
+    const install = req.widgetInstall;
+    if (!install) {
+      throw new AppError("Widget context missing", 500);
+    }
+
+    const profile = await prisma.businessProfile.findUnique({
+      where: { id: install.businessProfileId },
+      select: {
+        name: true,
+        brandLogoUrl: true,
+        brandPrimaryColor: true,
+        brandSecondaryColor: true,
+        brandAccentColor: true,
+        visualAesthetic: true,
+        artStyle: true,
+      },
+    });
+
+    if (!profile) {
+      throw new AppError("Business profile not found", 404);
+    }
+
+    return res.json({
+      branding: {
+        name: profile.name,
+        logoUrl: profile.brandLogoUrl,
+        colors: {
+          primary: profile.brandPrimaryColor,
+          secondary: profile.brandSecondaryColor,
+          accent: profile.brandAccentColor,
+        },
+        aesthetic: profile.visualAesthetic,
+        artStyle: profile.artStyle,
+      },
+      settings: {
+        // Future: add widget-specific settings here (e.g. initial message)
+        initialMessage: "Hello! How can I help you today?",
+      },
+    });
+  },
+);
 
 widgetPublicRoutes.post(
   "/chat",
@@ -32,7 +83,6 @@ widgetPublicRoutes.post(
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("Connection", "keep-alive");
-      res.flushHeaders();
 
       const { processWidgetChatStreaming } = await import("../services/widget/widgetChat.service");
       const generator = processWidgetChatStreaming({
@@ -83,7 +133,7 @@ widgetPublicRoutes.post(
         }
       }
 
-      res.write("event: end\ndata: [DONE]\n\n");
+      res.write("data: [DONE]\n\n");
       return res.end();
     }
 

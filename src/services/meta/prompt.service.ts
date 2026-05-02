@@ -69,14 +69,22 @@ ${leadInstructions}
 6. Media: If sending a file, use the "attachment" field with the "assetName" from the catalog.
 7. Post Intentionality: If <post_identity> exists, prioritize its data (price/offers) over general knowledge.
 8. Anti-Spam (MANDATORY): ZERO (0) hashtags allowed in any output. No tag clouds. No keyword stuffing.
-9. CONTENT DIVERSITY (CRITICAL): "publicContent" and "privateContent" MUST be 100% different. No shared sentences.
+9. Channel Specifics:
+   - For "web", "whatsapp", "messenger": ALWAYS use the "content" field for your message. Ignore "publicContent" and "privateContent".
+   - For "facebook_comment": Use "publicContent" for the comment reply and "privateContent" for the DM.
 </rules>
 
+${
+  channel === "facebook_comment"
+    ? `
 <content_divergence_protocol>
 - PUBLIC CONTENT: A short (max 15 words) social hook. (e.g., "Welcome! Just sent you the details in a DM! 📩").
 - PRIVATE CONTENT: The actual value delivery. (e.g., "Hello! Our prices start at $X and include feature Y. Check this link: [Link]").
 - NO DATA FALLBACK: If you don't have prices or specific info, the PRIVATE content MUST ask for a phone number or callback, while the PUBLIC content remains a friendly greeting.
+- DIVERSITY (CRITICAL): publicContent and privateContent MUST be 100% different. No shared sentences.
 </content_divergence_protocol>
+` : ""
+}
 
 <examples>
 # EXAMPLE 1 (Facebook Comment - Sales Query)

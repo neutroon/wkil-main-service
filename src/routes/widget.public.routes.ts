@@ -99,6 +99,8 @@ widgetPublicRoutes.post(
         if (event.type === "token") {
           fullContent += event.data;
           res.write(`data: ${JSON.stringify({ token: event.data })}\n\n`);
+        } else if (event.type === "conversation_id") {
+          res.write(`data: ${JSON.stringify({ conversationId: event.data })}\n\n`);
         } else if (event.type === "final_decision") {
           finalDecision = event.data;
         } else if (event.type === "error") {
@@ -208,7 +210,7 @@ widgetPublicRoutes.get(
       throw new AppError("Conversation not found", 404);
     }
 
-    const result = await listConversationMessages(convId, 1, 100);
+    const result = await listConversationMessages(convId, 100);
     return res.json({
       conversationId: convId,
       ...result,

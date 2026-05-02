@@ -42,7 +42,7 @@ const envSchema = z.object({
   REPLICATE_API_TOKEN: z.string().optional(),
   ML_SERVICE_URL: z.string().url().optional(),
   ML_API_KEY: z.string().optional(),
-  RAG_MIN_SIMILARITY: z.coerce.number().optional().default(0.7),
+  RAG_MIN_SIMILARITY: z.coerce.number().optional().default(0.25),
   
   // ── Google Cloud / Vertex AI ───────────────────────────────────────────────
   GOOGLE_CLOUD_PROJECT_ID: z.string().optional(),

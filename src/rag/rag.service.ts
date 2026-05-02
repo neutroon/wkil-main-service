@@ -7,11 +7,10 @@ import { CHUNK_TYPE_FIELDS } from "./chunkTypeFields";
 import { applySimilarityThreshold } from "./similarityThreshold";
 import { env } from "../config/env";
 
-const DEFAULT_RAG_MIN_SIMILARITY = 0.25;
 const MAX_CHUNK_CHARS = 2000;
 
 export function getRagSimilarityThreshold(): number {
-  return env.RAG_MIN_SIMILARITY ?? DEFAULT_RAG_MIN_SIMILARITY;
+  return env.RAG_MIN_SIMILARITY;
 }
 
 function truncateChunkContent(content: string, maxChars: number): string {

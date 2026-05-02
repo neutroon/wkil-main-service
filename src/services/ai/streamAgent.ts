@@ -104,14 +104,17 @@ export async function* streamAgentGraph(params: AgentGraphParams) {
         }
       } else {
         // We are extracting. We need to watch for the closing quote.
-        // This simple version doesn't handle escaped quotes perfectly but works for most chat.
         const closingQuoteIndex = token.indexOf('"');
         if (closingQuoteIndex !== -1) {
           isExtracting = false;
-          const finalPart = token.substring(0, closingQuoteIndex);
+          let finalPart = token.substring(0, closingQuoteIndex);
+          // Unescape newlines for the widget
+          finalPart = finalPart.replace(/\\n/g, "\n");
           if (finalPart) yield { type: "token", data: finalPart };
         } else {
-          yield { type: "token", data: token };
+          // Unescape newlines for the widget
+          const unescapedToken = token.replace(/\\n/g, "\n");
+          yield { type: "token", data: unescapedToken };
         }
       }
     }

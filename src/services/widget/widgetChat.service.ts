@@ -146,9 +146,12 @@ async function setupWidgetChat(params: {
   const pageId = pageIdForWidget(install.id);
 
   let conversation;
-  if (conversationId !== undefined) {
+  // Treat null as undefined to trigger auto-discovery
+  const effectiveConversationId = (conversationId === null) ? undefined : conversationId;
+
+  if (effectiveConversationId !== undefined) {
     const verified = await prisma.conversation.findFirst({
-      where: { id: conversationId, pageId, senderId: visitorId },
+      where: { id: effectiveConversationId, pageId, senderId: visitorId },
     });
     if (!verified) throw new AppError("Invalid conversationId for this visitor", 400);
     conversation = verified;

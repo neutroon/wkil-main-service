@@ -74,12 +74,46 @@ export async function* streamAgentGraph(params: AgentGraphParams) {
     }
   );
 
+  let fullResponseText = "";
+  let isExtracting = false;
+  let hasFoundKey = false;
+  
+  // We look for "content": " inside the streaming JSON output.
+  // This ensures the user only sees the actual message tokens.
+  const targetKey = "content";
+
   for await (const event of eventStream) {
-    // We listen for the 'ai_token' custom event we dispatched in the node
     if (event.event === "on_custom_event" && event.name === "ai_token") {
       const data = event.data as any;
       const token = data?.token;
-      if (token) yield { type: "token", data: token };
+      if (!token) continue;
+
+      fullResponseText += token;
+
+      // Simple streaming extractor for JSON field value
+      // This is slightly brittle but effective for standard Gemini JSON output
+      if (!isExtracting) {
+        const keyMarker = `"${targetKey}": "`;
+        const keyIndex = fullResponseText.indexOf(keyMarker);
+        if (keyIndex !== -1 && !hasFoundKey) {
+          hasFoundKey = true;
+          isExtracting = true;
+          // Yield the part of the token that might already be inside the value
+          const remaining = fullResponseText.substring(keyIndex + keyMarker.length);
+          if (remaining) yield { type: "token", data: remaining };
+        }
+      } else {
+        // We are extracting. We need to watch for the closing quote.
+        // This simple version doesn't handle escaped quotes perfectly but works for most chat.
+        const closingQuoteIndex = token.indexOf('"');
+        if (closingQuoteIndex !== -1) {
+          isExtracting = false;
+          const finalPart = token.substring(0, closingQuoteIndex);
+          if (finalPart) yield { type: "token", data: finalPart };
+        } else {
+          yield { type: "token", data: token };
+        }
+      }
     }
   }
 

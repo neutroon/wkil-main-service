@@ -117,14 +117,22 @@ Note: No specific background information was found. Strictly follow Rule #8.
 }
 
 <schema_blueprint>
-{
+${
+  channel === "facebook_comment"
+    ? `{
   "action": "REPLY_AUTO" | "HANDOFF_TO_HUMAN" | "RESOLVE_CONVERSATION",
-  "reasoning": "Internal logic",
-  "content": "Message for DM/WhatsApp",
-  "publicContent": "Optional: Public comment text",
-  "privateContent": "Optional: Private DM text for comments",
+  "reasoning": "Internal logic (in voice dialect)",
+  "publicContent": "Max 15 words social hook",
+  "privateContent": "Detailed DM value delivery",
   "intent": "SALES_DM" | "GREET_ONLY" | "IGNORE" | "NONE",
   "attachment": { "assetName": "string", "caption": "string" } | null
+}`
+    : `{
+  "action": "REPLY_AUTO" | "HANDOFF_TO_HUMAN" | "RESOLVE_CONVERSATION",
+  "reasoning": "Internal logic (in voice dialect)",
+  "content": "Your message to the user",
+  "attachment": { "assetName": "string", "caption": "string" } | null
+}`
 }
 </schema_blueprint>
 

@@ -33,8 +33,14 @@ export const corsOptions = {
     origin: string | undefined,
     callback: (err: Error | null, allow?: boolean) => void,
   ) => {
+    // Debug logging for CORS issues
+    logger.debug("CORS Check", { origin, nodeEnv: env.NODE_ENV });
+
     // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
+    // Also allow any origin in development to bypass CORS issues during testing
+    if (!origin || env.NODE_ENV === "development") {
+      return callback(null, true);
+    }
 
     const allowedOrigins = [
       "http://localhost:3000",
@@ -44,20 +50,8 @@ export const corsOptions = {
       "https://www.pagespilot.com",
       "https://pagespilot.vercel.app",
       "https://pagespilot.netlify.app",
-      "https://pagespilot.com",
       "https://app.pagespilot.com",
     ];
-
-    if (env.NODE_ENV === "development") {
-      // In development, allow any localhost origin
-      if (
-        origin.includes("localhost") ||
-        origin.includes("127.0.0.1") ||
-        origin.includes("trycloudflare.com")
-      ) {
-        return callback(null, true);
-      }
-    }
 
     if (allowedOrigins.includes(origin)) {
       return callback(null, true);

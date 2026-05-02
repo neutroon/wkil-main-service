@@ -9,12 +9,14 @@ import {
 import { logger } from "../utils/logger";
 import { AppError } from "../middlewares/errorHandler.middleware";
 
+import { wrapGemini } from "langsmith/wrappers/gemini";
 import { env } from "../config/env";
 
 const { GEMINI_API_KEY } = env;
 
-// Initialize Google Generative AI
-export const genAI = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+// Initialize Google Generative AI and wrap it with LangSmith for tracing
+const rawGenAI = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+export const genAI = process.env.LANGCHAIN_TRACING_V2 === "true" ? wrapGemini(rawGenAI) : rawGenAI;
 
 /**
  * Types for precise token usage and billing tracking (Gemini Production Standard).

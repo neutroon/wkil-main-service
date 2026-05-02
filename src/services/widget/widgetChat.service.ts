@@ -197,6 +197,9 @@ export async function* processWidgetChatStreaming(params: {
 
   const { computeBusinessChatStreaming } = await import("../chat/businessChatReply.service");
   
+  // Yield the conversation ID so the client can save it
+  yield { type: "conversation_id", data: conversation.id };
+
   const stream = computeBusinessChatStreaming({
     businessProfile,
     messageText: params.message,

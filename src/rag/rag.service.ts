@@ -195,6 +195,11 @@ export async function retrieveRelevantChunks(
     keptCount: filtered.length,
     minSimilarity,
     queryPreview: query.slice(0, 80),
+    retrievedChunks: filtered.map(c => ({
+      type: c.chunkType,
+      similarity: c.similarity.toFixed(3),
+      contentSnippet: c.content.slice(0, 50).replace(/\n/g, ' ')
+    }))
   });
 
   return filtered;

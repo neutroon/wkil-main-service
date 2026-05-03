@@ -4,7 +4,6 @@ import { authenticateToken } from "../../middlewares/auth.middleware";
 import { logger } from "../../utils/logger";
 import prisma from "../../config/prisma";
 import {
-  listWhatsAppConversations,
   listConversationMessages,
   saveMessage,
 } from "../../services/meta/conversation.service";
@@ -27,13 +26,10 @@ import { validate } from "../../middlewares/validate.middleware";
 import {
   toggleAiSchema,
   updateStatusSchema,
-  sendMessageSchema,
 } from "../../validations/conversation.validation";
-import { sendWhatsAppTemplateSchema } from "../../validations/meta.validation";
 import { AppError } from "../../middlewares/errorHandler.middleware";
 
 import {
-  paginationSchema,
   idPaginationSchema,
   idParamSchema,
 } from "../../validations/shared.validation";
@@ -49,7 +45,7 @@ const conversationsRoutes = Router();
  * using businessProfileId as the channel-agnostic ownership check.
  * Throws 404 if not found or not owned.
  */
-async function getAuthorizedConversation(userId: number, conversationId: number) {
+export async function getAuthorizedConversation(userId: number, conversationId: number) {
   const profiles = await prisma.businessProfile.findMany({
     where: { userId },
     select: { id: true },
@@ -63,33 +59,6 @@ async function getAuthorizedConversation(userId: number, conversationId: number)
   if (!conversation) throw new AppError("Conversation not found or access denied.", 404);
   return conversation;
 }
-
-// â”€â”€â”€ GET /v1/whatsapp/conversations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-/**
- * List paginated WhatsApp conversations for the authenticated user.
- *
- * Query params:
- *   page  (default: 1)
- *   limit (default: 20, max: 100)
- *
- * Response:
- *   {
- *     data: ConversationSummary[],
- *     meta: { total, page, limit, totalPages }
- *   }
- */
-conversationsRoutes.get(
-  "/",
-  authenticateToken,
-  validate(paginationSchema),
-  async (req: Request, res: Response) => {
-    const userId = (req as any).user.id as number;
-    const { page, limit, status } = req.query as any;
-
-    const result = await listWhatsAppConversations(userId, page, limit, status);
-    return res.json(result);
-  },
-);
 
 conversationsRoutes.get(
   "/:id/messages",
@@ -128,9 +97,10 @@ conversationsRoutes.get(
   },
 );
 
-// â”€â”€â”€ PATCH /v1/whatsapp/conversations/:id/read â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ————————————————————————————————————————————————————————————————————————————————
+// PATCH /v1/whatsapp/conversations/:id/read ——————————————————————————————————————
 /**
- * Mark a conversation as read (no-op stub â€” readAt column can be added later).
+ * Mark a conversation as read (no-op stub — readAt column can be added later).
  * Returns 404 if the conversation doesn't belong to the authenticated user.
  *
  * Response:
@@ -291,123 +261,6 @@ conversationsRoutes.delete(
   },
 );
 
-// â”€â”€â”€ POST /v1/whatsapp/conversations/:id/messages â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-conversationsRoutes.post(
-  "/:id/messages",
-  authenticateToken,
-  validate(idParamSchema),
-  validate(sendMessageSchema),
-  async (req: Request, res: Response) => {
-    const userId = (req as any).user.id as number;
-    const { id: conversationId } = req.params as any;
-    const { message: text } = req.body;
-
-    const conversation = await getAuthorizedConversation(userId, conversationId);
-
-
-    const account = await prisma.whatsAppAccount.findFirst({
-      where: { phoneNumberId: conversation.pageId, userId, isActive: true },
-      select: { accessToken: true, phoneNumberId: true },
-    });
-
-    if (!account) throw new AppError("WhatsApp account not found", 404);
-
-    const accessToken = decryptFacebookSecret(account.accessToken);
-    const customerPhone = conversation.customerPhone ?? conversation.senderId;
-    const trimmedText = text.trim();
-
-    const {
-      sendWhatsAppReply,
-    } = require("../../services/meta/whatsapp.service");
-    const platformRes = await sendWhatsAppReply(
-      customerPhone,
-      trimmedText,
-      account.phoneNumberId,
-      accessToken,
-    );
-    const wamid = (platformRes as any)?.messages?.[0]?.id;
-
-    const saved = await saveMessage(conversationId, "agent", trimmedText, {
-      externalId: wamid,
-    });
-
-    logger.info("whatsapp.conversations.human_sent", {
-      conversationId,
-      to: customerPhone,
-      wamid,
-    });
-    return res.status(201).json({ data: saved });
-  },
-);
-
-// â”€â”€â”€ GET /v1/whatsapp/templates â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-conversationsRoutes.get(
-  "/templates",
-  authenticateToken,
-  async (req: Request, res: Response) => {
-    const userId = (req as any).user.id as number;
-
-    const account = await prisma.whatsAppAccount.findFirst({
-      where: { userId, isActive: true },
-      select: { wabaId: true, accessToken: true },
-    });
-
-    if (!account || !account.wabaId) return res.json({ data: [] });
-
-    const accessToken = decryptFacebookSecret(account.accessToken);
-    const {
-      listWhatsAppTemplates,
-    } = require("../../services/meta/whatsapp.service");
-    const templates = await listWhatsAppTemplates(account.wabaId, accessToken);
-
-    return res.json({ data: templates });
-  },
-);
-
-// â”€â”€â”€ POST /v1/whatsapp/conversations/:id/template â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-conversationsRoutes.post(
-  "/:id/template",
-  authenticateToken,
-  validate(idParamSchema),
-  validate(sendWhatsAppTemplateSchema),
-  async (req: Request, res: Response) => {
-    const userId = (req as any).user.id as number;
-    const { id: conversationId } = req.params as any;
-    const { templateName, languageCode, components, textPreview } = req.body;
-
-    const conversation = await getAuthorizedConversation(userId, conversationId);
-
-
-    const account = await prisma.whatsAppAccount.findFirst({
-      where: { phoneNumberId: conversation.pageId, userId, isActive: true },
-      select: { accessToken: true, phoneNumberId: true },
-    });
-
-    if (!account) throw new AppError("WhatsApp account not found", 404);
-
-    const accessToken = decryptFacebookSecret(account.accessToken);
-    const customerPhone = conversation.customerPhone ?? conversation.senderId;
-
-    const {
-      sendWhatsAppTemplate,
-    } = require("../../services/meta/whatsapp.service");
-    await sendWhatsAppTemplate(
-      customerPhone,
-      templateName,
-      languageCode,
-      components || [],
-      account.phoneNumberId,
-      accessToken,
-    );
-
-    const saved = await saveMessage(
-      conversationId,
-      "agent",
-      textPreview || `[Template: ${templateName}]`,
-    );
-    return res.status(201).json({ data: saved });
-  },
-);
 
 // ============================================================================
 // HITL (Approve / Edit / Send Drafts)

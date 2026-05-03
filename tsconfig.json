@@ -6,9 +6,16 @@
         "outDir": "dist",
         "esModuleInterop": true,
         "strict": true,
-        "skipLibCheck": true
+        "skipLibCheck": true,
+        "baseUrl": "./",
+        "paths": {
+            "@modules/*": ["src/modules/*"],
+            "@config/*": ["src/config/*"],
+            "@middlewares/*": ["src/middlewares/*"],
+            "@utils/*": ["src/utils/*"],
+            "@scripts/*": ["src/scripts/*"]
+        }
     },
     "include": ["src/**/*.ts"],
     "exclude": ["node_modules", "dist", "src/**/*.test.ts"]
-  }
-  
+}

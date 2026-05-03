@@ -200,12 +200,14 @@ widgetRoutes.get(
         where: {
           businessProfileId: { in: profileIds },
           channel: "web",
+          status: { not: "ARCHIVED" },
         },
       }),
       prisma.conversation.findMany({
         where: {
           businessProfileId: { in: profileIds },
           channel: "web",
+          status: { not: "ARCHIVED" },
         },
         include: {
           messages: {

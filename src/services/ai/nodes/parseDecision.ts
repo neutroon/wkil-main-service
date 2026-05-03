@@ -83,11 +83,14 @@ export async function parseDecisionNode(
       return {
         // Request a retry by setting decision to null
         decision: null as any,
-        // Inject the correction prompt as a new user turn
-        contents: [{
-          role: "user",
-          parts: [{ text: "CRITIQUE: You repeated yourself in the last turn. Please provide a fresh, non-repetitive response and ensure you are not stuck in a loop." }]
-        }]
+        // Inject the correction prompt as a new user turn explicitly
+        contents: [
+          ...state.contents,
+          {
+            role: "user",
+            parts: [{ text: "CRITIQUE: You repeated yourself in the last turn. Please provide a fresh, non-repetitive response and ensure you are not stuck in a loop." }]
+          }
+        ]
       };
     }
 

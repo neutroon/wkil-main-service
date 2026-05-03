@@ -103,9 +103,9 @@ conversationsRoutes.get(
   validate(paginationSchema),
   async (req: Request, res: Response) => {
     const userId = (req as any).user.id as number;
-    const { page, limit } = req.query as any;
+    const { page, limit, status } = req.query as any;
 
-    const result = await listWhatsAppConversations(userId, page, limit);
+    const result = await listWhatsAppConversations(userId, page, limit, status);
     return res.json(result);
   },
 );

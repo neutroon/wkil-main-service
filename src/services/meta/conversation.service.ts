@@ -218,6 +218,7 @@ export async function listWhatsAppConversations(
         pageId: { in: phoneNumberIds },
         businessProfileId: { in: profileIds },
         OR: [{ channel: "whatsapp" }, { channel: null }],
+        status: { not: "ARCHIVED" },
       },
     }),
     prisma.conversation.findMany({
@@ -225,6 +226,7 @@ export async function listWhatsAppConversations(
         pageId: { in: phoneNumberIds },
         businessProfileId: { in: profileIds },
         OR: [{ channel: "whatsapp" }, { channel: null }],
+        status: { not: "ARCHIVED" },
       },
       orderBy: { updatedAt: "desc" },
       skip,

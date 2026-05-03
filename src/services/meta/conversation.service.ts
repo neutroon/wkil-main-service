@@ -263,6 +263,7 @@ export async function listWhatsAppConversations(
     readAt: c.readAt,
     createdAt: c.createdAt,
     senderId: c.senderId,
+    status: c.status,
     aiEnabled: c.aiEnabled ?? true,
   }));
 
@@ -472,6 +473,7 @@ export async function listMessengerConversations(
     updatedAt: c.updatedAt,
     readAt: c.readAt,
     createdAt: c.createdAt,
+    status: c.status,
   }));
 
   return {

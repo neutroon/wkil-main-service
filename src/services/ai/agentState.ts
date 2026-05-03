@@ -87,7 +87,7 @@ export const AgentState = Annotation.Root({
   // Each node that adds a turn pushes to this array.
   // The reducer merges arrays — no node can accidentally overwrite history.
   contents: Annotation<GeminiContent[]>({
-    value:   (existing, update) => [...existing, ...update],
+    value: (_, update) => update,
     default: () => [],
   }),
 

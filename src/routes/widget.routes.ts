@@ -228,6 +228,7 @@ widgetRoutes.get(
       visitorId: c.senderId,
       installId: c.pageId.replace("widget:", ""),
       lastMessage: c.messages?.[0] || null,
+      status: c.status,
       updatedAt: c.updatedAt,
       createdAt: c.createdAt,
     }));

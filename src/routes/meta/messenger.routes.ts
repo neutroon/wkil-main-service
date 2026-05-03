@@ -125,10 +125,10 @@ async function getUserFacebookPageIds(userId: number): Promise<string[]> {
 
 messengerRoutes.get("/", authenticateToken, validate(paginationSchema), async (req: Request, res: Response) => {
   const userId = (req as any).user.id as number;
-  const { page, limit, channel: channelParam } = req.query as any;
+  const { page, limit, status, channel: channelParam } = req.query as any;
   const channel = channelParam === "facebook_comment" ? "facebook_comment" : "messenger";
   
-  const result = await listMessengerConversations(userId, page, limit, channel);
+  const result = await listMessengerConversations(userId, page, limit, channel, status);
   return res.json(result);
 });
 

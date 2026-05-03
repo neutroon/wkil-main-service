@@ -35,6 +35,7 @@ export const widgetConversationQuerySchema = z.object({
   query: z.object({
     page: z.string().regex(/^\d+$/).optional().default("1"),
     limit: z.string().regex(/^\d+$/).optional().default("20"),
+    status: z.string().optional(),
   }),
 });
 

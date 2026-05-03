@@ -60,6 +60,7 @@ export async function* streamAgentGraph(params: AgentGraphParams) {
       groundingCalls:   0,
       modelName:        "gemini-3-flash-preview",
     } as any,
+    decision: null as any,
   };
 
   // ── Stream events from the graph ──────────────────────────────────────

@@ -6,7 +6,6 @@ import prisma from "../../config/prisma";
 import {
   listWhatsAppConversations,
   listConversationMessages,
-  getConversationForUser,
   saveMessage,
 } from "../../services/meta/conversation.service";
 import {
@@ -42,48 +41,30 @@ import { z } from "zod";
 
 const conversationsRoutes = Router();
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â”€â”€â”€ Shared Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-// ─── Shared Helpers ───────────────────────────────────────────────────────────
-
-async function getUserPhoneNumberIds(userId: number): Promise<string[]> {
-  // 1. Resolve all BusinessProfiles owned by this user
+/**
+ * Verify that the given conversation belongs to the authenticated user,
+ * using businessProfileId as the channel-agnostic ownership check.
+ * Throws 404 if not found or not owned.
+ */
+async function getAuthorizedConversation(userId: number, conversationId: number) {
   const profiles = await prisma.businessProfile.findMany({
     where: { userId },
     select: { id: true },
   });
   const profileIds = profiles.map((p) => p.id);
 
-  if (profileIds.length === 0) {
-    return [];
-  }
+  const conversation = await prisma.conversation.findFirst({
+    where: { id: conversationId, businessProfileId: { in: profileIds } },
+  });
 
-  // 2. Resolve all IDs (WA, FB, Widget) linked to these profiles
-  const [waAccounts, fbPages, widgets] = await Promise.all([
-    prisma.whatsAppAccount.findMany({
-      where: { businessProfileId: { in: profileIds }, isActive: true },
-      select: { phoneNumberId: true },
-    }),
-    prisma.facebookPage.findMany({
-      where: { businessProfileId: { in: profileIds }, isActive: true },
-      select: { pageId: true },
-    }),
-    prisma.widgetInstall.findMany({
-      where: { businessProfileId: { in: profileIds }, isActive: true },
-      select: { id: true },
-    }),
-  ]);
-
-  const waIds = waAccounts.map((a) => a.phoneNumberId);
-  const fbIds = fbPages.map((p) => p.pageId);
-  const widgetIds = widgets.map((w) => `widget:${w.id}`);
-
-  return [...waIds, ...fbIds, ...widgetIds];
+  if (!conversation) throw new AppError("Conversation not found or access denied.", 404);
+  return conversation;
 }
 
-// ─── GET /v1/whatsapp/conversations ──────────────────────────────────────────
+// â”€â”€â”€ GET /v1/whatsapp/conversations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 /**
  * List paginated WhatsApp conversations for the authenticated user.
  *
@@ -119,18 +100,7 @@ conversationsRoutes.get(
     const { id: conversationId } = req.params as any;
 
     // Authorisation: ensure this conversation belongs to the caller
-    const phoneNumberIds = await getUserPhoneNumberIds(userId);
-    if (phoneNumberIds.length === 0) {
-      throw new AppError("Conversation not found", 404);
-    }
-
-    const conversation = await getConversationForUser(
-      conversationId,
-      phoneNumberIds,
-    );
-    if (!conversation) {
-      throw new AppError("Conversation not found", 404);
-    }
+    const conversation = await getAuthorizedConversation(userId, conversationId);
 
     const { limit, cursor } = req.query as any;
 
@@ -158,9 +128,9 @@ conversationsRoutes.get(
   },
 );
 
-// ─── PATCH /v1/whatsapp/conversations/:id/read ───────────────────────────────
+// â”€â”€â”€ PATCH /v1/whatsapp/conversations/:id/read â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 /**
- * Mark a conversation as read (no-op stub — readAt column can be added later).
+ * Mark a conversation as read (no-op stub â€” readAt column can be added later).
  * Returns 404 if the conversation doesn't belong to the authenticated user.
  *
  * Response:
@@ -174,11 +144,7 @@ conversationsRoutes.patch(
     const userId = (req as any).user.id as number;
     const { id: conversationId } = req.params as any;
 
-    const phoneNumberIds = await getUserPhoneNumberIds(userId);
-    const conversation = await prisma.conversation.findFirst({
-      where: { id: conversationId, pageId: { in: phoneNumberIds } },
-    });
-    if (!conversation) throw new AppError("Conversation not found", 404);
+    const conversation = await getAuthorizedConversation(userId, conversationId);
 
     // 1. Dispatch signal to Meta platform
     if (conversation.channel === "messenger") {
@@ -224,11 +190,7 @@ conversationsRoutes.post(
     const { id: conversationId } = req.params as any;
     const { typing } = req.body as { typing: boolean };
 
-    const phoneNumberIds = await getUserPhoneNumberIds(userId);
-    const conversation = await prisma.conversation.findFirst({
-      where: { id: conversationId, pageId: { in: phoneNumberIds } },
-    });
-    if (!conversation) throw new AppError("Not found", 404);
+    const conversation = await getAuthorizedConversation(userId, conversationId);
 
     if (conversation.channel === "messenger") {
       const page = await prisma.facebookPage.findFirst({
@@ -267,12 +229,7 @@ conversationsRoutes.patch(
     const { id: conversationId } = req.params as any;
     const { enabled } = req.body;
 
-    const phoneNumberIds = await getUserPhoneNumberIds(userId);
-    const conversation = await prisma.conversation.findFirst({
-      where: { id: conversationId, pageId: { in: phoneNumberIds } },
-    });
-
-    if (!conversation) throw new AppError("Conversation not found", 404);
+    const conversation = await getAuthorizedConversation(userId, conversationId);
 
     const updated = await prisma.conversation.update({
       where: { id: conversationId },
@@ -301,12 +258,7 @@ conversationsRoutes.patch(
     const { id: conversationId } = req.params as any;
     const { status } = req.body;
 
-    const phoneNumberIds = await getUserPhoneNumberIds(userId);
-    const conversation = await prisma.conversation.findFirst({
-      where: { id: conversationId, pageId: { in: phoneNumberIds } },
-    });
-
-    if (!conversation) throw new AppError("Not found", 404);
+    await getAuthorizedConversation(userId, conversationId);
 
     const updated = await prisma.conversation.update({
       where: { id: conversationId },
@@ -332,20 +284,14 @@ conversationsRoutes.delete(
       throw new AppError("Only admins can perform a hard delete.", 403);
 
     const { id: conversationId } = req.params as any;
-    const phoneNumberIds = await getUserPhoneNumberIds(user.id);
-
-    const conversation = await prisma.conversation.findFirst({
-      where: { id: conversationId, pageId: { in: phoneNumberIds } },
-    });
-
-    if (!conversation) throw new AppError("Not found", 404);
+    await getAuthorizedConversation(user.id, conversationId);
 
     await prisma.conversation.delete({ where: { id: conversationId } });
     return res.json({ success: true, message: "Conversation deleted." });
   },
 );
 
-// ─── POST /v1/whatsapp/conversations/:id/messages ────────────────────────────
+// â”€â”€â”€ POST /v1/whatsapp/conversations/:id/messages â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 conversationsRoutes.post(
   "/:id/messages",
   authenticateToken,
@@ -356,12 +302,8 @@ conversationsRoutes.post(
     const { id: conversationId } = req.params as any;
     const { message: text } = req.body;
 
-    const phoneNumberIds = await getUserPhoneNumberIds(userId);
-    const conversation = await getConversationForUser(
-      conversationId,
-      phoneNumberIds,
-    );
-    if (!conversation) throw new AppError("Conversation not found", 404);
+    const conversation = await getAuthorizedConversation(userId, conversationId);
+
 
     const account = await prisma.whatsAppAccount.findFirst({
       where: { phoneNumberId: conversation.pageId, userId, isActive: true },
@@ -398,7 +340,7 @@ conversationsRoutes.post(
   },
 );
 
-// ─── GET /v1/whatsapp/templates ───────────────────────────────────────────────
+// â”€â”€â”€ GET /v1/whatsapp/templates â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 conversationsRoutes.get(
   "/templates",
   authenticateToken,
@@ -422,7 +364,7 @@ conversationsRoutes.get(
   },
 );
 
-// ─── POST /v1/whatsapp/conversations/:id/template ────────────────────────────
+// â”€â”€â”€ POST /v1/whatsapp/conversations/:id/template â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 conversationsRoutes.post(
   "/:id/template",
   authenticateToken,
@@ -433,12 +375,8 @@ conversationsRoutes.post(
     const { id: conversationId } = req.params as any;
     const { templateName, languageCode, components, textPreview } = req.body;
 
-    const phoneNumberIds = await getUserPhoneNumberIds(userId);
-    const conversation = await getConversationForUser(
-      conversationId,
-      phoneNumberIds,
-    );
-    if (!conversation) throw new AppError("Conversation not found", 404);
+    const conversation = await getAuthorizedConversation(userId, conversationId);
+
 
     const account = await prisma.whatsAppAccount.findFirst({
       where: { phoneNumberId: conversation.pageId, userId, isActive: true },
@@ -486,13 +424,7 @@ conversationsRoutes.put(
 
     if (!editedContent) throw new AppError("editedContent is required.", 400);
 
-    const phoneNumberIds = await getUserPhoneNumberIds(userId);
-    const conversation = await prisma.conversation.findFirst({
-      where: { id: conversationId, pageId: { in: phoneNumberIds } },
-    });
-
-    if (!conversation)
-      throw new AppError("Conversation not found or access denied.", 404);
+    const conversation = await getAuthorizedConversation(userId, conversationId);
 
     const message = await prisma.conversationMessage.findUnique({
       where: { id: messageId, conversationId },
@@ -607,7 +539,7 @@ conversationsRoutes.put(
   },
 );
 
-/** DELETE /v1/meta/conversations/:id/messages/:mid — dismiss a draft */
+/** DELETE /v1/meta/conversations/:id/messages/:mid â€” dismiss a draft */
 conversationsRoutes.delete(
   "/:id/messages/:mid",
   authenticateToken,
@@ -617,12 +549,7 @@ conversationsRoutes.delete(
     const { id: conversationId } = req.params as any;
     const messageId = z.coerce.number().int().positive().parse(req.params.mid);
 
-    const phoneNumberIds = await getUserPhoneNumberIds(userId);
-    const conversation = await prisma.conversation.findFirst({
-      where: { id: conversationId, pageId: { in: phoneNumberIds } },
-    });
-
-    if (!conversation) throw new AppError("Not found", 404);
+    await getAuthorizedConversation(userId, conversationId);
 
     const msg = await prisma.conversationMessage.findFirst({
       where: { id: messageId, conversationId, status: "PENDING_REVIEW" },
@@ -635,7 +562,7 @@ conversationsRoutes.delete(
   },
 );
 
-// ─── POST /v1/meta/conversations/:id/suggest ──────────────────────────────────
+// â”€â”€â”€ POST /v1/meta/conversations/:id/suggest â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 conversationsRoutes.post(
   "/:id/suggest",
   authenticateToken,
@@ -644,9 +571,16 @@ conversationsRoutes.post(
     const userId = (req as any).user.id as number;
     const { id: conversationId } = req.params as any;
 
-    const phoneNumberIds = await getUserPhoneNumberIds(userId);
+    // The suggest endpoint needs the full businessProfile relation for the AI reply.
+    // We call getAuthorizedConversation first to verify ownership, then re-fetch with includes.
+    await getAuthorizedConversation(userId, conversationId);
+    const profiles = await prisma.businessProfile.findMany({
+      where: { userId },
+      select: { id: true },
+    });
+    const profileIds = profiles.map((p) => p.id);
     const conversation = await prisma.conversation.findFirst({
-      where: { id: conversationId, pageId: { in: phoneNumberIds } },
+      where: { id: conversationId, businessProfileId: { in: profileIds } },
       include: {
         businessProfile: {
           include: {
@@ -656,7 +590,6 @@ conversationsRoutes.post(
         },
       },
     });
-
     if (!conversation)
       throw new AppError("Conversation not found or access denied.", 404);
 

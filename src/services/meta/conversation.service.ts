@@ -184,6 +184,7 @@ export async function listWhatsAppConversations(
   userId: number,
   page: number,
   limit: number,
+  status?: string,
 ) {
   limit = Math.min(limit, MAX_LIMIT);
   const skip = (page - 1) * limit;
@@ -218,7 +219,7 @@ export async function listWhatsAppConversations(
         pageId: { in: phoneNumberIds },
         businessProfileId: { in: profileIds },
         OR: [{ channel: "whatsapp" }, { channel: null }],
-        status: { not: "ARCHIVED" },
+        status: status === "ARCHIVED" ? "ARCHIVED" : { not: "ARCHIVED" },
       },
     }),
     prisma.conversation.findMany({
@@ -226,7 +227,7 @@ export async function listWhatsAppConversations(
         pageId: { in: phoneNumberIds },
         businessProfileId: { in: profileIds },
         OR: [{ channel: "whatsapp" }, { channel: null }],
-        status: { not: "ARCHIVED" },
+        status: status === "ARCHIVED" ? "ARCHIVED" : { not: "ARCHIVED" },
       },
       orderBy: { updatedAt: "desc" },
       skip,
@@ -387,6 +388,7 @@ export async function listMessengerConversations(
   page: number,
   limit: number,
   channel: "messenger" | "facebook_comment" = "messenger",
+  status?: string,
 ) {
   const MAX_LIMIT = 100;
   limit = Math.min(limit, MAX_LIMIT);
@@ -419,14 +421,14 @@ export async function listMessengerConversations(
       where: {
         pageId: { in: pageIds },
         channel: channel,
-        status: { not: "ARCHIVED" },
+        status: status === "ARCHIVED" ? "ARCHIVED" : { not: "ARCHIVED" },
       },
     }),
     prisma.conversation.findMany({
       where: {
         pageId: { in: pageIds },
         channel: channel,
-        status: { not: "ARCHIVED" },
+        status: status === "ARCHIVED" ? "ARCHIVED" : { not: "ARCHIVED" },
       },
       orderBy: { updatedAt: "desc" },
       skip,

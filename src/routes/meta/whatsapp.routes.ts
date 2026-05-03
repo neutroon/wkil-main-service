@@ -29,13 +29,199 @@ import { idParamSchema } from "../../validations/shared.validation";
 import { AppError } from "../../middlewares/errorHandler.middleware";
 import { env } from "../../config/env";
 import { z } from "zod";
+import {
+  listWhatsAppConversations,
+  listConversationMessages,
+} from "../../services/meta/conversation.service";
+import {
+  sendWhatsAppReply,
+  sendWhatsAppTemplate,
+  listWhatsAppTemplates,
+} from "../../services/meta/whatsapp.service";
+import {
+  paginationSchema,
+  idPaginationSchema,
+} from "../../validations/shared.validation";
+import {
+  sendMessageSchema,
+} from "../../validations/conversation.validation";
+import { sendWhatsAppTemplateSchema } from "../../validations/meta.validation";
+import { getAuthorizedConversation } from "./conversations.routes";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 16 * 1024 * 1024 } }); // 16MB limit
 
 const whatsappRoutes = Router();
 
 // ─── Sub-routers ──────────────────────────────────────────────────────────────
-whatsappRoutes.use("/conversations", conversationsRoutes);
+whatsappRoutes.use("/conversations", (req, res, next) => {
+  // If the path is just / or /:id/messages (POST) or /templates or /:id/template
+  // we handle it here in whatsappRoutes.
+  // Otherwise, we pass it to the unified conversationsRoutes.
+  const isWhatsAppSpecific = 
+    (req.method === "GET" && req.path === "/") ||
+    (req.method === "POST" && /^\/\d+\/messages$/.test(req.path)) ||
+    (req.method === "GET" && req.path === "/templates") ||
+    (req.method === "POST" && /^\/\d+\/template$/.test(req.path));
+
+  if (isWhatsAppSpecific) {
+    next();
+  } else {
+    conversationsRoutes(req, res, next);
+  }
+});
+
+/**
+ * GET /v1/whatsapp/conversations
+ * List paginated WhatsApp conversations.
+ */
+whatsappRoutes.get(
+  "/conversations",
+  authenticateToken,
+  validate(paginationSchema),
+  async (req: Request, res: Response) => {
+    const userId = (req as any).user.id as number;
+    const { page, limit, status } = req.query as any;
+
+    const result = await listWhatsAppConversations(userId, page, limit, status);
+    return res.json(result);
+  },
+);
+
+/**
+ * GET /v1/whatsapp/conversations/:id/messages
+ * List messages for a specific WhatsApp conversation.
+ */
+whatsappRoutes.get(
+  "/conversations/:id/messages",
+  authenticateToken,
+  validate(idParamSchema),
+  validate(idPaginationSchema),
+  async (req: Request, res: Response) => {
+    const userId = (req as any).user.id as number;
+    const { id: conversationId } = req.params as any;
+    const { limit, cursor } = req.query as any;
+
+    await getAuthorizedConversation(userId, conversationId);
+    const result = await listConversationMessages(conversationId, limit, cursor);
+    return res.json(result);
+  },
+);
+
+/**
+ * POST /v1/whatsapp/conversations/:id/messages
+ * Send a manual WhatsApp reply.
+ */
+whatsappRoutes.post(
+  "/conversations/:id/messages",
+  authenticateToken,
+  validate(idParamSchema),
+  validate(sendMessageSchema),
+  async (req: Request, res: Response) => {
+    const userId = (req as any).user.id as number;
+    const { id: conversationId } = req.params as any;
+    const { message: text } = req.body;
+
+    const conversation = await getAuthorizedConversation(userId, conversationId);
+
+    const account = await prisma.whatsAppAccount.findFirst({
+      where: { phoneNumberId: conversation.pageId, userId, isActive: true },
+      select: { accessToken: true, phoneNumberId: true },
+    });
+
+    if (!account) throw new AppError("WhatsApp account not found", 404);
+
+    const accessToken = decryptFacebookSecret(account.accessToken);
+    const customerPhone = conversation.customerPhone ?? conversation.senderId;
+    const trimmedText = text.trim();
+
+    const platformRes = await sendWhatsAppReply(
+      customerPhone,
+      trimmedText,
+      account.phoneNumberId,
+      accessToken,
+    );
+    const wamid = (platformRes as any)?.messages?.[0]?.id;
+
+    const saved = await saveMessage(conversationId, "agent", trimmedText, {
+      externalId: wamid,
+    });
+
+    logger.info("whatsapp.conversations.human_sent", {
+      conversationId,
+      to: customerPhone,
+      wamid,
+    });
+    return res.status(201).json({ data: saved });
+  },
+);
+
+/**
+ * GET /v1/whatsapp/templates
+ * Fetch approved WhatsApp templates.
+ */
+whatsappRoutes.get(
+  "/templates",
+  authenticateToken,
+  async (req: Request, res: Response) => {
+    const userId = (req as any).user.id as number;
+
+    const account = await prisma.whatsAppAccount.findFirst({
+      where: { userId, isActive: true },
+      select: { wabaId: true, accessToken: true },
+    });
+
+    if (!account || !account.wabaId) return res.json({ data: [] });
+
+    const accessToken = decryptFacebookSecret(account.accessToken);
+    const templates = await listWhatsAppTemplates(account.wabaId, accessToken);
+
+    return res.json({ data: templates });
+  },
+);
+
+/**
+ * POST /v1/whatsapp/conversations/:id/template
+ * Send a WhatsApp template message.
+ */
+whatsappRoutes.post(
+  "/conversations/:id/template",
+  authenticateToken,
+  validate(idParamSchema),
+  validate(sendWhatsAppTemplateSchema),
+  async (req: Request, res: Response) => {
+    const userId = (req as any).user.id as number;
+    const { id: conversationId } = req.params as any;
+    const { templateName, languageCode, components, textPreview } = req.body;
+
+    const conversation = await getAuthorizedConversation(userId, conversationId);
+
+    const account = await prisma.whatsAppAccount.findFirst({
+      where: { phoneNumberId: conversation.pageId, userId, isActive: true },
+      select: { accessToken: true, phoneNumberId: true },
+    });
+
+    if (!account) throw new AppError("WhatsApp account not found", 404);
+
+    const accessToken = decryptFacebookSecret(account.accessToken);
+    const customerPhone = conversation.customerPhone ?? conversation.senderId;
+
+    await sendWhatsAppTemplate(
+      customerPhone,
+      templateName,
+      languageCode,
+      components || [],
+      account.phoneNumberId,
+      accessToken,
+    );
+
+    const saved = await saveMessage(
+      conversationId,
+      "agent",
+      textPreview || `[Template: ${templateName}]`,
+    );
+    return res.status(201).json({ data: saved });
+  },
+);
 
 /**
  * POST /v1/whatsapp/conversations/:id/media

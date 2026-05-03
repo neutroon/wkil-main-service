@@ -178,8 +178,9 @@ widgetRoutes.get(
   validate(widgetConversationQuerySchema),
   async (req: Request, res: Response) => {
     const userId = (req as any).user.id as number;
-    const { page, limit } = req.query as any;
+    const { page, limit, status } = req.query as any;
     const skip = (Number(page) - 1) * Number(limit);
+    const statusFilter = status === "ARCHIVED" ? "ARCHIVED" : { not: "ARCHIVED" };
 
     // Resolve all business profiles owned by this user
     const profiles = await prisma.businessProfile.findMany({
@@ -200,14 +201,14 @@ widgetRoutes.get(
         where: {
           businessProfileId: { in: profileIds },
           channel: "web",
-          status: { not: "ARCHIVED" },
+          status: statusFilter,
         },
       }),
       prisma.conversation.findMany({
         where: {
           businessProfileId: { in: profileIds },
           channel: "web",
-          status: { not: "ARCHIVED" },
+          status: statusFilter,
         },
         include: {
           messages: {

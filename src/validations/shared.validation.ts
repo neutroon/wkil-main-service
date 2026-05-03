@@ -16,6 +16,7 @@ export const paginationSchema = z.object({
       .transform((val) => Math.min(100, Math.max(1, parseInt(val || "20", 10) || 20))),
     cursor: z.coerce.number().optional(),
     channel: z.string().optional(),
+    status: z.string().optional(),
   }),
 });
 

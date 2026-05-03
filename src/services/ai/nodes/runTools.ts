@@ -130,8 +130,10 @@ export async function runToolsNode(
   }
 
   return {
-    // Append tool results as a user-role turn for the next Gemini call
-    contents:         functionResponses.length > 0 ? [{ role: "user", parts: functionResponses }] : [],
+    // Append tool results as a user-role turn for the next Gemini call explicitly
+    contents: functionResponses.length > 0 
+      ? [...state.contents, { role: "user", parts: functionResponses }] 
+      : state.contents,
     evidence:         updatedEvidence,
     hadToolExecution: true,
     functionCalls:    [], // Clear for next turn

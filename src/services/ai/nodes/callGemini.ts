@@ -158,12 +158,15 @@ export async function callGeminiNode(
   });
 
   return {
-    // Append the model's response turn to history
+    // Append the model's response turn to history explicitly
     // Standardize: discard fragmented parts, use the verified aggregated fullText
-    contents:      [{ 
-      role: "model", 
-      parts: [{ text: responseResult.fullText || "" }] 
-    }],
+    contents: [
+      ...state.contents,
+      { 
+        role: "model", 
+        parts: [{ text: responseResult.fullText || "" }] 
+      }
+    ],
     functionCalls,
     turnCount:     state.turnCount + 1,
     sessionStats:  updatedStats,

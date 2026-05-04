@@ -1,12 +1,12 @@
 import { Router } from "express";
-import { authenticateToken } from "../middlewares/auth.middleware";
+import { authenticateToken } from "@modules/auth/core/auth.middleware";
 import {
   getDashboardActivityController,
   getDashboardStatsController,
   getUnifiedDashboardStatsController,
-} from "../controllers/dashboard.controller";
-import { validate } from "../middlewares/validate.middleware";
-import { dashboardQuerySchema } from "../validations/dashboard.validation";
+} from "./dashboard.controller";
+import { validate } from "@middlewares/validate.middleware";
+import { dashboardQuerySchema } from "./dashboard.validation";
 
 const dashboardRoutes = Router();
 
@@ -32,5 +32,12 @@ dashboardRoutes.get(
 );
 
 export default dashboardRoutes;
+
+
+
+
+
+
+
 
 

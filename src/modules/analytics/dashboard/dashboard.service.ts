@@ -1,5 +1,5 @@
-import prisma, { Prisma } from "../config/prisma";
-import { getAiPerformanceStats } from "./aiAnalytics.service";
+import prisma, { Prisma } from "@config/prisma";
+import { getAiPerformanceStats } from "../ai/analytics.service";
 
 interface DashboardActivityItem {
   id: number;
@@ -301,5 +301,10 @@ export const getUnifiedDashboardStats = async (
     }
   };
 };
+
+
+
+
+
 
 

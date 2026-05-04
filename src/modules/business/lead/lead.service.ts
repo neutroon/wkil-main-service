@@ -1,5 +1,5 @@
 // import { Lead } from "@prisma/client";
-import prisma, { Prisma } from "../config/prisma";
+import prisma, { Prisma } from "@config/prisma";
 
 const createLead = async (lead: Prisma.LeadCreateInput) => {
   return prisma.lead.create({
@@ -12,3 +12,6 @@ const getAllLeads = async () => {
 };
 
 export { createLead, getAllLeads };
+
+
+

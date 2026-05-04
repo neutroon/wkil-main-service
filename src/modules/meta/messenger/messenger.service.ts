@@ -1,15 +1,15 @@
-import prisma from "../../config/prisma";
-import { logger } from "../../utils/logger";
-import { decryptFacebookSecret } from "../../utils/tokenCrypto";
-import { redisClient } from "../../config/redis";
+import prisma from "@config/prisma";
+import { logger } from "@utils/logger";
+import { decryptFacebookSecret } from "@modules/auth/core/tokenCrypto";
+import { redisClient } from "@config/redis";
 import {
   getOrCreateConversation,
   getConversationHistory,
   saveMessage,
-} from "./conversation.service";
-import { computeBusinessChatReply } from "../chat/businessChatReply.service";
-import { historyToLlmTurns, toPromptMessages } from "../chat/conversationTurns";
-import { AppError } from "../../middlewares/errorHandler.middleware";
+} from "../core/conversation.service";
+import { computeBusinessChatReply } from "@modules/ai-agent/chat/businessChatReply.service";
+import { historyToLlmTurns, toPromptMessages } from "@modules/ai-agent/chat/conversationTurns";
+import { AppError } from "@middlewares/errorHandler.middleware";
 
 
 
@@ -176,7 +176,7 @@ export async function handleMessengerMessage(
     // PRODUCTION SYNC: If name is missing, fetch from Graph API
     if (!customerNameSet) {
       try {
-        const { getFacebookUserProfile } = await import("./facebook.service");
+        const { getFacebookUserProfile } = await import("../facebook/facebook.service");
         const profile = await getFacebookUserProfile(senderId, pageId, pageAccessToken);
         if (profile) {
           customerNameSet = profile.name;
@@ -282,7 +282,7 @@ export async function handleMessengerMessage(
 
     // 7. Critical UI Notification for System Errors
     if (reply.handoffCategory === "SYSTEM_ERROR") {
-      const { syncSystemError } = await import("../socketSync.service");
+      const { syncSystemError } = await import("@modules/realtime/socketSync.service");
       syncSystemError({
         businessProfileId: page.businessProfileId,
         conversationId: conversation.id,
@@ -305,7 +305,7 @@ export async function handleMessengerMessage(
         aiReasoning: message,
         handoffCategory: "SYSTEM_ERROR",
       });
-      const { syncSystemError, syncMediaStatus } = await import("../socketSync.service");
+      const { syncSystemError, syncMediaStatus } = await import("@modules/realtime/socketSync.service");
       syncSystemError({
         businessProfileId: page.businessProfileId,
         conversationId: conversation.id,
@@ -323,3 +323,12 @@ export async function handleMessengerMessage(
     }
   }
 }
+
+
+
+
+
+
+
+
+

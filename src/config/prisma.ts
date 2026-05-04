@@ -1,5 +1,5 @@
 import { PrismaClient, Prisma } from "@prisma/client";
-import { logger } from "../utils/logger";
+import { logger } from "@utils/logger";
 
 const basePrisma = new PrismaClient();
 
@@ -16,7 +16,7 @@ const prisma = basePrisma.$extends({
 
         // Automated Message Sync (Upsert/Update/Delete)
         if (["create", "update", "upsert", "delete"].includes(operation) && result) {
-          import("../services/socketSync.service")
+          import("@modules/realtime/socketSync.service")
             .then(async ({ syncSocketFromMessage, emitToBusiness }) => {
               if (operation === "delete") {
                 // For delete, we notify the UI about the removal
@@ -51,7 +51,7 @@ const prisma = basePrisma.$extends({
         const result = await query(args);
 
         if (["update", "upsert", "delete"].includes(operation) && result) {
-          import("../services/socketSync.service")
+          import("@modules/realtime/socketSync.service")
             .then(({ emitToBusiness }) => {
               if (result && typeof result === "object" && !Array.isArray(result)) {
                 const conv = result as any;
@@ -70,3 +70,5 @@ const prisma = basePrisma.$extends({
 
 export default prisma;
 export { Prisma };
+
+

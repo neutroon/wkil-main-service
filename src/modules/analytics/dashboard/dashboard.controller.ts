@@ -3,7 +3,7 @@ import {
   getDashboardActivity,
   getDashboardStats,
   getUnifiedDashboardStats,
-} from "../services/dashboard.service";
+} from "./dashboard.service";
 
 export const getDashboardActivityController = async (
   req: Request,
@@ -38,3 +38,5 @@ export const getUnifiedDashboardStatsController = async (
   const stats = await getUnifiedDashboardStats(userId, role, days);
   res.status(200).json({ data: stats });
 };
+
+

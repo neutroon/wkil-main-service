@@ -1,5 +1,5 @@
-import prisma from "../config/prisma";
-import { logger } from "../utils/logger";
+import prisma from "@config/prisma";
+import { logger } from "@utils/logger";
 import {
   MODEL_PRICING,
   EMBEDDING_RATE_PER_TOKEN,
@@ -7,9 +7,9 @@ import {
   GROUNDING_FREE_TIER_PER_DAY,
   PLAN_CREDIT_LIMITS,
   CREDIT_VALUE_USD,
-} from "../config/billing";
-import { getBillingMultiplier } from "./settings.service";
-import { AppError } from "../middlewares/errorHandler.middleware";
+} from "@modules/billing/billing.config";
+import { getBillingMultiplier } from "@modules/settings/settings.service";
+import { AppError } from "@middlewares/errorHandler.middleware";
 
 /**
  * Calculates YOUR cost to Google (system cost).
@@ -291,7 +291,7 @@ export async function recordAiUsage(params: {
     });
 
     // Notify Frontend to refresh credits in real-time
-    const { syncCreditsUpdate } = await import("./socketSync.service");
+    const { syncCreditsUpdate } = await import("@modules/realtime/socketSync.service");
     syncCreditsUpdate({
       businessProfileId: businessProfileId || 0,
       userId,
@@ -327,3 +327,7 @@ export async function recordAiUsage(params: {
       });
   }
 }
+
+
+
+

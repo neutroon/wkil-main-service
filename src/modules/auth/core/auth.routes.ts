@@ -3,22 +3,22 @@ import {
   getCurrentUser,
   loginUserController,
   registerUser,
-} from "../controllers/user.controller";
+} from "../user/user.controller";
 import {
   authenticateToken,
   logout,
   refreshToken,
-} from "../middlewares/auth.middleware";
-import { authLimiter, securityActionLimiter } from "../middlewares/rateLimit.middleware";
-import { validate } from "../middlewares/validate.middleware";
+} from "@modules/auth/core/auth.middleware";
+import { authLimiter, securityActionLimiter } from "@middlewares/rateLimit.middleware";
+import { validate } from "@middlewares/validate.middleware";
 import { 
   loginSchema, 
   registerSchema, 
   forgotPasswordSchema, 
   resetPasswordSchema,
   verifyEmailSchema
-} from "../validations/auth.validation";
-import * as authController from "../controllers/auth.controller";
+} from "../core/auth.validation";
+import * as authController from "./auth.controller";
 
 const authRoutes = Router();
 
@@ -70,3 +70,11 @@ authRoutes.post("/logout", logout);
 authRoutes.get("/me", authenticateToken, getCurrentUser);
 
 export default authRoutes;
+
+
+
+
+
+
+
+

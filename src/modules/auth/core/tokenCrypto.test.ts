@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import {
   decryptFacebookSecret,
   encryptFacebookSecret,
-} from "./tokenCrypto";
+} from "../core/tokenCrypto";
 
 describe("tokenCrypto", () => {
   const originalKey = process.env.FB_TOKEN_ENCRYPTION_KEY;
@@ -27,3 +27,4 @@ describe("tokenCrypto", () => {
     expect(decryptFacebookSecret(enc)).toBe(plain);
   });
 });
+

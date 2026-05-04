@@ -1,9 +1,9 @@
 import bcrypt from "bcrypt";
-import prisma from "../config/prisma";
-import { hashToken, generateRandomToken } from "../utils/tokenCrypto";
-import { sendVerificationEmail, sendPasswordResetEmail } from "./mail.service";
-import { logger } from "../utils/logger";
-import { AppError } from "../middlewares/errorHandler.middleware";
+import prisma from "@config/prisma";
+import { hashToken, generateRandomToken } from "@modules/auth/core/tokenCrypto";
+import { sendVerificationEmail, sendPasswordResetEmail } from "@modules/mail/mail.service";
+import { logger } from "@utils/logger";
+import { AppError } from "@middlewares/errorHandler.middleware";
 
 /**
  * Production-grade Identity Lifecycle Service
@@ -161,3 +161,10 @@ export const resendVerification = async (email: string) => {
 
   return { message: "If the account is unverified, a new link has been sent." };
 };
+
+
+
+
+
+
+

@@ -1,6 +1,6 @@
-import { env } from "../config/env";
+import { env } from "@config/env";
 import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
-import { AppError } from "../middlewares/errorHandler.middleware";
+import { AppError } from "@middlewares/errorHandler.middleware";
 
 const PREFIX = "enc:v1:";
 const ALGO = "aes-256-gcm";
@@ -67,3 +67,6 @@ export function hashToken(token: string): string {
   const { createHash } = require("crypto");
   return createHash("sha256").update(token).digest("hex");
 }
+
+
+

@@ -1,12 +1,12 @@
 import { Router, Request, Response } from "express";
-import prisma from "../../config/prisma";
-import { decryptFacebookSecret } from "../../utils/tokenCrypto";
-import { getMetaMediaUrl } from "../../services/meta/metaMedia.service";
+import prisma from "@config/prisma";
+import { decryptFacebookSecret } from "@modules/auth/core/tokenCrypto";
+import { getMetaMediaUrl } from "@modules/meta/core/metaMedia.service";
 
-import { authenticateToken } from "../../middlewares/auth.middleware";
-import { validate } from "../../middlewares/validate.middleware";
-import { metaMediaSchema } from "../../validations/metaMedia.validation";
-import { AppError } from "../../middlewares/errorHandler.middleware";
+import { authenticateToken } from "@modules/auth/core/auth.middleware";
+import { validate } from "@middlewares/validate.middleware";
+import { metaMediaSchema } from "@modules/meta/core/metaMedia.validation";
+import { AppError } from "@middlewares/errorHandler.middleware";
 
 const mediaRoutes = Router();
 

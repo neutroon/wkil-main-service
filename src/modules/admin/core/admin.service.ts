@@ -1,6 +1,6 @@
 import bcrypt from "bcrypt";
-import prisma from "../config/prisma";
-import { AppError } from "../middlewares/errorHandler.middleware";
+import prisma from "@config/prisma";
+import { AppError } from "@middlewares/errorHandler.middleware";
 
 const createAdmin = async (name: string, email: string, password: string) => {
   const hashed = await bcrypt.hash(password, 10);
@@ -33,3 +33,6 @@ const createAdmin = async (name: string, email: string, password: string) => {
 };
 
 export { createAdmin };
+
+
+

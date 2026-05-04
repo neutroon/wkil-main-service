@@ -10,8 +10,8 @@ import {
   deactivateUser,
   reactivateUser,
   getUserAnalytics,
-} from "../services/user.service";
-import { AppError } from "../middlewares/errorHandler.middleware";
+} from "../../auth/user/user.service";
+import { AppError } from "@middlewares/errorHandler.middleware";
 
 // Get manager's dashboard with overview of managed users
 export const getManagerDashboardController = async (
@@ -151,3 +151,10 @@ export const removeUserAssignmentController = async (
     data: assignment,
   });
 };
+
+
+
+
+
+
+

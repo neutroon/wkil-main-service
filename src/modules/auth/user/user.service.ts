@@ -1,14 +1,14 @@
 import bcrypt from "bcrypt";
-import prisma from "../config/prisma";
+import prisma from "@config/prisma";
 import {
   generateAccessToken,
   generateRefreshToken,
-} from "../middlewares/auth.middleware";
-import { getBillingMultiplier } from "./settings.service";
-import { clearQuotaCache } from "./billing.service";
-import { generateRandomToken, hashToken } from "../utils/tokenCrypto";
-import { sendVerificationEmail } from "./mail.service";
-import { AppError } from "../middlewares/errorHandler.middleware";
+} from "@modules/auth/core/auth.middleware";
+import { getBillingMultiplier } from "@modules/settings/settings.service";
+import { clearQuotaCache } from "@modules/billing/billing.service";
+import { generateRandomToken, hashToken } from "@modules/auth/core/tokenCrypto";
+import { sendVerificationEmail } from "@modules/mail/mail.service";
+import { AppError } from "@middlewares/errorHandler.middleware";
 
 export const createUser = async (
   name: string,
@@ -20,7 +20,9 @@ export const createUser = async (
   const hashed = await bcrypt.hash(password, 10);
 
   // Check if user already exists
-  const existingUser = await prisma.user.findUnique({ where: { email: normalizedEmail } });
+  const existingUser = await prisma.user.findUnique({
+    where: { email: normalizedEmail },
+  });
   if (existingUser) {
     throw new AppError("User already exists", 409);
   }
@@ -50,11 +52,16 @@ export const createUser = async (
   });
 
   // Send verification email asynchronously
-  sendVerificationEmail(user.email, user.name, verificationToken).catch((err) => {
-    // We log but don't fail the registration if the email fails (user can resend later)
-    const { logger } = require("../utils/logger");
-    logger.error("Registration email dispatch failed", { userId: user.id, error: err });
-  });
+  sendVerificationEmail(user.email, user.name, verificationToken).catch(
+    (err) => {
+      // We log but don't fail the registration if the email fails (user can resend later)
+      const { logger } = require("@utils/logger");
+      logger.error("Registration email dispatch failed", {
+        userId: user.id,
+        error: err,
+      });
+    },
+  );
 
   return user;
 };
@@ -63,7 +70,15 @@ export const loginUser = async (email: string, password: string) => {
   const normalizedEmail = email.toLowerCase();
   const user = await prisma.user.findUnique({
     where: { email: normalizedEmail },
-    select: { id: true, name: true, email: true, password: true, role: true, isEmailVerified: true, lastVerificationSentAt: true },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      password: true,
+      role: true,
+      isEmailVerified: true,
+      lastVerificationSentAt: true,
+    },
   });
 
   if (!user) {
@@ -502,30 +517,33 @@ export const getManagerDashboard = async (managerId: number) => {
   // Get AI usage stats for all managed users business profiles
   const businessProfiles = await prisma.businessProfile.findMany({
     where: { userId: { in: userIds } },
-    select: { id: true, userId: true }
+    select: { id: true, userId: true },
   });
-  
-  const bpIds = businessProfiles.map(bp => bp.id);
+
+  const bpIds = businessProfiles.map((bp) => bp.id);
   const aiUsage = await prisma.aiUsageStat.groupBy({
     by: ["businessProfileId"],
     where: { businessProfileId: { in: bpIds } },
-    _sum: { 
+    _sum: {
       totalTokens: true,
-      systemCost: true
-    }
+      systemCost: true,
+    },
   });
 
   const billingMultiplier = await getBillingMultiplier();
 
   // Create a map for quick lookup: userId -> { tokens: number, cost: number, systemCost: number, profit: number }
-  const userAiStats: Record<number, { tokens: number, cost: number, systemCost: number, profit: number }> = {};
-  businessProfiles.forEach(bp => {
-    const usage = aiUsage.find(u => u.businessProfileId === bp.id);
+  const userAiStats: Record<
+    number,
+    { tokens: number; cost: number; systemCost: number; profit: number }
+  > = {};
+  businessProfiles.forEach((bp) => {
+    const usage = aiUsage.find((u) => u.businessProfileId === bp.id);
     const tokens = usage?._sum.totalTokens || 0;
     const systemCost = usage?._sum.systemCost || 0;
     const revenue = systemCost * billingMultiplier;
     const profit = revenue - systemCost;
-    
+
     if (!userAiStats[bp.userId]) {
       userAiStats[bp.userId] = { tokens: 0, cost: 0, systemCost: 0, profit: 0 };
     }
@@ -557,7 +575,7 @@ export const getManagerDashboard = async (managerId: number) => {
         0,
       ),
       recentAnalytics: u.user.analytics.slice(0, 7), // Last 7 days
-      aiStats: userAiStats[u.user.id] || { tokens: 0, cost: 0 }
+      aiStats: userAiStats[u.user.id] || { tokens: 0, cost: 0 },
     })),
   };
 };
@@ -597,10 +615,12 @@ export const getUserAnalytics = async (userId: number, days: number = 30) => {
   });
 };
 
-export const getAccessibleProfileIds = async (userId: number): Promise<number[]> => {
+export const getAccessibleProfileIds = async (
+  userId: number,
+): Promise<number[]> => {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { role: true }
+    select: { role: true },
   });
 
   if (!user) return [];
@@ -608,33 +628,33 @@ export const getAccessibleProfileIds = async (userId: number): Promise<number[]>
   // Super admins and admins see ALL profiles
   if (["super_admin", "admin"].includes(user.role)) {
     const allProfiles = await prisma.businessProfile.findMany({
-      select: { id: true }
+      select: { id: true },
     });
-    return allProfiles.map(p => p.id);
+    return allProfiles.map((p) => p.id);
   }
 
   // Managers see their own AND their managed users' profiles
   if (user.role === "manager") {
     const managedUsers = await prisma.userManagement.findMany({
       where: { managerId: userId, isActive: true },
-      select: { userId: true }
+      select: { userId: true },
     });
-    
-    const userIds = [userId, ...managedUsers.map(m => m.userId)];
-    
+
+    const userIds = [userId, ...managedUsers.map((m) => m.userId)];
+
     const profiles = await prisma.businessProfile.findMany({
       where: { userId: { in: userIds } },
-      select: { id: true }
+      select: { id: true },
     });
-    
-    return profiles.map(p => p.id);
+
+    return profiles.map((p) => p.id);
   }
 
   // Regular users see only their own
   const profiles = await prisma.businessProfile.findMany({
     where: { userId },
-    select: { id: true }
+    select: { id: true },
   });
-  
-  return profiles.map(p => p.id);
+
+  return profiles.map((p) => p.id);
 };

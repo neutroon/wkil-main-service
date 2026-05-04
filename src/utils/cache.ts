@@ -1,4 +1,4 @@
-import { redisClient } from "../config/redis";
+import { redisClient } from "@config/redis";
 import { logger } from "./logger";
 
 /**
@@ -72,3 +72,4 @@ export const cache = {
     return fresh;
   },
 };
+

@@ -1,8 +1,8 @@
-import { encryptFacebookSecret } from "../../utils/tokenCrypto";
-import { logger } from "../../utils/logger";
-import prisma from "../../config/prisma";
-import { AppError } from "../../middlewares/errorHandler.middleware";
-import { env } from "../../config/env";
+import { encryptFacebookSecret } from "@modules/auth/core/tokenCrypto";
+import { logger } from "@utils/logger";
+import prisma from "@config/prisma";
+import { AppError } from "@middlewares/errorHandler.middleware";
+import { env } from "@config/env";
 
 const GRAPH_API = "https://graph.facebook.com/v25.0";
 // Meta Cloud API and Embedded Signup onboarding (Tech Provider) v25.0.
@@ -541,3 +541,9 @@ async function registerWhatsAppPhoneNumber(params: {
     throw err;
   }
 }
+
+
+
+
+
+

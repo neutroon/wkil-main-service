@@ -1,14 +1,14 @@
-import prisma from "../../config/prisma";
-import { logger } from "../../utils/logger";
-import { decryptFacebookSecret } from "../../utils/tokenCrypto";
+import prisma from "@config/prisma";
+import { logger } from "@utils/logger";
+import { decryptFacebookSecret } from "@modules/auth/core/tokenCrypto";
 import {
   getOrCreateConversation,
   getConversationHistory,
   saveMessage,
-} from "./conversation.service";
-import { computeBusinessChatReply } from "../chat/businessChatReply.service";
-import { historyToLlmTurns, toPromptMessages } from "../chat/conversationTurns";
-import { AppError } from "../../middlewares/errorHandler.middleware";
+} from "../core/conversation.service";
+import { computeBusinessChatReply } from "@modules/ai-agent/chat/businessChatReply.service";
+import { historyToLlmTurns, toPromptMessages } from "@modules/ai-agent/chat/conversationTurns";
+import { AppError } from "@middlewares/errorHandler.middleware";
 
 
 
@@ -352,3 +352,10 @@ export async function handleWhatsAppMessage(
     }
   }
 }
+
+
+
+
+
+
+

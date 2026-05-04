@@ -1,11 +1,11 @@
-import { embedQuery, embedTexts } from "../config/gemini";
-import { recordAiUsage, assertQuotaAvailable } from "../services/billing.service";
-import prisma from "../config/prisma";
-import { logger } from "../utils/logger";
+import { embedQuery, embedTexts } from "../gemini";
+import { recordAiUsage, assertQuotaAvailable } from "@modules/billing/billing.service";
+import prisma from "@config/prisma";
+import { logger } from "@utils/logger";
 import { chunkBusinessProfile } from "./chunker";
 import { CHUNK_TYPE_FIELDS } from "./chunkTypeFields";
 import { applySimilarityThreshold } from "./similarityThreshold";
-import { env } from "../config/env";
+import { env } from "@config/env";
 
 const MAX_CHUNK_CHARS = 2000;
 
@@ -229,3 +229,7 @@ export async function getIdentityContext(businessProfileId: number): Promise<{ c
      return [];
   }
 }
+
+
+
+

@@ -79,3 +79,4 @@ export function chunkBusinessProfile(profile: BusinessProfileWithFaqs) {
 
   return chunks;
 }
+

@@ -13,3 +13,4 @@ describe("applySimilarityThreshold", () => {
     expect(out.map((r) => r.content)).toEqual(["a", "c"]);
   });
 });
+

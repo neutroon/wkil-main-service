@@ -9,3 +9,4 @@ export const CHUNK_TYPE_FIELDS: Record<string, string[]> = {
   raw_content: ["scrapedMarkdown"],
   custom_section: ["knowledgeSections"],
 };
+

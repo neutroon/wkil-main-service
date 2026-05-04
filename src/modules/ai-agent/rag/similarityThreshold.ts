@@ -8,3 +8,4 @@ export function applySimilarityThreshold<T extends { similarity: number }>(
     .filter((c) => c.similarity >= minSimilarity)
     .slice(0, topK);
 }
+

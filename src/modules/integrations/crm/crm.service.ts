@@ -1,5 +1,5 @@
-import prisma from "../../config/prisma";
-import { logger } from "../../utils/logger";
+import prisma from "@config/prisma";
+import { logger } from "@utils/logger";
 
 export interface LeadPayload {
   [key: string]: any;
@@ -66,3 +66,6 @@ export async function pushLeadToCrm(
 
   return successCount > 0 ? { success: true } : { success: false, error: lastError };
 }
+
+
+

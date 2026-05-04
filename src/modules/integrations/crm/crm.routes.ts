@@ -1,9 +1,9 @@
 import { Router, Request, Response, NextFunction } from "express";
-import { authenticateToken } from "../middlewares/auth.middleware";
-import prisma from "../config/prisma";
-import { validate } from "../middlewares/validate.middleware";
-import { crmIntegrationSchema, getCrmSchema, deleteCrmSchema } from "../validations/crm.validation";
-import { AppError } from "../middlewares/errorHandler.middleware";
+import { authenticateToken } from "@modules/auth/core/auth.middleware";
+import prisma from "@config/prisma";
+import { validate } from "@middlewares/validate.middleware";
+import { crmIntegrationSchema, getCrmSchema, deleteCrmSchema } from "./crm.validation";
+import { AppError } from "@middlewares/errorHandler.middleware";
 
 const crmRoutes = Router();
 
@@ -96,3 +96,9 @@ crmRoutes.delete(
 );
 
 export default crmRoutes;
+
+
+
+
+
+

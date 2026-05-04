@@ -1,5 +1,5 @@
 import { S3Client } from "@aws-sdk/client-s3";
-import { env } from "./env";
+import { env } from "@config/env";
 
 export const r2Client = new S3Client({
   region: "auto",
@@ -12,3 +12,5 @@ export const r2Client = new S3Client({
 
 export const R2_BUCKET = env.R2_BUCKET_NAME;
 export const R2_PUBLIC_URL = env.R2_PUBLIC_URL.replace(/\/$/, "");
+
+

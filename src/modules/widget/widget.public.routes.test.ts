@@ -6,7 +6,7 @@ import http from "http";
 import express, { Application } from "express";
 import type { WidgetInstall } from "@prisma/client";
 
-vi.mock("../config/prisma", () => ({
+vi.mock("@config/prisma", () => ({
   default: {
     widgetInstall: {
       findFirst: vi.fn(),
@@ -14,13 +14,13 @@ vi.mock("../config/prisma", () => ({
   },
 }));
 
-vi.mock("../services/widget/widgetChat.service", () => ({
+vi.mock("./services/widgetChat.service", () => ({
   processWidgetChatMessage: vi.fn(),
 }));
 
 import widgetPublicRoutes from "./widget.public.routes";
-import prisma from "../config/prisma";
-import { processWidgetChatMessage } from "../services/widget/widgetChat.service";
+import prisma from "@config/prisma";
+import { processWidgetChatMessage } from "@modules/widget/services/widgetChat.service";
 
 function makeApp(): Application {
   const app = express();
@@ -287,3 +287,7 @@ describe("OPTIONS /chat (CORS preflight)", () => {
     );
   });
 });
+
+
+
+

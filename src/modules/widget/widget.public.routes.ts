@@ -1,15 +1,15 @@
 import { Router, Response } from "express";
-import prisma from "../config/prisma";
-import { processWidgetChatMessage } from "../services/widget/widgetChat.service";
-import { listConversationMessages, saveMessage } from "../services/meta/conversation.service";
-import type { WidgetRequest } from "../middlewares/widgetInstall.middleware";
-import { widgetInstallAndCors } from "../middlewares/widgetInstall.middleware";
-import { validate } from "../middlewares/validate.middleware";
+import prisma from "@config/prisma";
+import { processWidgetChatMessage } from "./services/widgetChat.service";
+import { listConversationMessages, saveMessage } from "@modules/meta/core/conversation.service";
+import type { WidgetRequest } from "@modules/widget/widgetInstall.middleware";
+import { widgetInstallAndCors } from "@modules/widget/widgetInstall.middleware";
+import { validate } from "@middlewares/validate.middleware";
 import {
   widgetChatSchema,
   widgetHistorySchema,
-} from "../validations/widget.validation";
-import { AppError } from "../middlewares/errorHandler.middleware";
+} from "./widget.validation";
+import { AppError } from "@middlewares/errorHandler.middleware";
 
 const widgetPublicRoutes = Router();
 
@@ -84,7 +84,7 @@ widgetPublicRoutes.post(
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("Connection", "keep-alive");
 
-      const { processWidgetChatStreaming } = await import("../services/widget/widgetChat.service");
+      const { processWidgetChatStreaming } = await import("./services/widgetChat.service");
       const generator = processWidgetChatStreaming({
         install,
         visitorId: visitorId.trim(),
@@ -219,3 +219,10 @@ widgetPublicRoutes.get(
 );
 
 export default widgetPublicRoutes;
+
+
+
+
+
+
+

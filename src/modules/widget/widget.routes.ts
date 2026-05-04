@@ -1,17 +1,17 @@
 import { Router, Request, Response } from "express";
 import { randomBytes } from "crypto";
-import prisma from "../config/prisma";
-import { authenticateToken } from "../middlewares/auth.middleware";
-import { parseAllowedOrigins } from "../middlewares/widgetInstall.middleware";
+import prisma from "@config/prisma";
+import { authenticateToken } from "@modules/auth/core/auth.middleware";
+import { parseAllowedOrigins } from "@modules/widget/widgetInstall.middleware";
 import {
   listConversationMessages,
   saveMessage,
-} from "../services/meta/conversation.service";
-import { computeBusinessChatReply } from "../services/chat/businessChatReply.service";
-import { toPromptMessages, historyToLlmTurns } from "../services/chat/conversationTurns";
-import { getConversationHistory } from "../services/meta/conversation.service";
+} from "@modules/meta/core/conversation.service";
+import { computeBusinessChatReply } from "../ai-agent/chat/businessChatReply.service";
+import { toPromptMessages, historyToLlmTurns } from "../ai-agent/chat/conversationTurns";
+import { getConversationHistory } from "@modules/meta/core/conversation.service";
 
-import { validate } from "../middlewares/validate.middleware";
+import { validate } from "@middlewares/validate.middleware";
 import { 
   widgetInstallSchema, 
   updateWidgetInstallSchema, 
@@ -19,8 +19,8 @@ import {
   approveDraftSchema,
   widgetReplySchema,
   widgetIdParamSchema
-} from "../validations/widgetAuth.validation";
-import { AppError } from "../middlewares/errorHandler.middleware";
+} from "./widgetAuth.validation";
+import { AppError } from "@middlewares/errorHandler.middleware";
 
 const widgetRoutes = Router();
 
@@ -496,3 +496,11 @@ widgetRoutes.post(
 );
 
 export default widgetRoutes;
+
+
+
+
+
+
+
+

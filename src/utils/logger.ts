@@ -1,4 +1,4 @@
-import { env } from "../config/env";
+import { env } from "@config/env";
 
 type LogLevel = "info" | "warn" | "error" | "debug";
 
@@ -33,3 +33,4 @@ class Logger {
 }
 
 export const logger = new Logger();
+

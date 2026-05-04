@@ -1,7 +1,7 @@
-import { generateContent } from "../config/gemini";
-import { logger } from "../utils/logger";
-import { assertQuotaAvailable, recordAiUsage } from "./billing.service";
-import { AppError } from "../middlewares/errorHandler.middleware";
+import { generateContent } from "@modules/ai-agent/gemini";
+import { logger } from "@utils/logger";
+import { assertQuotaAvailable, recordAiUsage } from "../../billing/billing.service";
+import { AppError } from "@middlewares/errorHandler.middleware";
 
 async function discoverStrategicLinks(
   userId: number,
@@ -155,3 +155,9 @@ async function extractBusinessIdentity(
 }
 
 export { discoverStrategicLinks, extractBusinessIdentity };
+
+
+
+
+
+

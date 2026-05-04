@@ -1,14 +1,14 @@
 import { Router, Request, Response, NextFunction } from "express";
-import { authenticateToken } from "../middlewares/auth.middleware";
-import prisma from "../config/prisma";
-import { validate } from "../middlewares/validate.middleware";
+import { authenticateToken } from "@modules/auth/core/auth.middleware";
+import prisma from "@config/prisma";
+import { validate } from "@middlewares/validate.middleware";
 import {
   dataSourceSchema,
   updateDataSourceSchema,
   getDataSourceSchema,
   deleteDataSourceSchema,
-} from "../validations/dataSource.validation";
-import { AppError } from "../middlewares/errorHandler.middleware";
+} from "./dataSource.validation";
+import { AppError } from "@middlewares/errorHandler.middleware";
 
 const externalDataSourceRoutes = Router();
 
@@ -145,3 +145,9 @@ externalDataSourceRoutes.delete(
 );
 
 export default externalDataSourceRoutes;
+
+
+
+
+
+

@@ -1,6 +1,6 @@
-import prisma from "../../config/prisma";
-import { logger } from "../../utils/logger";
-import { AppError } from "../../middlewares/errorHandler.middleware";
+import prisma from "@config/prisma";
+import { logger } from "@utils/logger";
+import { AppError } from "@middlewares/errorHandler.middleware";
 
 type CanonicalVerification = "verified" | "unverified" | "failed";
 
@@ -131,3 +131,6 @@ export async function executeExternalQuery(
     };
   }
 }
+
+
+

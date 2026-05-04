@@ -1,4 +1,4 @@
-import { AppError } from "../../middlewares/errorHandler.middleware";
+import { AppError } from "@middlewares/errorHandler.middleware";
 
 /**
  * Upload a media file to WhatsApp Cloud API.
@@ -87,3 +87,7 @@ export async function uploadMessengerMedia(
   const data = (await response.json()) as { attachment_id: string };
   return data.attachment_id;
 }
+
+
+
+

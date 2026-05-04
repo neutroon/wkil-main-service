@@ -1,6 +1,6 @@
-import prisma from "../../config/prisma";
-import { cache } from "../../utils/cache";
-import { logger } from "../../utils/logger";
+import prisma from "@config/prisma";
+import { cache } from "@utils/cache";
+import { logger } from "@utils/logger";
 
 const CACHE_TTL_SECONDS = 86400; // 24 hours (safe because of active invalidation)
 
@@ -83,7 +83,11 @@ export async function isDuplicateWebhook(externalId: string): Promise<boolean> {
   // We use redisClient directly for atomic SET NX since the cache utility
   // currently doesn't expose the raw SET response for NX.
   // This is acceptable as it's a specific atomic operation.
-  const { redisClient } = await import("../../config/redis");
+  const { redisClient } = await import("@config/redis");
   const result = await redisClient.set(cacheKey, "1", "EX", 90, "NX");
   return result === null; 
 }
+
+
+
+

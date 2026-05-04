@@ -1,12 +1,12 @@
 import { Queue, Worker, Job } from "bullmq";
-import { bullConnection } from "../config/redis";
-import { logger } from "../utils/logger";
+import { bullConnection } from "@config/redis";
+import { logger } from "@utils/logger";
 
 import {
   processMetaMessage,
   processVisualJob,
-} from "../services/meta/metaProcessor.service";
-import { registerAssetWithMeta } from "../services/media/mediaLibrary.service";
+} from "../core/metaProcessor.service";
+import { registerAssetWithMeta } from "../../media/services/mediaLibrary.service";
 
 /**
  * Enterprise-Grade Meta Engine Queues.
@@ -120,7 +120,7 @@ export const expressWorker = new Worker(
     if (type === "media_sync") {
       await registerAssetWithMeta(payload.assetId);
     } else if (type === "media_refresh_scanner") {
-      const { processMediaRefresh } = await import("../jobs/mediaRefresh.job");
+      const { processMediaRefresh } = await import("../../media/mediaRefresh.job");
       await processMediaRefresh();
     } else {
       await processMetaMessage(payload);
@@ -165,3 +165,8 @@ export function startMetaQueue() {
     productionConcurrency: 2,
   });
 }
+
+
+
+
+

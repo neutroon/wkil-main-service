@@ -1,6 +1,6 @@
-import prisma from "../../config/prisma";
-import { logger } from "../../utils/logger";
-import { getOrCreateConversation, saveMessage } from "./conversation.service";
+import prisma from "@config/prisma";
+import { logger } from "@utils/logger";
+import { getOrCreateConversation, saveMessage } from "../core/conversation.service";
 
 /**
  * ELITE TIER: Selective Mirroring (Inbox Continuity)
@@ -95,3 +95,7 @@ export const syncMessageStatus = async (
     return null;
   }
 };
+
+
+
+

@@ -1,18 +1,18 @@
 import { UnrecoverableError } from "bullmq";
-import prisma from "../../config/prisma";
-import { logger } from "../../utils/logger";
-import { decryptFacebookSecret } from "../../utils/tokenCrypto";
+import prisma from "@config/prisma";
+import { logger } from "@utils/logger";
+import { decryptFacebookSecret } from "@modules/auth/core/tokenCrypto";
 import {
   getOrCreateConversation,
   getConversationHistory,
   saveMessage,
-} from "./conversation.service";
-import { computeBusinessChatReply } from "../chat/businessChatReply.service";
-import { historyToLlmTurns, toPromptMessages } from "../chat/conversationTurns";
+} from "../core/conversation.service";
+import { computeBusinessChatReply } from "@modules/ai-agent/chat/businessChatReply.service";
+import { historyToLlmTurns, toPromptMessages } from "@modules/ai-agent/chat/conversationTurns";
 import {
   getFacebookUserProfile,
   likeComment,
-} from "./facebook.service";
+} from "../facebook/facebook.service";
 
 export type MetaPlatform = "messenger" | "whatsapp" | "visual_production" | "visual_refine" | "media_sync" | "facebook" | "instagram" | "linkedin";
 
@@ -188,7 +188,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
               },
               data: { status: "READ" }
             });
-            const { syncBulkMessageStatus } = await import("../socketSync.service");
+            const { syncBulkMessageStatus } = await import("@modules/realtime/socketSync.service");
             syncBulkMessageStatus({
               businessProfileId: conversation.businessProfileId,
               conversationId: conversation.id,
@@ -212,7 +212,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
         select: { id: true, businessProfileId: true }
       });
       if (conversation) {
-        const { syncTypingStatus } = await import("../socketSync.service");
+        const { syncTypingStatus } = await import("@modules/realtime/socketSync.service");
         syncTypingStatus({
           businessProfileId: conversation.businessProfileId,
           conversationId: conversation.id,
@@ -234,7 +234,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
 
     // 2. Idempotency Check
     if (externalId) {
-      const { isDuplicateWebhook } = await import("./webhookCache.service");
+      const { isDuplicateWebhook } = await import("../core/webhookCache.service");
       if (await isDuplicateWebhook(externalId)) {
         logger.info("meta.processor.duplicate_ignored", { externalId });
         return;
@@ -250,7 +250,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
     // 3. Early Returns
     if (type === "FACEBOOK_COMMENT_PUBLIC_REPLY") {
       logger.info("meta.processor.comment_public_reply_mode");
-      const { replyToComment } = await import("./facebook.service");
+      const { replyToComment } = await import("../facebook/facebook.service");
       await replyToComment({ commentId: job.commentId!, message: messageText, accessToken, pageId: identifier, businessProfileId });
       return;
     }
@@ -323,7 +323,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
 
     let postContext: any;
     if (isComment && job.postId) {
-      const { getPostContext, getCommentText } = await import("./facebook.service");
+      const { getPostContext, getCommentText } = await import("../facebook/facebook.service");
       const [pContext, parContext] = await Promise.all([
         getPostContext(job.postId, accessToken),
         job.parentId ? getCommentText(job.parentId, accessToken) : Promise.resolve(null)
@@ -331,7 +331,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
       if (pContext) postContext = { content: pContext.content, media: pContext.media, parentContext: parContext || undefined };
     }
 
-    const { syncTypingStatus } = await import("../socketSync.service");
+    const { syncTypingStatus } = await import("@modules/realtime/socketSync.service");
     syncTypingStatus({ businessProfileId, conversationId: conversation.id, isTyping: true });
 
     const reply = await computeBusinessChatReply({
@@ -433,11 +433,11 @@ export async function processMetaMessage(job: MetaMessageJob) {
 
     // B. Platform Delivery
     if (isAutoMode && reply.handoffCategory !== "SYSTEM_ERROR" && mainContent.length > 0) {
-      const { mirrorCommentReplyToMessenger, syncMessageStatus } = await import("./metaDelivery.service");
+      const { mirrorCommentReplyToMessenger, syncMessageStatus } = await import("../core/metaDelivery.service");
 
       if (platform === "messenger") {
         logger.info("meta.processor.delivering_messenger", { conversationId: conversation.id });
-        const { sendPrivateReply, replyToComment } = await import("./facebook.service");
+        const { sendPrivateReply, replyToComment } = await import("../facebook/facebook.service");
         
         if (isComment) {
           if (reply.intent === "IGNORE") return;
@@ -485,7 +485,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
             }
           }
         } else if (modelSaved && privateStatus === "SENT") {
-          const { sendMessengerReply, sendMessengerMedia } = await import("./messenger.service");
+          const { sendMessengerReply, sendMessengerMedia } = await import("../messenger/messenger.service");
           
           try {
             let res: any;
@@ -509,7 +509,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
         }
       } else if (platform === "whatsapp" && modelSaved && privateStatus === "SENT") {
         logger.info("meta.processor.delivering_whatsapp", { conversationId: conversation.id });
-        const { sendWhatsAppReply, sendWhatsAppMedia } = await import("./whatsapp.service");
+        const { sendWhatsAppReply, sendWhatsAppMedia } = await import("../whatsapp/whatsapp.service");
         
         try {
           let res: any;
@@ -553,7 +553,7 @@ export async function processVisualJob(payload: any) {
   const normalizedAssetId = Number(assetId || mediaId);
 
   try {
-    const { createGeminiVisual, refineGeminiVisual } = await import("../media/geminiVisual.service");
+    const { createGeminiVisual, refineGeminiVisual } = await import("../../media/services/geminiVisual.service");
     let resultAsset;
     if (normalizedType === "generate") {
       resultAsset = await createGeminiVisual({
@@ -577,3 +577,11 @@ export async function processVisualJob(payload: any) {
     throw err;
   }
 }
+
+
+
+
+
+
+
+

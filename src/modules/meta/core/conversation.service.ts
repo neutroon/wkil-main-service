@@ -1,6 +1,6 @@
-import prisma from "../../config/prisma";
-import { AppError } from "../../middlewares/errorHandler.middleware";
-import { getAccessibleProfileIds } from "../user.service";
+import prisma from "@config/prisma";
+import { AppError } from "@middlewares/errorHandler.middleware";
+import { getAccessibleProfileIds } from "@modules/auth/user/user.service";
 
 const HISTORY_LIMIT = 10;
 
@@ -10,10 +10,10 @@ export async function getOrCreateConversation(
   pageId: string,
   senderId: string,
   businessProfileId: number,
-  opts?: { 
-    channel?: string; 
-    customerPhone?: string; 
-    customerName?: string; 
+  opts?: {
+    channel?: string;
+    customerPhone?: string;
+    customerName?: string;
     customerAvatar?: string;
     externalId?: string;
     postId?: string;
@@ -28,7 +28,7 @@ export async function getOrCreateConversation(
       businessProfileId,
       channel: opts?.channel ?? null,
     },
-    orderBy: { updatedAt: "desc" }
+    orderBy: { updatedAt: "desc" },
   });
 
   if (existing) {
@@ -39,18 +39,25 @@ export async function getOrCreateConversation(
       updateData.customerPhone = opts.customerPhone;
     }
     // Update name if provided and DIFFERENT (or missing)
-    if (opts?.customerName && opts.customerName !== existing.customerName && opts.customerName !== "Guest Customer") {
+    if (
+      opts?.customerName &&
+      opts.customerName !== existing.customerName &&
+      opts.customerName !== "Guest Customer"
+    ) {
       updateData.customerName = opts.customerName;
     }
     // Update avatar if provided and different
-    if (opts?.customerAvatar && opts.customerAvatar !== existing.customerAvatar) {
+    if (
+      opts?.customerAvatar &&
+      opts.customerAvatar !== existing.customerAvatar
+    ) {
       updateData.customerAvatar = opts.customerAvatar;
     }
     // Sync channel if needed
     if (opts?.channel && !existing.channel) {
       updateData.channel = opts.channel;
     }
-    
+
     // ELITE IDENTITY: Always refresh externalId, postId, and sourceCommentText
     if (opts?.externalId) {
       updateData.externalId = opts.externalId;
@@ -83,10 +90,10 @@ export async function getOrCreateConversation(
       where: {
         pageId,
         senderId,
-        channel: "facebook_comment"
+        channel: "facebook_comment",
       },
       orderBy: { updatedAt: "desc" },
-      select: { id: true }
+      select: { id: true },
     });
     if (lastCommentThread) {
       parentConversationId = lastCommentThread.id;
@@ -112,14 +119,18 @@ export async function getOrCreateConversation(
   });
 }
 
-export async function getConversationHistory(conversationId: number, before?: Date, postId?: string) {
+export async function getConversationHistory(
+  conversationId: number,
+  before?: Date,
+  postId?: string,
+) {
   // ELITE TIER: Multi-Post Safety
   // If we are in a post-bound conversation, we strictly only pull history from that SAME post.
   const messages = await prisma.conversationMessage.findMany({
-    where: { 
+    where: {
       conversationId,
       conversation: postId ? { postId } : {}, // Ensure cross-post isolation
-      ...(before ? { createdAt: { lte: before } } : {})
+      ...(before ? { createdAt: { lte: before } } : {}),
     },
     orderBy: { createdAt: "desc" },
     take: HISTORY_LIMIT,
@@ -143,7 +154,7 @@ export async function saveMessage(
     intent?: string | null;
     isPrivate?: boolean;
     origin?: string | null;
-  }
+  },
 ) {
   const msg = await prisma.conversationMessage.create({
     data: {
@@ -280,8 +291,8 @@ export async function listWhatsAppConversations(
 
 /**
  * Return paginated messages for a conversation.
- * ELITE TIER: Messenger threads now perform "Thread Convergence" — pulling in 
- * Private DM replies from associated Facebook Comment threads to provide 
+ * ELITE TIER: Messenger threads now perform "Thread Convergence" — pulling in
+ * Private DM replies from associated Facebook Comment threads to provide
  * a "typical messenger flow" history.
  */
 export async function listConversationMessages(
@@ -294,7 +305,7 @@ export async function listConversationMessages(
   // 1. Fetch the base conversation to identify the user and page
   const mainConv = await prisma.conversation.findUnique({
     where: { id: conversationId },
-    select: { id: true, senderId: true, pageId: true, channel: true }
+    select: { id: true, senderId: true, pageId: true, channel: true },
   });
 
   if (!mainConv) throw new AppError("Conversation not found", 404);
@@ -312,20 +323,20 @@ export async function listConversationMessages(
           id: true,
           channel: true,
           postId: true,
-          externalId: true
-        }
-      }
-    }
+          externalId: true,
+        },
+      },
+    },
   });
 
   // 4. Transform and enrich
-  const data = messages.map(m => ({
+  const data = messages.map((m) => ({
     id: m.id,
     role: m.role as any,
     content: m.content,
     type: m.type,
     mediaId: m.mediaId,
-    mediaMetadata: m.mediaMetadata as any || {},
+    mediaMetadata: (m.mediaMetadata as any) || {},
     status: m.status,
     aiReasoning: m.aiReasoning,
     handoffCategory: m.handoffCategory,
@@ -335,15 +346,16 @@ export async function listConversationMessages(
     createdAt: m.createdAt,
   }));
 
-  const nextCursor = messages.length > 0 ? messages[messages.length - 1].id : null;
+  const nextCursor =
+    messages.length > 0 ? messages[messages.length - 1].id : null;
   const hasMore = messages.length === limit;
 
-  return { 
-    data, 
+  return {
+    data,
     meta: {
-        nextCursor,
-        hasMore
-    } 
+      nextCursor,
+      hasMore,
+    },
   };
 }
 

@@ -1,11 +1,11 @@
 import { Router } from "express";
-import { authenticateToken } from "../middlewares/auth.middleware";
+import { authenticateToken } from "@modules/auth/core/auth.middleware";
 import { 
   getAiPerformanceController, 
   getAiCorrectionsController 
-} from "../controllers/aiAnalytics.controller";
-import { validate } from "../middlewares/validate.middleware";
-import { aiAnalyticsQuerySchema } from "../validations/aiAnalytics.validation";
+} from "./analytics.controller";
+import { validate } from "@middlewares/validate.middleware";
+import { aiAnalyticsQuerySchema } from "./aiAnalytics.validation";
 
 const aiAnalyticsRoutes = Router();
 
@@ -24,3 +24,10 @@ aiAnalyticsRoutes.get(
 );
 
 export default aiAnalyticsRoutes;
+
+
+
+
+
+
+

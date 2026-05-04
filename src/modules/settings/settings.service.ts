@@ -1,8 +1,8 @@
-import prisma from "../config/prisma";
-import { logger } from "../utils/logger";
-import { AppError } from "../middlewares/errorHandler.middleware";
+import prisma from "@config/prisma";
+import { logger } from "@utils/logger";
+import { AppError } from "@middlewares/errorHandler.middleware";
 
-import { DEFAULT_BILLING_MULTIPLIER } from "../config/billing";
+import { DEFAULT_BILLING_MULTIPLIER } from "../billing/billing.config";
 
 const SETTINGS_CACHE: Record<string, { value: string; expiresAt: number }> = {};
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -64,3 +64,6 @@ export const updateBillingMultiplier = async (multiplier: number): Promise<void>
   }
   await updateSystemSetting("billing_multiplier", multiplier.toString());
 };
+
+
+

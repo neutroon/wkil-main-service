@@ -11,25 +11,27 @@
  * - Appends function results back to contents for the next Gemini turn
  */
 import { z } from "zod";
-import { logger } from "../../../utils/logger";
-import { pushLeadToCrm } from "../../crm/crm.service";
-import { executeExternalQuery } from "../../external/externalData.service";
-import { updateEvidenceFromEnvelope } from "../aiEngine.utils";
-import type { AgentStateType } from "../agentState";
+import { logger } from "@utils/logger";
+import { pushLeadToCrm } from "@modules/integrations/crm/crm.service";
+import { executeExternalQuery } from "@modules/integrations/external/externalData.service";
+import { updateEvidenceFromEnvelope } from "@modules/ai-agent/core/aiEngine.utils";
+import type { AgentStateType } from "@modules/ai-agent/core/agentState";
 
 // ── Zod Schemas for Tool Input Validation ─────────────────────────────────────
 
 const CaptureLeadSchema = z.object({
-  name:  z.string().min(1).optional(),
+  name: z.string().min(1).optional(),
   phone: z.string().optional(),
   email: z.string().email().optional().or(z.literal("")),
   notes: z.string().optional(),
 });
 
-const ExternalQuerySchema = z.object({
-  q:      z.string().optional(),
-  query:  z.string().optional(),
-}).passthrough(); // External APIs may have custom fields
+const ExternalQuerySchema = z
+  .object({
+    q: z.string().optional(),
+    query: z.string().optional(),
+  })
+  .passthrough(); // External APIs may have custom fields
 
 // ── Node ──────────────────────────────────────────────────────────────────────
 
@@ -63,7 +65,11 @@ export async function runToolsNode(
             actionType: "capture_lead",
             reason: "validation_failed: " + parseResult.error.message,
           };
-          updatedEvidence = applyEvidence(updatedEvidence, envelope, "capture_lead");
+          updatedEvidence = applyEvidence(
+            updatedEvidence,
+            envelope,
+            "capture_lead",
+          );
           functionResponses.push(buildFunctionResponse(call.name, envelope));
           continue;
         }
@@ -76,16 +82,33 @@ export async function runToolsNode(
         });
 
         const envelope = crmResult.success
-          ? { success: true,  verification: "verified" as const, actionType: "capture_lead", reason: "crm_saved",                        data: crmResult }
-          : { success: false, verification: "failed"   as const, actionType: "capture_lead", reason: crmResult.error ?? "crm_rejected",  data: crmResult };
+          ? {
+              success: true,
+              verification: "verified" as const,
+              actionType: "capture_lead",
+              reason: "crm_saved",
+              data: crmResult,
+            }
+          : {
+              success: false,
+              verification: "failed" as const,
+              actionType: "capture_lead",
+              reason: crmResult.error ?? "crm_rejected",
+              data: crmResult,
+            };
 
         if (!crmResult.success) {
-          logger.warn("ai.node.runTools.crm_kickback", { error: crmResult.error });
+          logger.warn("ai.node.runTools.crm_kickback", {
+            error: crmResult.error,
+          });
         }
 
-        updatedEvidence = applyEvidence(updatedEvidence, envelope, "capture_lead");
+        updatedEvidence = applyEvidence(
+          updatedEvidence,
+          envelope,
+          "capture_lead",
+        );
         functionResponses.push(buildFunctionResponse(call.name, envelope));
-
       } else if (call.name.startsWith("query_external_api_")) {
         const sourceId = parseInt(call.name.split("_").pop() || "0", 10);
 
@@ -102,17 +125,27 @@ export async function runToolsNode(
             actionType: `external_query_${sourceId}`,
             reason: "validation_failed",
           };
-          updatedEvidence = applyEvidence(updatedEvidence, envelope, `external_query_${sourceId}`);
+          updatedEvidence = applyEvidence(
+            updatedEvidence,
+            envelope,
+            `external_query_${sourceId}`,
+          );
           functionResponses.push(buildFunctionResponse(call.name, envelope));
           continue;
         }
 
-        logger.info("ai.node.runTools.external_query", { sourceId, args: parseResult.data });
+        logger.info("ai.node.runTools.external_query", {
+          sourceId,
+          args: parseResult.data,
+        });
         const envelope = await executeExternalQuery(sourceId, parseResult.data);
-        updatedEvidence = applyEvidence(updatedEvidence, envelope, `external_query_${sourceId}`);
+        updatedEvidence = applyEvidence(
+          updatedEvidence,
+          envelope,
+          `external_query_${sourceId}`,
+        );
         functionResponses.push(buildFunctionResponse(call.name, envelope));
       }
-
     } catch (toolError: any) {
       logger.error("ai.node.runTools.unexpected_error", {
         tool: call.name,
@@ -131,12 +164,13 @@ export async function runToolsNode(
 
   return {
     // Append tool results as a user-role turn for the next Gemini call explicitly
-    contents: functionResponses.length > 0 
-      ? [...state.contents, { role: "user", parts: functionResponses }] 
-      : state.contents,
-    evidence:         updatedEvidence,
+    contents:
+      functionResponses.length > 0
+        ? [...state.contents, { role: "user", parts: functionResponses }]
+        : state.contents,
+    evidence: updatedEvidence,
     hadToolExecution: true,
-    functionCalls:    [], // Clear for next turn
+    functionCalls: [], // Clear for next turn
   };
 }
 
@@ -155,10 +189,18 @@ function applyEvidence(
   const updated = { ...evidence };
 
   switch (envelope.verification) {
-    case "verified":   updated.verifiedActions   = [...evidence.verifiedActions,   actionType]; break;
-    case "unverified": updated.unverifiedActions = [...evidence.unverifiedActions, actionType]; break;
-    case "failed":     updated.failedActions     = [...evidence.failedActions,     actionType]; break;
-    default:           updated.unknownActions    = [...evidence.unknownActions,    actionType]; break;
+    case "verified":
+      updated.verifiedActions = [...evidence.verifiedActions, actionType];
+      break;
+    case "unverified":
+      updated.unverifiedActions = [...evidence.unverifiedActions, actionType];
+      break;
+    case "failed":
+      updated.failedActions = [...evidence.failedActions, actionType];
+      break;
+    default:
+      updated.unknownActions = [...evidence.unknownActions, actionType];
+      break;
   }
   return updated;
 }

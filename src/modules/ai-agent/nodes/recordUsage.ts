@@ -7,9 +7,9 @@
  * This is the terminal node. After this, the graph exits and the
  * decision is returned to the caller (businessChatReply.service.ts).
  */
-import { logger } from "../../../utils/logger";
-import { recordAiUsage } from "../../billing.service";
-import type { AgentStateType } from "../agentState";
+import { logger } from "@utils/logger";
+import { recordAiUsage } from "@modules/billing/billing.service";
+import type { AgentStateType } from "@modules/ai-agent/core/agentState";
 
 export async function recordUsageNode(
   state: AgentStateType,
@@ -20,17 +20,17 @@ export async function recordUsageNode(
     await recordAiUsage({
       userId,
       businessProfileId,
-      modelName:        sessionStats.modelName,
-      promptTokens:     sessionStats.promptTokens,
+      modelName: sessionStats.modelName,
+      promptTokens: sessionStats.promptTokens,
       completionTokens: sessionStats.completionTokens,
-      groundingCalls:   sessionStats.groundingCalls,
-      operation:        `chat_${channel || "direct"}`,
+      groundingCalls: sessionStats.groundingCalls,
+      operation: `chat_${channel || "direct"}`,
     });
 
     logger.info("ai.node.recordUsage.success", {
       businessProfileId,
-      model:            sessionStats.modelName,
-      promptTokens:     sessionStats.promptTokens,
+      model: sessionStats.modelName,
+      promptTokens: sessionStats.promptTokens,
       completionTokens: sessionStats.completionTokens,
     });
   } catch (billingError: any) {

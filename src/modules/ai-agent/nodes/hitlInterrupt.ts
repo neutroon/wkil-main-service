@@ -14,8 +14,8 @@
  * When responseMode === "AUTO", this node is a transparent pass-through.
  */
 import { interrupt } from "@langchain/langgraph";
-import { logger } from "../../../utils/logger";
-import type { AgentStateType } from "../agentState";
+import { logger } from "@utils/logger";
+import type { AgentStateType } from "../core/agentState";
 
 export async function hitlInterruptNode(
   state: AgentStateType,
@@ -61,3 +61,6 @@ export async function hitlInterruptNode(
     pendingHumanApproval: false,
   };
 }
+
+
+

@@ -1,16 +1,16 @@
 import { Request, Response } from "express";
 import { randomUUID } from "crypto";
-import prisma from "../../config/prisma";
-import { logger } from "../../utils/logger";
-import { decryptFacebookSecret } from "../../utils/tokenCrypto";
-import { encryptFacebookSecret } from "../../utils/tokenCrypto";
-import { cache } from "../../utils/cache";
-import { env } from "../../config/env";
+import prisma from "@config/prisma";
+import { logger } from "@utils/logger";
+import { decryptFacebookSecret } from "@modules/auth/core/tokenCrypto";
+import { encryptFacebookSecret } from "@modules/auth/core/tokenCrypto";
+import { cache } from "@utils/cache";
+import { env } from "@config/env";
 import { z } from "zod";
-import { AppError } from "../../middlewares/errorHandler.middleware";
-import { redisClient } from "../../config/redis";
-import { enqueueMetaJob } from "../../queues/meta.queue";
-import { verifyMetaWebhookSignature } from "../../utils/metaWebhook";
+import { AppError } from "@middlewares/errorHandler.middleware";
+import { redisClient } from "@config/redis";
+import { enqueueMetaJob } from "../core/meta.queue";
+import { verifyMetaWebhookSignature } from "../core/metaWebhook";
 import {
   exchangeCodeForToken,
   discoverWabaAccounts,
@@ -18,21 +18,21 @@ import {
   unsubscribeWebhook,
   saveWhatsAppAccount,
   adminTransferAccount,
-} from "../../services/meta/whatsappOauth.service";
+} from "./whatsappOauth.service";
 import {
   listWhatsAppConversations,
   listConversationMessages,
   saveMessage,
-} from "../../services/meta/conversation.service";
+} from "../core/conversation.service";
 import {
   sendWhatsAppReply,
   sendWhatsAppTemplate,
   listWhatsAppTemplates,
-} from "../../services/meta/whatsapp.service";
-import { uploadWhatsAppMedia } from "../../services/meta/metaUpload.service";
-import { sendWhatsAppMedia } from "../../services/meta/whatsapp.service";
-import { invalidateWhatsAppAccountCache } from "../../services/meta/webhookCache.service";
-import { getAuthorizedConversation } from "../../routes/meta/conversations.routes";
+} from "./whatsapp.service";
+import { uploadWhatsAppMedia } from "../core/metaUpload.service";
+import { sendWhatsAppMedia } from "./whatsapp.service";
+import { invalidateWhatsAppAccountCache } from "../core/webhookCache.service";
+import { getAuthorizedConversation } from "../../inbox/inbox.routes";
 
 const isDev = env.NODE_ENV !== "production";
 const OAUTH_EXCHANGE_REF_TTL_SEC = 10 * 60; // 10 minutes
@@ -549,3 +549,12 @@ export class WhatsAppController {
 }
 
 export const whatsappController = new WhatsAppController();
+
+
+
+
+
+
+
+
+

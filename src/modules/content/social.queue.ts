@@ -1,5 +1,5 @@
 import { Queue } from "bullmq";
-import { bullConnection } from "../config/redis";
+import { bullConnection } from "@config/redis";
 
 /**
  * Enterprise-Grade Social Media Publishing Queue.
@@ -31,3 +31,5 @@ export interface SocialPublishJob {
   platform: string;
   businessProfileId: number;
 }
+
+

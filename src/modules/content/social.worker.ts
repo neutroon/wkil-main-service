@@ -1,10 +1,10 @@
 import { Worker, Job } from "bullmq";
-import { bullConnection } from "../config/redis";
-import prisma from "../config/prisma";
-import { createPost } from "../services/meta/facebook.service";
-import { logger } from "../utils/logger";
-import { SocialPublishJob } from "../queues/social.queue";
-import { AppError } from "../middlewares/errorHandler.middleware";
+import { bullConnection } from "@config/redis";
+import prisma from "@config/prisma";
+import { createPost } from "../meta/facebook/facebook.service";
+import { logger } from "@utils/logger";
+import { SocialPublishJob } from "./social.queue";
+import { AppError } from "@middlewares/errorHandler.middleware";
 
 /**
  * Enterprise-Grade Social Media Worker.
@@ -92,3 +92,8 @@ socialWorker.on("completed", (job) => {
 socialWorker.on("failed", (job, err) => {
   logger.error("social_worker.job_failed_permanently", { jobId: job?.id, error: err.message });
 });
+
+
+
+
+

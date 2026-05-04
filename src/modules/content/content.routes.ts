@@ -1,19 +1,19 @@
 import { Router, Request, Response } from "express";
-import { generatePostContent } from "../services/content.service";
-import { generatePostExecution } from "../services/contentPlan.service";
-import { authenticateToken } from "../middlewares/auth.middleware";
-import { contentLimiter } from "../middlewares/rateLimit.middleware";
-import prisma from "../config/prisma";
-import upload from "../config/upload";
-import { validate } from "../middlewares/validate.middleware";
+import { generatePostContent } from "./content.service";
+import { generatePostExecution } from "./contentPlan.service";
+import { authenticateToken } from "@modules/auth/core/auth.middleware";
+import { contentLimiter } from "@middlewares/rateLimit.middleware";
+import prisma from "@config/prisma";
+import upload from "@modules/media/upload.config";
+import { validate } from "@middlewares/validate.middleware";
 import {
   generatePostSchema,
   generateStrategySchema,
   approvePostSchema,
   contentIdParamSchema,
   planPostIdParamSchema,
-} from "../validations/content.validation";
-import { AppError } from "../middlewares/errorHandler.middleware";
+} from "./content.validation";
+import { AppError } from "@middlewares/errorHandler.middleware";
 
 const contentRoutes = Router();
 
@@ -103,7 +103,7 @@ contentRoutes.post(
     }
 
     const generator = (
-      await import("../services/contentPlan.service")
+      await import("./contentPlan.service")
     ).generateContentStrategyStream({
       businessProfileId: targetProfileId,
       userId,
@@ -171,7 +171,7 @@ contentRoutes.patch(
     });
 
     if (!manual && updated.scheduledAt) {
-      const { socialQueue } = await import("../queues/social.queue");
+      const { socialQueue } = await import("../content/social.queue");
       const delay = Math.max(
         0,
         new Date(updated.scheduledAt).getTime() - Date.now(),
@@ -300,3 +300,12 @@ contentRoutes.post(
 );
 
 export default contentRoutes;
+
+
+
+
+
+
+
+
+

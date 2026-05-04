@@ -1,9 +1,9 @@
-import { generateContent, generateContentStream } from "../config/gemini";
-import { recordAiUsage, assertQuotaAvailable } from "./billing.service";
-import { logger } from "../utils/logger";
-import { retrieveRelevantChunks } from "../rag/rag.service";
-import prisma from "../config/prisma";
-import { AppError } from "../middlewares/errorHandler.middleware";
+import { generateContent, generateContentStream } from "@modules/ai-agent/gemini";
+import { recordAiUsage, assertQuotaAvailable } from "../billing/billing.service";
+import { logger } from "@utils/logger";
+import { retrieveRelevantChunks } from "../ai-agent/rag/rag.service";
+import prisma from "@config/prisma";
+import { AppError } from "@middlewares/errorHandler.middleware";
 
 export interface BriefingInput {
   businessProfileId: number;
@@ -611,3 +611,7 @@ ${schemaInstruct}
   throw outerErr;
 }
 }
+
+
+
+

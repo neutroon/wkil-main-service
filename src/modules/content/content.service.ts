@@ -1,7 +1,7 @@
-import { generateContent } from "../config/gemini";
-import { imageModel } from "../config/vertexai";
-import cloudinary from "../config/cloudinary";
-import { AppError } from "../middlewares/errorHandler.middleware";
+import { generateContent } from "@modules/ai-agent/gemini";
+import { imageModel } from "@modules/ai-agent/vertexai.config";
+import cloudinary from "@modules/media/cloudinary.config";
+import { AppError } from "@middlewares/errorHandler.middleware";
 
 export interface ContentGenerationRequest {
   topic: string;
@@ -246,3 +246,7 @@ async function uploadBufferToCloudinary(
     uploadStream.end(buffer);
   });
 }
+
+
+
+

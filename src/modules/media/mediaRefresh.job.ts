@@ -1,6 +1,9 @@
-import prisma from "../config/prisma";
-import { enqueueMediaSyncJob, metaExpressQueue } from "../queues/meta.queue";
-import { logger } from "../utils/logger";
+import prisma from "@config/prisma";
+import {
+  enqueueMediaSyncJob,
+  metaExpressQueue,
+} from "@modules/meta/core/meta.queue";
+import { logger } from "@utils/logger";
 
 /**
  * Scans for expiring media and enqueues sync jobs.
@@ -33,7 +36,9 @@ export async function processMediaRefresh() {
       return;
     }
 
-    logger.info("media.refresh_job.dispatching_to_queue", { assetCount: assetIds.length });
+    logger.info("media.refresh_job.dispatching_to_queue", {
+      assetCount: assetIds.length,
+    });
 
     // Mark expiring mappings as failed/pending for safety
     await prisma.businessProfileMediaSync.updateMany({
@@ -51,7 +56,10 @@ export async function processMediaRefresh() {
         await enqueueMediaSyncJob(assetId);
         logger.info("media.refresh_job.dispatched", { assetId });
       } catch (err: any) {
-        logger.error("media.refresh_job.dispatch_failed", { assetId, error: err.message });
+        logger.error("media.refresh_job.dispatch_failed", {
+          assetId,
+          error: err.message,
+        });
       }
     }
 
@@ -75,8 +83,10 @@ export async function startMediaRefreshJob() {
       repeat: {
         pattern: "0 3 * * *",
       },
-    }
+    },
   );
 
-  logger.info("media.refresh_job.scheduled", { schedule: "Daily at 03:00 UTC (BullMQ)" });
+  logger.info("media.refresh_job.scheduled", {
+    schedule: "Daily at 03:00 UTC (BullMQ)",
+  });
 }

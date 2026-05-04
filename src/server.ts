@@ -1,17 +1,17 @@
-import { env } from "./config/env";
+import { env } from "@config/env";
 import { createServer } from "http";
 import app from "./app";
-import { initSocket } from "./utils/socket";
+import { initSocket } from "@modules/realtime/socket";
 
 import { 
   startMetaQueue, 
   expressWorker, 
   productionWorker 
-} from "./queues/meta.queue";
-import { startMediaRefreshJob } from "./jobs/mediaRefresh.job";
-import { socialWorker } from "./workers/social.worker"; 
-import { logger } from "./utils/logger";
-import prisma from "./config/prisma";
+} from "@modules/meta/core/meta.queue";
+import { startMediaRefreshJob } from "@modules/media/mediaRefresh.job";
+import { socialWorker } from "@modules/content/social.worker"; 
+import { logger } from "@utils/logger";
+import prisma from "@config/prisma";
 
 const { PORT } = env;
 
@@ -84,3 +84,7 @@ process.on("uncaughtException", (err: any) => {
   });
   gracefulShutdown("UNCAUGHT_EXCEPTION");
 });
+
+
+
+

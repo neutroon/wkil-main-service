@@ -1,18 +1,18 @@
-import prisma from "../../config/prisma";
-import { logger } from "../../utils/logger";
+import prisma from "@config/prisma";
+import { logger } from "@utils/logger";
 import {
   getOrCreateConversation,
   getConversationHistory,
   saveMessage,
-} from "../meta/conversation.service";
-import { computeBusinessChatReply } from "../chat/businessChatReply.service";
-import { AiRoutingDecision } from "../ai/aiEngine.utils";
+} from "../../meta/core/conversation.service";
+import { computeBusinessChatReply } from "../../ai-agent/chat/businessChatReply.service";
+import { AiRoutingDecision } from "../../ai-agent/core/aiEngine.utils";
 import {
   historyToLlmTurns,
   toPromptMessages,
-} from "../chat/conversationTurns";
+} from "../../ai-agent/chat/conversationTurns";
 import type { WidgetInstall } from "@prisma/client";
-import { AppError } from "../../middlewares/errorHandler.middleware";
+import { AppError } from "@middlewares/errorHandler.middleware";
 
 
 
@@ -92,7 +92,7 @@ export async function processWidgetChatMessage(params: {
       });
       botMsg.content = `Internal Technical Failure: ${reply.reasoning}`;
 
-      const { syncSystemError } = await import("../socketSync.service");
+      const { syncSystemError } = await import("@modules/realtime/socketSync.service");
       syncSystemError({
         businessProfileId: install.businessProfileId,
         conversationId: conversation.id,
@@ -118,7 +118,7 @@ export async function processWidgetChatMessage(params: {
     // Resolve attachment for web delivery if AI included one
     let attachmentForWidget: { url: string; type: string; caption?: string | null } | null = null;
     if (reply.attachment?.assetName) {
-      const { resolveAssetForChannel } = await import("../../services/media/mediaLibrary.service");
+      const { resolveAssetForChannel } = await import("../../media/services/mediaLibrary.service");
       const resolved = await resolveAssetForChannel(reply.attachment.assetName, install.businessProfileId, "web");
       if (resolved?.url) {
         attachmentForWidget = { url: resolved.url, type: resolved.mediaType, caption: reply.attachment.caption ?? null };
@@ -195,7 +195,7 @@ export async function* processWidgetChatStreaming(params: {
     return;
   }
 
-  const { computeBusinessChatStreaming } = await import("../chat/businessChatReply.service");
+  const { computeBusinessChatStreaming } = await import("../../ai-agent/chat/businessChatReply.service");
   
   // Yield the conversation ID so the client can save it
   yield { type: "conversation_id", data: conversation.id };
@@ -212,4 +212,11 @@ export async function* processWidgetChatStreaming(params: {
     yield event;
   }
 }
+
+
+
+
+
+
+
 

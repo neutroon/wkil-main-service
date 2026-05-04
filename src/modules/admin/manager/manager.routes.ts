@@ -10,21 +10,21 @@ import {
   assignUserToManagerController,
   getAllUserAssignmentsController,
   removeUserAssignmentController,
-} from "../controllers/manager.controller";
+} from "./manager.controller";
 import {
   authenticateToken,
   requireAdmin,
   requireManagerAccess,
-} from "../middlewares/auth.middleware";
-import { validate } from "../middlewares/validate.middleware";
+} from "@modules/auth/core/auth.middleware";
+import { validate } from "@middlewares/validate.middleware";
 import {
   userAssignmentSchema,
   analyticsQuerySchema,
   idParamSchema,
-} from "../validations/manager.validation";
-import { registerSchema } from "../validations/auth.validation";
-import { managerLimiter } from "../middlewares/rateLimit.middleware";
-import { registerUser } from "../controllers/user.controller";
+} from "../manager/manager.validation";
+import { registerSchema } from "../../auth/core/auth.validation";
+import { managerLimiter } from "@middlewares/rateLimit.middleware";
+import { registerUser } from "../../auth/user/user.controller";
 
 const managerRoutes = Router();
 
@@ -103,3 +103,13 @@ managerRoutes.delete(
 );
 
 export default managerRoutes;
+
+
+
+
+
+
+
+
+
+

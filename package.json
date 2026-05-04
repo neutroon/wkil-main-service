@@ -70,6 +70,7 @@
     "tsc-alias": "^1.8.17",
     "tsconfig-paths": "^4.2.0",
     "typescript": "^5.9.2",
+    "vite-tsconfig-paths": "^6.1.1",
     "vitest": "^3.2.4"
   }
 }

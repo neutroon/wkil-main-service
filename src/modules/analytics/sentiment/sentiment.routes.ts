@@ -1,8 +1,8 @@
 import { Router, Request, Response } from "express";
-import { validate } from "../middlewares/validate.middleware";
-import { sentimentSchema } from "../validations/sentiment.validation";
-import { AppError } from "../middlewares/errorHandler.middleware";
-import { env } from "../config/env";
+import { validate } from "@middlewares/validate.middleware";
+import { sentimentSchema } from "./sentiment.validation";
+import { AppError } from "@middlewares/errorHandler.middleware";
+import { env } from "@config/env";
 
 // Environment variable for ML service
 const ML_SERVICE_URL =
@@ -46,3 +46,7 @@ router.post(
 );
 
 export default router;
+
+
+
+

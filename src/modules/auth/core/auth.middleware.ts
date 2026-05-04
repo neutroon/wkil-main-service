@@ -1,8 +1,8 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
-import prisma from "../config/prisma";
-import { AppError } from "./errorHandler.middleware";
-import { env } from "../config/env";
+import prisma from "@config/prisma";
+import { AppError } from "@middlewares/errorHandler.middleware";
+import { env } from "@config/env";
 
 const { JWT_SECRET, JWT_REFRESH_SECRET } = env;
 const ACCESS_TOKEN_EXPIRES_IN = "24h"; 
@@ -291,7 +291,7 @@ export const requireManagerAccess = async (
 
     // Managers can only manage assigned users
     if (user.role === "manager") {
-      const { canManageUser } = await import("../services/user.service");
+      const { canManageUser } = await import("../user/user.service");
       const canManage = await canManageUser(user.id, parseInt(userId));
 
       if (!canManage) {
@@ -339,3 +339,7 @@ export const requireVerified = (
   }
   next();
 };
+
+
+
+

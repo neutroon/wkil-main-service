@@ -1,13 +1,13 @@
 import { Router, Request, Response } from "express";
-import { internalClient } from "../../utils/apiClient";
+import { internalClient } from "@utils/apiClient";
 import {
   discoverStrategicLinks,
   extractBusinessIdentity,
-} from "../../services/ai.service";
-import { validate } from "../../middlewares/validate.middleware";
-import { websiteAnalysisSchema } from "../../validations/scraping.validation";
+} from "@modules/business/profile/ai.service";
+import { validate } from "@middlewares/validate.middleware";
+import { websiteAnalysisSchema } from "../scraping/scraping.validation";
 
-import { env } from "../../config/env";
+import { env } from "@config/env";
 
 const SCRAPING_SERVICE_URL = env.SCRAPING_SERVICE_URL || "https://scraper.pagespilot.com/api/scrape";
 
@@ -59,3 +59,8 @@ OnboardingRouter.post(
 );
 
 export default OnboardingRouter;
+
+
+
+
+

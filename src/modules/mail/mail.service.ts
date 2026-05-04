@@ -1,8 +1,8 @@
-import { mailer } from "../config/mail";
-import { logger } from "../utils/logger";
-import { AppError } from "../middlewares/errorHandler.middleware";
+import { mailer } from "./mail.config";
+import { logger } from "@utils/logger";
+import { AppError } from "@middlewares/errorHandler.middleware";
 
-import { env } from "../config/env";
+import { env } from "@config/env";
 
 const FRONTEND_URL = env.FRONTEND_URL;
 const MAIL_FROM = env.MAIL_FROM;
@@ -81,3 +81,6 @@ export const sendPasswordResetEmail = async (email: string, name: string, token:
     throw new AppError("Could not send password reset email", 502);
   }
 };
+
+
+

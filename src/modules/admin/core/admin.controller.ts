@@ -1,11 +1,11 @@
-import prisma from "../config/prisma";
-import { clearQuotaCache } from "../services/billing.service";
-import { createAdmin } from "../services/admin.service";
-import { createUser } from "../services/user.service";
+import prisma from "@config/prisma";
+import { clearQuotaCache } from "@modules/billing/billing.service";
+import { createAdmin } from "../core/admin.service";
+import { createUser } from "../../auth/user/user.service";
 import {
   getBillingMultiplier,
   updateBillingMultiplier,
-} from "../services/settings.service";
+} from "@modules/settings/settings.service";
 import { Request, Response } from "express";
 
 
@@ -83,3 +83,12 @@ export const updateBusinessUsage = async (req: Request, res: Response) => {
 };
 
 export { registerAdmin, createManager };
+
+
+
+
+
+
+
+
+

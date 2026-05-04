@@ -1,16 +1,16 @@
 import { GetObjectCommand } from "@aws-sdk/client-s3";
-import prisma from "../../config/prisma";
-import { logger } from "../../utils/logger";
-import { r2Client, R2_BUCKET } from "../../config/r2";
+import prisma from "@config/prisma";
+import { logger } from "@utils/logger";
+import { r2Client, R2_BUCKET } from "../r2";
 import { generateR2Key, uploadToR2 } from "./r2Storage.service";
 import {
   uploadWhatsAppMedia,
   uploadMessengerMedia,
-} from "../meta/metaUpload.service";
-import { decryptFacebookSecret } from "../../utils/tokenCrypto";
-import { enqueueMediaSyncJob } from "../../queues/meta.queue";
-import { syncMediaStatus } from "../socketSync.service";
-import { AppError } from "../../middlewares/errorHandler.middleware";
+} from "../../meta/core/metaUpload.service";
+import { decryptFacebookSecret } from "../../auth/core/tokenCrypto";
+import { enqueueMediaSyncJob } from "../../meta/core/meta.queue";
+import { syncMediaStatus } from "@modules/realtime/socketSync.service";
+import { AppError } from "@middlewares/errorHandler.middleware";
 
 // Allowed MIME types and their media type classifications
 const MIME_TO_MEDIA_TYPE: Record<string, "image" | "document" | "video"> = {
@@ -471,3 +471,11 @@ export async function updateMediaAssetMeta(
     data: updateData,
   });
 }
+
+
+
+
+
+
+
+

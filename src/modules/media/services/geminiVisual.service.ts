@@ -1,14 +1,14 @@
-import { generateVisualContent, generateContent } from "../../config/gemini";
+import { generateVisualContent, generateContent } from "../../ai-agent/gemini";
 import { createMediaAsset } from "./mediaLibrary.service";
-import { recordAiUsage, assertQuotaAvailable } from "../billing.service";
+import { recordAiUsage, assertQuotaAvailable } from "../../billing/billing.service";
 import { applyWatermark, WatermarkPosition } from "./watermark.service";
-import { logger } from "../../utils/logger";
-import prisma from "../../config/prisma";
-import { env } from "../../config/env";
-import { AppError } from "../../middlewares/errorHandler.middleware";
+import { logger } from "@utils/logger";
+import prisma from "@config/prisma";
+import { env } from "@config/env";
+import { AppError } from "@middlewares/errorHandler.middleware";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
-import { internalClient } from "../../utils/apiClient";
-import { r2Client, R2_BUCKET } from "../../config/r2";
+import { internalClient } from "@utils/apiClient";
+import { r2Client, R2_BUCKET } from "../r2";
 
 
 /**
@@ -327,3 +327,9 @@ export async function refineGeminiVisual(params: {
     throw err;
   }
 }
+
+
+
+
+
+

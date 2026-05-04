@@ -1,6 +1,6 @@
 import sharp from "sharp";
-import { logger } from "../../utils/logger";
-import { AppError } from "../../middlewares/errorHandler.middleware";
+import { logger } from "@utils/logger";
+import { AppError } from "@middlewares/errorHandler.middleware";
 
 export type WatermarkPosition = "TOP_LEFT" | "TOP_RIGHT" | "BOTTOM_LEFT" | "BOTTOM_RIGHT" | "CENTER";
 
@@ -95,3 +95,6 @@ export async function applyWatermark(params: {
     return imageBuffer;
   }
 }
+
+
+

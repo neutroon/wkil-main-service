@@ -1,8 +1,8 @@
 import { PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { randomUUID } from "crypto";
 import path from "path";
-import { r2Client, R2_BUCKET, R2_PUBLIC_URL } from "../../config/r2";
-import { logger } from "../../utils/logger";
+import { r2Client, R2_BUCKET, R2_PUBLIC_URL } from "../r2";
+import { logger } from "@utils/logger";
 
 /**
  * Generates a namespaced, collision-safe R2 key for a business asset.
@@ -57,3 +57,7 @@ export async function deleteFromR2(key: string): Promise<void> {
   );
   logger.info("r2.delete.success", { key });
 }
+
+
+
+

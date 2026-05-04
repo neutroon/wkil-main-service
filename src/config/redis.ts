@@ -1,6 +1,6 @@
 import { ConnectionOptions } from "bullmq";
 import Redis from "ioredis";
-import { logger } from "../utils/logger";
+import { logger } from "@utils/logger";
 import { env } from "./env";
 
 const REDIS_URL = env.REDIS_URL;
@@ -36,3 +36,4 @@ export const bullConnection: ConnectionOptions = {
     : undefined,
   maxRetriesPerRequest: null,
 };
+

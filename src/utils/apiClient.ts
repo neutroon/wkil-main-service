@@ -1,7 +1,7 @@
 import axios from "axios";
 import axiosRetry from "axios-retry";
-import { mapFacebookGraphError } from "./facebookGraphError";
-import { AppError } from "../middlewares/errorHandler.middleware";
+import { mapFacebookGraphError } from "@modules/meta/facebook/facebookGraphError";
+import { AppError } from "@middlewares/errorHandler.middleware";
 import { logger } from "./logger";
 
 /**
@@ -90,3 +90,8 @@ internalClient.interceptors.response.use(
     return Promise.reject(new AppError(message, 502));
   }
 );
+
+
+
+
+

@@ -1,10 +1,10 @@
-import { env } from "../config/env";
+import { env } from "@config/env";
 import { Server as SocketIOServer } from "socket.io";
 import { Server as HTTPServer } from "http";
 import { createAdapter } from "@socket.io/redis-adapter";
 import Redis from "ioredis";
-import { logger } from "./logger";
-import { AppError } from "../middlewares/errorHandler.middleware";
+import { logger } from "@utils/logger";
+import { AppError } from "@middlewares/errorHandler.middleware";
 
 let io: SocketIOServer | null = null;
 
@@ -89,3 +89,5 @@ export function emitToBusiness(businessProfileId: number, event: string, data: a
   if (!io) return;
   io.to(`business:${businessProfileId}`).emit(event, data);
 }
+
+

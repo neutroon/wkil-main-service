@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from "express";
-import prisma from "../config/prisma";
-import { env } from "../config/env";
+import prisma from "@config/prisma";
+import { env } from "@config/env";
 import type { WidgetInstall } from "@prisma/client";
 
 export function parseAllowedOrigins(value: unknown): string[] {
@@ -89,3 +89,5 @@ export function widgetInstallAndCors(
 ): void {
   void widgetInstallAndCorsImpl(req, res, next).catch(next);
 }
+
+

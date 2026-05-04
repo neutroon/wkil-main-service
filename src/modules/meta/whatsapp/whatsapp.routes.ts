@@ -1,13 +1,13 @@
 import { Router } from "express";
 import multer from "multer";
-import { authenticateToken, requireAdmin } from "../../middlewares/auth.middleware";
-import { validate } from "../../middlewares/validate.middleware";
-import { idParamSchema } from "../../validations/shared.validation";
-import { paginationSchema, idPaginationSchema } from "../../validations/shared.validation";
-import { sendMessageSchema } from "../../validations/conversation.validation";
-import { sendWhatsAppTemplateSchema } from "../../validations/meta.validation";
-import conversationsRoutes from "./conversations.routes";
-import { whatsappController } from "../../controllers/meta/whatsapp.controller";
+import { authenticateToken, requireAdmin } from "@modules/auth/core/auth.middleware";
+import { validate } from "@middlewares/validate.middleware";
+import { idParamSchema } from "@utils/shared.validation";
+import { paginationSchema, idPaginationSchema } from "@utils/shared.validation";
+import { sendMessageSchema } from "../core/conversation.validation";
+import { sendWhatsAppTemplateSchema } from "../core/meta.validation";
+import conversationsRoutes from "../../inbox/inbox.routes";
+import { whatsappController } from "./whatsapp.controller";
 
 const upload = multer({ 
   storage: multer.memoryStorage(), 
@@ -60,3 +60,11 @@ whatsappRoutes.get("/admin/users/:userId/accounts", authenticateToken, requireAd
 whatsappRoutes.post("/admin/transfer", authenticateToken, requireAdmin, (req, res) => whatsappController.adminTransfer(req, res));
 
 export default whatsappRoutes;
+
+
+
+
+
+
+
+

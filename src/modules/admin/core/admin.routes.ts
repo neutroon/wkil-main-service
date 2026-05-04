@@ -6,7 +6,7 @@ import {
   updateBillingSettings,
   resetBusinessUsage,
   updateBusinessUsage,
-} from "../controllers/admin.controller";
+} from "./admin.controller";
 import {
   getUsers,
   updateUser,
@@ -15,37 +15,37 @@ import {
   permanentlyDeleteUserController,
   getUserByIdController,
   registerUser,
-} from "../controllers/user.controller";
+} from "../../auth/user/user.controller";
 import {
   assignUserToManagerController,
   getAllUserAssignmentsController,
   removeUserAssignmentController,
-} from "../controllers/manager.controller";
+} from "../manager/manager.controller";
 import {
   authenticateToken,
   requireAdmin,
-} from "../middlewares/auth.middleware";
-import { validate } from "../middlewares/validate.middleware";
+} from "@modules/auth/core/auth.middleware";
+import { validate } from "@middlewares/validate.middleware";
 import { 
   createAdminManagerSchema,
   updateBillingSettingsSchema,
   updateBusinessUsageSchema,
   adminBusinessIdParamSchema
-} from "../validations/admin.validation";
+} from "../core/admin.validation";
 import { 
   registerUserSchema, 
   updateUserSchema, 
   userIdParamSchema, 
   userListQuerySchema 
-} from "../validations/user.validation";
-import { facebookAnalyticsSchema } from "../validations/facebook.validation";
-import { authLimiter, adminLimiter } from "../middlewares/rateLimit.middleware";
-import { getLeads } from "../controllers/lead.controller";
+} from "../../auth/user/user.validation";
+import { facebookAnalyticsSchema } from "../../meta/facebook/facebook.validation";
+import { authLimiter, adminLimiter } from "@middlewares/rateLimit.middleware";
+import { getLeads } from "../../business/lead/lead.controller";
 import {
   getAdminAnalytics,
   getUserFacebookAccounts,
   deactivateFacebookAccount,
-} from "../services/meta/facebook.service";
+} from "../../meta/facebook/facebook.service";
 
 const adminRoutes = Router();
 
@@ -150,3 +150,15 @@ adminRoutes.delete(
 );
 
 export default adminRoutes;
+
+
+
+
+
+
+
+
+
+
+
+

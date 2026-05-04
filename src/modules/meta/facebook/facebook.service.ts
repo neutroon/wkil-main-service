@@ -1,14 +1,14 @@
-import { metaClient } from "../../utils/apiClient";
-import prisma from "../../config/prisma";
-import { logger } from "../../utils/logger";
+import { metaClient } from "@utils/apiClient";
+import prisma from "@config/prisma";
+import { logger } from "@utils/logger";
 import {
   decryptFacebookSecret,
   encryptFacebookSecret,
-} from "../../utils/tokenCrypto";
-import { invalidateFacebookPageCache } from "./webhookCache.service";
-import { AppError } from "../../middlewares/errorHandler.middleware";
-import { cache } from "../../utils/cache";
-import { env } from "../../config/env";
+} from "@modules/auth/core/tokenCrypto";
+import { invalidateFacebookPageCache } from "../core/webhookCache.service";
+import { AppError } from "@middlewares/errorHandler.middleware";
+import { cache } from "@utils/cache";
+import { env } from "@config/env";
 
 const FB_API = env.FB_API_URL;
 
@@ -1232,3 +1232,9 @@ export const deactivateFacebookPage = async (
     throw new AppError("Failed to disconnect Facebook page", 500);
   }
 };
+
+
+
+
+
+

@@ -1,7 +1,7 @@
 import { Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 
-import { env } from "../config/env";
+import { env } from "@config/env";
 const JWT_SECRET = env.JWT_SECRET;
 
 /**
@@ -25,3 +25,4 @@ export const identifyUserForRateLimit = (req: any, res: Response, next: NextFunc
   }
   next();
 };
+

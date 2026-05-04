@@ -1,6 +1,6 @@
 import multer from "multer";
 import { CloudinaryStorage } from "multer-storage-cloudinary";
-import cloudinary from "./cloudinary";
+import cloudinary from "./cloudinary.config";
 
 const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
@@ -19,3 +19,4 @@ const upload = multer({
 });
 
 export default upload;
+

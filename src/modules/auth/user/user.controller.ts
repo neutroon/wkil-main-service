@@ -8,16 +8,16 @@ import {
   deactivateUser,
   reactivateUser,
   permanentlyDeleteUser,
-} from "../services/user.service";
-import * as authService from "../services/auth.service";
+} from "../user/user.service";
+import * as authService from "../core/auth.service";
 import {
   setAuthCookies,
   clearAuthCookies,
   generateAccessToken,
   generateRefreshToken,
-} from "../middlewares/auth.middleware";
-import { logger } from "../utils/logger";
-import { AppError } from "../middlewares/errorHandler.middleware";
+} from "@modules/auth/core/auth.middleware";
+import { logger } from "@utils/logger";
+import { AppError } from "@middlewares/errorHandler.middleware";
 
 export const registerUser = async (req: Request, res: Response) => {
   const { name, email, password, role } = req.body;
@@ -158,3 +158,10 @@ export const logoutUser = async (req: Request, res: Response) => {
   clearAuthCookies(res);
   res.status(200).json({ message: "Logged out successfully" });
 };
+
+
+
+
+
+
+

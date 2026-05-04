@@ -1,45 +1,45 @@
 import express from "express";
-import { env } from "./config/env";
+import { env } from "@config/env";
 import cors from "cors";
 import cookieParser from "cookie-parser";
-import adminRoutes from "./routes/admin.routes";
-import managerRoutes from "./routes/manager.routes";
-import leadRoutes from "./routes/lead.routes";
-import facebookRoutes from "./routes/meta/facebook.routes";
-import userRoutes from "./routes/user.routes";
-import contentRoutes from "./routes/content.routes";
+import adminRoutes from "@modules/admin/core/admin.routes";
+import managerRoutes from "@modules/admin/manager/manager.routes";
+import leadRoutes from "@modules/business/lead/lead.routes";
+import facebookRoutes from "@modules/meta/facebook/facebook.routes";
+import userRoutes from "@modules/auth/user/user.routes";
+import contentRoutes from "@modules/content/content.routes";
 import {
   securityHeaders,
   corsOptions,
   sanitizeRequest,
   requestSizeLimit,
-} from "./middlewares/security.middleware";
+} from "@middlewares/security.middleware";
 import {
   generalLimiter,
   messengerWebhookLimiter,
   whatsappWebhookLimiter,
   widgetChatLimiter,
-} from "./middlewares/rateLimit.middleware";
-import authRoutes from "./routes/auth.routes";
-import dashboardRoutes from "./routes/dashboard.routes";
+} from "@middlewares/rateLimit.middleware";
+import authRoutes from "@modules/auth/core/auth.routes";
+import dashboardRoutes from "@modules/analytics/dashboard/dashboard.routes";
 import os from "os";
-import scrapeRoutes from "./routes/scraping/scrape";
-import businessProfileRoutes from "./routes/businessProfile.routes";
-import messengerRoutes from "./routes/meta/messenger.routes";
-import whatsappRoutes from "./routes/meta/whatsapp.routes";
-import crmRoutes from "./routes/crm.routes";
-import externalDataSourceRoutes from "./routes/externalDataSource.routes";
-import widgetPublicRoutes from "./routes/widget.public.routes";
-import widgetRoutes from "./routes/widget.routes";
-import aiAnalyticsRoutes from "./routes/aiAnalytics.routes";
-import conversationsRoutes from "./routes/meta/conversations.routes";
-import mediaRoutes from "./routes/meta/media.routes";
-import mediaLibraryRoutes from "./routes/media.routes";
-import { identifyUserForRateLimit } from "./middlewares/identify.middleware";
-import { errorHandler } from "./middlewares/errorHandler.middleware";
-import prisma from "./config/prisma";
-import { logger } from "./utils/logger";
-import missionControlRouter from "./routes/admin/missionControl";
+import scrapeRoutes from "@modules/scraping/scrape";
+import businessProfileRoutes from "@modules/business/profile/business.routes";
+import messengerRoutes from "@modules/meta/messenger/messenger.routes";
+import whatsappRoutes from "@modules/meta/whatsapp/whatsapp.routes";
+import crmRoutes from "@modules/integrations/crm/crm.routes";
+import externalDataSourceRoutes from "@modules/integrations/external/external.routes";
+import widgetPublicRoutes from "@modules/widget/widget.public.routes";
+import widgetRoutes from "@modules/widget/widget.routes";
+import aiAnalyticsRoutes from "@modules/analytics/ai/analytics.routes";
+import conversationsRoutes from "@modules/inbox/inbox.routes";
+import mediaRoutes from "@modules/media/meta-media.routes";
+import mediaLibraryRoutes from "@modules/media/media.routes";
+import { identifyUserForRateLimit } from "@middlewares/identify.middleware";
+import { errorHandler } from "@middlewares/errorHandler.middleware";
+import prisma from "@config/prisma";
+import { logger } from "@utils/logger";
+import missionControlRouter from "@modules/admin/mission-control/missionControl.routes";
 
 const app = express();
 
@@ -102,7 +102,7 @@ app.use(
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
-import { authenticateToken, requireVerified } from "./middlewares/auth.middleware";
+import { authenticateToken, requireVerified } from "@modules/auth/core/auth.middleware";
 
 // ── Routes ───────────────────────────────────────────────────────────────────
 app.use("/v1/auth", authRoutes);
@@ -163,3 +163,9 @@ app.get("/v1/health", async (_req, res) => {
 app.use(errorHandler);
 
 export default app;
+
+
+
+
+
+

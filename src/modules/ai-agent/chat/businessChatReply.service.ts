@@ -1,21 +1,22 @@
 import type { Prisma } from "@prisma/client";
 import type { Tool } from "@google/genai";
-import { retrieveRelevantChunks } from "../../rag/rag.service";
-import { buildSystemPrompt } from "../meta/prompt.service";
+import { retrieveRelevantChunks } from "../rag/rag.service";
+import { buildSystemPrompt } from "../../meta/core/prompt.service";
 import {
   buildCaptureLeadTool,
   buildExternalQueryTools,
-} from "../../config/gemini";
-import { runAgentGraph } from "../ai/agentGraph";
-import type { AiRoutingDecision } from "../ai/aiEngine.utils";
-import prisma from "../../config/prisma";
+} from "@modules/ai-agent/gemini";
+import { runAgentGraph } from "@modules/ai-agent/core/agentGraph";
+import type { AiRoutingDecision } from "@modules/ai-agent/core/aiEngine.utils";
+import prisma from "@config/prisma";
 export type { AiRoutingDecision };
 
 export const NOT_INGESTED_REPLY: AiRoutingDecision = {
   action: "HANDOFF_TO_HUMAN",
   handoffCategory: "MISSING_KNOWLEDGE",
   reasoning: "Business profile knowledge base (RAG) is not yet ingested.",
-  content: "We're still setting up our assistant. Please contact us directly for now - we'll be with you shortly."
+  content:
+    "We're still setting up our assistant. Please contact us directly for now - we'll be with you shortly.",
 };
 
 export type BusinessProfileForChat = Prisma.BusinessProfileGetPayload<{
@@ -66,7 +67,8 @@ export async function prepareAgentParams(params: {
       identity: businessProfile.identity || "",
       voice: businessProfile.voice || "Professional",
       tone: businessProfile.tone || "Friendly",
-      leadCaptureInstructions: businessProfile.leadCaptureInstructions || undefined,
+      leadCaptureInstructions:
+        businessProfile.leadCaptureInstructions || undefined,
     },
     context: relevantChunks,
     channel: channel as any,
@@ -75,7 +77,11 @@ export async function prepareAgentParams(params: {
   });
 
   const mediaAssets = await prisma.businessProfileMedia.findMany({
-    where: { businessProfileId: businessProfile.id, isActive: true, deletedAt: null },
+    where: {
+      businessProfileId: businessProfile.id,
+      isActive: true,
+      deletedAt: null,
+    },
     select: { name: true, mediaType: true, instructions: true },
   });
 
@@ -91,7 +97,7 @@ export async function prepareAgentParams(params: {
     businessProfile.crmIntegrations.length > 0
       ? buildCaptureLeadTool(
           businessProfile.crmIntegrations[0].fieldMapping,
-          businessProfile.leadCaptureInstructions || undefined
+          businessProfile.leadCaptureInstructions || undefined,
         )
       : [];
   const externalTools = buildExternalQueryTools(
@@ -114,15 +120,15 @@ export async function prepareAgentParams(params: {
     graphParams: {
       systemInstruction: finalSystemInstruction,
       historyTurns,
-      customerMessage:   messageText,
-      tools:             finalTools,
+      customerMessage: messageText,
+      tools: finalTools,
       businessProfileId: businessProfile.id,
       customerPhone,
       channel,
-      mediaInfo:         params.mediaInfo,
+      mediaInfo: params.mediaInfo,
       conversationId,
       responseMode,
-    }
+    },
   };
 }
 
@@ -164,7 +170,7 @@ export async function* computeBusinessChatStreaming(params: {
     return;
   }
 
-  const { streamAgentGraph } = await import("../ai/streamAgent");
+  const { streamAgentGraph } = await import("../core/streamAgent");
   for await (const event of streamAgentGraph(prep.graphParams!)) {
     yield event;
   }

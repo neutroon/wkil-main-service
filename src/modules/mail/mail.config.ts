@@ -1,6 +1,6 @@
 import nodemailer from "nodemailer";
-import { logger } from "../utils/logger";
-import { env } from "./env";
+import { logger } from "@utils/logger";
+import { env } from "@config/env";
 
 /**
  * Production-grade SMTP Configuration
@@ -25,3 +25,5 @@ mailer.verify((error, success) => {
     logger.info("SMTP Connection established successfully");
   }
 });
+
+

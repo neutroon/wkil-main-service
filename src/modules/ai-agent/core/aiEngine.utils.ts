@@ -1,17 +1,5 @@
 import { Tool } from "@google/genai";
-import { logger } from "../../utils/logger";
-import {
-  genAI,
-  MESSENGER_SAFETY_SETTINGS,
-  aiRoutingSchema,
-  executeWithFallback,
-} from "../../config/gemini";
-import { pushLeadToCrm } from "../crm/crm.service";
-import { executeExternalQuery } from "../external/externalData.service";
-import { recordAiUsage, assertQuotaAvailable } from "../billing.service";
-import prisma from "../../config/prisma";
-import { AppError } from "../../middlewares/errorHandler.middleware";
-
+import { logger } from "@utils/logger";
 type VerificationStatus = "verified" | "unverified" | "failed";
 
 type ToolResultEnvelope = {
@@ -165,7 +153,9 @@ export function sanitizeAiText(text: string): string {
   // Catch phrases or words repeated 3+ times (e.g., "Hello Hello Hello")
   const phrasePattern = /(\b.+?\b)\1{3,}/gi;
   if (phrasePattern.test(sanitized)) {
-    logger.warn("ai.engine.stutter_detected", { original: sanitized.substring(0, 100) });
+    logger.warn("ai.engine.stutter_detected", {
+      original: sanitized.substring(0, 100),
+    });
     // Keep the first execution of the pattern, discard the rest
     sanitized = sanitized.replace(phrasePattern, "$1");
   }
@@ -173,7 +163,9 @@ export function sanitizeAiText(text: string): string {
   // 3. HEAL: Hard-Truncate extreme length (Backup guard)
   // Most social replies shouldn't exceed 2000 chars unless explicitly long-form
   if (sanitized.length > 5000) {
-    logger.warn("ai.engine.excessive_length_truncated", { length: sanitized.length });
+    logger.warn("ai.engine.excessive_length_truncated", {
+      length: sanitized.length,
+    });
     sanitized = sanitized.substring(0, 2000) + "...";
   }
 
@@ -211,14 +203,18 @@ export function repairAndParseAiResponse(text: string): AiRoutingDecision {
       const action = cleaned.match(/"action"\s*:\s*"([^"]+)"/)?.[1];
       const reasoning = cleaned.match(/"reasoning"\s*:\s*"([^"]+)"/)?.[1] || "";
       const content = cleaned.match(/"content"\s*:\s*"([^"]+)"/)?.[1] || "";
-      const publicContent = cleaned.match(/"publicContent"\s*:\s*"([^"]+)"/)?.[1] || "";
-      const privateContent = cleaned.match(/"privateContent"\s*:\s*"([^"]+)"/)?.[1] || "";
+      const publicContent =
+        cleaned.match(/"publicContent"\s*:\s*"([^"]+)"/)?.[1] || "";
+      const privateContent =
+        cleaned.match(/"privateContent"\s*:\s*"([^"]+)"/)?.[1] || "";
       const intent = cleaned.match(/"intent"\s*:\s*"([^"]+)"/)?.[1];
-      
+
       let attachment = null;
       const attachmentRaw = cleaned.match(/"attachment"\s*:\s*({[^}]+})/)?.[1];
       if (attachmentRaw) {
-        try { attachment = JSON.parse(attachmentRaw); } catch(e) {}
+        try {
+          attachment = JSON.parse(attachmentRaw);
+        } catch (e) {}
       }
 
       decision = {
@@ -248,16 +244,17 @@ export function repairAndParseAiResponse(text: string): AiRoutingDecision {
   // If the intent is SALES_DM but the AI forgot the private text, we MUST repair it.
   if (finalDecision.intent === "SALES_DM" && !finalDecision.privateContent) {
     if (finalDecision.publicContent || finalDecision.content) {
-      logger.warn("ai.engine.delivery_gap_repaired", { 
+      logger.warn("ai.engine.delivery_gap_repaired", {
         intent: finalDecision.intent,
-        reasoning: finalDecision.reasoning 
+        reasoning: finalDecision.reasoning,
       });
       // Append a CTA in Arabic to ensure divergence and brand voice
       const base = finalDecision.publicContent || finalDecision.content;
       finalDecision.privateContent = `${base}\n\nأهلاً بك! ممكن تشاركنا رقم تليفونك أو طلباتك عشان فريقنا يقدر يتواصل معاك بالتفاصيل اللي محتاجها؟`;
     } else {
       // Hard fallback if everything is empty but intent is sales
-      finalDecision.privateContent = "أهلاً بك! هبعتلك كل التفاصيل اللي طلبتها دلوقتي. إزاي أقدر أساعدك؟";
+      finalDecision.privateContent =
+        "أهلاً بك! هبعتلك كل التفاصيل اللي طلبتها دلوقتي. إزاي أقدر أساعدك؟";
     }
   }
 
@@ -267,7 +264,7 @@ export function repairAndParseAiResponse(text: string): AiRoutingDecision {
 export function hasExcessiveRepetition(text: string): boolean {
   if (!text || text.length < 50) return false;
   const sanitized = sanitizeAiText(text);
-  
+
   // 1. Character-level loops (aaaaa)
   const charPattern = /(.)\1{9,}/;
   if (charPattern.test(sanitized)) return true;
@@ -280,7 +277,7 @@ export function hasExcessiveRepetition(text: string): boolean {
   const minBlock = 50;
   const maxBlock = 100;
   const checkLen = Math.min(maxBlock, Math.floor(sanitized.length / 2));
-  
+
   for (let len = minBlock; len <= checkLen; len++) {
     for (let i = 0; i <= sanitized.length - len * 2; i++) {
       const chunk = sanitized.substring(i, i + len);
@@ -304,4 +301,3 @@ export interface AiRoutingDecision {
   privateContent?: string | null;
   attachment?: { assetName: string; caption?: string | null } | null;
 }
-

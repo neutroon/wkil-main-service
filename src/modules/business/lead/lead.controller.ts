@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { createLead, getAllLeads } from "../services/lead.service";
+import { createLead, getAllLeads } from "../lead/lead.service";
 
 const addLead = async (req: Request, res: Response) => {
   const { name, email, url, message } = req.body;
@@ -13,3 +13,6 @@ const getLeads = async (req: Request, res: Response) => {
 };
 
 export { addLead, getLeads };
+
+
+

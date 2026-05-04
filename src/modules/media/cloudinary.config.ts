@@ -1,6 +1,6 @@
 import { v2 as cloudinary } from "cloudinary";
-import { logger } from "../utils/logger";
-import { env } from "./env";
+import { logger } from "@utils/logger";
+import { env } from "@config/env";
 
 // Debug: Log environment variables
 logger.info("Cloudinary Config:");
@@ -15,3 +15,5 @@ cloudinary.config({
 });
 
 export default cloudinary;
+
+

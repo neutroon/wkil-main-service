@@ -6,11 +6,11 @@ import {
   Tool,
   Schema,
 } from "@google/genai";
-import { logger } from "../utils/logger";
-import { AppError } from "../middlewares/errorHandler.middleware";
+import { logger } from "@utils/logger";
+import { AppError } from "@middlewares/errorHandler.middleware";
 
 import { wrapGemini } from "langsmith/wrappers/gemini";
-import { env } from "../config/env";
+import { env } from "@config/env";
 
 const { GEMINI_API_KEY } = env;
 
@@ -637,3 +637,5 @@ export async function generateVisualContent(params: {
 }
 
 export { generateContent, generateContentStream, embedTexts, embedQuery };
+
+

@@ -43,7 +43,11 @@ export type MetaJobType =
   | "media_sync"
   | "media_refresh_scanner"
   | "status_update"
-  | "typing_indicator";
+  | "typing_indicator"
+  | "sync_facebook_pages"
+  | "webhook_subscription"
+  | "page_token_validation"
+  | "token_refresh_cron";
 
 export interface MetaEngineJob {
   type: MetaJobType;
@@ -122,6 +126,18 @@ export const expressWorker = new Worker(
     } else if (type === "media_refresh_scanner") {
       const { processMediaRefresh } = await import("../../media/mediaRefresh.job");
       await processMediaRefresh();
+    } else if (type === "sync_facebook_pages") {
+      const { processFacebookPageSync } = await import("../facebook/facebookPageSync.job");
+      await processFacebookPageSync(payload);
+    } else if (type === "webhook_subscription") {
+      const { processWebhookSubscription } = await import("../facebook/webhookSubscription.job");
+      await processWebhookSubscription(payload);
+    } else if (type === "page_token_validation") {
+      const { processPageTokenValidation } = await import("../facebook/pageTokenValidation.job");
+      await processPageTokenValidation(payload);
+    } else if (type === "token_refresh_cron") {
+      const { processTokenRefresh } = await import("../facebook/tokenRefresh.job");
+      await processTokenRefresh();
     } else {
       await processMetaMessage(payload);
     }
@@ -164,6 +180,16 @@ export function startMetaQueue() {
     expressConcurrency: 8,
     productionConcurrency: 2,
   });
+
+  // Schedule daily token health check (3 AM)
+  metaExpressQueue.add(
+    "daily_token_refresh",
+    { type: "token_refresh_cron", payload: {} },
+    {
+      repeat: { pattern: "0 3 * * *" },
+      jobId: "daily_token_refresh",
+    }
+  ).catch(err => logger.error("meta.queue.schedule_failed.token_refresh", { error: err.message }));
 }
 
 

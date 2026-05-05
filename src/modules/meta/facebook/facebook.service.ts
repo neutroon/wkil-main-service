@@ -474,11 +474,14 @@ export const likeComment = async (
   params: FacebookLikeParams & { pageId?: string },
 ) => {
   const { commentId, accessToken, pageId } = params;
+  
+  // Resolve token if missing
+  const token = accessToken || (await getPageAccessToken(pageId || commentId.split("_")[0]));
   const scopedId = scopeCommentId(commentId, pageId);
 
   try {
     const { data } = await metaClient.post(`${FB_API}/${scopedId}/likes`, {
-      access_token: accessToken,
+      access_token: token,
     });
     return data;
   } catch (error: any) {
@@ -491,11 +494,12 @@ export const likeComment = async (
  */
 export const getCommentText = async (
   commentId: string,
-  accessToken: string,
+  accessToken?: string,
 ): Promise<string | null> => {
   try {
+    const token = accessToken || (await getPageAccessToken(commentId.split("_")[0]));
     const { data } = await metaClient.get(
-      `${FB_API}/${commentId}?fields=message&access_token=${accessToken}`,
+      `${FB_API}/${commentId}?fields=message&access_token=${token}`,
     );
     return data.message || null;
   } catch (err: any) {
@@ -631,6 +635,18 @@ export const sendPrivateReply = async (
   }
 
   const scopedId = scopeCommentId(commentId, activePageId);
+
+  // Fallback: Resolve token if missing and pivot didn't happen
+  if (!activeToken && activePageId) {
+    activeToken = await getPageAccessToken(activePageId);
+  } else if (!activeToken && commentId.includes("_")) {
+    activeToken = await getPageAccessToken(commentId.split("_")[0]);
+  }
+
+  if (!activeToken) {
+    throw new AppError("Access token is required for private reply", 401);
+  }
+
   try {
     const { data } = await metaClient.post(
       `${FB_API}/me/messages?access_token=${activeToken}`,

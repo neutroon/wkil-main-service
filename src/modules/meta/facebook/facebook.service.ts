@@ -13,6 +13,7 @@ import { AppError } from "@middlewares/errorHandler.middleware";
 import { cache } from "@utils/cache";
 import { env } from "@config/env";
 import { metaExpressQueue } from "../core/meta.queue";
+import crypto from "crypto";
 
 const FB_API = env.FB_API_URL;
 
@@ -809,10 +810,11 @@ export const saveFacebookToken = async (
 
     // 2. Offload health checks and webhooks to background
     for (const page of pages) {
+      const traceId = crypto.randomUUID();
       metaExpressQueue.add("webhook_subscription", {
         type: "webhook_subscription",
         payload: { pageId: page.id, accessToken: page.access_token }
-      }, { jobId: `webhook_sub:${page.id}` }).catch(() => {});
+      }, { jobId: `webhook_sub:${page.id}:${traceId}` }).catch(() => {});
     }
 
     // Log the connection activity

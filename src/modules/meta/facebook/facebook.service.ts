@@ -248,7 +248,14 @@ export const getUserPages = async (
 
   const url = `${FB_API}/me/accounts?access_token=${token}&fields=id,name,access_token,category,followers_count,picture`;
   const { data } = await metaClient.get(url);
-  const graphPages: FacebookPage[] = data.data;
+  const graphPages: FacebookPage[] = data.data || [];
+
+  logger.info("facebook.api.get_user_pages", { 
+    userId, 
+    pagesCount: graphPages.length, 
+    hasDataArray: Array.isArray(data.data),
+    rawDataKeys: Object.keys(data)
+  });
 
   // If we have a userId, merge database settings (automation mode, etc.)
   if (userId && graphPages.length > 0) {
@@ -872,6 +879,13 @@ export const saveFacebookPages = async (
     // no longer return them in /me/accounts. We must mark them as inactive 
     // so they disappear from our UI, rather than keeping them as "zombies".
     const currentMetaPageIds = pages.map((p) => p.id);
+    
+    logger.info("facebook.pages.save_start", {
+      facebookAccountId,
+      incomingPagesCount: pages.length,
+      incomingPageIds: currentMetaPageIds,
+    });
+
     await prisma.facebookPage.updateMany({
       where: {
         facebookAccountId,

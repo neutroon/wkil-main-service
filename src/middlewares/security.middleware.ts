@@ -71,6 +71,7 @@ export const corsOptions = {
     "Content-Type",
     "Authorization",
     "X-Requested-With",
+    "X-CSRF-Token",
     "ngrok-skip-browser-warning",
   ],
   exposedHeaders: ["Set-Cookie"],

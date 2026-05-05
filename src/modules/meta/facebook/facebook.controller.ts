@@ -2,14 +2,12 @@ import { Request, Response } from "express";
 import {
   generateAuthUrl,
   exchangeCodeForToken,
-  getUserPages,
   createPost,
   schedulePost,
   getPagePosts,
   getPostComments,
   replyToComment,
   saveFacebookToken,
-  saveFacebookPages,
   getUserFacebookAccounts,
   getUserAnalytics,
   getAdminAnalytics,
@@ -21,12 +19,15 @@ import {
   deactivateFacebookPage,
   switchDevice,
   sendPrivateReply,
+  decryptFacebookPageForResponse,
 } from "./facebook.service";
 import { saveMessage } from "../core/conversation.service";
 import { decryptFacebookSecret } from "@modules/auth/core/tokenCrypto";
 import { logger } from "@utils/logger";
 import prisma from "@config/prisma";
 import { AppError } from "@middlewares/errorHandler.middleware";
+import { invalidateIdentityCache, invalidateFacebookPageCache } from "../core/webhookCache.service";
+import { metaExpressQueue } from "../core/meta.queue";
 
 export class FacebookController {
   /**
@@ -39,10 +40,10 @@ export class FacebookController {
   }
 
   /**
-   * GET /v1/facebook/login/callback
+   * POST /v1/facebook/login/callback
    */
   async callback(req: Request, res: Response) {
-    const { code, redirect_uri } = req.query as any;
+    const { code, redirect_uri } = req.body;
     const userId = (req as any).user.id;
 
     const tokenData = await exchangeCodeForToken({ code, redirect_uri });
@@ -73,31 +74,98 @@ export class FacebookController {
 
   /**
    * GET /v1/facebook/pages
+   * Reads pages from the database only. Sync is handled in the background (T2).
+   * Security: pageAccessToken is NEVER returned to the frontend.
    */
   async listPages(req: Request, res: Response) {
-    const { access_token, facebook_account_id } = req.query as any;
     const userId = (req as any).user.id;
 
-    const pages = await getUserPages(access_token || undefined, userId);
-
-    // Auto-persist all pages returned by the Graph API.
-    // This ensures newly authorized pages are always saved to DB even when
-    // the frontend doesn't pass facebook_account_id (which it never does).
-    const accountIdToUse = facebook_account_id
-      ? Number(facebook_account_id)
-      : (await prisma.facebookAccount.findFirst({
-          where: { userId, isActive: true },
+    const accounts = await prisma.facebookAccount.findMany({
+      where: { userId, isActive: true },
+      include: {
+        pages: {
+          where: { isActive: true },
           orderBy: { lastUsedAt: "desc" },
-          select: { id: true },
-        }))?.id;
+        },
+      },
+    });
 
-    if (accountIdToUse && pages.length > 0) {
-      saveFacebookPages(accountIdToUse, pages).catch((err) =>
-        logger.warn("facebook.listPages.auto_save_failed", { error: err.message })
-      );
+    const allPages = accounts.flatMap((acc) =>
+      acc.pages.map((p) => {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { pageAccessToken, ...safeFields } = p;
+        
+        // T5 Auto-trigger: if page is unhealthy, retry subscription in background
+        if (p.webhookStatus === "FAILED" || p.webhookStatus === "PENDING") {
+          metaExpressQueue.add("webhook_subscription", {
+            type: "webhook_subscription",
+            payload: { pageId: p.pageId },
+          }, { 
+            jobId: `webhook_sub_auto:${p.pageId}` // Deduplicate to avoid queue flood on rapid refreshes
+          }).catch(() => {});
+        }
+
+        return safeFields;
+      })
+    );
+
+    return res.json(allPages);
+  }
+
+  /**
+   * POST /v1/facebook/pages/sync
+   * Triggers background sync of all pages + auto-retries FAILED/PENDING webhook subscriptions.
+   */
+  async syncPages(req: Request, res: Response) {
+    const userId = (req as any).user.id;
+
+    const accounts = await prisma.facebookAccount.findMany({
+      where: { userId, isActive: true },
+      select: { id: true },
+    });
+
+    if (accounts.length === 0) {
+      return res.status(404).json({ error: "No connected Facebook accounts found." });
     }
 
-    return res.json({ data: pages });
+    let webhookRetryCount = 0;
+
+    for (const account of accounts) {
+      // 1. Enqueue full page sync from Facebook Graph API
+      metaExpressQueue.add("sync_facebook_pages", {
+        type: "sync_facebook_pages",
+        payload: { facebookAccountId: account.id },
+      }).catch((err) => logger.error("facebook.sync_trigger.failed", { accountId: account.id, error: err.message }));
+
+      // 2. T5: Auto-retry webhook subscriptions for pages in FAILED or PENDING state
+      const unhealthyPages = await prisma.facebookPage.findMany({
+        where: {
+          facebookAccountId: account.id,
+          isActive: true,
+          webhookStatus: { in: ["FAILED", "PENDING"] },
+        },
+        select: { pageId: true },
+      });
+
+      for (const page of unhealthyPages) {
+        metaExpressQueue.add("webhook_subscription", {
+          type: "webhook_subscription",
+          payload: { pageId: page.pageId },
+        }).catch(() => {});
+        webhookRetryCount++;
+      }
+    }
+
+    logger.info("facebook.sync_trigger.dispatched", {
+      accounts: accounts.length,
+      webhookRetries: webhookRetryCount,
+    });
+
+    return res.json({
+      success: true,
+      message: "Sync started in background.",
+      webhookRetries: webhookRetryCount,
+    });
   }
 
   /**
@@ -117,6 +185,11 @@ export class FacebookController {
     const { pageId } = req.params;
     const userId = (req as any).user.id;
     await deactivateFacebookPage(pageId, userId);
+    // Bust both the webhook presence cache and the identity resolution cache
+    await Promise.all([
+      invalidateFacebookPageCache(pageId).catch(() => {}),
+      invalidateIdentityCache("messenger", pageId).catch(() => {}),
+    ]);
     return res.json({ success: true, message: "Page disconnected successfully" });
   }
 
@@ -296,6 +369,9 @@ export class FacebookController {
       data: { businessProfileId },
     });
 
+    // Invalidate identity cache — businessProfile reference has changed
+    await invalidateIdentityCache("messenger", pageId).catch(() => {});
+
     return res.json({ success: true, page: updated });
   }
 
@@ -316,6 +392,9 @@ export class FacebookController {
       where: { id: page.id },
       data: { businessProfileId: null },
     });
+
+    // Invalidate identity cache — businessProfile reference has been removed
+    await invalidateIdentityCache("messenger", pageId).catch(() => {});
 
     return res.json({ success: true, page: updated });
   }
@@ -341,6 +420,9 @@ export class FacebookController {
         commentPublicGreeting: commentPublicGreeting !== undefined ? commentPublicGreeting : page.commentPublicGreeting,
       },
     });
+
+    // Invalidate identity cache — responseMode and pageSettings are cached in the processor
+    await invalidateIdentityCache("messenger", pageId).catch(() => {});
 
     return res.json({ success: true, page: updated });
   }

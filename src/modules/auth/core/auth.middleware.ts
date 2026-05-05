@@ -111,6 +111,7 @@ export const setAuthCookies = (
 export const clearAuthCookies = (res: Response) => {
   res.clearCookie("accessToken", { path: "/" });
   res.clearCookie("refreshToken", { path: "/" });
+  res.clearCookie("csrfToken", { path: "/" });
 };
 
 // export const clearAdminAuthCookies = (res: Response) => {

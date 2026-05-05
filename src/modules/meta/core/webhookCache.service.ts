@@ -62,6 +62,20 @@ export async function invalidateFacebookPageCache(pageId: string): Promise<void>
 }
 
 /**
+ * Invalidate the resolved identity cache for a Messenger page or WhatsApp number.
+ * MUST be called on every connect, disconnect, link, unlink, and settings change
+ * to ensure the processor always gets fresh identity data.
+ */
+export async function invalidateIdentityCache(
+  platform: "messenger" | "whatsapp",
+  identifier: string
+): Promise<void> {
+  const cacheKey = `identity:${platform}:${identifier}`;
+  await cache.delete(cacheKey);
+  logger.info("webhook_cache.identity_invalidated", { platform, identifier });
+}
+
+/**
  * Invalidate WhatsApp Account cache (e.g., when unlinked or deactivated)
  */
 export async function invalidateWhatsAppAccountCache(phoneNumberId: string): Promise<void> {

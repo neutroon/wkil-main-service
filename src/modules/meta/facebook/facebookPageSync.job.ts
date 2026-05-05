@@ -3,6 +3,7 @@ import { logger } from "@utils/logger";
 import { getUserPages, saveFacebookPages } from "./facebook.service";
 import { decryptFacebookSecret } from "@modules/auth/core/tokenCrypto";
 import { metaExpressQueue } from "../core/meta.queue";
+import crypto from "crypto";
 
 const FB_AUTH_ERROR_CODES = [190, 102, 2500]; // OAuthException codes
 
@@ -72,15 +73,17 @@ export async function processFacebookPageSync(payload: { facebookAccountId: numb
     // Persist to database
     await saveFacebookPages(facebookAccountId, pages);
 
-    // Enqueue health checks with deduplication keys
+    // Enqueue health checks
     const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
     for (const page of pages) {
-      // Webhook subscription — deduplicated per page per day
+      // Webhook subscription — Trace ID pattern ensures 1 job per sync request, 
+      // avoiding stale BullMQ locks while API rate limiters prevent user spam.
+      const traceId = crypto.randomUUID();
       metaExpressQueue.add(
         "webhook_subscription",
         { type: "webhook_subscription", payload: { pageId: page.id, accessToken: page.access_token } },
-        { jobId: `webhook_sub:${page.id}` } // No date suffix — always retry if not SUBSCRIBED
-      ).catch(() => {}); // jobId collision = already queued, safe to ignore
+        { jobId: `webhook_sub:${page.id}:${traceId}` }
+      ).catch(() => {});
 
       // Token validation — deduplicated per page per day
       metaExpressQueue.add(

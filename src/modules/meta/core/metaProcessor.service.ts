@@ -2,6 +2,7 @@ import { UnrecoverableError } from "bullmq";
 import prisma from "@config/prisma";
 import { logger } from "@utils/logger";
 import { decryptFacebookSecret } from "@modules/auth/core/tokenCrypto";
+import { cache } from "@utils/cache";
 import {
   getOrCreateConversation,
   getConversationHistory,
@@ -56,12 +57,66 @@ interface IdentityResolution {
   } | null;
 }
 
+/** Cached identity payload — accessToken is intentionally excluded (fetched fresh from DB) */
+type CachedIdentity = Omit<IdentityResolution, "accessToken">;
+
+const IDENTITY_CACHE_TTL = 900; // 15 minutes
+
 /**
- * Identity & Account Resolver
+ * Identity & Account Resolver — with 15-minute Redis cache.
+ *
+ * Strategy:
+ * - The heavy JOIN query result (businessProfile + externalDataSources + crmIntegrations)
+ *   is cached for 15 minutes to protect the DB on high-volume webhook spikes.
+ * - The accessToken is NEVER cached in Redis. On a cache hit, we do a fast single-field
+ *   indexed lookup (pageId/phoneNumberId) to get the fresh token.
+ * - Cache is invalidated on every: connect, disconnect, link, unlink, settings change.
  */
 async function resolveAccountIdentity(job: MetaMessageJob): Promise<IdentityResolution> {
   const { platform, identifier } = job;
+  const cacheKey = `identity:${platform}:${identifier}`;
 
+  // 1. Try cache (non-sensitive data only)
+  const cachedRaw = await cache.get<string>(cacheKey);
+  if (cachedRaw) {
+    try {
+      const cached = JSON.parse(cachedRaw) as CachedIdentity;
+      logger.debug("meta.processor.identity_cache_hit", { platform, identifier });
+
+      // Fetch ONLY the token — fast indexed single-field query
+      const tokenRow = platform === "messenger"
+        ? await prisma.facebookPage.findFirst({
+            where: { pageId: identifier, isActive: true },
+            select: { pageAccessToken: true, isTokenValid: true }
+          })
+        : await prisma.whatsAppAccount.findFirst({
+            where: { phoneNumberId: identifier, isActive: true },
+            select: { accessToken: true, isTokenValid: true }
+          });
+
+      if (!tokenRow) {
+        // Cache is stale — page was disconnected. Invalidate and fall through to DB lookup.
+        await cache.delete(cacheKey);
+        logger.warn("meta.processor.identity_cache_stale", { platform, identifier });
+      } else {
+        // T6: Guard — reject jobs for pages/accounts with known-invalid tokens
+        if ((tokenRow as any).isTokenValid === false) {
+          throw new UnrecoverableError(
+            `${platform === "messenger" ? "Page" : "WhatsApp account"} ${identifier} token is invalid. User must reconnect. Job stopped to prevent billing waste.`
+          );
+        }
+        const rawToken = platform === "messenger"
+          ? (tokenRow as any).pageAccessToken
+          : (tokenRow as any).accessToken;
+        return { ...cached, accessToken: decryptFacebookSecret(rawToken) };
+      }
+    } catch {
+      // Corrupted cache entry — fall through to DB
+      await cache.delete(cacheKey);
+    }
+  }
+
+  // 2. Cache miss — full DB lookup
   if (platform === "messenger") {
     const page = await prisma.facebookPage.findFirst({
       where: { pageId: identifier, isActive: true },
@@ -79,7 +134,14 @@ async function resolveAccountIdentity(job: MetaMessageJob): Promise<IdentityReso
       throw new UnrecoverableError(`Messenger page ${identifier} is not connected to a profile.`);
     }
 
-    return {
+    // T6: Guard — stop processing for pages with known-invalid tokens
+    if (page.isTokenValid === false) {
+      throw new UnrecoverableError(
+        `Page ${identifier} token is invalid. User must reconnect. Job stopped to prevent billing waste.`
+      );
+    }
+
+    const resolved: IdentityResolution = {
       businessProfileId: page.businessProfileId,
       businessProfile: page.businessProfile,
       accessToken: decryptFacebookSecret(page.pageAccessToken),
@@ -89,6 +151,12 @@ async function resolveAccountIdentity(job: MetaMessageJob): Promise<IdentityReso
         commentPublicGreeting: page.commentPublicGreeting,
       },
     };
+
+    // 3. Cache non-sensitive fields
+    const { accessToken: _token, ...cacheable } = resolved;
+    cache.set(cacheKey, JSON.stringify(cacheable), IDENTITY_CACHE_TTL).catch(() => {});
+
+    return resolved;
   } else {
     const account = await prisma.whatsAppAccount.findFirst({
       where: { phoneNumberId: identifier, isActive: true },
@@ -106,13 +174,25 @@ async function resolveAccountIdentity(job: MetaMessageJob): Promise<IdentityReso
       throw new UnrecoverableError(`WhatsApp account ${identifier} is not connected to a profile.`);
     }
 
-    return {
+    // T6: Guard — stop processing for accounts with known-invalid tokens
+    if (account.isTokenValid === false) {
+      throw new UnrecoverableError(
+        `WhatsApp account ${identifier} token is invalid. User must reconnect. Job stopped to prevent billing waste.`
+      );
+    }
+
+    const resolved: IdentityResolution = {
       businessProfileId: account.businessProfileId,
       businessProfile: account.businessProfile,
       accessToken: decryptFacebookSecret(account.accessToken),
       responseMode: account.businessProfile!.responseMode as "AUTO" | "MANUAL",
       pageSettings: null,
     };
+
+    const { accessToken: _token, ...cacheable } = resolved;
+    cache.set(cacheKey, JSON.stringify(cacheable), IDENTITY_CACHE_TTL).catch(() => {});
+
+    return resolved;
   }
 }
 

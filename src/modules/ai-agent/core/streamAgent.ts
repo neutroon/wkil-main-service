@@ -55,10 +55,13 @@ export async function* streamAgentGraph(params: AgentGraphParams) {
     turnCount:         0 as any,
     hadToolExecution:  false as any,
     sessionStats: {
-      promptTokens:     0,
-      completionTokens: 0,
-      groundingCalls:   0,
-      modelName:        "gemini-3-flash-preview",
+      promptTokens:           0,
+      completionTokens:       0,
+      groundingCalls:         0,
+      lastBilledPromptTokens: 0,
+      lastBilledCompletionTokens: 0,
+      lastBilledGrounding:    0,
+      modelName:              "gemini-3-flash-preview",
     } as any,
     decision: null as any,
   };

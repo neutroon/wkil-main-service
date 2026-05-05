@@ -777,12 +777,13 @@ export const saveFacebookToken = async (
         expiresAt,
         refreshToken: encRefresh,
         scope: tokenData.scope,
-        isActive: true,
-        lastUsedAt: new Date(),
-        deviceInfo: deviceInfo ? JSON.stringify(deviceInfo) : null,
         userId,
+        isActive: true,
         name: userInfo.name,
         pictureUrl: userInfo.picture?.data?.url || null,
+        deviceInfo: deviceInfo ? JSON.stringify(deviceInfo) : null,
+        isTokenValid: true, // Reset validation state on reconnect
+        lastUsedAt: new Date(),
       },
       create: {
         userId,
@@ -792,6 +793,8 @@ export const saveFacebookToken = async (
         expiresAt,
         refreshToken: encRefresh,
         scope: tokenData.scope,
+        isActive: true,
+        isTokenValid: true,
         deviceInfo: deviceInfo ? JSON.stringify(deviceInfo) : null,
         name: userInfo.name,
         pictureUrl: userInfo.picture?.data?.url || null,
@@ -914,6 +917,7 @@ export const saveFacebookPages = async (
             pictureUrl: page.picture?.data?.url || null,
             followersCount: page.followers_count || 0,
             isActive: true, // Explicitly reactivate on sync
+            isTokenValid: true, // Reset validation state on sync
             lastUsedAt: new Date(),
           },
           create: {

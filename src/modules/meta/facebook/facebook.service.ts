@@ -5,7 +5,7 @@ import {
   decryptFacebookSecret,
   encryptFacebookSecret,
 } from "@modules/auth/core/tokenCrypto";
-import { invalidateFacebookPageCache } from "../core/webhookCache.service";
+import { invalidateFacebookPageCache, invalidateIdentityCache } from "../core/webhookCache.service";
 import { AppError } from "@middlewares/errorHandler.middleware";
 import { cache } from "@utils/cache";
 import { env } from "@config/env";
@@ -175,7 +175,7 @@ function decryptFacebookAccountForResponse<
   };
 }
 
-function decryptFacebookPageForResponse<P extends { pageAccessToken: string }>(
+export function decryptFacebookPageForResponse<P extends { pageAccessToken: string }>(
   page: P,
 ): P {
   return {
@@ -259,6 +259,8 @@ export const getUserPages = async (
         commentAutoDmEnabled: true,
         commentPublicGreeting: true,
         isActive: true,
+        isTokenValid: true,
+        webhookStatus: true,
       },
       orderBy: { updatedAt: "desc" },
     });
@@ -280,6 +282,8 @@ export const getUserPages = async (
         // The DB's isActive is a soft-delete flag for our internal records only and must NOT
         // hide pages that the user has just re-authorized via OAuth.
         isActive: true,
+        isTokenValid: settings?.isTokenValid ?? true,
+        webhookStatus: settings?.webhookStatus ?? "PENDING",
         responseMode: settings?.responseMode,
         commentAutoDmEnabled: settings?.commentAutoDmEnabled,
         commentPublicGreeting: settings?.commentPublicGreeting,
@@ -789,17 +793,11 @@ export const saveFacebookToken = async (
 
     // CRITICAL: Propagate new tokens to all Facebook Pages linked to this user
     // This fixes the issue where a password change invalidates all page tokens.
-    // By fetching them again using the fresh user token, we restore connectivity.
-    try {
-      const freshPages = await getUserPages(tokenData.access_token, userId);
-      if (freshPages && freshPages.length > 0) {
-        await saveFacebookPages(facebookAccount.id, freshPages);
-        logger.info("facebook.token.pages_refreshed", { userId, count: freshPages.length });
-      }
-    } catch (pageErr: any) {
-      logger.warn("facebook.token.pages_refresh_failed", { userId, error: pageErr.message });
-      // Non-blocking: we still want to return the saved account
-    }
+    // Offload to background for speed.
+    metaExpressQueue.add("sync_facebook_pages", {
+      type: "sync_facebook_pages",
+      payload: { facebookAccountId: facebookAccount.id },
+    }).catch((err) => logger.error("facebook.token.sync_enqueue_failed", { userId, error: err.message }));
 
     // Log the connection activity
     await logFacebookActivity(facebookAccount.id, "account_connected", {
@@ -897,13 +895,17 @@ export const saveFacebookPages = async (
           },
         });
 
-        // Proactively clear cache to ensure new token is used immediately
-        await invalidateFacebookPageCache(page.id).catch(() => {});
+        // Bust both the webhook presence cache AND the identity resolution cache.
+        // Without this, a reconnected page would still serve stale business profile
+        // data from Redis for up to 15 minutes after the new token is saved.
+        await Promise.all([
+          invalidateFacebookPageCache(page.id).catch(() => {}),
+          invalidateIdentityCache("messenger", page.id).catch(() => {}),
+        ]);
 
-        // Non-blocking: webhook subscription failure must never break page saves
-        subscribePageToWebhook(page.access_token, page.id).catch((err) =>
-          logger.warn("facebook.pages.webhook_subscribe_failed", { pageId: page.id, error: err?.message })
-        );
+        // Health check jobs are NOT enqueued here — they are dispatched with
+        // BullMQ jobId deduplication keys by the facebookPageSync.job.ts caller.
+        // Enqueueing here would cause double-processing on every sync.
 
         return decryptFacebookPageForResponse(saved);
       }),
@@ -923,20 +925,6 @@ export const saveFacebookPages = async (
     throw new AppError("Failed to save Facebook pages", 500);
   }
 };
-async function subscribePageToWebhook(pageAccessToken: string, pageId: string) {
-  const response = await fetch(
-    `https://graph.facebook.com/v25.0/${pageId}/subscribed_apps?access_token=${pageAccessToken}&subscribed_fields=messages,messaging_postbacks,feed`,
-    { method: "POST" },
-  );
-
-  const data = await response.json();
-
-  if (!data.success) {
-    logger.warn("facebook.messenger.subscribe_failed", { pageId, data });
-  } else {
-    logger.info("facebook.messenger.page_subscribed", { pageId });
-  }
-}
 
 export const logFacebookActivity = async (
   facebookAccountId: number,

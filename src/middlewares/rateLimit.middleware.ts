@@ -21,7 +21,6 @@ export const generalLimiter = rateLimit({
   validate: { trustProxy: false },
   keyGenerator: getRateLimitKey,
 });
-
 // Strict rate limiting for authentication endpoints
 export const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -34,6 +33,19 @@ export const authLimiter = rateLimit({
   legacyHeaders: false,
   validate: { trustProxy: false },
   skipSuccessfulRequests: true, // Don't count successful requests
+});
+
+// Rate limiting for CSRF bootstrapping
+export const csrfLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 50, // Allow 50 token requests per 15 mins (plenty for multi-tab usage)
+  message: {
+    error: "Too many CSRF token requests, please try again later",
+    code: "CSRF_RATE_LIMIT_EXCEEDED",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: { trustProxy: false },
 });
 
 // High-intensity security limiter for forgot-password and resend-verification

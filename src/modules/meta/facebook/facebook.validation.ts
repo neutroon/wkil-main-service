@@ -13,7 +13,7 @@ export const facebookLoginSchema = z.object({
  * Facebook OAuth Callback Schema
  */
 export const facebookCallbackSchema = z.object({
-  query: z.object({
+  body: z.object({
     code: z.string().min(1, "code is required"),
     redirect_uri: z.string().url("redirect_uri must be a valid URL"),
   }),

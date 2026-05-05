@@ -1,4 +1,6 @@
 import { Request, Response } from "express";
+import bcrypt from "bcrypt";
+import prisma from "@config/prisma";
 import {
   createUser,
   loginUser,
@@ -38,12 +40,24 @@ export const registerUser = async (req: Request, res: Response) => {
     role: user.role,
   });
 
+  // Refresh Token Rotation: Store hash in DB
+  const salt = await bcrypt.genSalt(10);
+  const hash = await bcrypt.hash(refreshToken, salt);
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { 
+      refreshTokenHash: hash,
+      previousRefreshTokenHash: null,
+      refreshTokenExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      rotatedAt: new Date()
+    }
+  });
+
   // Set HTTP-only cookies
   setAuthCookies(res, accessToken, refreshToken);
 
   res.status(201).json({
     message: "User created successfully",
-    accessToken,
     user: {
       id: user.id,
       name: user.name,
@@ -69,15 +83,28 @@ export const loginUserController = async (req: Request, res: Response) => {
     });
   }
 
+  // Refresh Token Rotation: Store hash in DB
+  const salt = await bcrypt.genSalt(10);
+  const hash = await bcrypt.hash(result.refreshToken, salt);
+  await prisma.user.update({
+    where: { id: result.id },
+    data: { 
+      refreshTokenHash: hash,
+      previousRefreshTokenHash: null,
+      refreshTokenExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      rotatedAt: new Date()
+    }
+  });
+
   // Set HTTP-only cookies
   setAuthCookies(res, result.accessToken, result.refreshToken);
 
   res.status(200).json({
     message: "User Login successful",
-    accessToken: result.accessToken,
     user: {
       id: result.id,
       email: result.email,
+      name: result.name,
       role: result.role,
       isEmailVerified: result.isEmailVerified,
       lastVerificationSentAt: result.lastVerificationSentAt,
@@ -113,14 +140,7 @@ export const getUserByIdController = async (req: Request, res: Response) => {
 export const updateUser = async (req: Request, res: Response) => {
   const { id } = req.params as any;
   const { role, name, email, plan, monthlyQuota } = req.body;
-  const user = await updateUserRole(
-    id,
-    role,
-    name,
-    email,
-    plan,
-    monthlyQuota,
-  );
+  const user = await updateUserRole(id, role, name, email, plan, monthlyQuota);
   res.status(200).json({
     message: "User updated successfully",
     user,
@@ -153,15 +173,3 @@ export const permanentlyDeleteUserController = async (
   await permanentlyDeleteUser(id);
   res.status(200).json({ message: "User permanently deleted successfully" });
 };
-
-export const logoutUser = async (req: Request, res: Response) => {
-  clearAuthCookies(res);
-  res.status(200).json({ message: "Logged out successfully" });
-};
-
-
-
-
-
-
-

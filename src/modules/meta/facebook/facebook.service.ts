@@ -851,6 +851,23 @@ export const saveFacebookPages = async (
   try {
     const savedPages = await Promise.all(
       pages.map(async (page) => {
+        // CRITICAL: Reactivate ALL stale rows for this pageId across all accounts of this user.
+        // Without this, the webhook processor's `resolveAccountIdentity` (which queries isActive:true)
+        // will throw UnrecoverableError and silently kill AI replies after a disconnect-reconnect cycle.
+        await prisma.facebookPage.updateMany({
+          where: {
+            pageId: page.id,
+            facebookAccount: {
+              userId: (await prisma.facebookAccount.findUnique({
+                where: { id: facebookAccountId },
+                select: { userId: true },
+              }))!.userId
+            },
+            isActive: false,
+          },
+          data: { isActive: true },
+        }).catch(() => {}); // Non-blocking; the upsert below is the primary fix
+
         const saved = await prisma.facebookPage.upsert({
           where: {
             facebookAccountId_pageId: {

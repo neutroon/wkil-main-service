@@ -260,16 +260,26 @@ export const getUserPages = async (
         commentPublicGreeting: true,
         isActive: true,
       },
+      orderBy: { updatedAt: "desc" },
     });
 
-    // Map for fast lookup
-    const settingsMap = new Map(storedPages.map((sp) => [sp.pageId, sp]));
+    // Map for fast lookup — prefer the most recently updated record to avoid stale duplicates
+    // (e.g. an old isActive:false record from a previous account row overriding a fresh reconnect)
+    const settingsMap = new Map<string, typeof storedPages[0]>();
+    for (const sp of storedPages) {
+      if (!settingsMap.has(sp.pageId)) {
+        settingsMap.set(sp.pageId, sp);
+      }
+    }
 
     return graphPages.map((gp) => {
       const settings = settingsMap.get(gp.id);
       return {
         ...gp,
-        isActive: settings ? settings.isActive : true,
+        // If Facebook's Graph API returned this page, it is accessible — always treat it as active.
+        // The DB's isActive is a soft-delete flag for our internal records only and must NOT
+        // hide pages that the user has just re-authorized via OAuth.
+        isActive: true,
         responseMode: settings?.responseMode,
         commentAutoDmEnabled: settings?.commentAutoDmEnabled,
         commentPublicGreeting: settings?.commentPublicGreeting,

@@ -240,22 +240,17 @@ export function repairAndParseAiResponse(text: string): AiRoutingDecision {
     attachment: decision.attachment,
   };
 
-  // 5. ELITE TIER: Sales Delivery Repairer (Global Fail-Safe)
-  // If the intent is SALES_DM but the AI forgot the private text, we MUST repair it.
+  // 5. SALES_DM Anomaly Detector (Monitoring Only)
+  // The prompt mandates the AI MUST fill privateContent for SALES_DM.
+  // If it arrives empty here, log a warning for monitoring — do NOT inject content.
+  // Reason: any auto-injected text risks wrong language, wrong tone, or semantic nonsense
+  // (e.g. mirroring "I sent you a DM!" as the DM itself). The delivery gate in
+  // metaProcessor (mainContent.length > 0) will cleanly drop the empty private slot.
   if (finalDecision.intent === "SALES_DM" && !finalDecision.privateContent) {
-    if (finalDecision.publicContent || finalDecision.content) {
-      logger.warn("ai.engine.delivery_gap_repaired", {
-        intent: finalDecision.intent,
-        reasoning: finalDecision.reasoning,
-      });
-      // Append a CTA in Arabic to ensure divergence and brand voice
-      const base = finalDecision.publicContent || finalDecision.content;
-      finalDecision.privateContent = `${base}\n\nأهلاً بك! ممكن تشاركنا رقم تليفونك أو طلباتك عشان فريقنا يقدر يتواصل معاك بالتفاصيل اللي محتاجها؟`;
-    } else {
-      // Hard fallback if everything is empty but intent is sales
-      finalDecision.privateContent =
-        "أهلاً بك! هبعتلك كل التفاصيل اللي طلبتها دلوقتي. إزاي أقدر أساعدك؟";
-    }
+    logger.warn("ai.engine.sales_dm_missing_private_content", {
+      reasoning: finalDecision.reasoning,
+      publicContent: finalDecision.publicContent?.substring(0, 80),
+    });
   }
 
   return finalDecision;

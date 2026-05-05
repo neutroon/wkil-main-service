@@ -3,21 +3,37 @@ import crypto from "crypto";
 import { env } from "@config/env";
 
 /**
- * CSRF Protection — Double-Submit Cookie Pattern (stateless, no DB required).
+ * CSRF Protection — Hardened Double-Submit Cookie Pattern.
  *
- * How it works:
- * 1. `generateCsrfToken`: On every request, if no `csrfToken` cookie exists,
- *    set a new random token as a NON-HttpOnly cookie (readable by JS).
- * 2. `validateCsrfToken`: On every state-mutating request (POST/PUT/PATCH/DELETE),
- *    verify that the `X-CSRF-Token` request header matches the `csrfToken` cookie.
+ * How it works (Production-Grade):
+ * 1. `getCsrfToken`: The frontend "bootstraps" by calling this endpoint. 
+ *    The backend returns a random token in the JSON body AND sets it in a 
+ *    Secure, HttpOnly cookie.
+ * 2. `validateCsrfToken`: On every state-mutating request, the frontend sends 
+ *    the token in the `X-CSRF-Token` header. The backend compares it 
+ *    to the HttpOnly cookie.
  *
- * An attacker's page can trigger a cross-site request with the victim's HttpOnly
- * auth cookie, but cannot read the csrfToken cookie to forge the header.
+ * Security Benefit: Even if an attacker succeeds with XSS, they cannot 
+ * read the HttpOnly cookie, making it significantly harder to forge 
+ * valid CSRF-protected requests.
  */
 
 const CSRF_COOKIE_NAME = "csrfToken";
 const CSRF_HEADER_NAME = "x-csrf-token";
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+const getCookieOptions = (req: Request) => {
+  const isProduction = env.NODE_ENV === "production";
+  const isTunnel = env.BACKEND_URL?.includes("ngrok-free.dev") || false;
+  
+  return {
+    httpOnly: true, // Hardened: Cookie is hidden from JS
+    secure: isProduction || isTunnel,
+    sameSite: (isProduction || isTunnel) ? "none" as const : "lax" as const,
+    path: "/",
+    maxAge: 24 * 60 * 60 * 1000, // 24 hours
+  };
+};
 
 export const generateCsrfToken = (
   req: Request,
@@ -26,18 +42,25 @@ export const generateCsrfToken = (
 ) => {
   if (!req.cookies?.[CSRF_COOKIE_NAME]) {
     const token = crypto.randomBytes(32).toString("hex");
-    const isProduction = env.NODE_ENV === "production";
-    const isTunnel = env.BACKEND_URL?.includes("ngrok-free.dev") || false;
-
-    res.cookie(CSRF_COOKIE_NAME, token, {
-      httpOnly: false, // Must be readable by JS
-      secure: isProduction || isTunnel,
-      sameSite: (isProduction || isTunnel) ? "none" : "lax",
-      path: "/",
-      maxAge: 24 * 60 * 60 * 1000, // 24 hours
-    });
+    res.cookie(CSRF_COOKIE_NAME, token, getCookieOptions(req));
   }
   next();
+};
+
+/**
+ * Controller: getCsrfToken
+ * Returns the current CSRF token (or generates one) in the response body.
+ * Essential for cross-domain bootstrapping where the frontend cannot read the cookie directly.
+ */
+export const getCsrfToken = (req: Request, res: Response) => {
+  let token = req.cookies?.[CSRF_COOKIE_NAME];
+  
+  if (!token) {
+    token = crypto.randomBytes(32).toString("hex");
+    res.cookie(CSRF_COOKIE_NAME, token, getCookieOptions(req));
+  }
+
+  res.json({ csrfToken: token });
 };
 
 export const validateCsrfToken = (

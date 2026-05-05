@@ -40,6 +40,7 @@ import { errorHandler } from "@middlewares/errorHandler.middleware";
 import prisma from "@config/prisma";
 import { logger } from "@utils/logger";
 import missionControlRouter from "@modules/admin/mission-control/missionControl.routes";
+import { generateCsrfToken, validateCsrfToken } from "@middlewares/csrf.middleware";
 
 const app = express();
 
@@ -81,6 +82,7 @@ app.use(cors(corsOptions));       // ← CORS for dashboard / authenticated API
 app.use(cookieParser());
 app.use(sanitizeRequest);
 app.use(requestSizeLimit);
+app.use(generateCsrfToken); // Set CSRF cookie on every response
 app.use(identifyUserForRateLimit);
 app.use(generalLimiter);
 
@@ -114,6 +116,7 @@ app.use("/v1/whatsapp", whatsappRoutes);
 // Protected Enterprise Routes (Require Authentication & Email Verification)
 app.use(authenticateToken);
 app.use(requireVerified);
+app.use(validateCsrfToken); // Enforce CSRF on all protected mutating routes
 
 app.use("/v1/users", userRoutes);
 app.use("/v1/content", contentRoutes);

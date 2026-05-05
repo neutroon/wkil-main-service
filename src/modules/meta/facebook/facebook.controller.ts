@@ -80,8 +80,21 @@ export class FacebookController {
 
     const pages = await getUserPages(access_token || undefined, userId);
 
-    if (facebook_account_id) {
-      await saveFacebookPages(facebook_account_id, pages);
+    // Auto-persist all pages returned by the Graph API.
+    // This ensures newly authorized pages are always saved to DB even when
+    // the frontend doesn't pass facebook_account_id (which it never does).
+    const accountIdToUse = facebook_account_id
+      ? Number(facebook_account_id)
+      : (await prisma.facebookAccount.findFirst({
+          where: { userId, isActive: true },
+          orderBy: { lastUsedAt: "desc" },
+          select: { id: true },
+        }))?.id;
+
+    if (accountIdToUse && pages.length > 0) {
+      saveFacebookPages(accountIdToUse, pages).catch((err) =>
+        logger.warn("facebook.listPages.auto_save_failed", { error: err.message })
+      );
     }
 
     return res.json({ data: pages });

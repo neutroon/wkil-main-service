@@ -5,10 +5,14 @@ import {
   decryptFacebookSecret,
   encryptFacebookSecret,
 } from "@modules/auth/core/tokenCrypto";
-import { invalidateFacebookPageCache, invalidateIdentityCache } from "../core/webhookCache.service";
+import {
+  invalidateFacebookPageCache,
+  invalidateIdentityCache,
+} from "../core/webhookCache.service";
 import { AppError } from "@middlewares/errorHandler.middleware";
 import { cache } from "@utils/cache";
 import { env } from "@config/env";
+import { metaExpressQueue } from "../core/meta.queue";
 
 const FB_API = env.FB_API_URL;
 
@@ -175,9 +179,9 @@ function decryptFacebookAccountForResponse<
   };
 }
 
-export function decryptFacebookPageForResponse<P extends { pageAccessToken: string }>(
-  page: P,
-): P {
+export function decryptFacebookPageForResponse<
+  P extends { pageAccessToken: string },
+>(page: P): P {
   return {
     ...page,
     pageAccessToken: decryptFacebookSecret(page.pageAccessToken),
@@ -267,7 +271,7 @@ export const getUserPages = async (
 
     // Map for fast lookup — prefer the most recently updated record to avoid stale duplicates
     // (e.g. an old isActive:false record from a previous account row overriding a fresh reconnect)
-    const settingsMap = new Map<string, typeof storedPages[0]>();
+    const settingsMap = new Map<string, (typeof storedPages)[0]>();
     for (const sp of storedPages) {
       if (!settingsMap.has(sp.pageId)) {
         settingsMap.set(sp.pageId, sp);
@@ -313,8 +317,14 @@ export const getPageAccessToken = async (pageId: string): Promise<string> => {
   try {
     return decryptFacebookSecret(page.pageAccessToken);
   } catch (err: any) {
-    logger.error("facebook.token.decryption_failed", { pageId, pageName: page.pageName });
-    throw new AppError("Failed to decrypt page access token. Please reconnect the page.", 500);
+    logger.error("facebook.token.decryption_failed", {
+      pageId,
+      pageName: page.pageName,
+    });
+    throw new AppError(
+      "Failed to decrypt page access token. Please reconnect the page.",
+      500,
+    );
   }
 };
 
@@ -480,7 +490,6 @@ export const replyToComment = async (
  * Fetches the permalink_url for a Facebook post.
  */
 
-
 /**
  * ELITE TIER: Social Engagement - Liking a comment.
  */
@@ -488,9 +497,11 @@ export const likeComment = async (
   params: FacebookLikeParams & { pageId?: string },
 ) => {
   const { commentId, accessToken, pageId } = params;
-  
+
   // Resolve token if missing
-  const token = accessToken || (await getPageAccessToken(pageId || commentId.split("_")[0]));
+  const token =
+    accessToken ||
+    (await getPageAccessToken(pageId || commentId.split("_")[0]));
   const scopedId = scopeCommentId(commentId, pageId);
 
   try {
@@ -511,7 +522,8 @@ export const getCommentText = async (
   accessToken?: string,
 ): Promise<string | null> => {
   try {
-    const token = accessToken || (await getPageAccessToken(commentId.split("_")[0]));
+    const token =
+      accessToken || (await getPageAccessToken(commentId.split("_")[0]));
     const { data } = await metaClient.get(
       `${FB_API}/${commentId}?fields=message&access_token=${token}`,
     );
@@ -696,13 +708,13 @@ export const getFacebookUserProfile = async (
   try {
     const cleanPsid = psid.trim();
     const token = accessToken || (await getPageAccessToken(pageId));
-    
+
     // For Messenger PSIDs, Meta prefers first_name, last_name, and profile_pic
     const fields = "name,first_name,last_name,profile_pic,picture";
     const url = `${FB_API}/${cleanPsid}?fields=${fields}&access_token=${token}`;
-    
+
     logger.debug("facebook.profile.fetching", { pageId, psid: cleanPsid });
-    
+
     const { data } = await metaClient.get(url);
 
     // Normalize name and picture for our database
@@ -714,14 +726,14 @@ export const getFacebookUserProfile = async (
     return {
       ...data,
       name: fullName || "Guest Customer",
-      pictureUrl: pictureUrl || null
+      pictureUrl: pictureUrl || null,
     };
   } catch (error: any) {
-    logger.warn("facebook.profile.fetch_failed", { 
-      pageId, 
+    logger.warn("facebook.profile.fetch_failed", {
+      pageId,
       error: error.message,
       code: error.code,
-      subcode: error.subcode 
+      subcode: error.subcode,
     });
     return null;
   }
@@ -794,10 +806,17 @@ export const saveFacebookToken = async (
     // CRITICAL: Propagate new tokens to all Facebook Pages linked to this user
     // This fixes the issue where a password change invalidates all page tokens.
     // Offload to background for speed.
-    metaExpressQueue.add("sync_facebook_pages", {
-      type: "sync_facebook_pages",
-      payload: { facebookAccountId: facebookAccount.id },
-    }).catch((err) => logger.error("facebook.token.sync_enqueue_failed", { userId, error: err.message }));
+    metaExpressQueue
+      .add("sync_facebook_pages", {
+        type: "sync_facebook_pages",
+        payload: { facebookAccountId: facebookAccount.id },
+      })
+      .catch((err) =>
+        logger.error("facebook.token.sync_enqueue_failed", {
+          userId,
+          error: err.message,
+        }),
+      );
 
     // Log the connection activity
     await logFacebookActivity(facebookAccount.id, "account_connected", {
@@ -861,10 +880,16 @@ export const saveFacebookPages = async (
         // of this user's accounts — ensures the webhook processor always finds
         // an active row after a disconnect-reconnect cycle.
         if (ownerUserId) {
-          await prisma.facebookPage.updateMany({
-            where: { pageId: page.id, facebookAccount: { userId: ownerUserId }, isActive: false },
-            data: { isActive: true },
-          }).catch(() => {}); // truly non-blocking — upsert below is the primary fix
+          await prisma.facebookPage
+            .updateMany({
+              where: {
+                pageId: page.id,
+                facebookAccount: { userId: ownerUserId },
+                isActive: false,
+              },
+              data: { isActive: true },
+            })
+            .catch(() => {}); // truly non-blocking — upsert below is the primary fix
         }
 
         const saved = await prisma.facebookPage.upsert({
@@ -1268,9 +1293,3 @@ export const deactivateFacebookPage = async (
     throw new AppError("Failed to disconnect Facebook page", 500);
   }
 };
-
-
-
-
-
-

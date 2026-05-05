@@ -79,12 +79,7 @@ export async function* streamAgentGraph(params: AgentGraphParams) {
   );
 
   let fullResponseText = "";
-  let isExtracting = false;
-  let hasFoundKey = false;
-  
-  // We look for "content": " inside the streaming JSON output.
-  // This ensures the user only sees the actual message tokens.
-  const targetKey = "content";
+  let lastYieldedLength = 0;
 
   for await (const event of eventStream) {
     if (event.event === "on_custom_event" && event.name === "ai_token") {
@@ -94,31 +89,45 @@ export async function* streamAgentGraph(params: AgentGraphParams) {
 
       fullResponseText += token;
 
-      // Simple streaming extractor for JSON field value
-      // This is slightly brittle but effective for standard Gemini JSON output
-      if (!isExtracting) {
-        const keyMarker = `"${targetKey}": "`;
-        const keyIndex = fullResponseText.indexOf(keyMarker);
-        if (keyIndex !== -1 && !hasFoundKey) {
-          hasFoundKey = true;
-          isExtracting = true;
-          // Yield the part of the token that might already be inside the value
-          const remaining = fullResponseText.substring(keyIndex + keyMarker.length);
-          if (remaining) yield { type: "token", data: remaining };
+      // Robust streaming extractor for JSON field value
+      const contentMatch = fullResponseText.match(/"content"\s*:\s*"([^]*)/);
+      if (contentMatch) {
+        let rawContent = contentMatch[1];
+        
+        // Find the actual end of the string (first unescaped quote)
+        let trueEndIndex = -1;
+        for (let i = 0; i < rawContent.length; i++) {
+          if (rawContent[i] === '"') {
+            // Count backslashes to ensure it's not escaped
+            let backslashCount = 0;
+            let j = i - 1;
+            while (j >= 0 && rawContent[j] === '\\') {
+              backslashCount++;
+              j--;
+            }
+            if (backslashCount % 2 === 0) {
+              trueEndIndex = i;
+              break;
+            }
+          }
         }
-      } else {
-        // We are extracting. We need to watch for the closing quote.
-        const closingQuoteIndex = token.indexOf('"');
-        if (closingQuoteIndex !== -1) {
-          isExtracting = false;
-          let finalPart = token.substring(0, closingQuoteIndex);
-          // Unescape newlines for the widget
-          finalPart = finalPart.replace(/\\n/g, "\n");
-          if (finalPart) yield { type: "token", data: finalPart };
-        } else {
-          // Unescape newlines for the widget
-          const unescapedToken = token.replace(/\\n/g, "\n");
-          yield { type: "token", data: unescapedToken };
+        
+        if (trueEndIndex !== -1) {
+          rawContent = rawContent.substring(0, trueEndIndex);
+        }
+
+        try {
+          // Let the native JSON parser handle all escaping (\n, \t, unicode)
+          // This guarantees the streamed text will perfectly match the final saved text.
+          const parsedContent = JSON.parse(`"${rawContent}"`);
+          if (parsedContent.length > lastYieldedLength) {
+            const newText = parsedContent.substring(lastYieldedLength);
+            lastYieldedLength = parsedContent.length;
+            yield { type: "token", data: newText };
+          }
+        } catch (e) {
+          // The JSON string is incomplete (e.g. ends in the middle of \n or \u0645)
+          // We safely ignore it and wait for the next token to complete the sequence.
         }
       }
     }

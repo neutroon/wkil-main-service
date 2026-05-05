@@ -200,6 +200,7 @@ export const generateAuthUrl = (params: FacebookAuthUrlParams): string => {
     "pages_messaging",
     "pages_manage_metadata",
     "pages_manage_engagement",
+    "business_management", // Required by Meta for pages inside a Business Manager
   ];
 
   return `https://www.facebook.com/v25.0/dialog/oauth?client_id=${env.FB_APP_ID}&redirect_uri=${params.redirect_uri}&scope=${scope.join(",")}&response_type=code`;

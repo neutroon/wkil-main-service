@@ -849,24 +849,25 @@ export const saveFacebookPages = async (
   pages: FacebookPage[],
 ) => {
   try {
+    // Resolve userId ONCE before the loop — avoids N+1 queries and the
+    // non-null assertion crash that was silently breaking new page saves.
+    const ownerAccount = await prisma.facebookAccount.findUnique({
+      where: { id: facebookAccountId },
+      select: { userId: true },
+    });
+    const ownerUserId = ownerAccount?.userId;
+
     const savedPages = await Promise.all(
       pages.map(async (page) => {
-        // CRITICAL: Reactivate ALL stale rows for this pageId across all accounts of this user.
-        // Without this, the webhook processor's `resolveAccountIdentity` (which queries isActive:true)
-        // will throw UnrecoverableError and silently kill AI replies after a disconnect-reconnect cycle.
-        await prisma.facebookPage.updateMany({
-          where: {
-            pageId: page.id,
-            facebookAccount: {
-              userId: (await prisma.facebookAccount.findUnique({
-                where: { id: facebookAccountId },
-                select: { userId: true },
-              }))!.userId
-            },
-            isActive: false,
-          },
-          data: { isActive: true },
-        }).catch(() => {}); // Non-blocking; the upsert below is the primary fix
+        // Reactivate any stale isActive:false rows for this pageId across ALL
+        // of this user's accounts — ensures the webhook processor always finds
+        // an active row after a disconnect-reconnect cycle.
+        if (ownerUserId) {
+          await prisma.facebookPage.updateMany({
+            where: { pageId: page.id, facebookAccount: { userId: ownerUserId }, isActive: false },
+            data: { isActive: true },
+          }).catch(() => {}); // truly non-blocking — upsert below is the primary fix
+        }
 
         const saved = await prisma.facebookPage.upsert({
           where: {
@@ -898,8 +899,11 @@ export const saveFacebookPages = async (
 
         // Proactively clear cache to ensure new token is used immediately
         await invalidateFacebookPageCache(page.id).catch(() => {});
-        
-        await subscribePageToWebhook(page.access_token, page.id);
+
+        // Non-blocking: webhook subscription failure must never break page saves
+        subscribePageToWebhook(page.access_token, page.id).catch((err) =>
+          logger.warn("facebook.pages.webhook_subscribe_failed", { pageId: page.id, error: err?.message })
+        );
 
         return decryptFacebookPageForResponse(saved);
       }),

@@ -17,15 +17,21 @@ export async function recordUsageNode(
   const { sessionStats, userId, businessProfileId, channel } = state;
 
   try {
-    await recordAiUsage({
-      userId,
-      businessProfileId,
-      modelName: sessionStats.modelName,
-      promptTokens: sessionStats.promptTokens,
-      completionTokens: sessionStats.completionTokens,
-      groundingCalls: sessionStats.groundingCalls,
-      operation: `chat_${channel || "direct"}`,
-    });
+    const deltaPrompt = sessionStats.promptTokens - sessionStats.lastBilledPromptTokens;
+    const deltaCompletion = sessionStats.completionTokens - sessionStats.lastBilledCompletionTokens;
+    const deltaGrounding = sessionStats.groundingCalls - sessionStats.lastBilledGrounding;
+
+    if (deltaPrompt > 0 || deltaCompletion > 0 || deltaGrounding > 0) {
+      await recordAiUsage({
+        userId,
+        businessProfileId,
+        modelName: sessionStats.modelName,
+        promptTokens: deltaPrompt,
+        completionTokens: deltaCompletion,
+        groundingCalls: deltaGrounding,
+        operation: `chat_${channel || "direct"}`,
+      });
+    }
 
     logger.info("ai.node.recordUsage.success", {
       businessProfileId,

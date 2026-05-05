@@ -414,6 +414,8 @@ model FacebookPage {
   followersCount  Int       @default(0)
   isActive        Boolean   @default(true)
   isTokenValid    Boolean   @default(true)
+  webhookStatus   String    @default("PENDING") // PENDING | SUBSCRIBED | FAILED
+  webhookCheckedAt DateTime?
   lastValidatedAt DateTime?
   lastUsedAt      DateTime?
 

@@ -154,7 +154,7 @@ export class FacebookController {
   async getComments(req: Request, res: Response) {
     const { postId } = req.params;
     const { access_token } = req.query as any;
-    const result = await getPostComments(postId, access_token || "");
+    const result = await getPostComments(postId, access_token || undefined);
     return res.json(result);
   }
 

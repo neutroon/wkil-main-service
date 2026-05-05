@@ -61,7 +61,14 @@ export class FacebookController {
 
     const facebookAccount = await saveFacebookToken(userId, tokenData, userInfo, deviceInfo);
 
-    return res.json({ success: true, facebookAccount, tokenData });
+    // Hardening: Sanitize the account object and remove raw tokenData from response
+    // to ensure no sensitive tokens (even encrypted ones) reach the frontend.
+    const { accessToken, refreshToken, ...sanitizedAccount } = facebookAccount as any;
+
+    return res.json({ 
+      success: true, 
+      facebookAccount: sanitizedAccount
+    });
   }
 
   /**
@@ -71,7 +78,7 @@ export class FacebookController {
     const { access_token, facebook_account_id } = req.query as any;
     const userId = (req as any).user.id;
 
-    const pages = await getUserPages(access_token, userId);
+    const pages = await getUserPages(access_token || undefined, userId);
 
     if (facebook_account_id) {
       await saveFacebookPages(facebook_account_id, pages);
@@ -86,7 +93,7 @@ export class FacebookController {
   async getPageDetails(req: Request, res: Response) {
     const { pageId } = req.params;
     const { access_token } = req.query as any;
-    const page = await getPageDetails(pageId, access_token);
+    const page = await getPageDetails(pageId, access_token || undefined);
     return res.json(page);
   }
 
@@ -144,7 +151,7 @@ export class FacebookController {
   async getPagePosts(req: Request, res: Response) {
     const { pageId } = req.params;
     const { access_token } = req.query as any;
-    const result = await getPagePosts(pageId, access_token);
+    const result = await getPagePosts(pageId, access_token || undefined);
     return res.json(result);
   }
 
@@ -164,7 +171,7 @@ export class FacebookController {
   async replyToComment(req: Request, res: Response) {
     const { commentId } = req.params;
     const { message, accessToken } = req.body;
-    const result = await replyToComment({ commentId, message, accessToken });
+    const result = await replyToComment({ commentId, message, accessToken: accessToken || undefined });
     return res.json(result);
   }
 
@@ -174,7 +181,7 @@ export class FacebookController {
   async deletePost(req: Request, res: Response) {
     const { postId } = req.params;
     const { access_token } = req.query as any;
-    const success = await deleteFacebookPost(postId, access_token);
+    const success = await deleteFacebookPost(postId, access_token || undefined);
     return res.json({ success });
   }
 

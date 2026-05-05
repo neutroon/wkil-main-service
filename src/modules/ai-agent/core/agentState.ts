@@ -49,6 +49,9 @@ export interface SessionStats {
   promptTokens: number;
   completionTokens: number;
   groundingCalls: number;
+  lastBilledPromptTokens: number;
+  lastBilledCompletionTokens: number;
+  lastBilledGrounding: number;
   modelName: string;
 }
 
@@ -66,6 +69,9 @@ function makeDefaultStats(): SessionStats {
     promptTokens: 0,
     completionTokens: 0,
     groundingCalls: 0,
+    lastBilledPromptTokens: 0,
+    lastBilledCompletionTokens: 0,
+    lastBilledGrounding: 0,
     modelName: "gemini-3-flash-preview",
   };
 }

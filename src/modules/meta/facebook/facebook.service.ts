@@ -251,25 +251,6 @@ export const getUserPages = async (
   const { data } = await metaClient.get(url);
   const graphPages: FacebookPage[] = data.data || [];
 
-  // DEBUG: Check what permissions this token ACTUALLY has
-  try {
-    const permUrl = `${FB_API}/me/permissions?access_token=${token}`;
-    const permRes = await metaClient.get(permUrl);
-    logger.info("facebook.api.permissions_check", { 
-      userId,
-      permissions: permRes.data?.data 
-    });
-  } catch (e) {
-    logger.error("facebook.api.permissions_check_failed", { error: String(e) });
-  }
-
-  logger.info("facebook.api.get_user_pages", { 
-    userId, 
-    pagesCount: graphPages.length, 
-    hasDataArray: Array.isArray(data.data),
-    rawDataKeys: Object.keys(data)
-  });
-
   // If we have a userId, merge database settings (automation mode, etc.)
   if (userId && graphPages.length > 0) {
     const storedPages = await prisma.facebookPage.findMany({
@@ -892,12 +873,6 @@ export const saveFacebookPages = async (
     // no longer return them in /me/accounts. We must mark them as inactive 
     // so they disappear from our UI, rather than keeping them as "zombies".
     const currentMetaPageIds = pages.map((p) => p.id);
-    
-    logger.info("facebook.pages.save_start", {
-      facebookAccountId,
-      incomingPagesCount: pages.length,
-      incomingPageIds: currentMetaPageIds,
-    });
 
     await prisma.facebookPage.updateMany({
       where: {

@@ -250,6 +250,18 @@ export const getUserPages = async (
   const { data } = await metaClient.get(url);
   const graphPages: FacebookPage[] = data.data || [];
 
+  // DEBUG: Check what permissions this token ACTUALLY has
+  try {
+    const permUrl = `${FB_API}/me/permissions?access_token=${token}`;
+    const permRes = await metaClient.get(permUrl);
+    logger.info("facebook.api.permissions_check", { 
+      userId,
+      permissions: permRes.data?.data 
+    });
+  } catch (e) {
+    logger.error("facebook.api.permissions_check_failed", { error: String(e) });
+  }
+
   logger.info("facebook.api.get_user_pages", { 
     userId, 
     pagesCount: graphPages.length, 

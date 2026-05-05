@@ -27,7 +27,7 @@ export async function processPageTokenValidation(payload: { pageId: string }) {
     }
 
     const token = decryptFacebookSecret(page.pageAccessToken);
-    const fbApiUrl = env.FB_API_URL || "https://graph.facebook.com/v22.0";
+    const fbApiUrl = env.FB_API_URL;
     const appId = env.FB_APP_ID;
     const appSecret = env.FB_APP_SECRET;
 

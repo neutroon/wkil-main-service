@@ -1,6 +1,8 @@
 import prisma from "@config/prisma";
 import { logger } from "@utils/logger";
 import { decryptFacebookSecret } from "@modules/auth/core/tokenCrypto";
+import { env } from "@config/env";
+
 
 /**
  * Handles Facebook Page webhook subscription with exponential retry.
@@ -25,7 +27,7 @@ export async function processWebhookSubscription(payload: { pageId: string; acce
     }
 
     // 2. Call Meta API to subscribe
-    const fbApiUrl = process.env.FB_API_URL || "https://graph.facebook.com/v22.0";
+    const fbApiUrl = env.FB_API_URL;
     const response = await fetch(
       `${fbApiUrl}/${pageId}/subscribed_apps?access_token=${token}&subscribed_fields=messages,messaging_postbacks,feed`,
       { method: "POST" }

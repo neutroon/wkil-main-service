@@ -160,6 +160,7 @@ export async function processWidgetChatMessage(params: {
           {
             type: resolved.mediaType,
             status: "SENT",
+            mediaMetadata: { url: resolved.url },
           },
         );
       }

@@ -23,7 +23,7 @@ const facebookRoutes = Router();
 
 // ─── Authentication ───────────────────────────────────────────────────────────
 facebookRoutes.get("/login", validate(facebookLoginSchema), (req, res) => facebookController.login(req, res));
-facebookRoutes.get("/login/callback", authenticateToken, validate(facebookCallbackSchema), (req, res) => facebookController.callback(req, res));
+facebookRoutes.post("/login/callback", authenticateToken, validate(facebookCallbackSchema), (req, res) => facebookController.callback(req, res));
 facebookRoutes.get("/validate-token", authenticateToken, (req, res) => facebookController.validateToken(req, res));
 
 // ─── Accounts & Analytics ─────────────────────────────────────────────────────
@@ -35,6 +35,7 @@ facebookRoutes.get("/admin/analytics", authenticateToken, (req, res) => facebook
 
 // ─── Page Management ──────────────────────────────────────────────────────────
 facebookRoutes.get("/pages", facebookLimiter, authenticateToken, validate(facebookPagesSchema), (req, res) => facebookController.listPages(req, res));
+facebookRoutes.post("/pages/sync", facebookLimiter, authenticateToken, (req, res) => facebookController.syncPages(req, res));
 facebookRoutes.get("/pages/:pageId", facebookLimiter, authenticateToken, validate(facebookPageIdParamSchema), (req, res) => facebookController.getPageDetails(req, res));
 facebookRoutes.delete("/pages/:pageId", authenticateToken, validate(facebookPageIdParamSchema), (req, res) => facebookController.disconnectPage(req, res));
 facebookRoutes.post("/pages/:pageId/link-business", authenticateToken, validate(facebookPageIdParamSchema), validate(facebookLinkBusinessSchema), (req, res) => facebookController.linkBusiness(req, res));

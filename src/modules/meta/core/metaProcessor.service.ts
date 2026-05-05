@@ -432,18 +432,27 @@ export async function processMetaMessage(job: MetaMessageJob) {
     }
 
     // B. Platform Delivery
-    if (isAutoMode && reply.handoffCategory !== "SYSTEM_ERROR" && mainContent.length > 0) {
-      const { mirrorCommentReplyToMessenger, syncMessageStatus } = await import("../core/metaDelivery.service");
+    const { mirrorCommentReplyToMessenger, syncMessageStatus } = await import("../core/metaDelivery.service");
+
+    if (isAutoMode && reply.handoffCategory !== "SYSTEM_ERROR") {
 
       if (platform === "messenger") {
-        logger.info("meta.processor.delivering_messenger", { conversationId: conversation.id });
-        const { sendPrivateReply, replyToComment } = await import("../facebook/facebook.service");
-        
-        if (isComment) {
-          if (reply.intent === "IGNORE") return;
 
+        // ── COMMENT DELIVERY ──────────────────────────────────────────────────
+        if (isComment) {
+          // IGNORE: bail before any social action
+          if (reply.intent === "IGNORE") {
+            logger.info("meta.processor.delivery_skipped", { reason: "IGNORE_INTENT" });
+            return;
+          }
+
+          const { sendPrivateReply, replyToComment } = await import("../facebook/facebook.service");
+          logger.info("meta.processor.delivering_comment", { conversationId: conversation.id });
+
+          // Like the comment (social signal) — fires for all non-IGNORE intents
           likeComment({ commentId: job.commentId!, accessToken, pageId: identifier }).catch(() => {});
 
+          // Public reply — fires for GREET_ONLY and SALES_DM alike, independent of mainContent
           if (publicStatus === "SENT" && publicSaved) {
             await replyToComment({ commentId: job.commentId!, message: publicSaved.content, accessToken, pageId: identifier, businessProfileId })
               .then(res => {
@@ -456,46 +465,49 @@ export async function processMetaMessage(job: MetaMessageJob) {
               });
           }
 
-          if (privateStatus === "SENT" && modelSaved) {
-            if (reply.intent === "SALES_DM") {
-              await sendPrivateReply({ commentId: job.commentId!, message: mainContent, accessToken, pageId: identifier, businessProfileId })
-                .then(async res => {
-                  if (res?.id && res.id !== "ALREADY_REPLIED") {
-                    logger.info("meta.processor.messenger_private_reply_success", { resId: res.id });
-                    await syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, { externalId: res.id });
-                    await mirrorCommentReplyToMessenger({ pageId: identifier, senderId, businessProfileId, messageId: res.id, content: mainContent, intent: reply.intent, reasoning: reply.reasoning, postId: job.postId, commentId: job.commentId, role: "model" });
-                  } else if (res?.id === "ALREADY_REPLIED") {
-                    logger.warn("meta.processor.messenger_private_reply_skipped", { reason: "ALREADY_REPLIED" });
-                  }
-                })
-                .catch((err) => {
-                  logger.error("meta.processor.messenger_private_reply_failed", { error: err.message });
-                  return syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, { status: "FAILED" });
-                });
-            } else {
-              await replyToComment({ commentId: job.commentId!, message: mainContent, accessToken, pageId: identifier, businessProfileId })
-                .then(res => {
-                  logger.info("meta.processor.messenger_comment_private_success", { resId: res?.id });
-                  return res && syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, { externalId: res.id });
-                })
-                .catch((err) => {
-                  logger.error("meta.processor.messenger_comment_private_failed", { error: err.message });
-                  return syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, { status: "FAILED" });
-                });
-            }
+          // Private DM — only for SALES_DM with actual content
+          if (reply.intent === "SALES_DM" && privateStatus === "SENT" && modelSaved && mainContent.length > 0) {
+            await sendPrivateReply({ commentId: job.commentId!, message: mainContent, accessToken, pageId: identifier, businessProfileId })
+              .then(async res => {
+                if (res?.id && res.id !== "ALREADY_REPLIED") {
+                  logger.info("meta.processor.messenger_private_reply_success", { resId: res.id });
+                  await syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, { externalId: res.id });
+                  await mirrorCommentReplyToMessenger({ pageId: identifier, senderId, businessProfileId, messageId: res.id, content: mainContent, intent: reply.intent, reasoning: reply.reasoning, postId: job.postId, commentId: job.commentId, role: "model" });
+                } else if (res?.id === "ALREADY_REPLIED") {
+                  logger.warn("meta.processor.messenger_private_reply_skipped", { reason: "ALREADY_REPLIED" });
+                }
+              })
+              .catch((err) => {
+                logger.error("meta.processor.messenger_private_reply_failed", { error: err.message });
+                return syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, { status: "FAILED" });
+              });
+          } else if (reply.intent !== "SALES_DM" && privateStatus === "SENT" && modelSaved && mainContent.length > 0) {
+            // Non-sales informational reply — public comment thread
+            await replyToComment({ commentId: job.commentId!, message: mainContent, accessToken, pageId: identifier, businessProfileId })
+              .then(res => {
+                logger.info("meta.processor.messenger_comment_info_success", { resId: res?.id });
+                return res && syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, { externalId: res.id });
+              })
+              .catch((err) => {
+                logger.error("meta.processor.messenger_comment_info_failed", { error: err.message });
+                return syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, { status: "FAILED" });
+              });
           }
-        } else if (modelSaved && privateStatus === "SENT") {
+
+        // ── MESSENGER DM DELIVERY ─────────────────────────────────────────────
+        } else if (modelSaved && privateStatus === "SENT" && mainContent.length > 0) {
+          logger.info("meta.processor.delivering_messenger", { conversationId: conversation.id });
           const { sendMessengerReply, sendMessengerMedia } = await import("../messenger/messenger.service");
-          
+
           try {
             let res: any;
             if (aiMediaAsset && (syncedMediaId || aiMediaAsset.publicUrl)) {
               const messengerMediaType = aiMediaAsset.mediaType === "document" ? "file" : aiMediaAsset.mediaType;
               res = await sendMessengerMedia(senderId, syncedMediaId || null, messengerMediaType, accessToken, aiMediaAsset.publicUrl);
               logger.info("meta.processor.messenger_media_success", { messageId: res?.message_id });
-              
+
               if (mainContent.length > 0) {
-                 res = await sendMessengerReply(senderId, mainContent, accessToken);
+                res = await sendMessengerReply(senderId, mainContent, accessToken);
               }
             } else {
               res = await sendMessengerReply(senderId, mainContent, accessToken);
@@ -507,17 +519,19 @@ export async function processMetaMessage(job: MetaMessageJob) {
             await syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, { status: "FAILED" });
           }
         }
-      } else if (platform === "whatsapp" && modelSaved && privateStatus === "SENT") {
+
+      // ── WHATSAPP DELIVERY ───────────────────────────────────────────────────
+      } else if (platform === "whatsapp" && modelSaved && privateStatus === "SENT" && mainContent.length > 0) {
         logger.info("meta.processor.delivering_whatsapp", { conversationId: conversation.id });
         const { sendWhatsAppReply, sendWhatsAppMedia } = await import("../whatsapp/whatsapp.service");
-        
+
         try {
           let res: any;
           if (aiMediaAsset && (syncedMediaId || aiMediaAsset.publicUrl)) {
-             res = await sendWhatsAppMedia(senderId, syncedMediaId || null, aiMediaAsset.mediaType, identifier, accessToken, mainContent.length > 0 ? mainContent : undefined, aiMediaAsset.name, aiMediaAsset.publicUrl);
-             logger.info("meta.processor.whatsapp_media_success", { wamid: res?.messages?.[0]?.id });
+            res = await sendWhatsAppMedia(senderId, syncedMediaId || null, aiMediaAsset.mediaType, identifier, accessToken, mainContent.length > 0 ? mainContent : undefined, aiMediaAsset.name, aiMediaAsset.publicUrl);
+            logger.info("meta.processor.whatsapp_media_success", { wamid: res?.messages?.[0]?.id });
           } else {
-             res = await sendWhatsAppReply(senderId, mainContent, identifier, accessToken);
+            res = await sendWhatsAppReply(senderId, mainContent, identifier, accessToken);
           }
           const wamid = res?.messages?.[0]?.id;
           logger.info("meta.processor.whatsapp_reply_success", { wamid });
@@ -527,11 +541,12 @@ export async function processMetaMessage(job: MetaMessageJob) {
           await prisma.conversationMessage.update({ where: { id: modelSaved.id }, data: { status: "FAILED" } });
         }
       }
+
     } else {
-      logger.info("meta.processor.delivery_skipped", { 
-        isAutoMode, 
-        handoff: reply.handoffCategory, 
-        contentLength: mainContent.length 
+      logger.info("meta.processor.delivery_skipped", {
+        isAutoMode,
+        handoff: reply.handoffCategory,
+        contentLength: mainContent.length
       });
     }
   } catch (err: any) {

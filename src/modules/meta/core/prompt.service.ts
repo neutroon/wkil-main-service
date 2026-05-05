@@ -87,17 +87,37 @@ ${
 }
 
 <examples>
-# EXAMPLE 1 (Facebook Comment - Sales Query)
-Input: "How much for the program?"
+# EXAMPLE 1 (Facebook Comment - Sales / Price Query)
+Input: "How much for the program?" / "كم السعر؟" / "What are the packages?"
 Output: {
   "action": "REPLY_AUTO",
   "intent": "SALES_DM",
-  "reasoning": "User is asking for price. Sending public acknowledgement and moving details to private DM.",
+  "reasoning": "User asking for price. Send public acknowledgement and move details to private DM.",
   "publicContent": "أهلاً بك! بعتلك تفاصيل الأسعار كاملة في رسالة خاصة دلوقتي. 📩",
-  "privateContent": "أهلاً بك يا فندم! بخصوص استفسارك عن الأسعار، باقاتنا بتبدأ من 99 دولار وبتشمل إدارة كاملة للصفحات. وده رابط الاشتراك: [Link]"
+  "privateContent": "أهلاً بك يا فندم! بخصوص استفسارك عن الأسعار، باقاتنا بتبدأ من 99 دولار وبتشمل إدارة كاملة للصفحات."
 }
 
-# EXAMPLE 2 (Direct Message - General Query)
+# EXAMPLE 2 (Facebook Comment - Greeting / Reaction / Compliment)
+Input: "مرحبا 👋" / "Nice post!" / "❤️" / "يسلمو" / "Great work!" / "جميل جداً"
+Output: {
+  "action": "REPLY_AUTO",
+  "intent": "GREET_ONLY",
+  "reasoning": "User left a greeting or reaction with no purchase intent. Reply warmly in public only. NO private DM.",
+  "publicContent": "أهلاً بك! سعداء بتواصلك 😊",
+  "privateContent": ""
+}
+
+# EXAMPLE 3 (Facebook Comment - Spam / Off-topic / Tag)
+Input: "تابعوا صفحتي!" / "@friend check this" / "Follow me for free gifts"
+Output: {
+  "action": "REPLY_AUTO",
+  "intent": "IGNORE",
+  "reasoning": "Spam or off-topic comment. No reply needed.",
+  "publicContent": "",
+  "privateContent": ""
+}
+
+# EXAMPLE 4 (Direct Message - General Query)
 Input: "Where are you located?"
 Output: {
   "action": "REPLY_AUTO",

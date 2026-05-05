@@ -9,7 +9,12 @@ import {
   logout,
   refreshToken,
 } from "@modules/auth/core/auth.middleware";
-import { authLimiter, securityActionLimiter } from "@middlewares/rateLimit.middleware";
+import { getCsrfToken } from "@middlewares/csrf.middleware";
+import { 
+  authLimiter, 
+  csrfLimiter,
+  securityActionLimiter 
+} from "@middlewares/rateLimit.middleware";
 import { validate } from "@middlewares/validate.middleware";
 import { 
   loginSchema, 
@@ -64,6 +69,7 @@ authRoutes.post(
 );
 
 // Token management routes
+authRoutes.get("/csrf-token", csrfLimiter, getCsrfToken);
 authRoutes.post("/refresh", refreshToken);
 authRoutes.post("/logout", logout);
 

@@ -782,12 +782,6 @@ export const saveFacebookToken = async (
         userId,
         name: userInfo.name,
         pictureUrl: userInfo.picture?.data?.url || null,
-        pages: {
-          updateMany: {
-            where: {},
-            data: { isActive: true },
-          },
-        },
       },
       create: {
         userId,
@@ -803,26 +797,25 @@ export const saveFacebookToken = async (
       },
     });
 
-    // CRITICAL: Propagate new tokens to all Facebook Pages linked to this user
-    // This fixes the issue where a password change invalidates all page tokens.
-    // Offload to background for speed.
-    metaExpressQueue
-      .add("sync_facebook_pages", {
-        type: "sync_facebook_pages",
-        payload: { facebookAccountId: facebookAccount.id },
-      })
-      .catch((err) =>
-        logger.error("facebook.token.sync_enqueue_failed", {
-          userId,
-          error: err.message,
-        }),
-      );
+    // 1. SYNCHRONOUS SYNC (T2): Fetch and save pages immediately
+    // This ensures they appear in the UI without waiting for a background job.
+    logger.info("facebook.token.sync_start_sync", { facebookAccountId: facebookAccount.id });
+    const pages = await getUserPages(tokenData.access_token);
+    await saveFacebookPages(facebookAccount.id, pages);
+
+    // 2. Offload health checks and webhooks to background
+    for (const page of pages) {
+      metaExpressQueue.add("webhook_subscription", {
+        type: "webhook_subscription",
+        payload: { pageId: page.id, accessToken: page.access_token }
+      }, { jobId: `webhook_sub:${page.id}` }).catch(() => {});
+    }
 
     // Log the connection activity
     await logFacebookActivity(facebookAccount.id, "account_connected", {
       facebookUserId: userInfo.id,
       userName: userInfo.name,
-      deviceInfo,
+      pagesCount: pages.length,
     });
 
     return decryptFacebookAccountForResponse(facebookAccount);
@@ -873,6 +866,19 @@ export const saveFacebookPages = async (
       select: { userId: true },
     });
     const ownerUserId = ownerAccount?.userId;
+
+    // 1. DEACTIVATE MISSING PAGES (T2):
+    // If a user reconnects and unselects pages in the Facebook popup, Meta will 
+    // no longer return them in /me/accounts. We must mark them as inactive 
+    // so they disappear from our UI, rather than keeping them as "zombies".
+    const currentMetaPageIds = pages.map((p) => p.id);
+    await prisma.facebookPage.updateMany({
+      where: {
+        facebookAccountId,
+        pageId: { notIn: currentMetaPageIds },
+      },
+      data: { isActive: false },
+    });
 
     const savedPages = await Promise.all(
       pages.map(async (page) => {

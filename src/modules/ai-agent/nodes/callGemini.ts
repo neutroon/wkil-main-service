@@ -17,9 +17,10 @@ import {
   MESSENGER_SAFETY_SETTINGS,
   aiRoutingSchema,
 } from "../gemini";
+import { windowContents, estimateSystemTokens } from "../core/contextWindow";
+import { recordAiUsage } from "@modules/billing/billing.service";
 import { logger } from "@utils/logger";
 import type { AgentStateType } from "../core/agentState";
-import { windowContents, estimateSystemTokens } from "../core/contextWindow";
 
 const GEMINI_TIMEOUT_MS = 60_000;
 
@@ -157,13 +158,13 @@ export async function callGeminiNode(
     businessProfileId: state.businessProfileId,
   });
 
-  return {
+  const finalStateUpdate = {
     // Append the model's response turn to history explicitly
     // Standardize: discard fragmented parts, use the verified aggregated fullText
     contents: [
       ...state.contents,
       { 
-        role: "model", 
+        role: "model" as const, 
         parts: [{ text: responseResult.fullText || "" }] 
       }
     ],
@@ -171,6 +172,40 @@ export async function callGeminiNode(
     turnCount:     state.turnCount + 1,
     sessionStats:  updatedStats,
   };
+
+  // ── Real-time Differential Billing ──────────────────────────────────────────
+  // We bill the DELTA since the last time this turn (or previous turns) recorded usage.
+  // This ensures that even if the graph interrupts for Manual Approval, we've billed for the thinking time.
+  const deltaPrompt = updatedStats.promptTokens - updatedStats.lastBilledPromptTokens;
+  const deltaCompletion = updatedStats.completionTokens - updatedStats.lastBilledCompletionTokens;
+  const deltaGrounding = updatedStats.groundingCalls - updatedStats.lastBilledGrounding;
+
+  if (deltaPrompt > 0 || deltaCompletion > 0 || deltaGrounding > 0) {
+    try {
+      await recordAiUsage({
+        userId: state.userId,
+        businessProfileId: state.businessProfileId,
+        modelName: usedModel,
+        promptTokens: deltaPrompt,
+        completionTokens: deltaCompletion,
+        groundingCalls: deltaGrounding,
+        operation: `chat_${state.channel || "direct"}`,
+      });
+
+      // Synchronize state: mark these tokens as billed
+      updatedStats.lastBilledPromptTokens = updatedStats.promptTokens;
+      updatedStats.lastBilledCompletionTokens = updatedStats.completionTokens;
+      updatedStats.lastBilledGrounding = updatedStats.groundingCalls;
+    } catch (err: any) {
+      logger.error("ai.node.callGemini.billing_failed", {
+        error: err.message,
+        businessProfileId: state.businessProfileId
+      });
+      // We don't update lastBilled counters here, so the next turn (or recordUsage node) will retry.
+    }
+  }
+
+  return finalStateUpdate;
 }
 
 

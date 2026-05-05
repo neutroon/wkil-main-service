@@ -390,8 +390,9 @@ export const getPageDetails = async (
   return graphPage;
 };
 
-export const getPostComments = async (postId: string, accessToken: string) => {
-  const url = `${FB_API}/${postId}/comments?access_token=${accessToken}&fields=id,message,from{id,name},created_time,like_count,comments{id,message,from{id,name},created_time,like_count}`;
+export const getPostComments = async (postId: string, accessToken?: string) => {
+  const token = accessToken || (await getPageAccessToken(postId.split("_")[0]));
+  const url = `${FB_API}/${postId}/comments?access_token=${token}&fields=id,message,from{id,name},created_time,like_count,comments{id,message,from{id,name},created_time,like_count}`;
   const { data } = await metaClient.get(url);
   return data;
 };

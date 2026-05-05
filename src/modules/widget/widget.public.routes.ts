@@ -129,6 +129,27 @@ widgetPublicRoutes.post(
             handoffCategory: finalDecision.handoffCategory,
           });
 
+          if (finalDecision.attachment?.assetName) {
+            const { resolveAssetForChannel } = await import("@modules/media/services/mediaLibrary.service");
+            const resolved = await resolveAssetForChannel(
+              finalDecision.attachment.assetName,
+              install.businessProfileId,
+              "web",
+            );
+            if (resolved?.url) {
+              await saveMessage(
+                conversation.id,
+                "model",
+                finalDecision.attachment.caption ?? "",
+                {
+                  type: resolved.mediaType,
+                  status: "SENT",
+                  mediaMetadata: { url: resolved.url },
+                },
+              );
+            }
+          }
+
           if (finalDecision.action === "RESOLVE_CONVERSATION") {
             await prisma.conversation.update({ where: { id: conversation.id }, data: { status: "RESOLVED" } });
           }

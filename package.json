@@ -28,6 +28,8 @@
     "@langchain/langgraph": "^1.2.9",
     "@langchain/langgraph-checkpoint-postgres": "^1.0.1",
     "@prisma/client": "^6.16.2",
+    "@sentry/node": "^10.51.0",
+    "@sentry/profiling-node": "^10.51.0",
     "@socket.io/redis-adapter": "^8.3.0",
     "axios": "^1.12.2",
     "axios-retry": "^4.5.0",

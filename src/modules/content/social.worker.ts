@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/node";
 import { Worker, Job } from "bullmq";
 import { bullConnection } from "@config/redis";
 import prisma from "@config/prisma";
@@ -91,6 +92,13 @@ socialWorker.on("completed", (job) => {
 
 socialWorker.on("failed", (job, err) => {
   logger.error("social_worker.job_failed_permanently", { jobId: job?.id, error: err.message });
+  Sentry.captureException(err, {
+    extra: {
+      jobId: job?.id,
+      jobName: job?.name,
+      data: job?.data,
+    },
+  });
 });
 
 

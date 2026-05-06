@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/node";
 import { metaClient } from "@utils/apiClient";
 import prisma from "@config/prisma";
 import { logger } from "@utils/logger";
@@ -737,6 +738,13 @@ export const getFacebookUserProfile = async (
       code: error.code,
       subcode: error.subcode,
     });
+
+    // Report to Sentry for production debugging
+    Sentry.captureException(error, {
+      tags: { service: "facebook", action: "fetch_profile" },
+      extra: { pageId, psid: psid.trim() }
+    });
+
     return null;
   }
 };

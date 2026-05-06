@@ -54,34 +54,34 @@ export async function callGeminiNode(
           // ── Streaming loop ───────────────────────────────────────────
           let fullText = "";
           let finalUsage: any = null;
-          let finalCandidates: any[] = [];
+          let allParts: any[] = [];
 
           for await (const chunk of r) {
-            const text = chunk.text;
-            if (text) {
-              fullText += text;
-              // Dispatch token to any listeners (e.g. the web widget)
-              await dispatchCustomEvent("ai_token", { token: text });
+            // Safely get text without triggering the SDK's internal warning
+            const parts = chunk.candidates?.[0]?.content?.parts || [];
+            for (const part of parts) {
+              if (part.text) {
+                fullText += part.text;
+                await dispatchCustomEvent("ai_token", { token: part.text });
+              }
+              allParts.push(part);
             }
+
             if (chunk.usageMetadata) finalUsage = chunk.usageMetadata;
-            if (chunk.candidates) finalCandidates = chunk.candidates;
           }
 
-          // ── Validation: No candidates = Failure ──────────────────────────
-          // If Gemini returns a successful response but no candidates (e.g. safety block),
-          // we throw so executeWithFallback can scale to the next model tier.
-          if (!finalCandidates || finalCandidates.length === 0) {
+          // ── Validation: No parts = Failure ──────────────────────────
+          if (allParts.length === 0) {
             throw new Error("EMPTY_CANDIDATES");
           }
 
           // Reconstruct a response-like object for the rest of the node
           return {
-            candidates: finalCandidates,
             usageMetadata: finalUsage,
             fullText,
-            // Capture ALL parts (text + functionCalls) to maintain protocol integrity
-            parts: finalCandidates?.[0]?.content?.parts || [],
-            functionCalls: finalCandidates?.[0]?.content?.parts
+            parts: allParts,
+            firstCandidate: allParts.length > 0 ? { content: { parts: allParts } } : null,
+            functionCalls: allParts
               ?.filter((p: any) => p.functionCall)
               ?.map((p: any) => p.functionCall) || [],
           };
@@ -127,9 +127,6 @@ export async function callGeminiNode(
   }
 
   // ── Parse Gemini response structure ────────────────────────────────────────
-  // candidate is guaranteed to exist here because we throw if candidates.length === 0 inside executeWithFallback
-  const candidate = responseResult.candidates[0];
-
   const functionCalls = (responseResult.functionCalls || []).map((fc: any) => ({
     id:   fc.id || `${fc.name}_${Date.now()}`,
     name: fc.name,
@@ -138,7 +135,7 @@ export async function callGeminiNode(
 
   // ── Accumulate token usage (across multi-turn loops) ────────────────────
   const meta = responseResult?.usageMetadata;
-  const hasGrounding = !!candidate.groundingMetadata?.searchEntryPoint;
+  const hasGrounding = !!(responseResult.firstCandidate as any)?.groundingMetadata?.searchEntryPoint;
   const updatedStats: typeof state.sessionStats = {
     ...state.sessionStats,
     modelName: usedModel,

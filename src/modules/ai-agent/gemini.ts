@@ -317,7 +317,9 @@ export const buildDynamicProperties = (mapping: any): Record<string, any> => {
   const props: Record<string, any> = {};
   for (const [key, value] of Object.entries(mapping)) {
     if (typeof value === "object" && value !== null) {
-      const mappedType = String((value as any).type).toUpperCase();
+      // Detect if it's an "Advanced Rule" (has a type) or a "Simple Nested Object"
+      const hasExplicitType = "type" in (value as any);
+      const mappedType = hasExplicitType ? String((value as any).type).toUpperCase() : "OBJECT";
 
       if (mappedType === "ARRAY") {
         props[key] = {
@@ -336,18 +338,24 @@ export const buildDynamicProperties = (mapping: any): Record<string, any> => {
       } else if (mappedType === "BOOLEAN") {
         props[key] = {
           type: Type.BOOLEAN,
-          description:
-            (value as any).description || `True/false flag for ${key}`,
+          description: (value as any).description || `True/false flag for ${key}`,
         };
-      } else {
-        const nestedProps = buildDynamicProperties(
-          (value as any).properties || value,
-        );
+      } else if (mappedType === "OBJECT") {
+        // Handle both { type: "OBJECT", properties: {...} } AND simple { field: "..." }
+        const nestedContent = (value as any).properties || (hasExplicitType ? {} : value);
+        const nestedProps = buildDynamicProperties(nestedContent);
+        
         props[key] = {
           type: Type.OBJECT,
           description: (value as any).description || `Details for ${key}`,
           properties: nestedProps,
           required: Object.keys(nestedProps),
+        };
+      } else {
+        // Fallback for STRING or unrecognized types
+        props[key] = {
+          type: Type.STRING,
+          description: (value as any).description || String(value) || `The ${key}`,
         };
       }
     } else {

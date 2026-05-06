@@ -6,13 +6,8 @@ import { z } from "zod";
  */
 const aiExtractionRuleSchema: any = z.lazy(() =>
   z.union([
-    z.string(), // Simple rule: "The user's address"
-    z.object({
-      type: z.enum(["STRING", "NUMBER", "INTEGER", "BOOLEAN", "ARRAY", "OBJECT"]).optional(),
-      description: z.string().optional(),
-      items: z.record(z.string(), aiExtractionRuleSchema).optional(), // For arrays
-      properties: z.record(z.string(), aiExtractionRuleSchema).optional(), // For nested objects
-    }),
+    z.string(), // "Description" (e.g. "User's name")
+    z.record(z.string(), aiExtractionRuleSchema), // Nested object of rules (e.g. { "name": "..." })
   ])
 );
 

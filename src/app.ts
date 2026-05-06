@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/node";
 import express from "express";
 import { env } from "@config/env";
 import cors from "cors";
@@ -161,6 +162,9 @@ app.get("/v1/health", async (_req, res) => {
     },
   });
 });
+
+// Sentry Error Handler (must be before custom error handlers)
+Sentry.setupExpressErrorHandler(app);
 
 // Global Error Handler (must be last middleware)
 app.use(errorHandler);

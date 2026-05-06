@@ -11,6 +11,7 @@ const envSchema = z.object({
   // ── Core Server ────────────────────────────────────────────────────────────
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   PORT: z.coerce.number().default(8080),
+  SENTRY_DSN: z.string().optional(),
   DATABASE_URL: z.string().url(),
   TRUST_PROXY: z
     .string()

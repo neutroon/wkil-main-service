@@ -79,7 +79,8 @@ export async function callGeminiNode(
             candidates: finalCandidates,
             usageMetadata: finalUsage,
             fullText,
-            // Add a helper for the functionCalls extractor
+            // Capture ALL parts (text + functionCalls) to maintain protocol integrity
+            parts: finalCandidates?.[0]?.content?.parts || [],
             functionCalls: finalCandidates?.[0]?.content?.parts
               ?.filter((p: any) => p.functionCall)
               ?.map((p: any) => p.functionCall) || [],
@@ -160,12 +161,12 @@ export async function callGeminiNode(
 
   const finalStateUpdate = {
     // Append the model's response turn to history explicitly
-    // Standardize: discard fragmented parts, use the verified aggregated fullText
+    // USE the actual parts returned by Gemini to maintain the full chain of thought
     contents: [
       ...state.contents,
       { 
         role: "model" as const, 
-        parts: [{ text: responseResult.fullText || "" }] 
+        parts: responseResult.parts 
       }
     ],
     functionCalls,

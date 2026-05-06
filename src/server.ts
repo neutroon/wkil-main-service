@@ -1,3 +1,19 @@
+import * as Sentry from "@sentry/node";
+import { nodeProfilingIntegration } from "@sentry/profiling-node";
+
+// Initialize Sentry before anything else
+Sentry.init({
+  dsn: process.env.SENTRY_DSN,
+  integrations: [
+    nodeProfilingIntegration(),
+    Sentry.prismaIntegration(),
+  ],
+  // Performance Monitoring
+  tracesSampleRate: 1.0, 
+  // Set sampling rate for profiling
+  profilesSampleRate: 1.0,
+});
+
 import { env } from "@config/env";
 import { createServer } from "http";
 import app from "./app";

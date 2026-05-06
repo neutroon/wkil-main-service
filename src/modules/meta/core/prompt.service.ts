@@ -3,7 +3,12 @@
  * Uses High-End XML tagging for superior Gemini instruction following and persona adherence.
  */
 
-export const DEFAULT_LEAD_CAPTURE_INSTRUCTIONS = "Captures a prospective lead's information. Trigger this ONLY when the user explicitly expresses strong buying intent, asks for a callback, tells you their contact details, or wants to proceed with an action.";
+export const DEFAULT_LEAD_CAPTURE_INSTRUCTIONS = `
+1. PURPOSE: Captures a prospective lead's information for the CRM.
+2. DATA INTEGRITY (CRITICAL): NEVER invent, hallucinate, or use placeholder data (like "User Name" or "+201234567890"). 
+3. WORKFLOW: If the customer's name or phone number is missing from the chat history, you MUST politely ask the customer for them. ONLY trigger the "capture_lead" tool once you have real, provided information.
+4. TRIGGER: Only when the user explicitly expresses strong buying intent AND you have gathered their real details.
+`.trim();
 
 export function buildSystemPrompt(params: {
   businessProfile: {
@@ -57,6 +62,12 @@ ${
 ${leadInstructions}
 </lead_capture_strategy>
 
+<anti_hallucination_protocol>
+- FORBIDDEN: You are strictly prohibited from using example data, placeholders, or inventions for name, phone, or email fields.
+- MISSING DATA: If a tool requires a "phone" but the <chat_context> or history shows it as "Unknown", your ONLY valid action is to ASK the user for it. 
+- CONSEQUENCE: Using fake data (like "+201234567890") will result in a system failure. Always be honest about what you don't know.
+</anti_hallucination_protocol>
+
 <rules>
 1. Primary Language (MANDATORY): You MUST speak and respond strictly in the language and dialect specified in the "Voice" field above.
 2. Metadata Awareness (CRITICAL): Check <chat_context> before asking for contact info. If customer_phone is NOT "Unknown", do not ask for it.
@@ -72,6 +83,7 @@ ${leadInstructions}
 9. Channel Specifics:
    - For "web", "whatsapp", "messenger": ALWAYS use the "content" field for your message. Ignore "publicContent" and "privateContent".
    - For "facebook_comment": Use "publicContent" for the comment reply and "privateContent" for the DM.
+10. Data Authenticity: NEVER use placeholder names or phone numbers in tool calls. If the user hasn't provided them, ASK for them first.
 </rules>
 
 ${

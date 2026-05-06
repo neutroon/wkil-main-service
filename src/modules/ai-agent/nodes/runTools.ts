@@ -24,7 +24,7 @@ const CaptureLeadSchema = z.object({
   phone: z.string().optional(),
   email: z.string().email().optional().or(z.literal("")),
   notes: z.string().optional(),
-});
+}).passthrough(); // Crucial for production: allows custom fields from fieldMapping
 
 const ExternalQuerySchema = z
   .object({

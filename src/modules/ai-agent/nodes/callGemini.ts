@@ -51,39 +51,43 @@ export async function callGeminiNode(
             },
           });
 
-          // ── Streaming loop ───────────────────────────────────────────
+          // ── Stream Aggregator ──────────────────────────────────────────
           let fullText = "";
-          let finalUsage: any = null;
-          let allParts: any[] = [];
+          let accumulatedParts: any[] = [];
+          let usageMetadata: any = null;
 
           for await (const chunk of r) {
-            // Safely get text without triggering the SDK's internal warning
+            // 1. Process Parts (Text & Function Calls)
             const parts = chunk.candidates?.[0]?.content?.parts || [];
             for (const part of parts) {
               if (part.text) {
                 fullText += part.text;
                 await dispatchCustomEvent("ai_token", { token: part.text });
               }
-              allParts.push(part);
+              accumulatedParts.push(part);
             }
 
-            if (chunk.usageMetadata) finalUsage = chunk.usageMetadata;
+            // 2. Capture Usage & Safety
+            if (chunk.usageMetadata) usageMetadata = chunk.usageMetadata;
           }
 
-          // ── Validation: No parts = Failure ──────────────────────────
-          if (allParts.length === 0) {
-            throw new Error("EMPTY_CANDIDATES");
+          // ── Post-Stream Validation ───────────────────────────────────
+          if (accumulatedParts.length === 0) {
+            throw new Error("EMPTY_RESPONSE");
           }
 
-          // Reconstruct a response-like object for the rest of the node
           return {
-            usageMetadata: finalUsage,
             fullText,
-            parts: allParts,
-            firstCandidate: allParts.length > 0 ? { content: { parts: allParts } } : null,
-            functionCalls: allParts
-              ?.filter((p: any) => p.functionCall)
-              ?.map((p: any) => p.functionCall) || [],
+            usageMetadata,
+            parts: accumulatedParts,
+            // Reconstruct a candidate-like structure for downstream usage nodes
+            candidate: { 
+              content: { parts: accumulatedParts },
+              groundingMetadata: (r as any).candidates?.[0]?.groundingMetadata 
+            },
+            functionCalls: accumulatedParts
+              .filter((p: any) => p.functionCall)
+              .map((p: any) => p.functionCall),
           };
         },
         "AgentGraph.callGemini",
@@ -135,7 +139,7 @@ export async function callGeminiNode(
 
   // ── Accumulate token usage (across multi-turn loops) ────────────────────
   const meta = responseResult?.usageMetadata;
-  const hasGrounding = !!(responseResult.firstCandidate as any)?.groundingMetadata?.searchEntryPoint;
+  const hasGrounding = !!(responseResult.candidate as any)?.groundingMetadata?.searchEntryPoint;
   const updatedStats: typeof state.sessionStats = {
     ...state.sessionStats,
     modelName: usedModel,

@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/node";
 import { Queue, Worker, Job } from "bullmq";
 import { bullConnection } from "@config/redis";
 import { logger } from "@utils/logger";
@@ -127,16 +128,16 @@ export const expressWorker = new Worker(
       const { processMediaRefresh } = await import("../../media/mediaRefresh.job");
       await processMediaRefresh();
     } else if (type === "sync_facebook_pages") {
-      const { processFacebookPageSync } = await import("../facebook/facebookPageSync.job");
+      const { processFacebookPageSync } = await import("@modules/meta/facebook/facebookPageSync.job");
       await processFacebookPageSync(payload);
     } else if (type === "webhook_subscription") {
-      const { processWebhookSubscription } = await import("../facebook/webhookSubscription.job");
+      const { processWebhookSubscription } = await import("@modules/meta/facebook/webhookSubscription.job");
       await processWebhookSubscription(payload);
     } else if (type === "page_token_validation") {
-      const { processPageTokenValidation } = await import("../facebook/pageTokenValidation.job");
+      const { processPageTokenValidation } = await import("@modules/meta/facebook/pageTokenValidation.job");
       await processPageTokenValidation(payload);
     } else if (type === "token_refresh_cron") {
-      const { processTokenRefresh } = await import("../facebook/tokenRefresh.job");
+      const { processTokenRefresh } = await import("@modules/meta/facebook/tokenRefresh.job");
       await processTokenRefresh();
     } else {
       await processMetaMessage(payload);
@@ -175,6 +176,19 @@ export function startMetaQueue() {
   productionWorker.on("completed", (job) =>
     logger.info("meta.engine.job_completed.production", { jobId: job.id }),
   );
+  
+  // Sentry failure capturing for workers
+  expressWorker.on("failed", (job, err) => {
+    Sentry.captureException(err, {
+      extra: { queue: "express", jobId: job?.id, data: job?.data }
+    });
+  });
+
+  productionWorker.on("failed", (job, err) => {
+    Sentry.captureException(err, {
+      extra: { queue: "production", jobId: job?.id, data: job?.data }
+    });
+  });
 
   logger.info("meta.engine.workers_online", {
     expressConcurrency: 8,

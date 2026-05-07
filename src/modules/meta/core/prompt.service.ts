@@ -27,6 +27,71 @@ export const DEFAULT_LEAD_CAPTURE_INSTRUCTIONS = `
 2. TRIGGER: Only when the user explicitly expresses buying intent AND you have gathered their real details.
 `.trim();
 
+// ── Channel-Specific Examples ───────────────────────────────────────────────
+
+const FACEBOOK_COMMENT_EXAMPLES = `
+<examples>
+# EXAMPLE 1 (Sales / Price Query)
+Input: "How much for the program?"
+Output: {
+  "action": "REPLY_AUTO",
+  "intent": "SALES_DM",
+  "reasoning": "User asking for price. Send public acknowledgement and move details to private DM.",
+  "publicContent": "أهلاً بك! بعتلك تفاصيل الأسعار كاملة في رسالة خاصة دلوقتي. 📩",
+  "privateContent": "أهلاً بك يا فندم! بخصوص استفسارك عن الأسعار، باقاتنا بتبدأ من 99 دولار وبتشمل إدارة كاملة للصفحات."
+}
+
+# EXAMPLE 2 (Greeting / Reaction)
+Input: "مرحبا 👋"
+Output: {
+  "action": "REPLY_AUTO",
+  "intent": "GREET_ONLY",
+  "reasoning": "User left a greeting or reaction. Reply warmly in public only.",
+  "publicContent": "أهلاً بك! سعداء بتواصلك 😊",
+  "privateContent": ""
+}
+
+# EXAMPLE 3 (Spam / Off-topic)
+Input: "تابعوا صفحتي!"
+Output: {
+  "action": "REPLY_AUTO",
+  "intent": "IGNORE",
+  "reasoning": "Spam or off-topic comment. No reply needed.",
+  "publicContent": "",
+  "privateContent": ""
+}
+</examples>`.trim();
+
+const DM_EXAMPLES = `
+<examples>
+# EXAMPLE 1 (General Query)
+Input: "Where are you located?"
+Output: {
+  "action": "REPLY_AUTO",
+  "reasoning": "User asking for location. Answering from business context.",
+  "content": "We are located at 123 Business St, Cairo.",
+  "attachment": null
+}
+
+# EXAMPLE 2 (Handoff Trigger)
+Input: "I have a complaint about my order and I'm very upset."
+Output: {
+  "action": "HANDOFF_TO_HUMAN",
+  "reasoning": "User is expressing anger. Escalating to human agent.",
+  "content": "I completely understand your frustration. Let me connect you with a team member right away.",
+  "attachment": null
+}
+
+# EXAMPLE 3 (Conversation Close)
+Input: "Thanks, that's all I needed!"
+Output: {
+  "action": "RESOLVE_CONVERSATION",
+  "reasoning": "User expressed satisfaction and goodbye.",
+  "content": "Happy to help! Have a great day 😊",
+  "attachment": null
+}
+</examples>`.trim();
+
 export function buildSystemPrompt(params: SystemPromptParams): string {
   const {
     businessProfile,
@@ -39,12 +104,10 @@ export function buildSystemPrompt(params: SystemPromptParams): string {
 
   // ── Logic Extraction ────────────────────────────────────────────────────────
   const isFacebookComment = channel === "facebook_comment";
-  const isDirectChannel = !isFacebookComment;
   const hasContext = context.length > 0;
   const leadInstructions =
     businessProfile.leadCaptureInstructions ||
     DEFAULT_LEAD_CAPTURE_INSTRUCTIONS;
-  const phoneKnown = customerPhone && customerPhone !== "Unknown";
 
   const crmSection =
     crmFields && crmFields.length > 0
@@ -131,35 +194,7 @@ ${
     : ""
 }
 
-<examples>
-# EXAMPLE 1 (Facebook Comment - Sales / Price Query)
-Input: "How much for the program?"
-Output: {
-  "action": "REPLY_AUTO",
-  "intent": "SALES_DM",
-  "reasoning": "User asking for price. Send public acknowledgement and move details to private DM.",
-  "publicContent": "أهلاً بك! بعتلك تفاصيل الأسعار كاملة في رسالة خاصة دلوقتي. 📩",
-  "privateContent": "أهلاً بك يا فندم! بخصوص استفسارك عن الأسعار، باقاتنا بتبدأ من 99 دولار وبتشمل إدارة كاملة للصفحات."
-}
-
-# EXAMPLE 2 (Facebook Comment - Greeting / Reaction)
-Input: "مرحبا 👋"
-Output: {
-  "action": "REPLY_AUTO",
-  "intent": "GREET_ONLY",
-  "reasoning": "User left a greeting or reaction. Reply warmly in public only.",
-  "publicContent": "أهلاً بك! سعداء بتواصلك 😊",
-  "privateContent": ""
-}
-
-# EXAMPLE 3 (Direct Message - General Query)
-Input: "Where are you located?"
-Output: {
-  "action": "REPLY_AUTO",
-  "reasoning": "User asking for location. Providing address from business context.",
-  "content": "We are located at 123 Business St, Cairo."
-}
-</examples>
+${isFacebookComment ? FACEBOOK_COMMENT_EXAMPLES : DM_EXAMPLES}
 
 ${
   hasContext

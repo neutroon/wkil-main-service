@@ -63,7 +63,10 @@ export async function prepareAgentParams(params: {
 
   const crmIntegration = businessProfile.crmIntegrations?.[0];
   const crmFields = crmIntegration?.fieldMapping 
-    ? Object.keys(crmIntegration.fieldMapping as object).filter(k => !["name", "phone", "source"].includes(k))
+    ? Object.entries(crmIntegration.fieldMapping as object)
+        .filter(([_, v]) => typeof v !== "string" || !v.startsWith("fixed:"))
+        .map(([k]) => k)
+        .filter(k => !["name", "phone"].includes(k)) // Still skip these as they are handled by hard rules
     : [];
 
   const systemInstruction = buildSystemPrompt({

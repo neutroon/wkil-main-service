@@ -147,6 +147,8 @@ function buildRequestConfig(params: {
 }) {
   return {
     temperature: params.temperature,
+    // Google Search grounding requires text/plain, so it intentionally overrides
+    // the caller's requested response MIME type when enabled.
     responseMimeType: params.enableSearch
       ? "text/plain"
       : params.responseMimeType || "text/plain",
@@ -269,7 +271,6 @@ export const aiRoutingSchema: Schema = {
       type: Type.STRING,
       description:
         "Standard response content. Used as fallback or for direct chats.",
-      nullable: true,
     },
     publicContent: {
       type: Type.STRING,
@@ -303,14 +304,7 @@ export const aiRoutingSchema: Schema = {
       },
     },
   },
-  required: [
-    "action",
-    "reasoning",
-    "intent",
-    "publicContent",
-    "privateContent",
-    "attachment",
-  ],
+  required: ["action", "reasoning"],
 };
 
 export const buildDynamicProperties = (mapping: any): Record<string, any> => {
@@ -466,87 +460,44 @@ export function buildExternalQueryTools(dataSources: any[]): Tool[] {
   return [{ functionDeclarations }];
 }
 
-export async function generateMessengerAssistantReply(params: {
-  systemInstruction: string;
-  historyTurns: { role: "user" | "model"; text?: string; parts?: any[] }[];
-  customerMessage: string;
-  tools?: Tool[];
-  temperature?: number;
-}): Promise<{ response: any; usage: AiUsageMetadata }> {
-  const contents = [
-    ...params.historyTurns.map((t) => ({
-      role: t.role,
-      parts: t.parts ? t.parts : [{ text: t.text }],
-    })),
-    {
-      role: "user" as const,
-      parts: [{ text: params.customerMessage }],
-    },
-  ];
-
-  const { result: response, model } = await executeWithFallback(
-    async (model) => {
-      return await genAI.models.generateContent({
-        model,
-        contents,
-        config: {
-          systemInstruction: params.systemInstruction,
-          temperature: params.temperature ?? 0.4,
-          maxOutputTokens: 1024,
-          responseMimeType: "text/plain",
-          safetySettings: MESSENGER_SAFETY_SETTINGS,
-          tools: params.tools,
-        },
-      });
-    },
-    "MessengerAssistant",
-  );
-
-  const usage = response.usageMetadata;
-  const grounding =
-    response.candidates?.[0]?.groundingMetadata?.searchEntryPoint;
-
-  return {
-    response,
-    usage: {
-      promptTokens: usage?.promptTokenCount || 0,
-      completionTokens: usage?.candidatesTokenCount || 0,
-      totalTokens: usage?.totalTokenCount || 0,
-      groundingCalls: grounding ? 1 : 0,
-      model,
-    },
-  };
-}
-
 async function embedTexts(
   texts: string[],
 ): Promise<{ embeddings: number[][]; totalTokens: number }> {
-  let totalTokens = 0;
+  const EMBEDDING_CONCURRENCY = 5;
 
-  const results = await Promise.all(
-    texts.map(async (t) => {
-      const { result: res } = await executeWithFallback(
-        async (model) => {
-          return (await genAI.models.embedContent({
-            model,
-            contents: t,
-            config: {
-              taskType: "RETRIEVAL_DOCUMENT",
-              outputDimensionality: 768,
-            },
-          })) as EmbedResponseWithUsage;
-        },
-        "EmbedTexts",
-        undefined,
-        ["gemini-embedding-001"],
-      );
+  const embedSingle = async (t: string) => {
+    const { result: res } = await executeWithFallback(
+      async (model) => {
+        return (await genAI.models.embedContent({
+          model,
+          contents: t,
+          config: {
+            taskType: "RETRIEVAL_DOCUMENT",
+            outputDimensionality: 768,
+          },
+        })) as EmbedResponseWithUsage;
+      },
+      "EmbedTexts",
+      undefined,
+      ["gemini-embedding-001"],
+    );
 
-      totalTokens += res.usageMetadata?.totalTokenCount ?? 0;
-      return res.embeddings![0].values!;
-    }),
-  );
+    return {
+      embedding: res.embeddings![0].values!,
+      tokens: res.usageMetadata?.totalTokenCount ?? 0,
+    };
+  };
 
-  return { embeddings: results, totalTokens };
+  const results: { embedding: number[]; tokens: number }[] = [];
+  for (let i = 0; i < texts.length; i += EMBEDDING_CONCURRENCY) {
+    const batch = texts.slice(i, i + EMBEDDING_CONCURRENCY);
+    results.push(...(await Promise.all(batch.map(embedSingle))));
+  }
+
+  return {
+    embeddings: results.map((r) => r.embedding),
+    totalTokens: results.reduce((sum, r) => sum + r.tokens, 0),
+  };
 }
 
 async function embedQuery(

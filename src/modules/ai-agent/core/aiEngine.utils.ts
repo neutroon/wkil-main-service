@@ -208,6 +208,12 @@ export function repairAndParseAiResponse(text: string): AiRoutingDecision {
       const privateContent =
         cleaned.match(/"privateContent"\s*:\s*"([^"]+)"/)?.[1] || "";
       const intent = cleaned.match(/"intent"\s*:\s*"([^"]+)"/)?.[1];
+      const requiresGroundingRaw = cleaned.match(
+        /"requiresGrounding"\s*:\s*(true|false)/,
+      )?.[1];
+      const groundedRaw = cleaned.match(/"grounded"\s*:\s*(true|false)/)?.[1];
+      const missingInfo =
+        cleaned.match(/"missingInfo"\s*:\s*"([^"]+)"/)?.[1] || null;
 
       let attachment = null;
       const attachmentRaw = cleaned.match(/"attachment"\s*:\s*({[^}]+})/)?.[1];
@@ -224,6 +230,12 @@ export function repairAndParseAiResponse(text: string): AiRoutingDecision {
         content,
         publicContent,
         privateContent,
+        requiresGrounding: requiresGroundingRaw
+          ? requiresGroundingRaw === "true"
+          : true,
+        grounded: groundedRaw ? groundedRaw === "true" : true,
+        usedChunkTypes: [],
+        missingInfo,
         attachment,
       };
     }
@@ -237,6 +249,15 @@ export function repairAndParseAiResponse(text: string): AiRoutingDecision {
     content: sanitizeAiText(decision.content || ""),
     publicContent: sanitizeAiText(decision.publicContent || ""),
     privateContent: sanitizeAiText(decision.privateContent || ""),
+    requiresGrounding: decision.requiresGrounding === true,
+    grounded: decision.grounded !== false,
+    usedChunkTypes: Array.isArray(decision.usedChunkTypes)
+      ? decision.usedChunkTypes.filter((item: unknown) => typeof item === "string")
+      : [],
+    missingInfo:
+      typeof decision.missingInfo === "string"
+        ? sanitizeAiText(decision.missingInfo)
+        : null,
     attachment: decision.attachment,
   };
 
@@ -294,5 +315,9 @@ export interface AiRoutingDecision {
   content?: string | null;
   publicContent?: string | null;
   privateContent?: string | null;
+  requiresGrounding?: boolean;
+  grounded?: boolean;
+  usedChunkTypes?: string[];
+  missingInfo?: string | null;
   attachment?: { assetName: string; caption?: string | null } | null;
 }

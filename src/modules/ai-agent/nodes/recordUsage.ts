@@ -17,9 +17,18 @@ export async function recordUsageNode(
   const { sessionStats, userId, businessProfileId, channel } = state;
 
   try {
-    const deltaPrompt = sessionStats.promptTokens - sessionStats.lastBilledPromptTokens;
-    const deltaCompletion = sessionStats.completionTokens - sessionStats.lastBilledCompletionTokens;
-    const deltaGrounding = sessionStats.groundingCalls - sessionStats.lastBilledGrounding;
+    const deltaPrompt = Math.max(
+      0,
+      sessionStats.promptTokens - sessionStats.lastBilledPromptTokens,
+    );
+    const deltaCompletion = Math.max(
+      0,
+      sessionStats.completionTokens - sessionStats.lastBilledCompletionTokens,
+    );
+    const deltaGrounding = Math.max(
+      0,
+      sessionStats.groundingCalls - sessionStats.lastBilledGrounding,
+    );
 
     if (deltaPrompt > 0 || deltaCompletion > 0 || deltaGrounding > 0) {
       await recordAiUsage({

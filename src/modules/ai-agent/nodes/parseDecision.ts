@@ -108,6 +108,31 @@ export async function parseDecisionNode(
     };
   }
 
+  const isDirectChannel =
+    state.channel === "web" ||
+    state.channel === "whatsapp" ||
+    state.channel === "messenger";
+  if (
+    isDirectChannel &&
+    decision.action !== "HANDOFF_TO_HUMAN" &&
+    (typeof decision.content !== "string" || decision.content.trim() === "")
+  ) {
+    logger.warn("ai.node.parseDecision.missing_dm_content", {
+      businessProfileId: state.businessProfileId,
+      channel: state.channel,
+      action: decision.action,
+    });
+
+    return {
+      decision: {
+        action: "HANDOFF_TO_HUMAN",
+        handoffCategory: "SYSTEM_ERROR",
+        reasoning: "AI response omitted required direct-message content.",
+        content: "",
+      },
+    };
+  }
+
   logger.info("ai.node.parseDecision.success", {
     action: decision.action,
     intent: decision.intent,

@@ -22,10 +22,15 @@ export function buildSystemPrompt(params: {
   channel: string;
   customerPhone?: string;
   postContext?: { content: string; media?: string; parentContext?: string };
+  crmFields?: string[];
 } | any): string {
-  const { businessProfile, context, channel, customerPhone, postContext } = params;
+  const { businessProfile, context, channel, customerPhone, postContext, crmFields } = params;
   const hasContext = context.length > 0;
   const leadInstructions = businessProfile.leadCaptureInstructions || DEFAULT_LEAD_CAPTURE_INSTRUCTIONS;
+
+  const crmSection = crmFields && crmFields.length > 0 
+    ? `\n<required_crm_fields>\n${crmFields.map((f: string) => `- ${f}`).join("\n")}\n\nCRITICAL: In addition to Name and Phone, you MUST gather the fields listed above before calling the "capture_lead" tool.\n</required_crm_fields>`
+    : "";
 
   return `You are the official AI representative for "${businessProfile.name}". 
 
@@ -61,6 +66,7 @@ ${
 <lead_capture_strategy>
 ${leadInstructions}
 </lead_capture_strategy>
+${crmSection}
 
 <anti_hallucination_protocol>
 - FORBIDDEN: You are strictly prohibited from using example data, placeholders, or inventions for name, phone, or email fields.

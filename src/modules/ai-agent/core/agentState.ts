@@ -86,6 +86,11 @@ export const AgentState = Annotation.Root({
   userId:            Annotation<number>(),
   customerPhone:     Annotation<string | undefined>(),
   channel:           Annotation<string | undefined>(),
+  contextQuality:    Annotation<"specific_evidence_found" | "core_context_only" | "no_context" | undefined>(),
+  availableChunkTypes: Annotation<string[]>({
+    value:   (_, update) => update,
+    default: () => [],
+  }),
   policy:            Annotation<AiTruthfulnessPolicy>(),
   responseMode:      Annotation<"AUTO" | "MANUAL">(),
 

@@ -242,70 +242,90 @@ export const MESSENGER_SAFETY_SETTINGS = [
   },
 ];
 
-export const aiRoutingSchema: Schema = {
+const attachmentSchema: Schema = {
   type: Type.OBJECT,
+  nullable: true,
+  description:
+    "Optional media file to send alongside the text reply. ONLY populate this if a matching asset name exists in your Media Catalog. NEVER invent an asset name. NEVER send attachments on public Facebook Comments.",
   properties: {
-    action: {
+    assetName: {
       type: Type.STRING,
       description:
-        "Must be 'REPLY_AUTO', 'HANDOFF_TO_HUMAN', or 'RESOLVE_CONVERSATION'",
+        "Exact name of the asset from the Media Catalog (case-sensitive).",
     },
-    intent: {
+    caption: {
       type: Type.STRING,
-      description:
-        "Specifically for Facebook Comments: 'SALES_DM' (wants info), 'GREET_ONLY' (just praise/thanks), or 'IGNORE' (spam). Use 'NONE' for direct chats.",
-      nullable: true,
-    },
-    handoffCategory: {
-      type: Type.STRING,
-      description:
-        "If action is HANDOFF_TO_HUMAN, categorise the reason. E.g., 'SALES_OPPORTUNITY', 'ANGRY_CUSTOMER', 'MISSING_KNOWLEDGE', 'COMPLEX_SUPPORT'",
-      nullable: true,
-    },
-    reasoning: {
-      type: Type.STRING,
-      description:
-        "Internal thought process explaining the action and routing decision.",
-    },
-    content: {
-      type: Type.STRING,
-      description:
-        "Standard response content. Used as fallback or for direct chats.",
-    },
-    publicContent: {
-      type: Type.STRING,
-      description:
-        "Short, friendly greeting for a public post. Tailored to user's comment.",
-      nullable: true,
-    },
-    privateContent: {
-      type: Type.STRING,
-      description:
-        "Detailed, value-heavy response for a private DM. Prices, details, links.",
-      nullable: true,
-    },
-    attachment: {
-      type: Type.OBJECT,
       nullable: true,
       description:
-        "Optional media file to send alongside the text reply. ONLY populate this if a matching asset name exists in your Media Catalog. NEVER invent an asset name. NEVER send attachments on public Facebook Comments.",
-      properties: {
-        assetName: {
-          type: Type.STRING,
-          description:
-            "Exact name of the asset from the Media Catalog (case-sensitive).",
-        },
-        caption: {
-          type: Type.STRING,
-          nullable: true,
-          description:
-            "Short caption to accompany the file (e.g. 'Here is our product catalog!').",
-        },
-      },
+        "Short caption to accompany the file (e.g. 'Here is our product catalog!').",
     },
   },
-  required: ["action", "reasoning"],
 };
+
+const baseRoutingProperties: Record<string, Schema> = {
+  action: {
+    type: Type.STRING,
+    description:
+      "Must be 'REPLY_AUTO', 'HANDOFF_TO_HUMAN', or 'RESOLVE_CONVERSATION'",
+  },
+  handoffCategory: {
+    type: Type.STRING,
+    description:
+      "If action is HANDOFF_TO_HUMAN, categorise the reason. E.g., 'SALES_OPPORTUNITY', 'ANGRY_CUSTOMER', 'MISSING_KNOWLEDGE', 'COMPLEX_SUPPORT'",
+    nullable: true,
+  },
+  reasoning: {
+    type: Type.STRING,
+    description:
+      "Internal thought process explaining the action and routing decision.",
+  },
+  attachment: attachmentSchema,
+};
+
+export function buildAiRoutingSchema(channel?: string | null): Schema {
+  if (channel === "facebook_comment") {
+    return {
+      type: Type.OBJECT,
+      properties: {
+        ...baseRoutingProperties,
+        intent: {
+          type: Type.STRING,
+          description:
+            "Specifically for Facebook Comments: 'SALES_DM' (wants info), 'GREET_ONLY' (just praise/thanks), or 'IGNORE' (spam).",
+        },
+        publicContent: {
+          type: Type.STRING,
+          description:
+            "Short, friendly greeting for a public post. Tailored to user's comment.",
+        },
+        privateContent: {
+          type: Type.STRING,
+          description:
+            "Detailed, value-heavy response for a private DM. Prices, details, links. Required for SALES_DM.",
+        },
+      },
+      required: [
+        "action",
+        "reasoning",
+        "intent",
+        "publicContent",
+        "privateContent",
+      ],
+    };
+  }
+
+  return {
+    type: Type.OBJECT,
+    properties: {
+      ...baseRoutingProperties,
+      content: {
+        type: Type.STRING,
+        description: "Standard response content for direct chats.",
+      },
+    },
+    required: ["action", "reasoning", "content"],
+  };
+}
 
 export const buildDynamicProperties = (mapping: any): Record<string, any> => {
   const props: Record<string, any> = {};

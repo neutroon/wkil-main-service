@@ -15,7 +15,7 @@ import {
   genAI,
   executeWithFallback,
   MESSENGER_SAFETY_SETTINGS,
-  aiRoutingSchema,
+  buildAiRoutingSchema,
 } from "../gemini";
 import { windowContents, estimateSystemTokens } from "../core/contextWindow";
 import { recordAiUsage } from "@modules/billing/billing.service";
@@ -47,7 +47,7 @@ export async function callGeminiNode(
               safetySettings: MESSENGER_SAFETY_SETTINGS,
               tools: state.tools as any,
               responseMimeType: "application/json",
-              responseSchema: aiRoutingSchema,
+              responseSchema: buildAiRoutingSchema(state.channel),
             },
           });
 

@@ -61,6 +61,11 @@ export async function prepareAgentParams(params: {
     5,
   );
 
+  const crmIntegration = businessProfile.crmIntegrations?.[0];
+  const crmFields = crmIntegration?.fieldMapping 
+    ? Object.keys(crmIntegration.fieldMapping as object).filter(k => !["name", "phone", "source"].includes(k))
+    : [];
+
   const systemInstruction = buildSystemPrompt({
     businessProfile: {
       name: businessProfile.name,
@@ -74,6 +79,7 @@ export async function prepareAgentParams(params: {
     channel: channel as any,
     customerPhone,
     postContext: params.postContext,
+    crmFields,
   });
 
   const mediaAssets = await prisma.businessProfileMedia.findMany({

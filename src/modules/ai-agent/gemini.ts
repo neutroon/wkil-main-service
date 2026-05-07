@@ -279,6 +279,30 @@ const baseRoutingProperties: Record<string, Schema> = {
     description:
       "Internal thought process explaining the action and routing decision.",
   },
+  requiresGrounding: {
+    type: Type.BOOLEAN,
+    description:
+      "True when the customer-facing response makes factual business claims that require retrieved business evidence. False for greetings, thanks, spam ignores, clarification questions, or pure handoff copy.",
+  },
+  grounded: {
+    type: Type.BOOLEAN,
+    description:
+      "True only when the customer-facing factual answer is supported by provided business context, post context, chat history, or verified tool results.",
+  },
+  usedChunkTypes: {
+    type: Type.ARRAY,
+    description:
+      "Business context chunk types used as evidence, e.g. identity, contact, faq, product, custom_section, raw_content. Empty array if none.",
+    items: {
+      type: Type.STRING,
+    },
+  },
+  missingInfo: {
+    type: Type.STRING,
+    nullable: true,
+    description:
+      "Specific missing fact needed to answer safely. Null when no evidence is missing.",
+  },
   attachment: attachmentSchema,
 };
 
@@ -310,6 +334,9 @@ export function buildAiRoutingSchema(channel?: string | null): Schema {
         "intent",
         "publicContent",
         "privateContent",
+        "requiresGrounding",
+        "grounded",
+        "usedChunkTypes",
       ],
     };
   }
@@ -323,7 +350,14 @@ export function buildAiRoutingSchema(channel?: string | null): Schema {
         description: "Standard response content for direct chats.",
       },
     },
-    required: ["action", "reasoning", "content"],
+    required: [
+      "action",
+      "reasoning",
+      "content",
+      "requiresGrounding",
+      "grounded",
+      "usedChunkTypes",
+    ],
   };
 }
 

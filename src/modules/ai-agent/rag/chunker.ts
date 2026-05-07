@@ -4,6 +4,44 @@ type BusinessProfileWithFaqs = Prisma.BusinessProfileGetPayload<{
   include: { faqs: true; knowledgeSections: true };
 }>;
 
+const MAX_CHUNK_CHARS = 1200;
+const CHUNK_OVERLAP_CHARS = 150;
+
+function splitLongText(
+  text: string,
+  maxChars = MAX_CHUNK_CHARS,
+  overlapChars = CHUNK_OVERLAP_CHARS,
+): string[] {
+  const normalized = text.replace(/\r\n/g, "\n").trim();
+  if (!normalized) return [];
+  if (normalized.length <= maxChars) return [normalized];
+
+  const chunks: string[] = [];
+  let start = 0;
+
+  while (start < normalized.length) {
+    let end = Math.min(start + maxChars, normalized.length);
+    if (end < normalized.length) {
+      const paragraphBreak = normalized.lastIndexOf("\n\n", end);
+      const sentenceBreak = normalized.lastIndexOf(". ", end);
+      const lineBreak = normalized.lastIndexOf("\n", end);
+      const splitAt = Math.max(paragraphBreak, sentenceBreak, lineBreak);
+
+      if (splitAt > start + Math.floor(maxChars * 0.5)) {
+        end = splitAt + (splitAt === sentenceBreak ? 1 : 0);
+      }
+    }
+
+    const chunk = normalized.slice(start, end).trim();
+    if (chunk) chunks.push(chunk);
+    if (end >= normalized.length) break;
+
+    start = Math.max(0, end - overlapChars);
+  }
+
+  return chunks;
+}
+
 export function chunkBusinessProfile(profile: BusinessProfileWithFaqs) {
   const chunks: { chunkType: string; content: string; chunkIndex: number }[] =
     [];
@@ -61,19 +99,23 @@ export function chunkBusinessProfile(profile: BusinessProfileWithFaqs) {
 
   // custom knowledge sections
   profile.knowledgeSections.forEach((section) => {
-    chunks.push({
-      chunkType: "custom_section",
-      chunkIndex: index++,
-      content: `[KNOWLEDGE]: ${section.title}\n${section.content}`,
+    splitLongText(section.content).forEach((content, sectionIndex) => {
+      chunks.push({
+        chunkType: "custom_section",
+        chunkIndex: index++,
+        content: `[KNOWLEDGE]: ${section.title} (${sectionIndex + 1})\n${content}`,
+      });
     });
   });
 
   // raw scraped content (only if exists)
   if (profile.scrapedMarkdown) {
-    chunks.push({
-      chunkType: "raw_content",
-      chunkIndex: index++,
-      content: profile.scrapedMarkdown,
+    splitLongText(profile.scrapedMarkdown).forEach((content, rawIndex) => {
+      chunks.push({
+        chunkType: "raw_content",
+        chunkIndex: index++,
+        content: `[SCRAPED_CONTENT ${rawIndex + 1}]\n${content}`,
+      });
     });
   }
 

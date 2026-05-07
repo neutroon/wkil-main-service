@@ -26,6 +26,17 @@ export type BusinessProfileForChat = Prisma.BusinessProfileGetPayload<{
   };
 }>;
 
+const CORE_CONTEXT_TYPES = new Set(["identity", "contact", "intents"]);
+
+function resolveContextQuality(
+  chunks: { chunkType: string; content: string }[],
+): "specific_evidence_found" | "core_context_only" | "no_context" {
+  if (chunks.length === 0) return "no_context";
+  return chunks.some((chunk) => !CORE_CONTEXT_TYPES.has(chunk.chunkType))
+    ? "specific_evidence_found"
+    : "core_context_only";
+}
+
 /**
  * Shared RAG + tool + AI loop used by Messenger, WhatsApp, and web widget.
  * Does not persist messages — callers save user/model turns around this call.
@@ -60,6 +71,10 @@ export async function prepareAgentParams(params: {
     messageText,
     5,
   );
+  const contextQuality = resolveContextQuality(relevantChunks);
+  const availableChunkTypes = Array.from(
+    new Set(relevantChunks.map((chunk) => chunk.chunkType)),
+  );
 
   const crmIntegration = businessProfile.crmIntegrations?.[0];
   const crmFields = crmIntegration?.fieldMapping 
@@ -80,6 +95,7 @@ export async function prepareAgentParams(params: {
     },
     context: relevantChunks,
     channel: channel,
+    contextQuality,
     customerPhone,
     postContext: params.postContext,
     crmFields,
@@ -134,6 +150,8 @@ export async function prepareAgentParams(params: {
       businessProfileId: businessProfile.id,
       customerPhone,
       channel,
+      contextQuality,
+      availableChunkTypes,
       mediaInfo: params.mediaInfo,
       conversationId,
       responseMode,

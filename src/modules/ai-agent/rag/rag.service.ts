@@ -8,6 +8,16 @@ import { applySimilarityThreshold } from "./similarityThreshold";
 import { env } from "@config/env";
 
 const MAX_CHUNK_CHARS = 2000;
+const CORE_CHUNK_TYPES = ["identity", "contact", "intents"];
+const KEYWORD_FETCH_LIMIT = 200;
+
+type RetrievedChunk = {
+  id?: number;
+  chunkType: string;
+  content: string;
+  similarity: number;
+  lexicalScore?: number;
+};
 
 export function getRagSimilarityThreshold(): number {
   return env.RAG_MIN_SIMILARITY;
@@ -16,6 +26,70 @@ export function getRagSimilarityThreshold(): number {
 function truncateChunkContent(content: string, maxChars: number): string {
   if (content.length <= maxChars) return content;
   return content.slice(0, maxChars) + "…";
+}
+
+function tokenizeForKeywordSearch(query: string): string[] {
+  return Array.from(
+    new Set(
+      query
+        .toLowerCase()
+        .split(/[^\p{L}\p{N}]+/u)
+        .map((term) => term.trim())
+        .filter((term) => term.length >= 2),
+    ),
+  ).slice(0, 12);
+}
+
+function scoreKeywordMatch(content: string, terms: string[]): number {
+  if (terms.length === 0) return 0;
+
+  const lowerContent = content.toLowerCase();
+  const matches = terms.filter((term) => lowerContent.includes(term)).length;
+  return matches / terms.length;
+}
+
+function mergeRankedChunks(
+  vectorChunks: RetrievedChunk[],
+  keywordChunks: RetrievedChunk[],
+  coreChunks: RetrievedChunk[],
+  topK: number,
+): RetrievedChunk[] {
+  const merged = new Map<string, RetrievedChunk>();
+
+  for (const chunk of [...coreChunks, ...vectorChunks, ...keywordChunks]) {
+    const key = chunk.id ? String(chunk.id) : `${chunk.chunkType}:${chunk.content}`;
+    const existing = merged.get(key);
+    if (!existing) {
+      merged.set(key, chunk);
+      continue;
+    }
+
+    merged.set(key, {
+      ...existing,
+      similarity: Math.max(existing.similarity, chunk.similarity),
+      lexicalScore: Math.max(existing.lexicalScore ?? 0, chunk.lexicalScore ?? 0),
+    });
+  }
+
+  const coreKeys = new Set(
+    coreChunks.map((chunk) =>
+      chunk.id ? String(chunk.id) : `${chunk.chunkType}:${chunk.content}`,
+    ),
+  );
+  const core = Array.from(merged.entries())
+    .filter(([key]) => coreKeys.has(key))
+    .map(([, chunk]) => chunk);
+  const ranked = Array.from(merged.entries())
+    .filter(([key]) => !coreKeys.has(key))
+    .map(([, chunk]) => chunk)
+    .sort(
+      (a, b) =>
+        Math.max(b.similarity, b.lexicalScore ?? 0) -
+        Math.max(a.similarity, a.lexicalScore ?? 0),
+    )
+    .slice(0, topK);
+
+  return [...core, ...ranked];
 }
 
 async function insertChunks(
@@ -170,10 +244,10 @@ export async function retrieveRelevantChunks(
   }).catch(console.error);
 
   // 2. Cosine similarity search via pgvector (fetch extra rows, then threshold)
-  const chunks = await prisma.$queryRaw<
-    { chunkType: string; content: string; similarity: number }[]
+  const vectorChunks = await prisma.$queryRaw<
+    RetrievedChunk[]
   >`
-    SELECT "chunkType", "content",
+    SELECT "id", "chunkType", "content",
     1 - (embedding <=> ${vector}::vector) AS similarity
     FROM public."BusinessProfileChunk"
     WHERE "businessProfileId" = ${businessProfileId}
@@ -181,27 +255,89 @@ export async function retrieveRelevantChunks(
     LIMIT ${fetchLimit}
   `;
 
-  const filtered = applySimilarityThreshold(chunks, minSimilarity, topK).map(
-    (c) => ({
-      ...c,
-      content: truncateChunkContent(c.content, MAX_CHUNK_CHARS),
+  const keywordTerms = tokenizeForKeywordSearch(query);
+  const keywordCandidates = await prisma.businessProfileChunk.findMany({
+    where: { businessProfileId },
+    select: { id: true, chunkType: true, content: true },
+    orderBy: { updatedAt: "desc" },
+    take: KEYWORD_FETCH_LIMIT,
+  });
+  const keywordChunks = keywordCandidates
+    .map((chunk) => ({
+      ...chunk,
+      similarity: 0,
+      lexicalScore: scoreKeywordMatch(chunk.content, keywordTerms),
+    }))
+    .filter((chunk) => (chunk.lexicalScore ?? 0) > 0)
+    .sort((a, b) => (b.lexicalScore ?? 0) - (a.lexicalScore ?? 0))
+    .slice(0, topK);
+
+  const coreChunks = await prisma.businessProfileChunk.findMany({
+    where: {
+      businessProfileId,
+      chunkType: { in: CORE_CHUNK_TYPES },
+    },
+    select: { id: true, chunkType: true, content: true },
+    orderBy: { chunkIndex: "asc" },
+    take: 5,
+  });
+  const coreContext = coreChunks.map((chunk) => ({
+    ...chunk,
+    similarity: 1,
+    lexicalScore: 1,
+  }));
+
+  const filteredVectorChunks = applySimilarityThreshold(
+    vectorChunks,
+    minSimilarity,
+    topK,
+  );
+  const filtered = mergeRankedChunks(
+    filteredVectorChunks,
+    keywordChunks,
+    coreContext,
+    topK,
+  ).map((c) => ({
+    ...c,
+    content: truncateChunkContent(c.content, MAX_CHUNK_CHARS),
+  }));
+
+  const evidenceCount = filtered.filter(
+    (chunk) => !CORE_CHUNK_TYPES.includes(chunk.chunkType),
+  ).length;
+
+  if (evidenceCount === 0) {
+    logger.warn("rag.retrieve.no_specific_evidence", {
+      businessProfileId,
+      minSimilarity,
+      queryPreview: query.slice(0, 80),
+    });
+  }
+
+  const publicChunks = filtered.map(
+    ({ chunkType, content, similarity }) => ({
+      chunkType,
+      content,
+      similarity,
     }),
   );
 
   logger.debug("rag.retrieve", {
     businessProfileId,
-    rawCount: chunks.length,
-    keptCount: filtered.length,
+    vectorRawCount: vectorChunks.length,
+    keywordCount: keywordChunks.length,
+    coreCount: coreContext.length,
+    keptCount: publicChunks.length,
     minSimilarity,
     queryPreview: query.slice(0, 80),
-    retrievedChunks: filtered.map(c => ({
+    retrievedChunks: publicChunks.map(c => ({
       type: c.chunkType,
       similarity: c.similarity.toFixed(3),
       contentSnippet: c.content.slice(0, 50).replace(/\n/g, ' ')
     }))
   });
 
-  return filtered;
+  return publicChunks;
 }
 
 /**

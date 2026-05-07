@@ -17,6 +17,32 @@ import {
 } from "../core/aiEngine.utils";
 import type { AgentStateType } from "../core/agentState";
 
+const MISSING_KNOWLEDGE_REPLY =
+  "I want to confirm this accurately for you. I'll connect you with a team member who can check the latest details.";
+
+function missingKnowledgeDecision(reasoning: string) {
+  return {
+    action: "HANDOFF_TO_HUMAN" as const,
+    handoffCategory: "MISSING_KNOWLEDGE",
+    reasoning,
+    content: MISSING_KNOWLEDGE_REPLY,
+    publicContent: "Thanks! Our team will confirm the details with you.",
+    privateContent: MISSING_KNOWLEDGE_REPLY,
+    requiresGrounding: true,
+    grounded: false,
+    usedChunkTypes: [],
+  };
+}
+
+function hasUnsupportedChunkClaim(
+  usedChunkTypes: string[] | undefined,
+  availableChunkTypes: string[],
+): boolean {
+  if (!usedChunkTypes || usedChunkTypes.length === 0) return false;
+  const available = new Set(availableChunkTypes);
+  return usedChunkTypes.some((chunkType) => !available.has(chunkType));
+}
+
 export async function parseDecisionNode(
   state: AgentStateType,
 ): Promise<Partial<AgentStateType>> {
@@ -133,9 +159,70 @@ export async function parseDecisionNode(
     };
   }
 
+  if (
+    decision.action !== "HANDOFF_TO_HUMAN" &&
+    decision.requiresGrounding === true &&
+    hasUnsupportedChunkClaim(decision.usedChunkTypes, state.availableChunkTypes)
+  ) {
+    logger.warn("ai.node.parseDecision.invalid_grounding_claim_blocked", {
+      businessProfileId: state.businessProfileId,
+      channel: state.channel,
+      usedChunkTypes: decision.usedChunkTypes,
+      availableChunkTypes: state.availableChunkTypes,
+    });
+
+    return {
+      decision: missingKnowledgeDecision(
+        "AI cited unavailable business context chunk types.",
+      ),
+    };
+  }
+
+  if (
+    decision.action !== "HANDOFF_TO_HUMAN" &&
+    decision.requiresGrounding === true &&
+    state.contextQuality !== "specific_evidence_found"
+  ) {
+    logger.warn("ai.node.parseDecision.insufficient_context_blocked", {
+      businessProfileId: state.businessProfileId,
+      channel: state.channel,
+      contextQuality: state.contextQuality,
+      usedChunkTypes: decision.usedChunkTypes,
+    });
+
+    return {
+      decision: missingKnowledgeDecision(
+        `Specific evidence was not retrieved for a grounded answer. Context quality: ${state.contextQuality ?? "unknown"}`,
+      ),
+    };
+  }
+
+  if (
+    decision.action !== "HANDOFF_TO_HUMAN" &&
+    decision.requiresGrounding === true &&
+    (decision.grounded === false || decision.usedChunkTypes?.length === 0)
+  ) {
+    logger.warn("ai.node.parseDecision.ungrounded_response_blocked", {
+      businessProfileId: state.businessProfileId,
+      channel: state.channel,
+      action: decision.action,
+      missingInfo: decision.missingInfo,
+      usedChunkTypes: decision.usedChunkTypes,
+    });
+
+    return {
+      decision: missingKnowledgeDecision(
+        `AI reported missing evidence: ${decision.missingInfo || "No evidence chunks cited."}`,
+      ),
+    };
+  }
+
   logger.info("ai.node.parseDecision.success", {
     action: decision.action,
     intent: decision.intent,
+    requiresGrounding: decision.requiresGrounding,
+    grounded: decision.grounded,
+    usedChunkTypes: decision.usedChunkTypes,
     businessProfileId: state.businessProfileId,
   });
 

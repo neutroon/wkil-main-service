@@ -27,14 +27,26 @@ export async function pushLeadToCrm(
   let lastError = "Failed to push";
 
   for (const integration of integrations) {
+    // ── Scalable Fixed Value Injection ────────────────────────────────
+    // If a field is mapped to a static value (fixed: ...), we inject it here
+    const fieldMapping = integration.fieldMapping as Record<string, any> | null;
+    const finalLead = { ...lead };
+    
+    if (fieldMapping) {
+      for (const [key, value] of Object.entries(fieldMapping)) {
+        if (typeof value === "string" && value.startsWith("fixed:")) {
+          finalLead[key] = value.replace("fixed:", "").trim();
+        }
+      }
+    }
+
     if (integration.provider === "webhook" && integration.webhookUrl) {
       try {
-        // A generic POST allowing integrations via Zapier, Make.com, n8n, etc.
         const response = await fetch(integration.webhookUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            ...lead,
+            ...finalLead,
             businessProfileId,
             timestamp: new Date().toISOString(),
           }),

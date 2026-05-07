@@ -13,6 +13,7 @@ export interface SystemPromptParams {
   };
   context: { chunkType: string; content: string }[];
   channel: "messenger" | "whatsapp" | "web" | "facebook_comment";
+  contextQuality?: "specific_evidence_found" | "core_context_only" | "no_context";
   customerPhone?: string;
   postContext?: {
     content: string;
@@ -46,7 +47,11 @@ Output: {
   "intent": "SALES_DM",
   "reasoning": "User asking for price. Send public acknowledgement and move details to private DM.",
   "publicContent": "أهلاً بك! بعتلك تفاصيل الأسعار كاملة في رسالة خاصة دلوقتي. 📩",
-  "privateContent": "أهلاً بك يا فندم! بخصوص استفسارك عن الأسعار، باقاتنا بتبدأ من 99 دولار وبتشمل إدارة كاملة للصفحات."
+  "privateContent": "أهلاً بك يا فندم! بخصوص استفسارك عن الأسعار، باقاتنا بتبدأ من 99 دولار وبتشمل إدارة كاملة للصفحات.",
+  "requiresGrounding": true,
+  "grounded": true,
+  "usedChunkTypes": ["faq", "custom_section"],
+  "missingInfo": null
 }
 
 # EXAMPLE 2 (Greeting / Reaction)
@@ -56,7 +61,11 @@ Output: {
   "intent": "GREET_ONLY",
   "reasoning": "User left a greeting or reaction. Reply warmly in public only.",
   "publicContent": "أهلاً بك! سعداء بتواصلك 😊",
-  "privateContent": ""
+  "privateContent": "",
+  "requiresGrounding": false,
+  "grounded": false,
+  "usedChunkTypes": [],
+  "missingInfo": null
 }
 
 # EXAMPLE 3 (Spam / Off-topic)
@@ -66,7 +75,11 @@ Output: {
   "intent": "IGNORE",
   "reasoning": "Spam or off-topic comment. No reply needed.",
   "publicContent": "",
-  "privateContent": ""
+  "privateContent": "",
+  "requiresGrounding": false,
+  "grounded": false,
+  "usedChunkTypes": [],
+  "missingInfo": null
 }
 </examples>`.trim();
 
@@ -78,6 +91,10 @@ Output: {
   "action": "REPLY_AUTO",
   "reasoning": "User asking for location. Answering from business context.",
   "content": "We are located at 123 Business St, Cairo.",
+  "requiresGrounding": true,
+  "grounded": true,
+  "usedChunkTypes": ["contact"],
+  "missingInfo": null,
   "attachment": null
 }
 
@@ -87,6 +104,10 @@ Output: {
   "action": "HANDOFF_TO_HUMAN",
   "reasoning": "User is expressing anger. Escalating to human agent.",
   "content": "I completely understand your frustration. Let me connect you with a team member right away.",
+  "requiresGrounding": false,
+  "grounded": false,
+  "usedChunkTypes": [],
+  "missingInfo": null,
   "attachment": null
 }
 
@@ -96,6 +117,10 @@ Output: {
   "action": "RESOLVE_CONVERSATION",
   "reasoning": "User expressed satisfaction and goodbye.",
   "content": "Happy to help! Have a great day 😊",
+  "requiresGrounding": false,
+  "grounded": false,
+  "usedChunkTypes": [],
+  "missingInfo": null,
   "attachment": null
 }
 </examples>`.trim();
@@ -105,6 +130,7 @@ export function buildSystemPrompt(params: SystemPromptParams): string {
     businessProfile,
     context,
     channel,
+    contextQuality = "specific_evidence_found",
     customerPhone,
     postContext,
     crmFields,
@@ -158,11 +184,13 @@ export function buildSystemPrompt(params: SystemPromptParams): string {
 2. No Outside Facts: Do NOT use internet knowledge, general model knowledge, assumptions, or invented prices/policies/availability/contact details.
 3. Missing Evidence: If the requested fact is not explicitly present in the allowed sources, set "action" to "HANDOFF_TO_HUMAN" and briefly tell the customer that a team member will confirm it.
 4. Uncertainty: If retrieved context is related but not enough to answer confidently, ask one concise clarification question or hand off. Do not guess.
+5. Audit Fields: Set "requiresGrounding" to true for factual business answers about prices, policies, services, availability, contact details, locations, schedules, guarantees, or offers. Set it to false for greetings, thanks, spam ignores, clarifying questions, and pure handoff copy. Set "grounded" to true only when required factual evidence is supported by allowed sources. Fill "usedChunkTypes" with the chunk types used. If evidence is missing, set "grounded" to false and explain the missing fact in "missingInfo".
 </business_grounding_protocol>
 
 <chat_context>
   <channel>${channel}</channel>
   <customer_phone>${customerPhone || "Unknown"}</customer_phone>
+  <context_quality>${contextQuality}</context_quality>
   <status>Active</status>
 </chat_context>
 
@@ -243,6 +271,10 @@ ${
   "publicContent": "Max 15 words social hook",
   "privateContent": "Detailed DM value delivery",
   "intent": "SALES_DM" | "GREET_ONLY" | "IGNORE" | "NONE",
+  "requiresGrounding": true | false,
+  "grounded": true | false,
+  "usedChunkTypes": ["identity", "faq", "custom_section"],
+  "missingInfo": "What exact evidence is missing, or null",
   "attachment": { "assetName": "string", "caption": "string" } | null
 }
 `
@@ -251,6 +283,10 @@ ${
   "action": "REPLY_AUTO" | "HANDOFF_TO_HUMAN" | "RESOLVE_CONVERSATION",
   "reasoning": "Internal logic (in voice dialect)",
   "content": "Your message to the user",
+  "requiresGrounding": true | false,
+  "grounded": true | false,
+  "usedChunkTypes": ["identity", "faq", "custom_section"],
+  "missingInfo": "What exact evidence is missing, or null",
   "attachment": { "assetName": "string", "caption": "string" } | null
 }
 `

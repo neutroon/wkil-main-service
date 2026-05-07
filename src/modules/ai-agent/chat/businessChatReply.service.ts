@@ -79,7 +79,7 @@ export async function prepareAgentParams(params: {
         businessProfile.leadCaptureInstructions || undefined,
     },
     context: relevantChunks,
-    channel: channel as any,
+    channel: channel,
     customerPhone,
     postContext: params.postContext,
     crmFields,

@@ -383,8 +383,18 @@ export function buildCaptureLeadTool(
     typeof fieldMapping === "object" &&
     Object.keys(fieldMapping).length > 0
   ) {
+    // ── Scalable Field Filtering ─────────────────────────────────────
+    // We separate "Dynamic Fields" (AI asks) from "Fixed Fields" (System injects)
+    const dynamicMapping: Record<string, any> = {};
+    for (const [key, value] of Object.entries(fieldMapping)) {
+      const isFixed = typeof value === "string" && value.startsWith("fixed:");
+      if (!isFixed) {
+        dynamicMapping[key] = value;
+      }
+    }
+
     for (const [key, propConfig] of Object.entries(
-      buildDynamicProperties(fieldMapping),
+      buildDynamicProperties(dynamicMapping),
     )) {
       properties[key] = propConfig;
       required.push(key);

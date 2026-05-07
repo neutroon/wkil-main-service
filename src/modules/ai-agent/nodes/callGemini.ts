@@ -55,6 +55,7 @@ export async function callGeminiNode(
           let fullText = "";
           let accumulatedParts: any[] = [];
           let usageMetadata: any = null;
+          let groundingMetadata: any = null;
 
           for await (const chunk of r) {
             // 1. Process Parts (Text & Function Calls)
@@ -69,6 +70,9 @@ export async function callGeminiNode(
 
             // 2. Capture Usage & Safety
             if (chunk.usageMetadata) usageMetadata = chunk.usageMetadata;
+            if (chunk.candidates?.[0]?.groundingMetadata) {
+              groundingMetadata = chunk.candidates[0].groundingMetadata;
+            }
           }
 
           // ── Post-Stream Validation ───────────────────────────────────
@@ -81,9 +85,9 @@ export async function callGeminiNode(
             usageMetadata,
             parts: accumulatedParts,
             // Reconstruct a candidate-like structure for downstream usage nodes
-            candidate: { 
+            candidate: {
               content: { parts: accumulatedParts },
-              groundingMetadata: (r as any).candidates?.[0]?.groundingMetadata 
+              groundingMetadata,
             },
             functionCalls: accumulatedParts
               .filter((p: any) => p.functionCall)
@@ -104,7 +108,7 @@ export async function callGeminiNode(
     usedModel = raceResult.model;
   } catch (error: any) {
     const isTimeout = error.message === "GEMINI_TIMEOUT";
-    const isEmpty = error.message === "EMPTY_CANDIDATES";
+    const isEmpty = error.message === "EMPTY_RESPONSE";
     
     logger.error("ai.node.callGemini.failed", {
       isTimeout,
@@ -160,27 +164,21 @@ export async function callGeminiNode(
     businessProfileId: state.businessProfileId,
   });
 
-  const finalStateUpdate = {
-    // Append the model's response turn to history explicitly
-    // USE the actual parts returned by Gemini to maintain the full chain of thought
-    contents: [
-      ...state.contents,
-      { 
-        role: "model" as const, 
-        parts: responseResult.parts 
-      }
-    ],
-    functionCalls,
-    turnCount:     state.turnCount + 1,
-    sessionStats:  updatedStats,
-  };
-
   // ── Real-time Differential Billing ──────────────────────────────────────────
   // We bill the DELTA since the last time this turn (or previous turns) recorded usage.
   // This ensures that even if the graph interrupts for Manual Approval, we've billed for the thinking time.
-  const deltaPrompt = updatedStats.promptTokens - updatedStats.lastBilledPromptTokens;
-  const deltaCompletion = updatedStats.completionTokens - updatedStats.lastBilledCompletionTokens;
-  const deltaGrounding = updatedStats.groundingCalls - updatedStats.lastBilledGrounding;
+  const deltaPrompt = Math.max(
+    0,
+    updatedStats.promptTokens - updatedStats.lastBilledPromptTokens,
+  );
+  const deltaCompletion = Math.max(
+    0,
+    updatedStats.completionTokens - updatedStats.lastBilledCompletionTokens,
+  );
+  const deltaGrounding = Math.max(
+    0,
+    updatedStats.groundingCalls - updatedStats.lastBilledGrounding,
+  );
 
   if (deltaPrompt > 0 || deltaCompletion > 0 || deltaGrounding > 0) {
     try {
@@ -207,7 +205,20 @@ export async function callGeminiNode(
     }
   }
 
-  return finalStateUpdate;
+  return {
+    // Append the model's response turn to history explicitly.
+    // Use the actual parts returned by Gemini to preserve tool-call history.
+    contents: [
+      ...state.contents,
+      {
+        role: "model" as const,
+        parts: responseResult.parts,
+      },
+    ],
+    functionCalls,
+    turnCount: state.turnCount + 1,
+    sessionStats: updatedStats,
+  };
 }
 
 

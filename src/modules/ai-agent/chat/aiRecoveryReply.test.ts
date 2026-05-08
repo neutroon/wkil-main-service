@@ -126,28 +126,40 @@ describe("generateSafeRecoveryReply", () => {
     );
   });
 
-  it("retries once with stricter instructions before using the static fallback", async () => {
-    vi.mocked(generateContent)
-      .mockResolvedValueOnce({
-        text: "Done, your request has been confirmed and saved.",
-        usage: {
-          promptTokens: 0,
-          completionTokens: 0,
-          totalTokens: 0,
-          groundingCalls: 0,
-          model: "test",
-        },
-      })
-      .mockResolvedValueOnce({
-        text: "I could not verify this right now, so I routed it for review.",
-        usage: {
-          promptTokens: 0,
-          completionTokens: 0,
-          totalTokens: 0,
-          groundingCalls: 0,
-          model: "test",
-        },
-      });
+  it("keeps AI recovery text from real Arabic handoff traces", async () => {
+    vi.mocked(generateContent).mockResolvedValue({
+      text: "أهلاً بيك! فريقنا هيراجع رسالتك وهيتواصل معاك في أسرع وقت.",
+      usage: {
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        groundingCalls: 0,
+        model: "test",
+      },
+    });
+
+    await expect(
+      generateSafeRecoveryReply({
+        systemInstruction: "Voice: Egyptian Arabic",
+        failureReason: "network_or_runtime_error",
+        customerMessage: "hi",
+        safeFallback: "Fallback",
+        allowHandoffLanguage: true,
+      }),
+    ).resolves.toBe("أهلاً بيك! فريقنا هيراجع رسالتك وهيتواصل معاك في أسرع وقت.");
+  });
+
+  it("uses the static fallback after one unsafe AI recovery attempt", async () => {
+    vi.mocked(generateContent).mockResolvedValue({
+      text: "Done, your request has been confirmed and saved.",
+      usage: {
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        groundingCalls: 0,
+        model: "test",
+      },
+    });
 
     await expect(
       generateSafeRecoveryReply({
@@ -156,8 +168,8 @@ describe("generateSafeRecoveryReply", () => {
         safeFallback: "Fallback",
         allowHandoffLanguage: true,
       }),
-    ).resolves.toBe("I could not verify this right now, so I routed it for review.");
+    ).resolves.toBe("Fallback");
 
-    expect(generateContent).toHaveBeenCalledTimes(2);
+    expect(generateContent).toHaveBeenCalledTimes(1);
   });
 });

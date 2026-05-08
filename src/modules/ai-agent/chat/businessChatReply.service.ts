@@ -92,6 +92,8 @@ export async function prepareAgentParams(params: {
       tone: businessProfile.tone || "Friendly",
       leadCaptureInstructions:
         businessProfile.leadCaptureInstructions || undefined,
+      aiBehaviorInstructions:
+        businessProfile.aiBehaviorInstructions || undefined,
     },
     context: relevantChunks,
     channel: channel,

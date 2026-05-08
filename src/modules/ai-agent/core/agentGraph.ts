@@ -198,6 +198,7 @@ async function _runGraph(params: AgentGraphParams): Promise<AiRoutingDecision> {
       availableChunkTypes: params.availableChunkTypes ?? [],
       policy,
       responseMode:      params.responseMode ?? "AUTO",
+      conversationId:    params.conversationId,
       // Initial mutable state
       // For fields with custom reducers, the initial value is passed directly.
       // LangGraph uses the value reducer on every subsequent update.

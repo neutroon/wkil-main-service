@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  assertExternalArgsAllowedByPolicy,
   assertExternalApiUrlLooksSafe,
+  buildServerInjectedParams,
   filterExternalArgsBySchema,
   maskExternalHeaders,
   mergeHeaderUpdate,
@@ -39,6 +41,108 @@ describe("toCanonicalVerificationRead", () => {
       verification: "failed",
       reason: "provider_status_error",
     });
+  });
+
+  it("exposes only AI-writable params and injects server-owned params", () => {
+    const schema = {
+      orderId: {
+        type: "STRING",
+        source: "USER_PROVIDED",
+        description: "Order ID from the customer",
+      },
+      date: {
+        type: "STRING",
+        source: "AI_DERIVED",
+        description: "ISO date derived from the customer request",
+      },
+      phone: {
+        type: "STRING",
+        source: "CHAT_CONTEXT",
+        contextKey: "customerPhone",
+        description: "Phone from chat context",
+      },
+      source: {
+        type: "STRING",
+        source: "DEFAULT",
+        value: "PagesPilot AI",
+        description: "Default source label",
+      },
+      tenant: {
+        type: "FIXED",
+        value: "tenant_1",
+        description: "Fixed tenant scope",
+      },
+    };
+
+    expect(
+      filterExternalArgsBySchema(schema, {
+        orderId: "A-1",
+        date: "2026-05-09",
+        phone: "+201000000000",
+        source: "evil",
+        tenant: "evil",
+      }),
+    ).toEqual({ orderId: "A-1", date: "2026-05-09" });
+
+    expect(
+      buildServerInjectedParams(schema, {
+        customerPhone: "+201234567890",
+      }, { source: "Campaign A" }),
+    ).toEqual({
+      phone: "+201234567890",
+      tenant: "tenant_1",
+    });
+
+    expect(
+      buildServerInjectedParams(schema, {
+        customerPhone: "+201234567890",
+      }),
+    ).toMatchObject({
+      source: "PagesPilot AI",
+    });
+  });
+
+  it("blocks USER_PROVIDED params invented by the model while allowing AI_DERIVED fields", () => {
+    const schema = {
+      propertyName: {
+        type: "STRING",
+        source: "USER_PROVIDED",
+        description: "Lookup value supplied by the customer",
+      },
+      date: {
+        type: "STRING",
+        source: "AI_DERIVED",
+        description: "ISO date derived from the customer request",
+      },
+    };
+
+    expect(
+      assertExternalArgsAllowedByPolicy(
+        schema,
+        { propertyName: "pagesPilot services" },
+        { latestUserText: "fd" },
+      ),
+    ).toEqual({
+      ok: false,
+      field: "propertyName",
+      reason: "unprovided_parameter:propertyName",
+    });
+
+    expect(
+      assertExternalArgsAllowedByPolicy(
+        schema,
+        { propertyName: "order A-1", date: "2026-05-09" },
+        { latestUserText: "check order A-1 tomorrow" },
+      ),
+    ).toEqual({ ok: true });
+
+    expect(
+      assertExternalArgsAllowedByPolicy(
+        schema,
+        { propertyName: "+201001112222" },
+        { latestUserText: "رقمي +20 100 111 2222" },
+      ),
+    ).toEqual({ ok: true });
   });
 });
 

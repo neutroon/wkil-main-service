@@ -81,7 +81,7 @@ router.post(
   validate(uploadMediaSchema),
   async (req: Request, res: Response) => {
     const userId = (req as any).user.id;
-    const { businessProfileId, name, instructions } = req.body;
+    const { businessProfileId, name, instructions, usageScope } = req.body;
 
     if (!req.file) throw new AppError("No file uploaded", 400);
 
@@ -93,6 +93,7 @@ router.post(
       mimeType: req.file.mimetype,
       name,
       instructions,
+      usageScope,
     });
 
     return res

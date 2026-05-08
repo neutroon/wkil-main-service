@@ -27,6 +27,7 @@ export type BusinessProfileForChat = Prisma.BusinessProfileGetPayload<{
 }>;
 
 const CORE_CONTEXT_TYPES = new Set(["identity", "contact", "intents"]);
+const ARABIC_VOICE_PATTERN = /arabic|عربي|egyptian/i;
 
 function resolveContextQuality(
   chunks: { chunkType: string; content: string }[],
@@ -78,10 +79,12 @@ export async function prepareAgentParams(params: {
     new Set(relevantChunks.map((chunk) => chunk.chunkType)),
   );
 
-  const crmIntegration = businessProfile.crmIntegrations?.[0];
+  const crmIntegration = allowCrmTools
+    ? businessProfile.crmIntegrations?.[0]
+    : undefined;
   const crmFields = crmIntegration?.fieldMapping 
     ? Object.entries(crmIntegration.fieldMapping as object)
-        .filter(([_, v]) => !isFixedFieldRule(v))
+        .filter(([_, v]) => isAiWritableFieldRule(v))
         .map(([k]) => k)
         .filter(k => !["name", "phone"].includes(k)) // Still skip these as they are handled by hard rules
     : [];
@@ -160,14 +163,32 @@ export async function prepareAgentParams(params: {
       mediaInfo: params.mediaInfo,
       conversationId,
       responseMode,
+      policy: buildChannelPolicy(businessProfile.voice || ""),
     },
   };
 }
 
-function isFixedFieldRule(value: unknown): boolean {
+function buildChannelPolicy(voice: string) {
+  if (!ARABIC_VOICE_PATTERN.test(voice)) return undefined;
+
+  return {
+    fallbackTemplates: {
+      unverified:
+        "مش قادر أأكد المعلومة دي من بيانات النظام الحالية. ابعتلي الرقم أو التفاصيل المطلوبة بالظبط عشان أقدر أتحقق منها.",
+      failed:
+        "مش قادر أتحقق من المعلومة دي حالياً بسبب مشكلة في الربط بالنظام. هحوّلك لفريقنا عشان يأكدوا لك التفاصيل بدقة.",
+      unsupportedPromise:
+        "أقدر أأكد بس الإجراءات اللي تمت واتوثقت في المحادثة دي. هحوّلك لفريقنا لو محتاج متابعة إضافية.",
+    },
+  };
+}
+
+function isAiWritableFieldRule(value: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const rule = value as Record<string, unknown>;
-  return String(rule.type ?? "").toUpperCase() === "FIXED";
+  if (String(rule.type ?? "").toUpperCase() === "FIXED") return false;
+  const source = String(rule.source ?? "USER_PROVIDED").toUpperCase();
+  return source === "USER_PROVIDED" || source === "AI_DERIVED";
 }
 
 /**
@@ -202,6 +223,7 @@ export async function* computeBusinessChatStreaming(params: {
   customerPhone?: string;
   conversationId?: number;
   responseMode?: "AUTO" | "MANUAL";
+  allowCrmTools?: boolean;
 }) {
   const prep = await prepareAgentParams(params);
   if (prep.errorDecision) {

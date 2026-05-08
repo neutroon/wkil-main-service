@@ -47,6 +47,7 @@ interface BusinessProfileBody {
   brandWatermarkEnabled?: boolean;
   watermarkPosition?: "TOP_LEFT" | "TOP_RIGHT" | "BOTTOM_LEFT" | "BOTTOM_RIGHT" | "CENTER";
   leadCaptureInstructions?: string;
+  aiBehaviorInstructions?: string;
 }
 
 export const createBusinessProfile = async (req: Request, res: Response) => {
@@ -65,6 +66,7 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
     faqs,
     knowledgeSections,
     leadCaptureInstructions,
+    aiBehaviorInstructions,
     brandLogoUrl,
     brandPrimaryColor,
     brandSecondaryColor,
@@ -93,6 +95,7 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
       workingHours,
       address,
       leadCaptureInstructions,
+      aiBehaviorInstructions,
       brandLogoUrl,
       brandPrimaryColor,
       brandSecondaryColor,
@@ -201,6 +204,7 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
     faqs,
     knowledgeSections,
     leadCaptureInstructions,
+    aiBehaviorInstructions,
     brandLogoUrl,
     brandPrimaryColor,
     brandSecondaryColor,
@@ -236,6 +240,7 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
       workingHours,
       address,
       leadCaptureInstructions,
+      aiBehaviorInstructions,
       brandLogoUrl,
       brandPrimaryColor,
       brandSecondaryColor,

@@ -1,15 +1,17 @@
 import { z } from "zod";
+import { assertExternalApiUrlLooksSafe } from "@modules/integrations/external/externalData.service";
+import { aiSchemaObject } from "@modules/integrations/schemaRules.validation";
 
-/**
- * Production-grade recursive schema for AI field extraction rules.
- * Supports simple strings or complex nested objects (Arrays, Objects).
- */
-const aiExtractionRuleSchema: any = z.lazy(() =>
-  z.union([
-    z.string(), // "Description" (e.g. "User's name")
-    z.record(z.string(), aiExtractionRuleSchema), // Nested object of rules (e.g. { "name": "..." })
-  ])
-);
+const safeWebhookUrl = z.string().url("Invalid webhook URL").superRefine((url, ctx) => {
+  try {
+    assertExternalApiUrlLooksSafe(url);
+  } catch (error: any) {
+    ctx.addIssue({
+      code: "custom",
+      message: error?.message || "Webhook URL is not allowed",
+    });
+  }
+});
 
 /**
  * CRM Integration Schema
@@ -21,9 +23,9 @@ export const crmIntegrationSchema = z.object({
   }),
   body: z.object({
     provider: z.string().min(1, "Provider is required"),
-    webhookUrl: z.string().url("Invalid webhook URL").optional().or(z.literal("")),
+    webhookUrl: safeWebhookUrl.optional().or(z.literal("")),
     apiKey: z.string().optional(),
-    fieldMapping: z.record(z.string(), aiExtractionRuleSchema).optional(),
+    fieldMapping: aiSchemaObject.optional(),
   }),
 });
 

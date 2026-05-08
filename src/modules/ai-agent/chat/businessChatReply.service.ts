@@ -12,7 +12,10 @@ import {
   buildNotIngestedReply,
   buildTruthfulnessPolicyForVoice,
 } from "./aiFallbackPolicy";
+import { filterEligibleExternalDataSources } from "./externalToolEligibility";
+import { shouldExposeCrmTool } from "./crmToolEligibility";
 import prisma from "@config/prisma";
+import { logger } from "@utils/logger";
 export type { AiRoutingDecision };
 
 export type BusinessProfileForChat = Prisma.BusinessProfileGetPayload<{
@@ -56,7 +59,6 @@ export async function prepareAgentParams(params: {
   postContext?: { content: string; media?: string };
   conversationId?: number;
   responseMode?: "AUTO" | "MANUAL";
-  allowCrmTools?: boolean;
 }) {
   const {
     businessProfile,
@@ -66,7 +68,6 @@ export async function prepareAgentParams(params: {
     customerPhone,
     conversationId,
     responseMode,
-    allowCrmTools = true,
   } = params;
 
   if (!businessProfile.ragIngested) {
@@ -83,9 +84,7 @@ export async function prepareAgentParams(params: {
     new Set(relevantChunks.map((chunk) => chunk.chunkType)),
   );
 
-  const crmIntegration = allowCrmTools
-    ? businessProfile.crmIntegrations?.[0]
-    : undefined;
+  const crmIntegration = businessProfile.crmIntegrations?.[0];
   const crmFields = crmIntegration?.fieldMapping 
     ? Object.entries(crmIntegration.fieldMapping as object)
         .filter(([_, v]) => isAiWritableFieldRule(v))
@@ -130,16 +129,23 @@ export async function prepareAgentParams(params: {
     finalSystemInstruction += `\n\n## MEDIA CATALOG\nYou MAY send one file per response using the "attachment" field in your JSON output.\nAvailable assets:\n${catalog}\n\nCRITICAL RULES:\n1. Only reference EXACT names from the list above.\n2. NEVER invent an asset name.\n3. NEVER send attachments to public Facebook Comments.\n4. Only attach a file when it is genuinely relevant to the customer's request.`;
   }
 
+  const canExposeCrmTool = await shouldExposeCrmTool({
+    latestUserMessage: messageText,
+    leadCaptureInstructions: businessProfile.leadCaptureInstructions,
+    integration: crmIntegration,
+  });
   const captureTool =
-    allowCrmTools && businessProfile.crmIntegrations.length > 0
+    canExposeCrmTool && businessProfile.crmIntegrations.length > 0
       ? buildCaptureLeadTool(
           businessProfile.crmIntegrations[0].fieldMapping,
           businessProfile.leadCaptureInstructions || undefined,
         )
       : [];
-  const externalTools = buildExternalQueryTools(
-    businessProfile.externalDataSources.filter((source) => source.isActive),
+  const eligibleExternalSources = await filterEligibleExternalDataSources(
+    businessProfile.externalDataSources,
+    messageText,
   );
+  const externalTools = buildExternalQueryTools(eligibleExternalSources);
 
   const toolBlocks: Tool[] = [];
   if (captureTool.length > 0) toolBlocks.push(...captureTool);
@@ -152,6 +158,14 @@ export async function prepareAgentParams(params: {
     mergedDeclarations.length > 0
       ? [{ functionDeclarations: mergedDeclarations }]
       : undefined;
+
+  logger.info("ai.chat.prepared_tools", {
+    businessProfileId: businessProfile.id,
+    channel,
+    crmToolExposed: captureTool.length > 0,
+    eligibleExternalSourceIds: eligibleExternalSources.map((source) => source.id),
+    toolNames: mergedDeclarations.map((declaration) => declaration.name),
+  });
 
   return {
     graphParams: {
@@ -193,7 +207,6 @@ export async function computeBusinessChatReply(params: {
   postContext?: { content: string; media?: string };
   conversationId?: number;
   responseMode?: "AUTO" | "MANUAL";
-  allowCrmTools?: boolean;
 }): Promise<AiRoutingDecision> {
   const prep = await prepareAgentParams(params);
   if (prep.errorDecision) return prep.errorDecision;
@@ -212,7 +225,6 @@ export async function* computeBusinessChatStreaming(params: {
   customerPhone?: string;
   conversationId?: number;
   responseMode?: "AUTO" | "MANUAL";
-  allowCrmTools?: boolean;
 }) {
   const prep = await prepareAgentParams(params);
   if (prep.errorDecision) {

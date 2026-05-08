@@ -10,9 +10,21 @@ const FIELD_TYPES = [
   "FIXED",
 ] as const;
 
+const FIELD_SOURCES = [
+  "USER_PROVIDED",
+  "AI_DERIVED",
+  "CHAT_CONTEXT",
+  "FIXED",
+  "DEFAULT",
+] as const;
+
 const fieldTypeSchema = z
   .enum(FIELD_TYPES)
   .describe("Field type must be one of STRING, NUMBER, INTEGER, BOOLEAN, ARRAY, OBJECT, or FIXED.");
+
+const fieldSourceSchema = z
+  .enum(FIELD_SOURCES)
+  .describe("Field source must be USER_PROVIDED, AI_DERIVED, CHAT_CONTEXT, FIXED, or DEFAULT.");
 
 const fixedValueSchema = z.union([
   z.string(),
@@ -27,6 +39,8 @@ export const aiFieldRuleSchema: z.ZodTypeAny = z.lazy(() =>
   z
     .object({
       type: fieldTypeSchema,
+      source: fieldSourceSchema.optional(),
+      contextKey: z.enum(["customerPhone", "conversationId"]).optional(),
       description: z.string().min(1).optional(),
       required: z.boolean().optional(),
       value: fixedValueSchema.optional(),
@@ -48,6 +62,30 @@ export const aiFieldRuleSchema: z.ZodTypeAny = z.lazy(() =>
           code: "custom",
           path: ["value"],
           message: "value is required for FIXED fields",
+        });
+      }
+
+      if (rule.source === "FIXED" && rule.value === undefined) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["value"],
+          message: "value is required when source is FIXED",
+        });
+      }
+
+      if (rule.source === "DEFAULT" && rule.value === undefined) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["value"],
+          message: "value is required when source is DEFAULT",
+        });
+      }
+
+      if (rule.source === "CHAT_CONTEXT" && !rule.contextKey) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["contextKey"],
+          message: "contextKey is required when source is CHAT_CONTEXT",
         });
       }
 

@@ -13,6 +13,35 @@ import { AppError } from "@middlewares/errorHandler.middleware";
 
 const widgetPublicRoutes = Router();
 
+function normalizeWidgetText(input: string): string {
+  return input
+    .replace(/[\uFE00-\uFE0F\u200B-\u200D\u2060\uFEFF]/g, "")
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\s*\n\s*/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+async function resolveWidgetAttachment(
+  attachment: { assetName: string; caption?: string | null } | null | undefined,
+  businessProfileId: number,
+) {
+  if (!attachment?.assetName) return null;
+  const { resolveAssetForChannel } = await import("@modules/media/services/mediaLibrary.service");
+  const resolved = await resolveAssetForChannel(
+    attachment.assetName,
+    businessProfileId,
+    "web",
+  );
+  if (!resolved?.url) return null;
+  return {
+    url: resolved.url,
+    type: resolved.mediaType,
+    caption: attachment.caption ?? null,
+  };
+}
+
 widgetPublicRoutes.options("/chat", widgetInstallAndCors);
 widgetPublicRoutes.options("/config", widgetInstallAndCors);
 
@@ -77,6 +106,10 @@ widgetPublicRoutes.post(
     }
 
     const { visitorId, message, conversationId, stream } = req.body;
+    const normalizedMessage = normalizeWidgetText(message);
+    if (!normalizedMessage) {
+      throw new AppError("message is required", 400);
+    }
 
     if (stream) {
       // ── Server-Sent Events (SSE) Streaming Path ───────────────────────
@@ -88,25 +121,35 @@ widgetPublicRoutes.post(
       const generator = processWidgetChatStreaming({
         install,
         visitorId: visitorId.trim(),
-        message: message.trim(),
+        message: normalizedMessage,
         conversationId,
       });
 
       let finalDecision: any = null;
       let fullContent = "";
+      let streamedConversationId: number | null = null;
+      let streamedError: string | null = null;
 
       for await (const event of generator) {
         if (event.type === "token") {
           fullContent += event.data;
           res.write(`data: ${JSON.stringify({ token: event.data })}\n\n`);
         } else if (event.type === "conversation_id") {
+          streamedConversationId = event.data;
           res.write(`data: ${JSON.stringify({ conversationId: event.data })}\n\n`);
         } else if (event.type === "final_decision") {
           finalDecision = event.data;
         } else if (event.type === "error") {
-          res.write(`data: ${JSON.stringify({ error: event.data.content })}\n\n`);
+          streamedError = event.data.content || "Unable to complete chat response.";
+          res.write(`data: ${JSON.stringify({ error: streamedError })}\n\n`);
         }
       }
+
+      let attachmentForWidget: {
+        url: string;
+        type: string;
+        caption?: string | null;
+      } | null = null;
 
       // Persist final message (streaming doesn't automatically save model turn)
       if (finalDecision) {
@@ -114,10 +157,18 @@ widgetPublicRoutes.post(
         // Actually, we should yield the conversationId from the generator too.
         // For now, I'll assume we have it or fetch it.
         const pageId = `widget:${install.id}`;
-        const conversation = await prisma.conversation.findFirst({
-          where: { pageId, senderId: visitorId },
-          orderBy: { updatedAt: "desc" },
-        });
+        const conversation = streamedConversationId
+          ? await prisma.conversation.findFirst({
+              where: {
+                id: streamedConversationId,
+                pageId,
+                senderId: visitorId,
+              },
+            })
+          : await prisma.conversation.findFirst({
+              where: { pageId, senderId: visitorId },
+              orderBy: { updatedAt: "desc" },
+            });
 
         if (conversation) {
           const isAutoMode = req.body.responseMode !== "MANUAL"; // Simplified
@@ -129,31 +180,40 @@ widgetPublicRoutes.post(
             handoffCategory: finalDecision.handoffCategory,
           });
 
-          if (finalDecision.attachment?.assetName) {
-            const { resolveAssetForChannel } = await import("@modules/media/services/mediaLibrary.service");
-            const resolved = await resolveAssetForChannel(
-              finalDecision.attachment.assetName,
-              install.businessProfileId,
-              "web",
+          attachmentForWidget = await resolveWidgetAttachment(
+            finalDecision.attachment,
+            install.businessProfileId,
+          );
+          if (attachmentForWidget?.url) {
+            await saveMessage(
+              conversation.id,
+              "model",
+              attachmentForWidget.caption ?? "",
+              {
+                type: attachmentForWidget.type,
+                status: "SENT",
+                mediaMetadata: { url: attachmentForWidget.url },
+              },
             );
-            if (resolved?.url) {
-              await saveMessage(
-                conversation.id,
-                "model",
-                finalDecision.attachment.caption ?? "",
-                {
-                  type: resolved.mediaType,
-                  status: "SENT",
-                  mediaMetadata: { url: resolved.url },
-                },
-              );
-            }
           }
 
           if (finalDecision.action === "RESOLVE_CONVERSATION") {
             await prisma.conversation.update({ where: { id: conversation.id }, data: { status: "RESOLVED" } });
           }
         }
+      }
+
+      if (finalDecision || attachmentForWidget || streamedError) {
+        res.write(
+          `data: ${JSON.stringify({
+            final: {
+              reply: finalDecision?.content || fullContent || streamedError || "",
+              action: finalDecision?.action || "REPLY_AUTO",
+              attachment: attachmentForWidget,
+              conversationId: streamedConversationId,
+            },
+          })}\n\n`,
+        );
       }
 
       res.write("data: [DONE]\n\n");
@@ -164,13 +224,14 @@ widgetPublicRoutes.post(
     const result = await processWidgetChatMessage({
       install,
       visitorId: visitorId.trim(),
-      message: message.trim(),
+      message: normalizedMessage,
       conversationId,
     });
 
     return res.json({
       reply: result.reply,
       conversationId: result.conversationId,
+      attachment: result.attachment ?? null,
     });
   },
 );

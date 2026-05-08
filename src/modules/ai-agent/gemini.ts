@@ -365,7 +365,7 @@ export function buildAiRoutingSchema(channel?: string | null): Schema {
 export const buildDynamicProperties = (mapping: any): Record<string, any> => {
   const props: Record<string, any> = {};
   for (const [key, value] of Object.entries(mapping)) {
-    if (isFixedFieldRule(value)) continue;
+    if (!isAiWritableFieldRule(value)) continue;
 
     if (typeof value === "object" && value !== null) {
       const mappedType = String((value as any).type).toUpperCase();
@@ -412,6 +412,11 @@ export const buildDynamicProperties = (mapping: any): Record<string, any> => {
           type: Type.BOOLEAN,
           description,
         };
+      } else if (mappedType === "STRING") {
+        props[key] = {
+          type: Type.STRING,
+          description,
+        };
       } else if (mappedType === "OBJECT") {
         const nestedContent = (value as any).properties || {};
         const nestedProps = buildDynamicProperties(nestedContent);
@@ -439,6 +444,20 @@ function isFixedFieldRule(value: unknown): boolean {
   return String(rule.type ?? "").toUpperCase() === "FIXED";
 }
 
+function getFieldSource(value: unknown): string {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return "USER_PROVIDED";
+  }
+  const rule = value as Record<string, unknown>;
+  if (String(rule.type ?? "").toUpperCase() === "FIXED") return "FIXED";
+  return String(rule.source ?? "USER_PROVIDED").toUpperCase();
+}
+
+function isAiWritableFieldRule(value: unknown): boolean {
+  const source = getFieldSource(value);
+  return source === "USER_PROVIDED" || source === "AI_DERIVED";
+}
+
 function collectRequiredFields(
   mapping: any,
   defaultRequired: boolean,
@@ -447,7 +466,7 @@ function collectRequiredFields(
   const required: string[] = [];
 
   for (const [key, value] of Object.entries(mapping)) {
-    if (isFixedFieldRule(value)) continue;
+    if (!isAiWritableFieldRule(value)) continue;
     if (typeof value === "object" && value !== null && !Array.isArray(value)) {
       const requiredFlag = (value as any).required;
       if (
@@ -481,7 +500,7 @@ export function buildCaptureLeadTool(
     // We separate "Dynamic Fields" (AI asks) from "Fixed Fields" (System injects)
     const dynamicMapping: Record<string, any> = {};
     for (const [key, value] of Object.entries(fieldMapping)) {
-      if (!isFixedFieldRule(value)) {
+      if (isAiWritableFieldRule(value)) {
         dynamicMapping[key] = value;
       }
     }
@@ -532,18 +551,27 @@ export function buildCaptureLeadTool(
 export function buildExternalQueryTools(dataSources: any[]): Tool[] {
   if (!dataSources || dataSources.length === 0) return [];
 
-  const functionDeclarations = dataSources.map((ds) => {
+  const functionDeclarations = dataSources.flatMap((ds) => {
     let properties: any = {};
-    if (
-      ds.expectedParamsSchema &&
-      typeof ds.expectedParamsSchema === "object"
-    ) {
-      properties = buildDynamicProperties(ds.expectedParamsSchema);
+    try {
+      if (
+        ds.expectedParamsSchema &&
+        typeof ds.expectedParamsSchema === "object"
+      ) {
+        properties = buildDynamicProperties(ds.expectedParamsSchema);
+      }
+    } catch (error: any) {
+      logger.warn("ai.external_tool.invalid_schema_skipped", {
+        sourceId: ds.id,
+        sourceName: ds.name,
+        error: error?.message || String(error),
+      });
+      return [];
     }
     const hasDeclaredParams = Object.keys(properties).length > 0;
     const required = collectRequiredFields(ds.expectedParamsSchema, false);
 
-    return {
+    return [{
       name: `query_external_api_${ds.id}`,
       description: [
         `Live lookup tool for "${ds.name}".`,
@@ -559,7 +587,7 @@ export function buildExternalQueryTools(dataSources: any[]): Tool[] {
         properties: hasDeclaredParams ? properties : {},
         ...(required.length > 0 ? { required } : {}),
       },
-    };
+    }];
   });
 
   return [{ functionDeclarations }];

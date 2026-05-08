@@ -60,7 +60,7 @@ router.get(
   validate(mediaListQuerySchema),
   async (req: Request, res: Response) => {
     const userId = (req as any).user.id;
-    const { businessProfileId } = req.query as any;
+    const { businessProfileId, usageScope } = req.query as any;
 
     // Verify ownership
     const profile = await prisma.businessProfile.findFirst({
@@ -68,7 +68,7 @@ router.get(
     });
     if (!profile) throw new AppError("Access denied to business profile", 403);
 
-    const assets = await listMediaAssets(businessProfileId, userId);
+    const assets = await listMediaAssets(businessProfileId, userId, usageScope);
     return res.json({ data: assets });
   },
 );

@@ -1,6 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { runToolsNode } from "./runTools";
 import { executeExternalQuery } from "@modules/integrations/external/externalData.service";
+import { generateSafeRecoveryReply } from "@modules/ai-agent/chat/aiRecoveryReply";
+import { classifyExternalToolFailureRecovery } from "@modules/ai-agent/chat/externalToolRecoveryClassifier";
 
 vi.mock("@modules/integrations/external/externalData.service", () => ({
   executeExternalQuery: vi.fn(),
@@ -12,6 +14,10 @@ vi.mock("@modules/integrations/crm/crm.service", () => ({
 
 vi.mock("@modules/ai-agent/chat/aiRecoveryReply", () => ({
   generateSafeRecoveryReply: vi.fn(async ({ safeFallback }) => safeFallback),
+}));
+
+vi.mock("@modules/ai-agent/chat/externalToolRecoveryClassifier", () => ({
+  classifyExternalToolFailureRecovery: vi.fn(async () => "handoff"),
 }));
 
 const failedFallback =
@@ -46,6 +52,7 @@ function baseState(overrides: Record<string, unknown> = {}) {
         unverified: "unverified",
         failed: failedFallback,
         unsupportedPromise: "unsupported",
+        smallTalkRecovery: "أهلاً بيك! تحب تعرف إيه عن خدماتنا؟",
       },
     },
     ...overrides,
@@ -104,6 +111,43 @@ describe("runToolsNode external query guardrails", () => {
     expect(result.decision).toMatchObject({
       action: "HANDOFF_TO_HUMAN",
       content: failedFallback,
+    });
+  });
+
+  it("recovers accidental external lookup failures on greetings as a normal reply", async () => {
+    vi.mocked(classifyExternalToolFailureRecovery).mockResolvedValue("normal_reply");
+    vi.mocked(executeExternalQuery).mockResolvedValue({
+      success: false,
+      verification: "failed",
+      actionType: "external_query_2",
+      reason: "network_or_runtime_error",
+      data: null,
+      error: "network failed",
+    });
+
+    const result = await runToolsNode(
+      baseState({
+        contents: [{ role: "user", parts: [{ text: "hi" }] }],
+      }),
+    );
+
+    expect(classifyExternalToolFailureRecovery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        customerMessage: "hi",
+        failureReason: "network_or_runtime_error",
+      }),
+    );
+    expect(generateSafeRecoveryReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        customerMessage: "hi",
+        allowHandoffLanguage: false,
+      }),
+    );
+    expect(result.decision).toMatchObject({
+      action: "REPLY_AUTO",
+      content: "أهلاً بيك! تحب تعرف إيه عن خدماتنا؟",
+      requiresGrounding: false,
+      missingInfo: null,
     });
   });
 });

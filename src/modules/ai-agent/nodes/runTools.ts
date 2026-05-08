@@ -79,6 +79,7 @@ export async function runToolsNode(
           ...args,
           phone: args.phone || leadPhone,
           idempotencyKey,
+          conversationId: state.conversationId,
         });
 
         const envelope = crmResult.success
@@ -138,7 +139,11 @@ export async function runToolsNode(
           sourceId,
           args: parseResult.data,
         });
-        const envelope = await executeExternalQuery(sourceId, parseResult.data);
+        const envelope = await executeExternalQuery(
+          state.businessProfileId,
+          sourceId,
+          parseResult.data,
+        );
         updatedEvidence = applyEvidence(
           updatedEvidence,
           envelope,

@@ -61,6 +61,7 @@ router.get(
   async (req: Request, res: Response) => {
     const userId = (req as any).user.id;
     const { businessProfileId, usageScope } = req.query as any;
+    res.setHeader("Cache-Control", "no-store");
 
     // Verify ownership
     const profile = await prisma.businessProfile.findFirst({

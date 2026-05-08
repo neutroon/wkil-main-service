@@ -123,7 +123,7 @@ export async function processWidgetChatMessage(params: {
     }
 
     return {
-      reply: "An agent has been notified and will be with you shortly.",
+      reply: reply.content || "",
       conversationId: conversation.id,
     };
   } else {

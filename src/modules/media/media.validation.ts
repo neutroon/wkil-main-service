@@ -66,5 +66,6 @@ export const mediaIdParamSchema = z.object({
 export const mediaListQuerySchema = z.object({
   query: z.object({
     businessProfileId: z.coerce.number(),
+    usageScope: z.enum(["CHAT_ATTACHMENT", "CONTENT_ASSET"]).optional(),
   }),
 });

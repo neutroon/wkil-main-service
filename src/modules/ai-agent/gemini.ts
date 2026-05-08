@@ -16,7 +16,8 @@ const { GEMINI_API_KEY } = env;
 
 // Initialize Google Generative AI and wrap it with LangSmith for tracing
 const rawGenAI = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
-export const genAI = process.env.LANGCHAIN_TRACING_V2 === "true" ? wrapGemini(rawGenAI) : rawGenAI;
+export const genAI =
+  process.env.LANGCHAIN_TRACING_V2 === "true" ? wrapGemini(rawGenAI) : rawGenAI;
 
 /**
  * Types for precise token usage and billing tracking (Gemini Production Standard).
@@ -364,60 +365,105 @@ export function buildAiRoutingSchema(channel?: string | null): Schema {
 export const buildDynamicProperties = (mapping: any): Record<string, any> => {
   const props: Record<string, any> = {};
   for (const [key, value] of Object.entries(mapping)) {
+    if (isFixedFieldRule(value)) continue;
+
     if (typeof value === "object" && value !== null) {
-      // Detect if it's an "Advanced Rule" (has a type) or a "Simple Nested Object"
-      const hasExplicitType = "type" in (value as any);
-      const mappedType = hasExplicitType ? String((value as any).type).toUpperCase() : "OBJECT";
+      const mappedType = String((value as any).type).toUpperCase();
+      const description = String(
+        (value as any).description ||
+          (mappedType === "OBJECT" ? `Details for ${key}` : `The ${key}`),
+      );
 
       if (mappedType === "ARRAY") {
+        const itemConfig = (value as any).items || {};
+        const itemProperties =
+          typeof itemConfig === "object" &&
+          itemConfig !== null &&
+          !Array.isArray(itemConfig)
+            ? buildDynamicProperties(
+                (itemConfig as any).properties || itemConfig,
+              )
+            : {};
+        const itemRequired =
+          typeof itemConfig === "object" &&
+          itemConfig !== null &&
+          !Array.isArray(itemConfig)
+            ? collectRequiredFields(
+                (itemConfig as any).properties || itemConfig,
+                false,
+              )
+            : [];
         props[key] = {
           type: Type.ARRAY,
-          description: (value as any).description || `List of ${key}`,
+          description,
           items: {
             type: Type.OBJECT,
-            properties: buildDynamicProperties((value as any).items || {}),
+            properties: itemProperties,
+            ...(itemRequired.length > 0 ? { required: itemRequired } : {}),
           },
         };
       } else if (mappedType === "NUMBER" || mappedType === "INTEGER") {
         props[key] = {
           type: mappedType === "INTEGER" ? Type.INTEGER : Type.NUMBER,
-          description: (value as any).description || `Numeric value for ${key}`,
+          description,
         };
       } else if (mappedType === "BOOLEAN") {
         props[key] = {
           type: Type.BOOLEAN,
-          description: (value as any).description || `True/false flag for ${key}`,
+          description,
         };
       } else if (mappedType === "OBJECT") {
-        // Handle both { type: "OBJECT", properties: {...} } AND simple { field: "..." }
-        const nestedContent = (value as any).properties || (hasExplicitType ? {} : value);
+        const nestedContent = (value as any).properties || {};
         const nestedProps = buildDynamicProperties(nestedContent);
-        
+        const nestedRequired = collectRequiredFields(nestedContent, false);
+
         props[key] = {
           type: Type.OBJECT,
-          description: (value as any).description || `Details for ${key}`,
+          description,
           properties: nestedProps,
-          required: Object.keys(nestedProps),
+          ...(nestedRequired.length > 0 ? { required: nestedRequired } : {}),
         };
       } else {
-        // Fallback for STRING or unrecognized types
-        props[key] = {
-          type: Type.STRING,
-          description: (value as any).description || String(value) || `The ${key}`,
-        };
+        throw new Error(
+          `Unsupported AI schema field type "${mappedType}" for "${key}"`,
+        );
       }
-    } else {
-      props[key] = {
-        type: Type.STRING,
-        description: String(value) || `The ${key}`,
-      };
     }
   }
   return props;
 };
 
+function isFixedFieldRule(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const rule = value as Record<string, unknown>;
+  return String(rule.type ?? "").toUpperCase() === "FIXED";
+}
+
+function collectRequiredFields(
+  mapping: any,
+  defaultRequired: boolean,
+): string[] {
+  if (!mapping || typeof mapping !== "object") return [];
+  const required: string[] = [];
+
+  for (const [key, value] of Object.entries(mapping)) {
+    if (isFixedFieldRule(value)) continue;
+    if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+      const requiredFlag = (value as any).required;
+      if (
+        requiredFlag === true ||
+        (requiredFlag !== false && defaultRequired)
+      ) {
+        required.push(key);
+      }
+    }
+  }
+
+  return required;
+}
+
 export const DEFAULT_LEAD_CAPTURE_INSTRUCTIONS =
-  "Captures a prospective lead's information. Trigger this ONLY when the user explicitly expresses strong buying intent, asks for a callback, tells you their contact details, or wants to proceed with an action.";
+  "Captures or updates a prospective lead's CRM information. Trigger this ONLY when the user explicitly expresses strong buying intent, asks for a callback, tells you their contact details, wants to proceed, or explicitly corrects previously captured lead details. Do not call it again for identical details after a successful capture.";
 
 export function buildCaptureLeadTool(
   fieldMapping: any,
@@ -435,8 +481,7 @@ export function buildCaptureLeadTool(
     // We separate "Dynamic Fields" (AI asks) from "Fixed Fields" (System injects)
     const dynamicMapping: Record<string, any> = {};
     for (const [key, value] of Object.entries(fieldMapping)) {
-      const isFixed = typeof value === "string" && value.startsWith("fixed:");
-      if (!isFixed) {
+      if (!isFixedFieldRule(value)) {
         dynamicMapping[key] = value;
       }
     }
@@ -445,8 +490,8 @@ export function buildCaptureLeadTool(
       buildDynamicProperties(dynamicMapping),
     )) {
       properties[key] = propConfig;
-      required.push(key);
     }
+    required.push(...collectRequiredFields(dynamicMapping, true));
   } else {
     properties["name"] = {
       type: Type.STRING,
@@ -495,18 +540,24 @@ export function buildExternalQueryTools(dataSources: any[]): Tool[] {
     ) {
       properties = buildDynamicProperties(ds.expectedParamsSchema);
     }
+    const hasDeclaredParams = Object.keys(properties).length > 0;
+    const required = collectRequiredFields(ds.expectedParamsSchema, false);
 
     return {
       name: `query_external_api_${ds.id}`,
-      description:
+      description: [
+        `Live lookup tool for "${ds.name}".`,
         ds.description ||
-        `Fetch data from ${ds.name}. Ask user for required fields if missing.`,
+          "Use only when this source directly matches the user's latest request.",
+        "Do not call for greetings, generic support, lead capture, handoff, or conversation closing.",
+        hasDeclaredParams
+          ? "If required lookup details are missing, ask the customer for them instead of inventing parameters."
+          : "This source requires no customer-supplied parameters; call it with an empty argument object only when the user's request directly needs this live source.",
+      ].join(" "),
       parameters: {
         type: Type.OBJECT,
-        properties:
-          Object.keys(properties).length > 0
-            ? properties
-            : { q: { type: Type.STRING, description: "Optional search term" } },
+        properties: hasDeclaredParams ? properties : {},
+        ...(required.length > 0 ? { required } : {}),
       },
     };
   });
@@ -660,5 +711,3 @@ export async function generateVisualContent(params: {
 }
 
 export { generateContent, generateContentStream, embedTexts, embedQuery };
-
-

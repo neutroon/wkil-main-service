@@ -70,6 +70,7 @@ workflow.addConditionalEdges("callGemini", (state) => {
 // After runTools: loop back to callGemini for the next turn
 // Safety exit: if we've hit MAX_TURNS, force parse whatever we have
 workflow.addConditionalEdges("runTools", (state) => {
+  if (state.decision !== null) return "hitlInterrupt";
   if (state.turnCount >= MAX_TURNS) return "parseDecision";
   return "callGemini";
 });

@@ -129,11 +129,17 @@ export async function prepareAgentParams(params: {
     finalSystemInstruction += `\n\n## MEDIA CATALOG\nYou MAY send one file per response using the "attachment" field in your JSON output.\nAvailable assets:\n${catalog}\n\nCRITICAL RULES:\n1. Only reference EXACT names from the list above.\n2. NEVER invent an asset name.\n3. NEVER send attachments to public Facebook Comments.\n4. Only attach a file when it is genuinely relevant to the customer's request.`;
   }
 
-  const canExposeCrmTool = await shouldExposeCrmTool({
-    latestUserMessage: messageText,
-    leadCaptureInstructions: businessProfile.leadCaptureInstructions,
-    integration: crmIntegration,
-  });
+  const [canExposeCrmTool, eligibleExternalSources] = await Promise.all([
+    shouldExposeCrmTool({
+      latestUserMessage: messageText,
+      leadCaptureInstructions: businessProfile.leadCaptureInstructions,
+      integration: crmIntegration,
+    }),
+    filterEligibleExternalDataSources(
+      businessProfile.externalDataSources,
+      messageText,
+    ),
+  ]);
   const captureTool =
     canExposeCrmTool && businessProfile.crmIntegrations.length > 0
       ? buildCaptureLeadTool(
@@ -141,10 +147,6 @@ export async function prepareAgentParams(params: {
           businessProfile.leadCaptureInstructions || undefined,
         )
       : [];
-  const eligibleExternalSources = await filterEligibleExternalDataSources(
-    businessProfile.externalDataSources,
-    messageText,
-  );
   const externalTools = buildExternalQueryTools(eligibleExternalSources);
 
   const toolBlocks: Tool[] = [];

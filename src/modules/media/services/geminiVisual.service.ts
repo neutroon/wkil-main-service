@@ -161,6 +161,7 @@ export async function createGeminiVisual(params: {
       mimeType: "image/png",
       name: assetName,
       instructions: `Branded AI Image: ${userPrompt}`,
+      usageScope: "CONTENT_ASSET",
     });
 
     // 7. Link to Content Plan Post
@@ -291,6 +292,7 @@ export async function refineGeminiVisual(params: {
       mimeType: "image/png",
       name: refinedAssetName,
       instructions: `AI Refinement: ${instruction} (Source: ${asset.name})`,
+      usageScope: "CONTENT_ASSET",
     });
 
     // 7. Link to Content Plan Post

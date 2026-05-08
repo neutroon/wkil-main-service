@@ -16,6 +16,7 @@ import { pushLeadToCrm } from "@modules/integrations/crm/crm.service";
 import { executeExternalQuery } from "@modules/integrations/external/externalData.service";
 import { updateEvidenceFromEnvelope } from "@modules/ai-agent/core/aiEngine.utils";
 import { generateSafeRecoveryReply } from "@modules/ai-agent/chat/aiRecoveryReply";
+import { classifyExternalToolFailureRecovery } from "@modules/ai-agent/chat/externalToolRecoveryClassifier";
 import type { AgentStateType } from "@modules/ai-agent/core/agentState";
 
 // ── Zod Schemas for Tool Input Validation ─────────────────────────────────────
@@ -250,24 +251,37 @@ async function buildExternalLookupFailedDecision(
   reasoning: string,
   failureReason: string,
 ): Promise<AgentStateType["decision"]> {
-  const fallback = state.policy.fallbackTemplates.failed;
+  const customerMessage = latestUserText(state.contents);
+  const recoveryRoute = await classifyExternalToolFailureRecovery({
+    customerMessage,
+    failureReason,
+  });
+  const isNormalReply = recoveryRoute === "normal_reply";
+  const fallback = isNormalReply
+    ? state.policy.fallbackTemplates.smallTalkRecovery
+    : state.policy.fallbackTemplates.failed;
   const recoveryReply = await generateSafeRecoveryReply({
     systemInstruction: state.systemInstruction,
     channel: state.channel,
-    customerMessage: latestUserText(state.contents),
+    customerMessage,
     failureReason,
     safeFallback: fallback,
+    allowHandoffLanguage: !isNormalReply,
   });
 
   return {
-    action: "HANDOFF_TO_HUMAN",
-    handoffCategory: "MISSING_KNOWLEDGE",
-    reasoning,
+    action: isNormalReply ? "REPLY_AUTO" : "HANDOFF_TO_HUMAN",
+    handoffCategory: isNormalReply ? null : "MISSING_KNOWLEDGE",
+    reasoning: isNormalReply
+      ? `${reasoning} Ignored non-essential external lookup failure.`
+      : reasoning,
     content: recoveryReply,
-    requiresGrounding: true,
+    requiresGrounding: !isNormalReply,
     grounded: false,
     usedChunkTypes: [],
-    missingInfo: "External live lookup could not be verified.",
+    missingInfo: isNormalReply
+      ? null
+      : "External live lookup could not be verified.",
     attachment: null,
   };
 }

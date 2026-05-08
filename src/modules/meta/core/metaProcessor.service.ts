@@ -453,6 +453,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
           where: { 
             businessProfileId, 
             name: { equals: reply.attachment.assetName, mode: "insensitive" },
+            usageScope: "CHAT_ATTACHMENT",
             isActive: true,
             deletedAt: null 
           },

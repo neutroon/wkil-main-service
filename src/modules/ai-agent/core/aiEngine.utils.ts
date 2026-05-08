@@ -17,6 +17,7 @@ export type AiTruthfulnessPolicy = {
     unverified: string;
     failed: string;
     unsupportedPromise: string;
+    smallTalkRecovery: string;
   };
 };
 
@@ -30,6 +31,8 @@ export const DEFAULT_AI_TRUTHFULNESS_POLICY: AiTruthfulnessPolicy = {
       "I could not complete verification due to a system lookup issue. Please recheck the details and send them exactly as provided.",
     unsupportedPromise:
       "I can only confirm actions that were completed and verified in this chat flow. I cannot promise additional actions that were not executed.",
+    smallTalkRecovery:
+      "Hi! How can I help you today?",
   },
 };
 

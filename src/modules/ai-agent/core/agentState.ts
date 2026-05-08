@@ -93,6 +93,7 @@ export const AgentState = Annotation.Root({
   }),
   policy:            Annotation<AiTruthfulnessPolicy>(),
   responseMode:      Annotation<"AUTO" | "MANUAL">(),
+  conversationId:    Annotation<number | undefined>(),
 
   // ─── Mutable: conversation turns (append-only via reducer) ───────────────
   // Each node that adds a turn pushes to this array.

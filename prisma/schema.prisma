@@ -235,6 +235,26 @@ model CrmIntegration {
   @@index([businessProfileId])
 }
 
+model CrmDeliveryLog {
+  id                Int      @id @default(autoincrement())
+  businessProfileId Int
+  integrationId     Int
+  idempotencyKey    String
+  leadKey           String
+  payloadHash       String
+  eventType         String   // "lead_created" | "lead_updated"
+  status            String   @default("PENDING") // "PENDING" | "DELIVERED" | "FAILED" | "SKIPPED_DUPLICATE"
+  attempts          Int      @default(0)
+  lastError         String?
+  deliveredAt       DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([businessProfileId, integrationId, idempotencyKey])
+  @@index([businessProfileId, integrationId, leadKey, status])
+  @@index([businessProfileId, integrationId, payloadHash, status])
+}
+
 model Conversation {
   id                Int      @id @default(autoincrement())
   pageId            String

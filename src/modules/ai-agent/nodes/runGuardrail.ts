@@ -52,13 +52,22 @@ export async function runGuardrailNode(
     customerMessage: latestUserText(state),
     failureReason: result.ruleId,
     safeFallback: result.safeReply,
+    allowHandoffLanguage: shouldRouteGuardrailToHuman(result.ruleId),
   });
 
   // Override the decision with a safe reply
+  const nextAction = shouldRouteGuardrailToHuman(result.ruleId)
+    ? "HANDOFF_TO_HUMAN"
+    : "REPLY_AUTO";
+
   return {
     decision: {
       ...state.decision,
-      action:    "REPLY_AUTO",
+      action:    nextAction,
+      handoffCategory:
+        nextAction === "HANDOFF_TO_HUMAN"
+          ? state.decision.handoffCategory || "MISSING_KNOWLEDGE"
+          : state.decision.handoffCategory,
       reasoning: `Guardrail Triggered: ${result.ruleId}`,
       content:   recoveryReply,
       // Clear channel-specific content fields too
@@ -74,6 +83,10 @@ function latestUserText(state: AgentStateType): string {
     .filter((part) => typeof part.text === "string")
     .map((part) => part.text)
     .join(" ");
+}
+
+function shouldRouteGuardrailToHuman(ruleId: string): boolean {
+  return ruleId === "TRUTH_FAILED_ACTION" || ruleId === "TRUTH_UNKNOWN_ACTION";
 }
 
 

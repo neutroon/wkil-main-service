@@ -10,6 +10,10 @@ vi.mock("@modules/integrations/crm/crm.service", () => ({
   pushLeadToCrm: vi.fn(),
 }));
 
+vi.mock("@modules/ai-agent/chat/aiRecoveryReply", () => ({
+  generateSafeRecoveryReply: vi.fn(async ({ safeFallback }) => safeFallback),
+}));
+
 const failedFallback =
   "مش قادر أتحقق من المعلومة دي حالياً بسبب مشكلة في الربط بالنظام.";
 

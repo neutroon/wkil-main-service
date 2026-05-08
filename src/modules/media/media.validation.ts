@@ -9,6 +9,7 @@ export const uploadMediaSchema = z.object({
     businessProfileId: z.coerce.number(),
     name: z.string().min(2, "Name must be at least 2 characters"),
     instructions: z.string().min(10, "Instructions must be at least 10 characters"),
+    usageScope: z.enum(["CHAT_ATTACHMENT", "CONTENT_ASSET"]).optional(),
   }),
 });
 

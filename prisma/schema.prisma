@@ -90,6 +90,7 @@ model BusinessProfile {
   workingHours        String?
   address             String?
   leadCaptureInstructions String? @default("Captures a prospective lead's information. Trigger this ONLY when the user explicitly expresses strong buying intent, asks for a callback, tells you their contact details, or wants to proceed with an action.")
+  aiBehaviorInstructions String?
   
   // Brand Kit & Visual DNA
   brandLogoUrl           String?

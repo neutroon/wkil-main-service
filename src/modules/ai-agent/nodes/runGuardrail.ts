@@ -12,6 +12,7 @@
  */
 import { logger } from "@utils/logger";
 import { evaluateGuardrailsForReply } from "../core/aiEngine.utils";
+import { generateSafeRecoveryReply } from "@modules/ai-agent/chat/aiRecoveryReply";
 import type { AgentStateType } from "../core/agentState";
 
 export async function runGuardrailNode(
@@ -45,18 +46,34 @@ export async function runGuardrailNode(
     },
   });
 
+  const recoveryReply = await generateSafeRecoveryReply({
+    systemInstruction: state.systemInstruction,
+    channel: state.channel,
+    customerMessage: latestUserText(state),
+    failureReason: result.ruleId,
+    safeFallback: result.safeReply,
+  });
+
   // Override the decision with a safe reply
   return {
     decision: {
       ...state.decision,
       action:    "REPLY_AUTO",
       reasoning: `Guardrail Triggered: ${result.ruleId}`,
-      content:   result.safeReply,
+      content:   recoveryReply,
       // Clear channel-specific content fields too
-      publicContent:  result.safeReply,
-      privateContent: result.safeReply,
+      publicContent:  recoveryReply,
+      privateContent: recoveryReply,
     },
   };
+}
+
+function latestUserText(state: AgentStateType): string {
+  const latest = [...state.contents].reverse().find((turn) => turn.role === "user");
+  return (latest?.parts ?? [])
+    .filter((part) => typeof part.text === "string")
+    .map((part) => part.text)
+    .join(" ");
 }
 
 

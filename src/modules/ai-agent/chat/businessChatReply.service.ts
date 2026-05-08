@@ -51,6 +51,7 @@ export async function prepareAgentParams(params: {
   postContext?: { content: string; media?: string };
   conversationId?: number;
   responseMode?: "AUTO" | "MANUAL";
+  allowCrmTools?: boolean;
 }) {
   const {
     businessProfile,
@@ -60,6 +61,7 @@ export async function prepareAgentParams(params: {
     customerPhone,
     conversationId,
     responseMode,
+    allowCrmTools = true,
   } = params;
 
   if (!businessProfile.ragIngested) {
@@ -122,7 +124,7 @@ export async function prepareAgentParams(params: {
   }
 
   const captureTool =
-    businessProfile.crmIntegrations.length > 0
+    allowCrmTools && businessProfile.crmIntegrations.length > 0
       ? buildCaptureLeadTool(
           businessProfile.crmIntegrations[0].fieldMapping,
           businessProfile.leadCaptureInstructions || undefined,
@@ -181,6 +183,7 @@ export async function computeBusinessChatReply(params: {
   postContext?: { content: string; media?: string };
   conversationId?: number;
   responseMode?: "AUTO" | "MANUAL";
+  allowCrmTools?: boolean;
 }): Promise<AiRoutingDecision> {
   const prep = await prepareAgentParams(params);
   if (prep.errorDecision) return prep.errorDecision;

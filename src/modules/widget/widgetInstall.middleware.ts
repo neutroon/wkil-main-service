@@ -29,7 +29,8 @@ async function widgetInstallAndCorsImpl(
   res: Response,
   next: NextFunction,
 ): Promise<void> {
-  const isProduction = env.NODE_ENV === "production";
+  const isProduction =
+    env.NODE_ENV === "production" || process.env.NODE_ENV === "production";
   const origin = req.headers.origin;
 
   const siteKeyHeader = String(req.headers["x-widget-site-key"] ?? "").trim();
@@ -44,8 +45,17 @@ async function widgetInstallAndCorsImpl(
   const siteKey = siteKeyHeader || siteKeyBody;
 
   if (!siteKey) {
-    if (req.method === "OPTIONS") return next(); // Already handled in app.ts
-    res.status(400).json({ error: "Missing X-Widget-Site-Key header." });
+    if (req.method === "OPTIONS") {
+      res.setHeader("Access-Control-Allow-Origin", origin || "*");
+      res.setHeader(
+        "Access-Control-Allow-Headers",
+        "Content-Type, X-Widget-Site-Key",
+      );
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+      res.status(204).end();
+      return;
+    }
+    res.status(400).json({ error: "Missing widget site key header." });
     return;
   }
 
@@ -79,6 +89,19 @@ async function widgetInstallAndCorsImpl(
   }
 
   req.widgetInstall = install;
+  if (origin) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+  }
+  res.setHeader("Vary", "Origin");
+  if (req.method === "OPTIONS") {
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Content-Type, X-Widget-Site-Key",
+    );
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.status(204).end();
+    return;
+  }
   next();
 }
 

@@ -9,6 +9,11 @@ import {
   deleteDataSourceSchema,
 } from "./dataSource.validation";
 import { AppError } from "@middlewares/errorHandler.middleware";
+import {
+  encryptExternalHeaders,
+  mergeHeaderUpdate,
+  serializeExternalDataSource,
+} from "./externalData.service";
 
 const externalDataSourceRoutes = Router();
 
@@ -43,7 +48,7 @@ externalDataSourceRoutes.get(
     const sources = await prisma.externalDataSource.findMany({
       where: { businessProfileId: profileId },
     });
-    return res.json(sources);
+    return res.json(sources.map(serializeExternalDataSource));
   },
 );
 
@@ -73,14 +78,17 @@ externalDataSourceRoutes.post(
         description,
         apiUrl,
         method: method || "GET",
-        headers,
+        headers: encryptExternalHeaders(headers),
         queryParams,
         expectedParamsSchema,
         isActive: isActive !== undefined ? isActive : true,
       },
     });
 
-    return res.json({ success: true, source: newSource });
+    return res.json({
+      success: true,
+      source: serializeExternalDataSource(newSource),
+    });
   },
 );
 
@@ -104,25 +112,32 @@ externalDataSourceRoutes.put(
       isActive,
     } = req.body;
 
-    const updatedSource = await prisma.externalDataSource.updateMany({
+    const existingSource = await prisma.externalDataSource.findFirst({
       where: { id: sourceId, businessProfileId: profileId },
+    });
+
+    if (!existingSource) {
+      throw new AppError("Data source not found or unauthorized", 404);
+    }
+
+    const updatedSource = await prisma.externalDataSource.update({
+      where: { id: existingSource.id },
       data: {
         name,
         description,
         apiUrl,
         method,
-        headers,
+        headers: mergeHeaderUpdate(existingSource.headers, headers),
         queryParams,
         expectedParamsSchema,
         isActive,
       },
     });
 
-    if (updatedSource.count === 0) {
-      throw new AppError("Data source not found or unauthorized", 404);
-    }
-
-    return res.json({ success: true, count: updatedSource.count });
+    return res.json({
+      success: true,
+      source: serializeExternalDataSource(updatedSource),
+    });
   },
 );
 

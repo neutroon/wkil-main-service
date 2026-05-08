@@ -106,6 +106,7 @@ export async function prepareAgentParams(params: {
   const mediaAssets = await prisma.businessProfileMedia.findMany({
     where: {
       businessProfileId: businessProfile.id,
+      usageScope: "CHAT_ATTACHMENT",
       isActive: true,
       deletedAt: null,
     },

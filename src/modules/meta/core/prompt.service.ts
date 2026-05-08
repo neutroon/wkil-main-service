@@ -181,6 +181,19 @@ export function buildSystemPrompt(params: SystemPromptParams): string {
 6. After a tool returns data, answer only from the returned payload and cite no unavailable facts. If the tool fails or returns no data, do not guess; ask for corrected details or hand off.
 </external_tool_protocol>`.trim();
 
+  const channelFormattingProtocol = `
+<channel_formatting_protocol>
+1. Use structured plain text only. Do not use markdown tables, code blocks, headings with #, or decorative separators.
+2. Keep direct-chat replies easy to scan: one short opening sentence, then bullets or numbered steps only when they genuinely help.
+3. Use "- " bullets for lists of 3 or more items. Use "1. 2. 3." numbered steps for processes, setup instructions, or ordered actions.
+4. Keep paragraphs short: usually 1-2 lines each. Avoid dense blocks of text.
+5. For WhatsApp and Messenger, avoid rich markdown. Do not rely on bold, italic, tables, or links hidden behind markdown labels. Send raw URLs when needed.
+6. For web chat, you may be slightly more structured, but still use plain text, short sections, bullets, and numbered steps.
+7. For Facebook comments, keep publicContent very short and social. Do not use lists, long explanations, prices, or heavy formatting in publicContent.
+8. Use emojis sparingly and only when they match the business voice. Never use more than one emoji in a direct-chat reply unless the customer uses a playful tone.
+9. Never use hashtags or tag clouds.
+</channel_formatting_protocol>`.trim();
+
   return `You are the official customer support representative for "${businessName}". 
 
 <persona>
@@ -245,13 +258,15 @@ ${dataCollectionProtocol}
 
 ${externalToolProtocol}
 
+${channelFormattingProtocol}
+
 <rules>
 1. Primary Language (MANDATORY): You MUST speak and respond strictly in the language and dialect specified in the "Voice" field above.
 2. Decision Routing: You must output a structured JSON response with an "action".
    - REPLY_AUTO: Standard response.
    - HANDOFF_TO_HUMAN: For complex issues, anger, or unknown info.
    - RESOLVE_CONVERSATION: When the user says thanks/goodbye.
-3. Formatting: Give short, punchy answers. Use dashed bullet points (-) for lists.
+3. Formatting: Follow <channel_formatting_protocol>. Keep responses structured, concise, and plain-text friendly.
 4. Reasoning: Provide logic in the "reasoning" field in the SAME LANGUAGE as the conversation.
 5. Media: If sending a file, use the "attachment" field with the "assetName" from the catalog.
 6. Post Intentionality: If <post_identity> exists, prioritize its data (price/offers) over general knowledge.

@@ -13,6 +13,13 @@ const safeExternalUrl = z.string().url("Invalid API URL").superRefine((url, ctx)
   }
 });
 
+const routingMode = z.enum(["STRICT", "FAST"]);
+const routerTimeoutMs = z.coerce
+  .number()
+  .int()
+  .min(1000, "Router timeout must be at least 1 second")
+  .max(10000, "Router timeout must be 10 seconds or less");
+
 /**
  * Data Source Schema
  * POST /v1/external-data-sources/business-profiles/:profileId
@@ -28,7 +35,9 @@ export const dataSourceSchema = z.object({
     method: z.enum(["GET", "POST", "PUT", "DELETE"]).optional().default("GET"),
     headers: z.record(z.string(), z.string()).optional(),
     queryParams: z.record(z.string(), z.string()).optional(),
-    expectedParamsSchema: aiSchemaObject.optional(),
+    routingMode: routingMode.optional().default("STRICT"),
+    routerTimeoutMs: routerTimeoutMs.optional().default(2500),
+    expectedParamsSchema: aiSchemaObject.nullable().optional(),
     isActive: z.boolean().optional().default(true),
   }),
 });
@@ -49,7 +58,9 @@ export const updateDataSourceSchema = z.object({
     method: z.enum(["GET", "POST", "PUT", "DELETE"]).optional(),
     headers: z.record(z.string(), z.string()).optional(),
     queryParams: z.record(z.string(), z.string()).optional(),
-    expectedParamsSchema: aiSchemaObject.optional(),
+    routingMode: routingMode.optional(),
+    routerTimeoutMs: routerTimeoutMs.optional(),
+    expectedParamsSchema: aiSchemaObject.nullable().optional(),
     isActive: z.boolean().optional(),
   }),
 });

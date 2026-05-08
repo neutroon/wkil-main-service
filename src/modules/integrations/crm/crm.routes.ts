@@ -4,8 +4,29 @@ import prisma from "@config/prisma";
 import { validate } from "@middlewares/validate.middleware";
 import { crmIntegrationSchema, getCrmSchema, deleteCrmSchema } from "./crm.validation";
 import { AppError } from "@middlewares/errorHandler.middleware";
+import { encryptFacebookSecret } from "@modules/auth/core/tokenCrypto";
 
 const crmRoutes = Router();
+const MASKED_SECRET = "********";
+
+function serializeCrmIntegration<T extends { apiKey?: string | null }>(
+  integration: T,
+): T {
+  return {
+    ...integration,
+    apiKey: integration.apiKey ? MASKED_SECRET : null,
+  };
+}
+
+function resolveApiKeyUpdate(
+  existingApiKey: string | null | undefined,
+  incomingApiKey: string | undefined,
+): string | undefined {
+  if (incomingApiKey === undefined) return undefined;
+  if (incomingApiKey === MASKED_SECRET) return existingApiKey || undefined;
+  if (incomingApiKey.trim() === "") return undefined;
+  return encryptFacebookSecret(incomingApiKey);
+}
 
 // Middleware to ensure user owns the business profile
 const authorizeBusinessProfile = async (req: Request, res: Response, next: NextFunction) => {
@@ -34,7 +55,7 @@ crmRoutes.get(
     const integrations = await prisma.crmIntegration.findMany({
       where: { businessProfileId: profileId },
     });
-    return res.json(integrations);
+    return res.json(integrations.map(serializeCrmIntegration));
   }
 );
 
@@ -59,7 +80,7 @@ crmRoutes.post(
       },
       update: {
         webhookUrl,
-        apiKey,
+        apiKey: resolveApiKeyUpdate(existing?.apiKey, apiKey),
         fieldMapping,
         isActive: true,
       },
@@ -67,13 +88,16 @@ crmRoutes.post(
         businessProfileId: profileId,
         provider,
         webhookUrl,
-        apiKey,
+        apiKey: apiKey ? encryptFacebookSecret(apiKey) : undefined,
         fieldMapping,
         isActive: true,
       }
     });
 
-    return res.json({ success: true, integration });
+    return res.json({
+      success: true,
+      integration: serializeCrmIntegration(integration),
+    });
   }
 );
 

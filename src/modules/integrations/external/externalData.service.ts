@@ -2,6 +2,12 @@ import prisma from "@config/prisma";
 import { logger } from "@utils/logger";
 import { AppError } from "@middlewares/errorHandler.middleware";
 import { decryptFacebookSecret, encryptFacebookSecret } from "@modules/auth/core/tokenCrypto";
+import {
+  backoffDelayMs,
+  classifyHttpRetry,
+  classifyNetworkRetry,
+  waitForRetry,
+} from "@modules/integrations/retryPolicy";
 import dns from "dns/promises";
 import net from "net";
 
@@ -9,6 +15,8 @@ type CanonicalVerification = "verified" | "unverified" | "failed";
 const MASKED_SECRET = "********";
 const MAX_EXTERNAL_RESPONSE_BYTES = 1_000_000;
 const MAX_EXTERNAL_REDIRECTS = 3;
+const MAX_EXTERNAL_FETCH_ATTEMPTS = 2;
+const EXTERNAL_FETCH_TIMEOUT_MS = 8_000;
 const BLOCKED_HOSTNAMES = new Set(["localhost", "localhost.localdomain"]);
 
 type ExternalQueryEnvelope = {
@@ -18,6 +26,13 @@ type ExternalQueryEnvelope = {
   reason: string;
   data: unknown;
   error?: string;
+};
+
+type ExternalToolContext = {
+  customerPhone?: string;
+  conversationId?: number;
+  latestUserText?: string;
+  historyText?: string;
 };
 
 function looksEmptyResult(data: unknown): boolean {
@@ -170,7 +185,7 @@ export function filterExternalArgsBySchema(
 
   const allowedKeys = new Set(
     Object.entries(expectedParamsSchema)
-      .filter(([, value]) => !isFixedFieldRule(value))
+      .filter(([, value]) => isAiWritableFieldRule(value))
       .map(([key]) => key),
   );
   return Object.fromEntries(
@@ -178,10 +193,195 @@ export function filterExternalArgsBySchema(
   );
 }
 
-function isFixedFieldRule(value: unknown): boolean {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+function getFieldSource(value: unknown): string {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return "USER_PROVIDED";
+  }
   const rule = value as Record<string, unknown>;
-  return String(rule.type ?? "").toUpperCase() === "FIXED";
+  if (String(rule.type ?? "").toUpperCase() === "FIXED") return "FIXED";
+  return String(rule.source ?? "USER_PROVIDED").toUpperCase();
+}
+
+function isAiWritableFieldRule(value: unknown): boolean {
+  const source = getFieldSource(value);
+  return source === "USER_PROVIDED" || source === "AI_DERIVED";
+}
+
+function isFixedFieldRule(value: unknown): boolean {
+  return getFieldSource(value) === "FIXED";
+}
+
+function getContextValue(context: ExternalToolContext, contextKey: unknown): unknown {
+  if (contextKey === "customerPhone") return context.customerPhone;
+  if (contextKey === "conversationId") return context.conversationId;
+  return undefined;
+}
+
+export function assertExternalArgsAllowedByPolicy(
+  schema: unknown,
+  args: Record<string, any>,
+  context: ExternalToolContext,
+): { ok: true } | { ok: false; reason: string; field: string } {
+  if (!isRecord(schema)) return { ok: true };
+  const userText = `${context.historyText || ""} ${context.latestUserText || ""}`.toLowerCase();
+
+  for (const [field, rule] of Object.entries(schema)) {
+    if (!isRecord(rule) || !isAiWritableFieldRule(rule)) continue;
+    if (!Object.prototype.hasOwnProperty.call(args, field)) continue;
+
+    const source = getFieldSource(rule);
+    if (source === "AI_DERIVED") continue;
+
+    for (const value of flattenScalarValues(args[field])) {
+      const normalized = value.toLowerCase().trim();
+      if (normalized.length < 2) continue;
+      if (!valueAppearsInUserText(normalized, userText)) {
+        return {
+          ok: false,
+          field,
+          reason: `unprovided_parameter:${field}`,
+        };
+      }
+    }
+  }
+
+  return { ok: true };
+}
+
+function valueAppearsInUserText(value: string, userText: string): boolean {
+  if (userText.includes(value)) return true;
+
+  const compactValue = compactForMatching(value);
+  if (compactValue.length < 2) return true;
+  return compactForMatching(userText).includes(compactValue);
+}
+
+function compactForMatching(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9\u0600-\u06ff]+/gi, "");
+}
+
+export function buildServerInjectedParams(
+  schema: unknown,
+  context: ExternalToolContext,
+  existingParams: Record<string, any> = {},
+): Record<string, any> {
+  if (!isRecord(schema)) return {};
+
+  const params: Record<string, any> = {};
+  for (const [field, rule] of Object.entries(schema)) {
+    if (!isRecord(rule)) continue;
+    const source = getFieldSource(rule);
+
+    if (source === "DEFAULT") {
+      if (
+        Object.prototype.hasOwnProperty.call(rule, "value") &&
+        isMissingParamValue(existingParams[field])
+      ) {
+        params[field] = rule.value;
+      }
+    }
+
+    if (source === "FIXED") {
+      if (Object.prototype.hasOwnProperty.call(rule, "value")) {
+        params[field] = rule.value;
+      }
+    }
+
+    if (source === "CHAT_CONTEXT") {
+      const contextValue = getContextValue(context, rule.contextKey);
+      if (contextValue !== undefined && contextValue !== null && contextValue !== "") {
+        params[field] = contextValue;
+      }
+    }
+  }
+
+  return params;
+}
+
+function isMissingParamValue(value: unknown): boolean {
+  return value === undefined || value === null || value === "";
+}
+
+function flattenScalarValues(value: unknown): string[] {
+  if (typeof value === "string") return [value];
+  if (typeof value === "number" || typeof value === "boolean") return [String(value)];
+  if (Array.isArray(value)) return value.flatMap(flattenScalarValues);
+  if (isRecord(value)) return Object.values(value).flatMap(flattenScalarValues);
+  return [];
+}
+
+async function fetchOnceWithTimeout(
+  url: string,
+  options: RequestInit,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), EXTERNAL_FETCH_TIMEOUT_MS);
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function fetchExternalWithRetry(
+  initialUrl: string,
+  options: RequestInit,
+): Promise<{ response: Response; finalUrl: string; attempts: number }> {
+  let finalUrl = initialUrl;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= MAX_EXTERNAL_FETCH_ATTEMPTS; attempt++) {
+    try {
+      let response = await fetchOnceWithTimeout(finalUrl, options);
+
+      for (
+        let redirects = 0;
+        redirects < MAX_EXTERNAL_REDIRECTS &&
+        response.status >= 300 &&
+        response.status < 400;
+        redirects++
+      ) {
+        const location = response.headers.get("location");
+        if (!location) break;
+        const nextUrl = new URL(location, finalUrl).toString();
+        await assertExternalApiUrlNetworkSafe(nextUrl);
+        finalUrl = nextUrl;
+        response = await fetchOnceWithTimeout(finalUrl, options);
+      }
+
+      const retryDecision = classifyHttpRetry(response.status);
+      if (!response.ok && retryDecision.retryable && attempt < MAX_EXTERNAL_FETCH_ATTEMPTS) {
+        logger.warn("external_api_retrying_http", {
+          host: new URL(finalUrl).host,
+          status: response.status,
+          attempt,
+        });
+        await waitForRetry(backoffDelayMs(attempt));
+        continue;
+      }
+
+      return { response, finalUrl, attempts: attempt };
+    } catch (error) {
+      lastError = error;
+      const retryDecision = classifyNetworkRetry(error);
+      if (retryDecision.retryable && attempt < MAX_EXTERNAL_FETCH_ATTEMPTS) {
+        logger.warn("external_api_retrying_network", {
+          host: new URL(finalUrl).host,
+          reason: retryDecision.reason,
+          attempt,
+        });
+        await waitForRetry(backoffDelayMs(attempt));
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 /**
@@ -213,7 +413,8 @@ export function toCanonicalVerificationRead(data: unknown): {
 export async function executeExternalQuery(
   businessProfileId: number,
   sourceId: number,
-  args: Record<string, any>
+  args: Record<string, any>,
+  context: ExternalToolContext = {},
 ): Promise<ExternalQueryEnvelope> {
   const source = await prisma.externalDataSource.findFirst({
     where: { id: sourceId, businessProfileId, isActive: true },
@@ -228,6 +429,27 @@ export async function executeExternalQuery(
     const filteredArgs = filterExternalArgsBySchema(
       source.expectedParamsSchema,
       args,
+    );
+    const policyCheck = assertExternalArgsAllowedByPolicy(
+      source.expectedParamsSchema,
+      filteredArgs,
+      context,
+    );
+    if (!policyCheck.ok) {
+      return {
+        success: false,
+        verification: "failed",
+        actionType: `external_query_${sourceId}`,
+        reason: policyCheck.reason,
+        data: null,
+        error: `External tool parameter "${policyCheck.field}" was not provided by an allowed source`,
+      };
+    }
+    const configuredParams = (source.queryParams as object || {}) as Record<string, any>;
+    const injectedParams = buildServerInjectedParams(
+      source.expectedParamsSchema,
+      context,
+      { ...filteredArgs, ...configuredParams },
     );
     let finalUrl = source.apiUrl;
     let options: RequestInit = {
@@ -244,7 +466,11 @@ export async function executeExternalQuery(
 
     if (source.method === "GET") {
       const url = new URL(source.apiUrl);
-      const allParams = { ...filteredArgs, ...(source.queryParams as object || {}) };
+      const allParams = {
+        ...filteredArgs,
+        ...injectedParams,
+        ...configuredParams,
+      };
       for (const [key, val] of Object.entries(allParams)) {
         if (val !== undefined && val !== null) {
           url.searchParams.set(key, String(val));
@@ -252,46 +478,30 @@ export async function executeExternalQuery(
       }
       finalUrl = url.toString();
     } else {
-      options.body = JSON.stringify({ ...filteredArgs, ...(source.queryParams as object || {}) });
+      options.body = JSON.stringify({
+        ...filteredArgs,
+        ...injectedParams,
+        ...configuredParams,
+      });
     }
 
-    // Set a strict timeout so AI doesn't hang forever. Better scalability setup.
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000); // 8 seconds limit
-    options.signal = controller.signal;
-
-    let response: Response;
-    try {
-      response = await fetch(finalUrl, options);
-
-      for (
-        let redirects = 0;
-        redirects < MAX_EXTERNAL_REDIRECTS &&
-        response.status >= 300 &&
-        response.status < 400;
-        redirects++
-      ) {
-        const location = response.headers.get("location");
-        if (!location) break;
-        const nextUrl = new URL(location, finalUrl).toString();
-        await assertExternalApiUrlNetworkSafe(nextUrl);
-        finalUrl = nextUrl;
-        response = await fetch(finalUrl, options);
-      }
-    } finally {
-      clearTimeout(timeoutId);
-    }
+    const fetchResult = await fetchExternalWithRetry(finalUrl, options);
+    const response = fetchResult.response;
+    finalUrl = fetchResult.finalUrl;
 
     if (!response.ok) {
+        const retryDecision = classifyHttpRetry(response.status);
         logger.warn("external_api_failed", {
           host: new URL(finalUrl).host,
           status: response.status,
+          attempts: fetchResult.attempts,
+          retryable: retryDecision.retryable,
         });
         return {
           success: false,
           verification: "failed",
           actionType: `external_query_${sourceId}`,
-          reason: "http_error",
+          reason: retryDecision.reason,
           data: null,
           error: `External API returned status ${response.status}`,
         };

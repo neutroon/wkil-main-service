@@ -79,7 +79,7 @@ export async function prepareAgentParams(params: {
   const crmIntegration = businessProfile.crmIntegrations?.[0];
   const crmFields = crmIntegration?.fieldMapping 
     ? Object.entries(crmIntegration.fieldMapping as object)
-        .filter(([_, v]) => typeof v !== "string" || !v.startsWith("fixed:"))
+        .filter(([_, v]) => !isFixedFieldRule(v))
         .map(([k]) => k)
         .filter(k => !["name", "phone"].includes(k)) // Still skip these as they are handled by hard rules
     : [];
@@ -129,7 +129,7 @@ export async function prepareAgentParams(params: {
         )
       : [];
   const externalTools = buildExternalQueryTools(
-    businessProfile.externalDataSources,
+    businessProfile.externalDataSources.filter((source) => source.isActive),
   );
 
   const toolBlocks: Tool[] = [];
@@ -160,6 +160,12 @@ export async function prepareAgentParams(params: {
       responseMode,
     },
   };
+}
+
+function isFixedFieldRule(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const rule = value as Record<string, unknown>;
+  return String(rule.type ?? "").toUpperCase() === "FIXED";
 }
 
 /**

@@ -8,6 +8,7 @@ import {
 import { uploadToR2 } from "@modules/media/services/r2Storage.service";
 import { randomUUID } from "crypto";
 import path from "path";
+import { computeBusinessChatReply } from "@modules/ai-agent/chat/businessChatReply.service";
 
 import { AppError } from "@middlewares/errorHandler.middleware";
 
@@ -329,6 +330,64 @@ export const retrieveBusinessProfile = async (req: Request, res: Response) => {
 
   const chunks = await retrieveRelevantChunks(Number(req.params.id), query);
   res.json({ chunks });
+};
+
+export const previewBusinessProfileChat = async (req: Request, res: Response) => {
+  const userId: number = (req as any).user.id;
+  const profileId = Number(req.params.id);
+  const message = String(req.body?.message ?? "")
+    .replace(/[\uFE00-\uFE0F\u200B-\u200D\u2060\uFEFF]/g, "")
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\s*\n\s*/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  if (!message) throw new AppError("message is required", 400);
+  if (message.length > 4000) throw new AppError("message is too long", 400);
+
+  const rawHistory = Array.isArray(req.body?.history) ? req.body.history : [];
+  const historyTurns = rawHistory
+    .slice(-20)
+    .filter(
+      (turn: any) =>
+        (turn?.role === "user" || turn?.role === "model") &&
+        typeof turn?.content === "string" &&
+        turn.content.trim().length > 0,
+    )
+    .map((turn: any) => ({
+      role: turn.role as "user" | "model",
+      text: String(turn.content).slice(0, 2000),
+    }));
+
+  const businessProfile = await prisma.businessProfile.findFirst({
+    where: { id: profileId, userId },
+    include: {
+      externalDataSources: { where: { isActive: true } },
+      crmIntegrations: { where: { isActive: true }, take: 1 },
+    },
+  });
+
+  if (!businessProfile) {
+    throw new AppError("Business profile not found", 404);
+  }
+
+  const decision = await computeBusinessChatReply({
+    businessProfile,
+    messageText: message,
+    historyTurns,
+    channel: "web",
+    responseMode: "AUTO",
+    allowCrmTools: false,
+  });
+
+  return res.json({
+    reply: decision.content || "",
+    action: decision.action,
+    reasoning: decision.reasoning,
+    handoffCategory: decision.handoffCategory ?? null,
+    preview: true,
+  });
 };
 
 export const uploadLogo = async (req: Request, res: Response) => {

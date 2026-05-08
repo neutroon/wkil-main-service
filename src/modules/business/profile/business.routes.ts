@@ -3,6 +3,7 @@ import {
   createBusinessProfile,
   deleteBusinessProfile,
   getBusinessProfiles,
+  previewBusinessProfileChat,
   retrieveBusinessProfile,
   updateBusinessProfile,
   uploadLogo,
@@ -27,6 +28,8 @@ businessProfileRouts.delete("/:id", deleteBusinessProfile);
 businessProfileRouts.get("/", getBusinessProfiles);
 
 businessProfileRouts.post("/:id/retrieve", retrieveBusinessProfile);
+
+businessProfileRouts.post("/:id/preview-chat", previewBusinessProfileChat);
 
 businessProfileRouts.post("/logo", upload.single("logo"), uploadLogo);
 

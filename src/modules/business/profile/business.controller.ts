@@ -393,7 +393,6 @@ export const previewBusinessProfileChat = async (req: Request, res: Response) =>
         historyTurns,
         channel: "web",
         responseMode: "AUTO",
-        allowCrmTools: false,
       });
 
       for await (const event of stream) {
@@ -460,7 +459,6 @@ export const previewBusinessProfileChat = async (req: Request, res: Response) =>
     historyTurns,
     channel: "web",
     responseMode: "AUTO",
-    allowCrmTools: false,
   });
 
   let attachment = null;

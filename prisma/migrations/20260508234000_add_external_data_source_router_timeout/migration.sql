@@ -1,0 +1,2 @@
+ALTER TABLE "ExternalDataSource"
+ADD COLUMN "routerTimeoutMs" INTEGER NOT NULL DEFAULT 2500;

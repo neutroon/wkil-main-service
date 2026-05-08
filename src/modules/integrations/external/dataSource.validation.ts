@@ -1,4 +1,17 @@
 import { z } from "zod";
+import { assertExternalApiUrlLooksSafe } from "./externalData.service";
+import { aiSchemaObject } from "@modules/integrations/schemaRules.validation";
+
+const safeExternalUrl = z.string().url("Invalid API URL").superRefine((url, ctx) => {
+  try {
+    assertExternalApiUrlLooksSafe(url);
+  } catch (error: any) {
+    ctx.addIssue({
+      code: "custom",
+      message: error?.message || "External API URL is not allowed",
+    });
+  }
+});
 
 /**
  * Data Source Schema
@@ -11,11 +24,11 @@ export const dataSourceSchema = z.object({
   body: z.object({
     name: z.string().min(1, "Name is required"),
     description: z.string().min(1, "Description is required"),
-    apiUrl: z.string().url("Invalid API URL"),
+    apiUrl: safeExternalUrl,
     method: z.enum(["GET", "POST", "PUT", "DELETE"]).optional().default("GET"),
     headers: z.record(z.string(), z.string()).optional(),
     queryParams: z.record(z.string(), z.string()).optional(),
-    expectedParamsSchema: z.any().optional(),
+    expectedParamsSchema: aiSchemaObject.optional(),
     isActive: z.boolean().optional().default(true),
   }),
 });
@@ -32,11 +45,11 @@ export const updateDataSourceSchema = z.object({
   body: z.object({
     name: z.string().min(1).optional(),
     description: z.string().min(1).optional(),
-    apiUrl: z.string().url().optional(),
+    apiUrl: safeExternalUrl.optional(),
     method: z.enum(["GET", "POST", "PUT", "DELETE"]).optional(),
     headers: z.record(z.string(), z.string()).optional(),
     queryParams: z.record(z.string(), z.string()).optional(),
-    expectedParamsSchema: z.any().optional(),
+    expectedParamsSchema: aiSchemaObject.optional(),
     isActive: z.boolean().optional(),
   }),
 });

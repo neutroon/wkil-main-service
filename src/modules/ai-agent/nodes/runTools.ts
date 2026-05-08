@@ -41,6 +41,7 @@ export async function runToolsNode(
   const functionResponses: any[] = [];
   let updatedEvidence = { ...state.evidence };
   const leadPhone = state.customerPhone;
+  let blockingDecision: AgentStateType["decision"] | null = null;
 
   for (const call of state.functionCalls) {
     if (!call.name) continue;
@@ -112,6 +113,27 @@ export async function runToolsNode(
         functionResponses.push(buildFunctionResponse(call.name, envelope));
       } else if (call.name.startsWith("query_external_api_")) {
         const sourceId = parseInt(call.name.split("_").pop() || "0", 10);
+        const actionType = `external_query_${sourceId}`;
+
+        if (state.evidence.failedActions.includes(actionType)) {
+          logger.warn("ai.node.runTools.external_query_retry_blocked", {
+            sourceId,
+            args: call.args,
+          });
+          const envelope = {
+            success: false,
+            verification: "failed" as const,
+            actionType,
+            reason: "duplicate_failed_lookup_blocked",
+          };
+          updatedEvidence = applyEvidence(updatedEvidence, envelope, actionType);
+          functionResponses.push(buildFunctionResponse(call.name, envelope));
+          blockingDecision = buildExternalLookupFailedDecision(
+            state,
+            "The assistant tried to repeat a failed external lookup.",
+          );
+          continue;
+        }
 
         // ── Validate args with Zod ─────────────────────────────────────
         const parseResult = ExternalQuerySchema.safeParse(call.args);
@@ -123,15 +145,19 @@ export async function runToolsNode(
           const envelope = {
             success: false,
             verification: "failed" as const,
-            actionType: `external_query_${sourceId}`,
+            actionType,
             reason: "validation_failed",
           };
           updatedEvidence = applyEvidence(
             updatedEvidence,
             envelope,
-            `external_query_${sourceId}`,
+            actionType,
           );
           functionResponses.push(buildFunctionResponse(call.name, envelope));
+          blockingDecision = buildExternalLookupFailedDecision(
+            state,
+            "External lookup arguments failed validation.",
+          );
           continue;
         }
 
@@ -143,13 +169,25 @@ export async function runToolsNode(
           state.businessProfileId,
           sourceId,
           parseResult.data,
+          {
+            customerPhone: state.customerPhone,
+            conversationId: state.conversationId,
+            latestUserText: latestUserText(state.contents),
+            historyText: userHistoryText(state.contents),
+          },
         );
         updatedEvidence = applyEvidence(
           updatedEvidence,
           envelope,
-          `external_query_${sourceId}`,
+          actionType,
         );
         functionResponses.push(buildFunctionResponse(call.name, envelope));
+        if (envelope.verification === "failed") {
+          blockingDecision = buildExternalLookupFailedDecision(
+            state,
+            `External lookup failed: ${envelope.reason || "unknown"}.`,
+          );
+        }
       }
     } catch (toolError: any) {
       logger.error("ai.node.runTools.unexpected_error", {
@@ -176,6 +214,7 @@ export async function runToolsNode(
     evidence: updatedEvidence,
     hadToolExecution: true,
     functionCalls: [], // Clear for next turn
+    ...(blockingDecision ? { decision: blockingDecision } : {}),
   };
 }
 
@@ -183,6 +222,40 @@ export async function runToolsNode(
 
 function buildFunctionResponse(name: string, response: unknown) {
   return { functionResponse: { name, response } };
+}
+
+function userHistoryText(contents: AgentStateType["contents"]): string {
+  return contents
+    .filter((turn) => turn.role === "user")
+    .flatMap((turn) => turn.parts ?? [])
+    .filter((part) => typeof part.text === "string")
+    .map((part) => part.text)
+    .join(" ");
+}
+
+function latestUserText(contents: AgentStateType["contents"]): string {
+  const latest = [...contents].reverse().find((turn) => turn.role === "user");
+  return (latest?.parts ?? [])
+    .filter((part) => typeof part.text === "string")
+    .map((part) => part.text)
+    .join(" ");
+}
+
+function buildExternalLookupFailedDecision(
+  state: AgentStateType,
+  reasoning: string,
+): AgentStateType["decision"] {
+  return {
+    action: "HANDOFF_TO_HUMAN",
+    handoffCategory: "MISSING_KNOWLEDGE",
+    reasoning,
+    content: state.policy.fallbackTemplates.failed,
+    requiresGrounding: true,
+    grounded: false,
+    usedChunkTypes: [],
+    missingInfo: "External live lookup could not be verified.",
+    attachment: null,
+  };
 }
 
 function applyEvidence(

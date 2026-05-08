@@ -38,6 +38,7 @@ export const businessProfileSchema = z.object({
     brandWatermarkEnabled: z.boolean().optional().default(false),
     watermarkPosition: z.enum(["TOP_LEFT", "TOP_RIGHT", "BOTTOM_LEFT", "BOTTOM_RIGHT", "CENTER"]).optional().default("BOTTOM_RIGHT"),
     leadCaptureInstructions: z.string().optional(),
+    aiBehaviorInstructions: z.string().max(4000, "AI behavior instructions must be 4000 characters or less").optional(),
   }),
 });
 

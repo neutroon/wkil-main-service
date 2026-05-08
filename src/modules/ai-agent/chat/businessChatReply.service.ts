@@ -8,16 +8,12 @@ import {
 } from "@modules/ai-agent/gemini";
 import { runAgentGraph } from "@modules/ai-agent/core/agentGraph";
 import type { AiRoutingDecision } from "@modules/ai-agent/core/aiEngine.utils";
+import {
+  buildNotIngestedReply,
+  buildTruthfulnessPolicyForVoice,
+} from "./aiFallbackPolicy";
 import prisma from "@config/prisma";
 export type { AiRoutingDecision };
-
-export const NOT_INGESTED_REPLY: AiRoutingDecision = {
-  action: "HANDOFF_TO_HUMAN",
-  handoffCategory: "MISSING_KNOWLEDGE",
-  reasoning: "Business profile knowledge base (RAG) is not yet ingested.",
-  content:
-    "We're still setting up our assistant. Please contact us directly for now - we'll be with you shortly.",
-};
 
 export type BusinessProfileForChat = Prisma.BusinessProfileGetPayload<{
   include: {
@@ -27,7 +23,15 @@ export type BusinessProfileForChat = Prisma.BusinessProfileGetPayload<{
 }>;
 
 const CORE_CONTEXT_TYPES = new Set(["identity", "contact", "intents"]);
-const ARABIC_VOICE_PATTERN = /arabic|عربي|egyptian/i;
+
+function notIngestedReply(voice: string): AiRoutingDecision {
+  return {
+    action: "HANDOFF_TO_HUMAN",
+    handoffCategory: "MISSING_KNOWLEDGE",
+    reasoning: "Business profile knowledge base (RAG) is not yet ingested.",
+    content: buildNotIngestedReply(voice),
+  };
+}
 
 function resolveContextQuality(
   chunks: { chunkType: string; content: string }[],
@@ -66,7 +70,7 @@ export async function prepareAgentParams(params: {
   } = params;
 
   if (!businessProfile.ragIngested) {
-    return { errorDecision: NOT_INGESTED_REPLY };
+    return { errorDecision: notIngestedReply(businessProfile.voice || "") };
   }
 
   const relevantChunks = await retrieveRelevantChunks(
@@ -163,22 +167,7 @@ export async function prepareAgentParams(params: {
       mediaInfo: params.mediaInfo,
       conversationId,
       responseMode,
-      policy: buildChannelPolicy(businessProfile.voice || ""),
-    },
-  };
-}
-
-function buildChannelPolicy(voice: string) {
-  if (!ARABIC_VOICE_PATTERN.test(voice)) return undefined;
-
-  return {
-    fallbackTemplates: {
-      unverified:
-        "مش قادر أأكد المعلومة دي من بيانات النظام الحالية. ابعتلي الرقم أو التفاصيل المطلوبة بالظبط عشان أقدر أتحقق منها.",
-      failed:
-        "مش قادر أتحقق من المعلومة دي حالياً بسبب مشكلة في الربط بالنظام. هحوّلك لفريقنا عشان يأكدوا لك التفاصيل بدقة.",
-      unsupportedPromise:
-        "أقدر أأكد بس الإجراءات اللي تمت واتوثقت في المحادثة دي. هحوّلك لفريقنا لو محتاج متابعة إضافية.",
+      policy: buildTruthfulnessPolicyForVoice(businessProfile.voice || ""),
     },
   };
 }

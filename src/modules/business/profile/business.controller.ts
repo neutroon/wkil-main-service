@@ -8,7 +8,11 @@ import {
 import { uploadToR2 } from "@modules/media/services/r2Storage.service";
 import { randomUUID } from "crypto";
 import path from "path";
-import { computeBusinessChatReply } from "@modules/ai-agent/chat/businessChatReply.service";
+import {
+  computeBusinessChatReply,
+  computeBusinessChatStreaming,
+} from "@modules/ai-agent/chat/businessChatReply.service";
+import { resolveAssetForChannel } from "@modules/media/services/mediaLibrary.service";
 
 import { AppError } from "@middlewares/errorHandler.middleware";
 
@@ -372,6 +376,84 @@ export const previewBusinessProfileChat = async (req: Request, res: Response) =>
     throw new AppError("Business profile not found", 404);
   }
 
+  if (req.body?.stream === true) {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders?.();
+
+    let finalDecision = null as Awaited<
+      ReturnType<typeof computeBusinessChatReply>
+    > | null;
+
+    try {
+      const stream = computeBusinessChatStreaming({
+        businessProfile,
+        messageText: message,
+        historyTurns,
+        channel: "web",
+        responseMode: "AUTO",
+        allowCrmTools: false,
+      });
+
+      for await (const event of stream) {
+        if (event.type === "token") {
+          res.write(`data: ${JSON.stringify({ token: event.data })}\n\n`);
+        }
+        if (event.type === "error") {
+          finalDecision = event.data;
+          res.write(
+            `data: ${JSON.stringify({ error: event.data.content || "Preview failed." })}\n\n`,
+          );
+        }
+        if (event.type === "final_decision") {
+          finalDecision = event.data;
+        }
+      }
+
+      let attachment = null;
+      if (finalDecision?.attachment?.assetName) {
+        const resolved = await resolveAssetForChannel(
+          finalDecision.attachment.assetName,
+          businessProfile.id,
+          "web",
+        );
+        if (resolved?.url) {
+          attachment = {
+            url: resolved.url,
+            type: resolved.mediaType,
+            caption: finalDecision.attachment.caption ?? null,
+          };
+        }
+      }
+
+      res.write(
+        `data: ${JSON.stringify({
+          final: {
+            reply: finalDecision?.content || "",
+            action: finalDecision?.action || "REPLY_AUTO",
+            reasoning: finalDecision?.reasoning || "",
+            handoffCategory: finalDecision?.handoffCategory ?? null,
+            attachment,
+            preview: true,
+          },
+        })}\n\n`,
+      );
+      res.write("data: [DONE]\n\n");
+      res.end();
+      return;
+    } catch (err) {
+      res.write(
+        `data: ${JSON.stringify({
+          error: err instanceof Error ? err.message : "Preview failed.",
+        })}\n\n`,
+      );
+      res.write("data: [DONE]\n\n");
+      res.end();
+      return;
+    }
+  }
+
   const decision = await computeBusinessChatReply({
     businessProfile,
     messageText: message,
@@ -381,11 +463,28 @@ export const previewBusinessProfileChat = async (req: Request, res: Response) =>
     allowCrmTools: false,
   });
 
+  let attachment = null;
+  if (decision.attachment?.assetName) {
+    const resolved = await resolveAssetForChannel(
+      decision.attachment.assetName,
+      businessProfile.id,
+      "web",
+    );
+    if (resolved?.url) {
+      attachment = {
+        url: resolved.url,
+        type: resolved.mediaType,
+        caption: decision.attachment.caption ?? null,
+      };
+    }
+  }
+
   return res.json({
     reply: decision.content || "",
     action: decision.action,
     reasoning: decision.reasoning,
     handoffCategory: decision.handoffCategory ?? null,
+    attachment,
     preview: true,
   });
 };

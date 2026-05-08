@@ -15,6 +15,8 @@ const FALLBACK_CATALOG: Record<
       "I can’t verify this right now. I’ll connect you with the team so they can confirm the details accurately.",
     unsupportedPromise:
       "I can only confirm actions that were completed and verified in this chat. I’ll connect you with the team if you need extra follow-up.",
+    smallTalkRecovery:
+      "Hi! How can I help you today?",
   },
   "ar-EG": {
     unverified:
@@ -23,6 +25,8 @@ const FALLBACK_CATALOG: Record<
       "مش قادر أتحقق من المعلومة دي حالياً. هحوّلك لفريقنا عشان يأكدوا لك التفاصيل بدقة.",
     unsupportedPromise:
       "أقدر أأكد بس الإجراءات اللي تمت واتوثقت في المحادثة دي. هحوّلك لفريقنا لو محتاج متابعة إضافية.",
+    smallTalkRecovery:
+      "أهلاً بيك! تحب تعرف إيه عن خدماتنا؟",
   },
 };
 

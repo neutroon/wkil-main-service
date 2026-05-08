@@ -15,6 +15,7 @@ import { logger } from "@utils/logger";
 import { pushLeadToCrm } from "@modules/integrations/crm/crm.service";
 import { executeExternalQuery } from "@modules/integrations/external/externalData.service";
 import { updateEvidenceFromEnvelope } from "@modules/ai-agent/core/aiEngine.utils";
+import { generateSafeRecoveryReply } from "@modules/ai-agent/chat/aiRecoveryReply";
 import type { AgentStateType } from "@modules/ai-agent/core/agentState";
 
 // ── Zod Schemas for Tool Input Validation ─────────────────────────────────────
@@ -128,9 +129,10 @@ export async function runToolsNode(
           };
           updatedEvidence = applyEvidence(updatedEvidence, envelope, actionType);
           functionResponses.push(buildFunctionResponse(call.name, envelope));
-          blockingDecision = buildExternalLookupFailedDecision(
+          blockingDecision = await buildExternalLookupFailedDecision(
             state,
             "The assistant tried to repeat a failed external lookup.",
+            "duplicate_failed_lookup_blocked",
           );
           continue;
         }
@@ -154,9 +156,10 @@ export async function runToolsNode(
             actionType,
           );
           functionResponses.push(buildFunctionResponse(call.name, envelope));
-          blockingDecision = buildExternalLookupFailedDecision(
+          blockingDecision = await buildExternalLookupFailedDecision(
             state,
             "External lookup arguments failed validation.",
+            "validation_failed",
           );
           continue;
         }
@@ -183,9 +186,10 @@ export async function runToolsNode(
         );
         functionResponses.push(buildFunctionResponse(call.name, envelope));
         if (envelope.verification === "failed") {
-          blockingDecision = buildExternalLookupFailedDecision(
+          blockingDecision = await buildExternalLookupFailedDecision(
             state,
             `External lookup failed: ${envelope.reason || "unknown"}.`,
+            envelope.reason || "external_lookup_failed",
           );
         }
       }
@@ -241,15 +245,25 @@ function latestUserText(contents: AgentStateType["contents"]): string {
     .join(" ");
 }
 
-function buildExternalLookupFailedDecision(
+async function buildExternalLookupFailedDecision(
   state: AgentStateType,
   reasoning: string,
-): AgentStateType["decision"] {
+  failureReason: string,
+): Promise<AgentStateType["decision"]> {
+  const fallback = state.policy.fallbackTemplates.failed;
+  const recoveryReply = await generateSafeRecoveryReply({
+    systemInstruction: state.systemInstruction,
+    channel: state.channel,
+    customerMessage: latestUserText(state.contents),
+    failureReason,
+    safeFallback: fallback,
+  });
+
   return {
     action: "HANDOFF_TO_HUMAN",
     handoffCategory: "MISSING_KNOWLEDGE",
     reasoning,
-    content: state.policy.fallbackTemplates.failed,
+    content: recoveryReply,
     requiresGrounding: true,
     grounded: false,
     usedChunkTypes: [],

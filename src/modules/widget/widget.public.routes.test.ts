@@ -208,6 +208,7 @@ describe("POST /chat (public widget)", () => {
     expect(JSON.parse(res.body)).toEqual({
       reply: "Hello from widget",
       conversationId: 99,
+      attachment: null,
     });
     expect(processWidgetChatMessage).toHaveBeenCalledWith(
       expect.objectContaining({

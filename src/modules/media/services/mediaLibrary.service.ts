@@ -33,6 +33,7 @@ const MIME_TO_MEDIA_TYPE: Record<string, "image" | "document" | "video"> = {
 };
 
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
+export type MediaUsageScope = "CHAT_ATTACHMENT" | "CONTENT_ASSET";
 
 /**
  * Creates a new media asset: validates, uploads to R2, saves to DB,
@@ -46,6 +47,7 @@ export async function createMediaAsset(params: {
   mimeType: string;
   name: string;
   instructions: string;
+  usageScope?: MediaUsageScope;
 }) {
   const {
     businessProfileId,
@@ -55,6 +57,7 @@ export async function createMediaAsset(params: {
     mimeType,
     name,
     instructions,
+    usageScope = "CHAT_ATTACHMENT",
   } = params;
 
   // 1. Validate ownership
@@ -94,6 +97,7 @@ export async function createMediaAsset(params: {
       name: name.trim().substring(0, 100),
       instructions: sanitizedInstructions,
       mediaType,
+      usageScope,
       mimeType,
       fileSizeBytes: fileBuffer.length,
       r2Key,
@@ -103,8 +107,10 @@ export async function createMediaAsset(params: {
     },
   });
 
-  // 7. Kick off durable background Meta registration
-  await enqueueMediaSyncJob(asset.id);
+  // 7. Only chat-sendable assets need platform attachment IDs.
+  if (usageScope === "CHAT_ATTACHMENT") {
+    await enqueueMediaSyncJob(asset.id);
+  }
 
   return asset;
 }
@@ -127,7 +133,7 @@ export async function registerAssetWithMeta(assetId: number) {
     },
   });
 
-  if (!asset) return;
+  if (!asset || asset.usageScope !== "CHAT_ATTACHMENT") return;
 
   // 1. Fetch the file from R2 directly via S3 SDK
   let fileBuffer: Buffer;
@@ -354,6 +360,7 @@ export async function resolveAssetForChannel(
     where: {
       businessProfileId,
       name: assetName,
+      usageScope: "CHAT_ATTACHMENT",
       isActive: true,
       deletedAt: null,
     },
@@ -431,9 +438,16 @@ export async function softDeleteAsset(
 export async function listMediaAssets(
   businessProfileId: number,
   userId: number,
+  usageScope?: MediaUsageScope,
 ) {
   return prisma.businessProfileMedia.findMany({
-    where: { businessProfileId, userId, isActive: true, deletedAt: null },
+    where: {
+      businessProfileId,
+      userId,
+      usageScope,
+      isActive: true,
+      deletedAt: null,
+    },
     orderBy: { createdAt: "desc" },
     include: {
       syncs: {

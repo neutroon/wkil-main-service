@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { generateContent } from "@modules/ai-agent/gemini";
 import { generateSafeRecoveryReply } from "./aiRecoveryReply";
 
@@ -7,6 +7,10 @@ vi.mock("@modules/ai-agent/gemini", () => ({
 }));
 
 describe("generateSafeRecoveryReply", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("uses safe AI recovery text when it passes validation", async () => {
     vi.mocked(generateContent).mockResolvedValue({
       text: "I can’t verify that detail right now. Please send the exact order ID and I’ll check again.",
@@ -49,5 +53,111 @@ describe("generateSafeRecoveryReply", () => {
         safeFallback: "Fallback",
       }),
     ).resolves.toBe("Fallback");
+  });
+
+  it("extracts content when the model accidentally returns JSON", async () => {
+    vi.mocked(generateContent).mockResolvedValue({
+      text: JSON.stringify({
+        action: "REPLY_AUTO",
+        content: "مش قادر أتحقق من المعلومة دي حالياً. فريقنا هيأكد لك التفاصيل.",
+      }),
+      usage: {
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        groundingCalls: 0,
+        model: "test",
+      },
+    });
+
+    await expect(
+      generateSafeRecoveryReply({
+        systemInstruction: "Voice: Egyptian Arabic",
+        failureReason: "external_lookup_failed",
+        safeFallback: "Fallback",
+        allowHandoffLanguage: true,
+      }),
+    ).resolves.toBe("مش قادر أتحقق من المعلومة دي حالياً. فريقنا هيأكد لك التفاصيل.");
+  });
+
+  it("rejects handoff promises when no handoff route is active", async () => {
+    vi.mocked(generateContent).mockResolvedValue({
+      text: "فريقنا هيتواصل معاك في أسرع وقت.",
+      usage: {
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        groundingCalls: 0,
+        model: "test",
+      },
+    });
+
+    await expect(
+      generateSafeRecoveryReply({
+        systemInstruction: "Voice: Egyptian Arabic",
+        failureReason: "external_lookup_failed",
+        safeFallback: "Fallback",
+      }),
+    ).resolves.toBe("Fallback");
+  });
+
+  it("allows Arabic team confirmation wording when handoff route is active", async () => {
+    vi.mocked(generateContent).mockResolvedValue({
+      text: "أنا بخير، شكراً لسؤالك! فريقنا هيتواصل معاك حالاً عشان يتابع معاك.",
+      usage: {
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        groundingCalls: 0,
+        model: "test",
+      },
+    });
+
+    await expect(
+      generateSafeRecoveryReply({
+        systemInstruction: "Voice: Egyptian Arabic",
+        failureReason: "network_or_runtime_error",
+        customerMessage: "how are u",
+        safeFallback: "Fallback",
+        allowHandoffLanguage: true,
+      }),
+    ).resolves.toBe(
+      "أنا بخير، شكراً لسؤالك! فريقنا هيتواصل معاك حالاً عشان يتابع معاك.",
+    );
+  });
+
+  it("retries once with stricter instructions before using the static fallback", async () => {
+    vi.mocked(generateContent)
+      .mockResolvedValueOnce({
+        text: "Done, your request has been confirmed and saved.",
+        usage: {
+          promptTokens: 0,
+          completionTokens: 0,
+          totalTokens: 0,
+          groundingCalls: 0,
+          model: "test",
+        },
+      })
+      .mockResolvedValueOnce({
+        text: "I could not verify this right now, so I routed it for review.",
+        usage: {
+          promptTokens: 0,
+          completionTokens: 0,
+          totalTokens: 0,
+          groundingCalls: 0,
+          model: "test",
+        },
+      });
+
+    await expect(
+      generateSafeRecoveryReply({
+        systemInstruction: "Use English.",
+        failureReason: "external_lookup_failed",
+        safeFallback: "Fallback",
+        allowHandoffLanguage: true,
+      }),
+    ).resolves.toBe("I could not verify this right now, so I routed it for review.");
+
+    expect(generateContent).toHaveBeenCalledTimes(2);
   });
 });

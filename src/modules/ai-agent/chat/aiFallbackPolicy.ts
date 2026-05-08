@@ -1,0 +1,47 @@
+import type { AiTruthfulnessPolicy } from "@modules/ai-agent/core/aiEngine.utils";
+
+type SupportedFallbackLocale = "en" | "ar-EG";
+
+const ARABIC_VOICE_PATTERN = /arabic|عربي|egyptian/i;
+
+const FALLBACK_CATALOG: Record<
+  SupportedFallbackLocale,
+  AiTruthfulnessPolicy["fallbackTemplates"]
+> = {
+  en: {
+    unverified:
+      "I can’t confirm this from the latest system data yet. Please send the exact details so I can verify them.",
+    failed:
+      "I can’t verify this right now. I’ll connect you with the team so they can confirm the details accurately.",
+    unsupportedPromise:
+      "I can only confirm actions that were completed and verified in this chat. I’ll connect you with the team if you need extra follow-up.",
+  },
+  "ar-EG": {
+    unverified:
+      "مش قادر أأكد المعلومة دي من بيانات النظام الحالية. ابعتلي التفاصيل المطلوبة بالظبط عشان أقدر أتحقق منها.",
+    failed:
+      "مش قادر أتحقق من المعلومة دي حالياً. هحوّلك لفريقنا عشان يأكدوا لك التفاصيل بدقة.",
+    unsupportedPromise:
+      "أقدر أأكد بس الإجراءات اللي تمت واتوثقت في المحادثة دي. هحوّلك لفريقنا لو محتاج متابعة إضافية.",
+  },
+};
+
+export function resolveFallbackLocale(voice: string): SupportedFallbackLocale {
+  return ARABIC_VOICE_PATTERN.test(voice) ? "ar-EG" : "en";
+}
+
+export function buildTruthfulnessPolicyForVoice(
+  voice: string,
+): Partial<AiTruthfulnessPolicy> {
+  return {
+    fallbackTemplates: FALLBACK_CATALOG[resolveFallbackLocale(voice)],
+  };
+}
+
+export function buildNotIngestedReply(voice: string): string {
+  if (resolveFallbackLocale(voice) === "ar-EG") {
+    return "لسه بنجهز المساعد لهذا الملف. هحوّلك لفريقنا عشان يساعدك في الوقت الحالي.";
+  }
+
+  return "We’re still setting up this assistant. I’ll connect you with the team so they can help for now.";
+}

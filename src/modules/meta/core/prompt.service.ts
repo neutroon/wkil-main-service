@@ -166,7 +166,20 @@ export function buildSystemPrompt(params: SystemPromptParams): string {
 2. AUTHENTICITY ONLY (CRITICAL): NEVER invent, hallucinate, or use placeholder data (like "User Name" or "+201234567890"). 
 3. MISSING DATA: If a field is missing from both <chat_context> and chat history, you MUST politely ask the user for it.
 4. VALIDATION: Only call the "capture_lead" tool once you have real, provided information for all required fields.
+5. DUPLICATE PREVENTION: After a successful "capture_lead" result in this conversation, do NOT call it again for the same lead details. Continue the chat normally.
+6. CORRECTIONS: If the customer explicitly corrects lead details after capture (for example: "wrong number, use this one"), call "capture_lead" once with the complete latest corrected details. Treat this as an update, not a new lead.
+7. NEW INTENT: Only call "capture_lead" again when the customer starts a clearly separate new request or provides materially changed contact/lead details.
 </data_collection_protocol>`.trim();
+
+  const externalToolProtocol = `
+<external_tool_protocol>
+1. External data tools are live lookup tools, not default context tools. Use them ONLY when the user's latest message asks for information that is dynamic, account/order-specific, inventory/availability-specific, booking/schedule-specific, price/quote-specific, or otherwise explicitly described by that tool.
+2. Do NOT call external data tools for greetings, small talk, generic business questions already answered by <business_context>, lead capture, complaints, handoff decisions, or conversation closing.
+3. Before calling an external data tool, confirm the tool description directly matches the user's request. If no available tool clearly matches, do not call any external data tool.
+4. Use only real parameters that the customer provided, chat history already contains, or <chat_context> provides. Never invent search terms, IDs, phone numbers, dates, emails, names, or a generic "q" value.
+5. If a required lookup parameter is missing, ask one concise clarification question instead of calling the tool with partial or placeholder data.
+6. After a tool returns data, answer only from the returned payload and cite no unavailable facts. If the tool fails or returns no data, do not guess; ask for corrected details or hand off.
+</external_tool_protocol>`.trim();
 
   return `You are the official customer support representative for "${businessName}". 
 
@@ -229,6 +242,8 @@ ${safeLeadInstructions}
 ${crmSection}
 
 ${dataCollectionProtocol}
+
+${externalToolProtocol}
 
 <rules>
 1. Primary Language (MANDATORY): You MUST speak and respond strictly in the language and dialect specified in the "Voice" field above.

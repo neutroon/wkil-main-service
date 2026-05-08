@@ -2,6 +2,12 @@ import prisma from "@config/prisma";
 import { logger } from "@utils/logger";
 import { decryptFacebookSecret } from "@modules/auth/core/tokenCrypto";
 import { assertExternalApiUrlNetworkSafe } from "@modules/integrations/external/externalData.service";
+import {
+  backoffDelayMs,
+  classifyHttpRetry,
+  classifyNetworkRetry,
+  waitForRetry,
+} from "@modules/integrations/retryPolicy";
 import crypto from "crypto";
 
 export interface LeadPayload {
@@ -9,6 +15,7 @@ export interface LeadPayload {
 }
 
 const CRM_WEBHOOK_TIMEOUT_MS = 8_000;
+const MAX_CRM_WEBHOOK_ATTEMPTS = 2;
 const MAX_CRM_ERROR_BODY_BYTES = 4_000;
 const DEFAULT_LEAD_KEY = "unknown_lead";
 
@@ -31,6 +38,66 @@ async function readLimitedText(response: Response): Promise<string> {
   return Buffer.byteLength(text, "utf8") > MAX_CRM_ERROR_BODY_BYTES
     ? text.slice(0, MAX_CRM_ERROR_BODY_BYTES) + "...[truncated]"
     : text;
+}
+
+async function postWebhookOnce(
+  webhookUrl: string,
+  headers: Record<string, string>,
+  body: string,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), CRM_WEBHOOK_TIMEOUT_MS);
+  try {
+    return await fetch(webhookUrl, {
+      method: "POST",
+      redirect: "error",
+      signal: controller.signal,
+      headers,
+      body,
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function postWebhookWithRetry(
+  webhookUrl: string,
+  headers: Record<string, string>,
+  body: string,
+): Promise<{ response: Response; attempts: number }> {
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= MAX_CRM_WEBHOOK_ATTEMPTS; attempt++) {
+    try {
+      const response = await postWebhookOnce(webhookUrl, headers, body);
+      const retryDecision = classifyHttpRetry(response.status);
+      if (!response.ok && retryDecision.retryable && attempt < MAX_CRM_WEBHOOK_ATTEMPTS) {
+        logger.warn("crm.webhook_retrying_http", {
+          host: new URL(webhookUrl).host,
+          status: response.status,
+          attempt,
+        });
+        await waitForRetry(backoffDelayMs(attempt));
+        continue;
+      }
+      return { response, attempts: attempt };
+    } catch (error) {
+      lastError = error;
+      const retryDecision = classifyNetworkRetry(error);
+      if (retryDecision.retryable && attempt < MAX_CRM_WEBHOOK_ATTEMPTS) {
+        logger.warn("crm.webhook_retrying_network", {
+          host: new URL(webhookUrl).host,
+          reason: retryDecision.reason,
+          attempt,
+        });
+        await waitForRetry(backoffDelayMs(attempt));
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 function cleanLeadValue(value: unknown): unknown {
@@ -90,15 +157,41 @@ function publicLeadPayload(finalLead: LeadPayload): Record<string, unknown> {
   return cleanLeadValue(payload) as Record<string, unknown>;
 }
 
-function resolveFixedFieldValue(value: unknown): unknown {
+function resolveFieldSource(value: unknown): string {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
+    return "USER_PROVIDED";
   }
   const rule = value as Record<string, unknown>;
-  if (String(rule.type ?? "").toUpperCase() === "FIXED") {
-    return rule.value;
+  if (String(rule.type ?? "").toUpperCase() === "FIXED") return "FIXED";
+  return String(rule.source ?? "USER_PROVIDED").toUpperCase();
+}
+
+function isMissingLeadValue(value: unknown): boolean {
+  return cleanLeadValue(value) === undefined;
+}
+
+function resolveSystemFieldValue(value: unknown, finalLead: LeadPayload): {
+  source: string;
+  value: unknown;
+} {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { source: "USER_PROVIDED", value: undefined };
   }
-  return undefined;
+  const rule = value as Record<string, unknown>;
+  const source = resolveFieldSource(rule);
+
+  if (source === "FIXED" || source === "DEFAULT") {
+    return { source, value: rule.value };
+  }
+
+  if (source === "CHAT_CONTEXT") {
+    if (rule.contextKey === "customerPhone") return { source, value: finalLead.phone };
+    if (rule.contextKey === "conversationId") {
+      return { source, value: finalLead.conversationId };
+    }
+  }
+
+  return { source, value: undefined };
 }
 
 /**
@@ -124,16 +217,31 @@ export async function pushLeadToCrm(
   const deliveries: CrmDeliveryOutcome[] = [];
 
   for (const integration of integrations) {
-    // ── Scalable Fixed Value Injection ────────────────────────────────
-    // If a field is mapped to a static value (fixed: ...), we inject it here
+    // ── Scalable Server-Owned Value Injection ─────────────────────────
+    // FIXED always wins. DEFAULT fills only when no higher-priority value exists.
     const fieldMapping = integration.fieldMapping as Record<string, any> | null;
     const finalLead = { ...lead };
     
     if (fieldMapping) {
       for (const [key, value] of Object.entries(fieldMapping)) {
-        const fixedValue = resolveFixedFieldValue(value);
-        if (fixedValue !== undefined) {
-          finalLead[key] = fixedValue;
+        const resolved = resolveSystemFieldValue(value, finalLead);
+        if (resolved.source === "FIXED" && resolved.value !== undefined) {
+          finalLead[key] = resolved.value;
+        }
+        if (
+          resolved.source === "DEFAULT" &&
+          resolved.value !== undefined &&
+          isMissingLeadValue(finalLead[key])
+        ) {
+          finalLead[key] = resolved.value;
+        }
+        if (
+          resolved.source === "CHAT_CONTEXT" &&
+          resolved.value !== undefined &&
+          resolved.value !== null &&
+          resolved.value !== ""
+        ) {
+          finalLead[key] = resolved.value;
         }
       }
     }
@@ -218,38 +326,34 @@ export async function pushLeadToCrm(
         });
       }
 
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), CRM_WEBHOOK_TIMEOUT_MS);
-
       try {
         await assertExternalApiUrlNetworkSafe(integration.webhookUrl);
-        const response = await fetch(integration.webhookUrl, {
-          method: "POST",
-          redirect: "error",
-          signal: controller.signal,
-          headers: buildWebhookHeaders(integration.apiKey),
-          body: JSON.stringify({
+        const webhookBody = JSON.stringify({
             ...payload,
             businessProfileId,
             eventType,
             leadKey,
             idempotencyKey,
             timestamp: new Date().toISOString(),
-          }),
-        });
-        clearTimeout(timeoutId);
+          });
+        const { response, attempts } = await postWebhookWithRetry(
+          integration.webhookUrl,
+          buildWebhookHeaders(integration.apiKey),
+          webhookBody,
+        );
 
         if (response.ok) {
           logger.info("crm.webhook_success", {
             host: new URL(integration.webhookUrl).host,
             businessProfileId,
             eventType,
+            attempts,
           });
           await prisma.crmDeliveryLog.update({
             where: { id: deliveryLog.id },
             data: {
               status: "DELIVERED",
-              attempts: { increment: 1 },
+              attempts: { increment: attempts },
               lastError: null,
               deliveredAt: new Date(),
             },
@@ -264,17 +368,20 @@ export async function pushLeadToCrm(
           // Parse the error body to capture specific validation errors (e.g. invalid mobile number)
           const errorBody = await readLimitedText(response);
           lastError = errorBody;
+          const retryDecision = classifyHttpRetry(response.status);
           logger.error("crm.webhook_validation_failed", {
             host: new URL(integration.webhookUrl).host,
             status: response.status,
             errorBody,
             businessProfileId,
+            attempts,
+            retryable: retryDecision.retryable,
           });
           await prisma.crmDeliveryLog.update({
             where: { id: deliveryLog.id },
             data: {
               status: "FAILED",
-              attempts: { increment: 1 },
+              attempts: { increment: attempts },
               lastError: errorBody,
             },
           });
@@ -304,8 +411,6 @@ export async function pushLeadToCrm(
           status: "failed",
           eventType,
         });
-      } finally {
-        clearTimeout(timeoutId);
       }
     }
   }

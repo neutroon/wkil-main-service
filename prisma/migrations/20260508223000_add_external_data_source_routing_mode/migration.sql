@@ -1,0 +1,2 @@
+ALTER TABLE "ExternalDataSource"
+ADD COLUMN "routingMode" TEXT NOT NULL DEFAULT 'STRICT';

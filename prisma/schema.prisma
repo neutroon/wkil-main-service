@@ -168,6 +168,7 @@ model ExternalDataSource {
   method            String          @default("GET")
   headers           Json?           // Optional API keys or Bearer tokens
   queryParams       Json?           // Optional required query params expected by the API
+  routingMode       String          @default("STRICT") // STRICT = semantic pre-router, FAST = expose when active
   
   // Defines the schema the AI is allowed to pass to the API (e.g. { category: "string", limit: "integer" })
   expectedParamsSchema Json?        

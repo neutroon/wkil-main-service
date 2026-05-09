@@ -12,6 +12,7 @@ import {
   buildNotIngestedReply,
   buildTruthfulnessPolicyForVoice,
 } from "./aiFallbackPolicy";
+import { generateSafeRecoveryReply } from "./aiRecoveryReply";
 import { filterEligibleExternalDataSources } from "./externalToolEligibility";
 import { shouldExposeCrmTool } from "./crmToolEligibility";
 import prisma from "@config/prisma";
@@ -27,12 +28,41 @@ export type BusinessProfileForChat = Prisma.BusinessProfileGetPayload<{
 
 const CORE_CONTEXT_TYPES = new Set(["identity", "contact", "intents"]);
 
-function notIngestedReply(voice: string): AiRoutingDecision {
+async function notIngestedReply(params: {
+  businessName: string;
+  identity?: string | null;
+  voice?: string | null;
+  tone?: string | null;
+  channel: "messenger" | "whatsapp" | "web" | "facebook_comment";
+  messageText: string;
+}): Promise<AiRoutingDecision> {
+  const voice = params.voice || "Professional";
+  const systemInstruction = [
+    `You are the official customer support representative for "${params.businessName}".`,
+    "",
+    "<persona>",
+    `- Agency/Business: ${params.businessName}`,
+    params.identity ? `- Identity: ${params.identity}` : "",
+    `- Voice (Language/Dialect): ${voice}`,
+    params.tone ? `- Tone: ${params.tone}` : "",
+    "</persona>",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const content = await generateSafeRecoveryReply({
+    systemInstruction,
+    channel: params.channel,
+    customerMessage: params.messageText,
+    failureReason: "knowledge_not_ready",
+    safeFallback: buildNotIngestedReply(voice),
+    allowHandoffLanguage: true,
+  });
+
   return {
     action: "HANDOFF_TO_HUMAN",
     handoffCategory: "MISSING_KNOWLEDGE",
     reasoning: "Business profile knowledge base (RAG) is not yet ingested.",
-    content: buildNotIngestedReply(voice),
+    content,
   };
 }
 
@@ -71,7 +101,16 @@ export async function prepareAgentParams(params: {
   } = params;
 
   if (!businessProfile.ragIngested) {
-    return { errorDecision: notIngestedReply(businessProfile.voice || "") };
+    return {
+      errorDecision: await notIngestedReply({
+        businessName: businessProfile.name,
+        identity: businessProfile.identity,
+        voice: businessProfile.voice,
+        tone: businessProfile.tone,
+        channel,
+        messageText,
+      }),
+    };
   }
 
   const relevantChunks = await retrieveRelevantChunks(
@@ -154,6 +193,12 @@ export async function prepareAgentParams(params: {
         )
       : [];
   const externalTools = buildExternalQueryTools(eligibleExternalSources);
+  const externalSourceFailureBehaviors = Object.fromEntries(
+    eligibleExternalSources.map((source) => [
+      source.id,
+      source.failureBehavior || "AUTO",
+    ]),
+  );
 
   const toolBlocks: Tool[] = [];
   if (captureTool.length > 0) toolBlocks.push(...captureTool);
@@ -186,6 +231,7 @@ export async function prepareAgentParams(params: {
       channel,
       contextQuality,
       availableChunkTypes,
+      externalSourceFailureBehaviors,
       mediaInfo: params.mediaInfo,
       conversationId,
       responseMode,

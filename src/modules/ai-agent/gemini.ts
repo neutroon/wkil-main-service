@@ -481,23 +481,38 @@ function collectRequiredFields(
   return required;
 }
 
-export const DEFAULT_LEAD_CAPTURE_INSTRUCTIONS =
-  "Captures or updates a prospective lead's CRM information. Trigger this ONLY when the user explicitly expresses strong buying intent, asks for a callback, tells you their contact details, wants to proceed, or explicitly corrects previously captured lead details. Do not call it again for identical details after a successful capture.";
+export const DEFAULT_CUSTOMER_DETAILS_INSTRUCTIONS =
+  "Saves useful customer details to the local customer profile only. Call this ONLY when the customer provides contact details, asks for follow-up, wants to proceed, gives a preference or requirement, or explicitly corrects previously saved details. Do not call it for greetings, generic questions, or identical details already saved in the conversation.";
 
-export function buildCaptureLeadTool(
+export function buildSaveCustomerDetailsTool(
   fieldMapping: any,
   customInstructions?: string,
 ): Tool[] {
-  const properties: Record<string, any> = {};
-  const required: string[] = [];
+  const properties: Record<string, any> = {
+    name: {
+      type: Type.STRING,
+      description: "The customer's real name, if provided.",
+    },
+    email: {
+      type: Type.STRING,
+      description: "The customer's email address, if provided.",
+    },
+    phone: {
+      type: Type.STRING,
+      description: "The customer's phone number, if provided.",
+    },
+    notes: {
+      type: Type.STRING,
+      description:
+        "A concise summary of the customer's request, preferences, or next step.",
+    },
+  };
 
   if (
     fieldMapping &&
     typeof fieldMapping === "object" &&
     Object.keys(fieldMapping).length > 0
   ) {
-    // ── Scalable Field Filtering ─────────────────────────────────────
-    // We separate "Dynamic Fields" (AI asks) from "Fixed Fields" (System injects)
     const dynamicMapping: Record<string, any> = {};
     for (const [key, value] of Object.entries(fieldMapping)) {
       if (isAiWritableFieldRule(value)) {
@@ -510,37 +525,18 @@ export function buildCaptureLeadTool(
     )) {
       properties[key] = propConfig;
     }
-    required.push(...collectRequiredFields(dynamicMapping, true));
-  } else {
-    properties["name"] = {
-      type: Type.STRING,
-      description: "The full name of the prospect.",
-    };
-    properties["email"] = {
-      type: Type.STRING,
-      description: "The email address of the prospect.",
-    };
-    properties["phone"] = {
-      type: Type.STRING,
-      description: "The phone number of the prospect.",
-    };
-    properties["notes"] = {
-      type: Type.STRING,
-      description: "A summary of the prospect's intent.",
-    };
-    required.push("name");
   }
 
   return [
     {
       functionDeclarations: [
         {
-          name: "capture_lead",
-          description: customInstructions || DEFAULT_LEAD_CAPTURE_INSTRUCTIONS,
+          name: "save_customer_details",
+          description:
+            customInstructions || DEFAULT_CUSTOMER_DETAILS_INSTRUCTIONS,
           parameters: {
             type: Type.OBJECT,
             properties,
-            required,
           },
         },
       ],
@@ -548,7 +544,7 @@ export function buildCaptureLeadTool(
   ];
 }
 
-export function buildExternalQueryTools(dataSources: any[]): Tool[] {
+export function buildIntegrationActionTools(dataSources: any[]): Tool[] {
   if (!dataSources || dataSources.length === 0) return [];
 
   const functionDeclarations = dataSources.flatMap((ds) => {
@@ -570,17 +566,24 @@ export function buildExternalQueryTools(dataSources: any[]): Tool[] {
     }
     const hasDeclaredParams = Object.keys(properties).length > 0;
     const required = collectRequiredFields(ds.expectedParamsSchema, false);
+    const actionType = String(ds.actionType || "LOOKUP").toUpperCase();
+    const isMutation = actionType === "MUTATION";
 
     return [{
-      name: `query_external_api_${ds.id}`,
+      name: `integration_action_${ds.id}`,
       description: [
-        `Live lookup tool for "${ds.name}".`,
+        isMutation
+          ? `Chat-requested business action for "${ds.name}". Calling this queues the action in the background.`
+          : `Chat-requested information action for "${ds.name}". Calling this queues the check in the background.`,
         ds.description ||
-          "Use only when this source directly matches the user's latest request.",
-        "Do not call for greetings, generic support, lead capture, handoff, or conversation closing.",
+          "Use only when this action directly matches the user's latest request.",
+        "Do not call for greetings, generic support, customer detail saving, handoff, or conversation closing.",
         hasDeclaredParams
-          ? "If required lookup details are missing, ask the customer for them instead of inventing parameters."
-          : "This source requires no customer-supplied parameters; call it with an empty argument object only when the user's request directly needs this live source.",
+          ? "If required details are missing, ask the customer for them instead of inventing parameters."
+          : "This action requires no customer-supplied parameters; call it with an empty argument object only when the user's request directly needs this action.",
+        isMutation
+          ? "Do not confirm completion from the queue result. Confirm only after a later verified action result is available."
+          : "Do not answer the factual request from the queue result. Answer only after a later verified action result is available.",
       ].join(" "),
       parameters: {
         type: Type.OBJECT,

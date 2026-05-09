@@ -174,11 +174,21 @@ widgetPublicRoutes.post(
           const isAutoMode = req.body.responseMode !== "MANUAL"; // Simplified
           const status = finalDecision.action === "HANDOFF_TO_HUMAN" ? "PENDING_REVIEW" : "SENT";
           
-          await saveMessage(conversation.id, "model", finalDecision.content || fullContent, {
+          const savedFinalMessage = await saveMessage(conversation.id, "model", finalDecision.content || fullContent, {
             status,
             aiReasoning: finalDecision.reasoning,
             handoffCategory: finalDecision.handoffCategory,
           });
+
+          if (status === "SENT") {
+            const { scheduleConversationFollowUps } =
+              await import("@modules/follow-up/followUp.service");
+            await scheduleConversationFollowUps({
+              conversationId: conversation.id,
+              businessProfileId: install.businessProfileId,
+              triggerMessageId: savedFinalMessage.id,
+            });
+          }
 
           attachmentForWidget = await resolveWidgetAttachment(
             finalDecision.attachment,

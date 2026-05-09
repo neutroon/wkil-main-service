@@ -3,8 +3,8 @@ import type { Tool } from "@google/genai";
 import { retrieveRelevantChunks } from "../rag/rag.service";
 import { buildSystemPrompt } from "../../meta/core/prompt.service";
 import {
-  buildCaptureLeadTool,
-  buildExternalQueryTools,
+  buildSaveCustomerDetailsTool,
+  buildIntegrationActionTools,
 } from "@modules/ai-agent/gemini";
 import { runAgentGraph } from "@modules/ai-agent/core/agentGraph";
 import type { AiRoutingDecision } from "@modules/ai-agent/core/aiEngine.utils";
@@ -14,7 +14,6 @@ import {
 } from "./aiFallbackPolicy";
 import { generateSafeRecoveryReply } from "./aiRecoveryReply";
 import { filterEligibleExternalDataSources } from "./externalToolEligibility";
-import { shouldExposeCrmTool } from "./crmToolEligibility";
 import prisma from "@config/prisma";
 import { logger } from "@utils/logger";
 export type { AiRoutingDecision };
@@ -26,7 +25,21 @@ export type BusinessProfileForChat = Prisma.BusinessProfileGetPayload<{
   };
 }>;
 
+type CompletedExternalLookup = {
+  sourceName?: string;
+  toolName: string;
+  envelope: {
+    success: boolean;
+    verification?: string;
+    actionType?: string;
+    reason?: string;
+    data?: unknown;
+    error?: string;
+  };
+};
+
 const CORE_CONTEXT_TYPES = new Set(["identity", "contact", "intents"]);
+const MAX_EXTERNAL_LOOKUP_PROMPT_CHARS = 12_000;
 
 async function notIngestedReply(params: {
   businessName: string;
@@ -89,6 +102,7 @@ export async function prepareAgentParams(params: {
   postContext?: { content: string; media?: string };
   conversationId?: number;
   responseMode?: "AUTO" | "MANUAL";
+  completedExternalLookup?: CompletedExternalLookup;
 }) {
   const {
     businessProfile,
@@ -98,6 +112,7 @@ export async function prepareAgentParams(params: {
     customerPhone,
     conversationId,
     responseMode,
+    completedExternalLookup,
   } = params;
 
   if (!businessProfile.ragIngested) {
@@ -122,19 +137,15 @@ export async function prepareAgentParams(params: {
   const availableChunkTypes = Array.from(
     new Set(relevantChunks.map((chunk) => chunk.chunkType)),
   );
+  if (completedExternalLookup) {
+    availableChunkTypes.push("external_tool");
+  }
 
-  const activeExternalDataSources = (businessProfile.externalDataSources || []).filter(
-    (source) => source.isActive,
-  );
-  const crmIntegration = businessProfile.crmIntegrations?.find(
-    (integration) => integration.isActive,
-  );
-  const crmFields = crmIntegration?.fieldMapping 
-    ? Object.entries(crmIntegration.fieldMapping as object)
-        .filter(([_, v]) => isAiWritableFieldRule(v))
-        .map(([k]) => k)
-        .filter(k => !["name", "phone"].includes(k)) // Still skip these as they are handled by hard rules
-    : [];
+  const activeExternalDataSources = completedExternalLookup
+    ? []
+    : (businessProfile.externalDataSources || []).filter(
+        (source) => source.isActive && (source as any).trigger === "CHAT_REQUESTED",
+      );
 
   const systemInstruction = buildSystemPrompt({
     businessProfile: {
@@ -142,8 +153,8 @@ export async function prepareAgentParams(params: {
       identity: businessProfile.identity || "",
       voice: businessProfile.voice || "Professional",
       tone: businessProfile.tone || "Friendly",
-      leadCaptureInstructions:
-        businessProfile.leadCaptureInstructions || undefined,
+      customerDetailsInstructions:
+        businessProfile.customerDetailsInstructions || undefined,
       aiBehaviorInstructions:
         businessProfile.aiBehaviorInstructions || undefined,
     },
@@ -152,7 +163,6 @@ export async function prepareAgentParams(params: {
     contextQuality,
     customerPhone,
     postContext: params.postContext,
-    crmFields,
   });
 
   const mediaAssets = await prisma.businessProfileMedia.findMany({
@@ -166,6 +176,13 @@ export async function prepareAgentParams(params: {
   });
 
   let finalSystemInstruction = systemInstruction;
+  if (completedExternalLookup) {
+    const serializedLookup = stringifyForPrompt(
+      completedExternalLookup.envelope,
+      MAX_EXTERNAL_LOOKUP_PROMPT_CHARS,
+    );
+    finalSystemInstruction += `\n\n<completed_integration_action>\nThis external action already ran in a background worker. Do not call the same integration action tool again for this answer. Use this payload as verified tool evidence only when verification is "verified"; if it failed, explain that the external result could not be verified and ask for the exact missing/correct detail.\nTool: ${completedExternalLookup.toolName}\nSource: ${completedExternalLookup.sourceName || "External action"}\nPayload JSON:\n${serializedLookup}\n</completed_integration_action>\n\nWhen your customer-facing answer relies on this action result, include "external_tool" in usedChunkTypes.`;
+  }
   if (mediaAssets.length > 0) {
     const catalog = mediaAssets
       .map((a) => `- "${a.name}" (${a.mediaType}): ${a.instructions}`)
@@ -173,31 +190,18 @@ export async function prepareAgentParams(params: {
     finalSystemInstruction += `\n\n## MEDIA CATALOG\nYou MAY send one file per response using the "attachment" field in your JSON output.\nAvailable assets:\n${catalog}\n\nCRITICAL RULES:\n1. Only reference EXACT names from the list above.\n2. NEVER invent an asset name.\n3. NEVER send attachments to public Facebook Comments.\n4. Only attach a file when it is genuinely relevant to the customer's request.`;
   }
 
-  const crmRouterPromise = crmIntegration
-    ? shouldExposeCrmTool({
-        latestUserMessage: messageText,
-        leadCaptureInstructions: businessProfile.leadCaptureInstructions,
-        integration: crmIntegration,
-      })
-    : Promise.resolve(false);
   const externalRouterPromise = activeExternalDataSources.length > 0
     ? filterEligibleExternalDataSources(
         activeExternalDataSources,
         messageText,
       )
     : Promise.resolve([]);
-  const [canExposeCrmTool, eligibleExternalSources] = await Promise.all([
-    crmRouterPromise,
-    externalRouterPromise,
-  ]);
-  const captureTool =
-    canExposeCrmTool && crmIntegration
-      ? buildCaptureLeadTool(
-          crmIntegration.fieldMapping,
-          businessProfile.leadCaptureInstructions || undefined,
-        )
-      : [];
-  const externalTools = buildExternalQueryTools(eligibleExternalSources);
+  const eligibleExternalSources = await externalRouterPromise;
+  const customerDetailsTool = buildSaveCustomerDetailsTool(
+    undefined,
+    businessProfile.customerDetailsInstructions || undefined,
+  );
+  const externalTools = buildIntegrationActionTools(eligibleExternalSources);
   const externalSourceFailureBehaviors = Object.fromEntries(
     eligibleExternalSources.map((source) => [
       source.id,
@@ -206,7 +210,7 @@ export async function prepareAgentParams(params: {
   );
 
   const toolBlocks: Tool[] = [];
-  if (captureTool.length > 0) toolBlocks.push(...captureTool);
+  toolBlocks.push(...customerDetailsTool);
   if (externalTools.length > 0) toolBlocks.push(...externalTools);
 
   const mergedDeclarations = toolBlocks.flatMap(
@@ -220,7 +224,7 @@ export async function prepareAgentParams(params: {
   logger.info("ai.chat.prepared_tools", {
     businessProfileId: businessProfile.id,
     channel,
-    crmToolExposed: captureTool.length > 0,
+    customerDetailsToolExposed: true,
     eligibleExternalSourceIds: eligibleExternalSources.map((source) => source.id),
     toolNames: mergedDeclarations.map((declaration) => declaration.name),
   });
@@ -232,6 +236,9 @@ export async function prepareAgentParams(params: {
       customerMessage: messageText,
       tools: finalTools,
       businessProfileId: businessProfile.id,
+      businessName: businessProfile.name,
+      businessVoice: businessProfile.voice || undefined,
+      businessTone: businessProfile.tone || undefined,
       customerPhone,
       channel,
       contextQuality,
@@ -245,12 +252,15 @@ export async function prepareAgentParams(params: {
   };
 }
 
-function isAiWritableFieldRule(value: unknown): boolean {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const rule = value as Record<string, unknown>;
-  if (String(rule.type ?? "").toUpperCase() === "FIXED") return false;
-  const source = String(rule.source ?? "USER_PROVIDED").toUpperCase();
-  return source === "USER_PROVIDED" || source === "AI_DERIVED";
+function stringifyForPrompt(value: unknown, maxChars: number): string {
+  let text: string;
+  try {
+    text = JSON.stringify(value, null, 2);
+  } catch {
+    text = String(value);
+  }
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, maxChars)}\n...[truncated]`;
 }
 
 /**
@@ -266,6 +276,7 @@ export async function computeBusinessChatReply(params: {
   postContext?: { content: string; media?: string };
   conversationId?: number;
   responseMode?: "AUTO" | "MANUAL";
+  completedExternalLookup?: CompletedExternalLookup;
 }): Promise<AiRoutingDecision> {
   const prep = await prepareAgentParams(params);
   if (prep.errorDecision) return prep.errorDecision;

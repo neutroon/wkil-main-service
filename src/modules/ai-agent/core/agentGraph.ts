@@ -109,6 +109,7 @@ export interface AgentGraphParams {
   channel?:          "messenger" | "whatsapp" | "web" | "facebook_comment";
   contextQuality?:   "specific_evidence_found" | "core_context_only" | "no_context";
   availableChunkTypes?: string[];
+  externalSourceFailureBehaviors?: Record<number, string>;
   policy?:           Partial<AiTruthfulnessPolicy>;
   responseMode?:     "AUTO" | "MANUAL";
   mediaInfo?:        { id: string; type: string; url?: string };
@@ -197,6 +198,7 @@ async function _runGraph(params: AgentGraphParams): Promise<AiRoutingDecision> {
       channel:           params.channel,
       contextQuality:    params.contextQuality,
       availableChunkTypes: params.availableChunkTypes ?? [],
+      externalSourceFailureBehaviors: params.externalSourceFailureBehaviors ?? {},
       policy,
       responseMode:      params.responseMode ?? "AUTO",
       conversationId:    params.conversationId,

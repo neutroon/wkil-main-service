@@ -48,6 +48,8 @@ export async function* streamAgentGraph(params: AgentGraphParams) {
     userId:            profile.userId,
     customerPhone:     params.customerPhone,
     channel:           params.channel,
+    contextQuality:    params.contextQuality,
+    availableChunkTypes: params.availableChunkTypes ?? [],
     policy,
     responseMode:      params.responseMode ?? "AUTO",
     contents:          initialContents as any,

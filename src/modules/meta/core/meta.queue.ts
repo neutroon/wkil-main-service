@@ -48,7 +48,8 @@ export type MetaJobType =
   | "sync_facebook_pages"
   | "webhook_subscription"
   | "page_token_validation"
-  | "token_refresh_cron";
+  | "token_refresh_cron"
+  | "follow_up";
 
 export interface MetaEngineJob {
   type: MetaJobType;
@@ -139,6 +140,9 @@ export const expressWorker = new Worker(
     } else if (type === "token_refresh_cron") {
       const { processTokenRefresh } = await import("@modules/meta/facebook/tokenRefresh.job");
       await processTokenRefresh();
+    } else if (type === "follow_up") {
+      const { processFollowUpJob } = await import("@modules/follow-up/followUp.service");
+      await processFollowUpJob(payload);
     } else {
       await processMetaMessage(payload);
     }

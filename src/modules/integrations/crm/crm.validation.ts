@@ -26,6 +26,7 @@ export const crmIntegrationSchema = z.object({
     webhookUrl: safeWebhookUrl.optional().or(z.literal("")),
     apiKey: z.string().optional(),
     fieldMapping: aiSchemaObject.optional(),
+    isActive: z.boolean().optional(),
   }),
 });
 

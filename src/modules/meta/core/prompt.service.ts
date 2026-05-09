@@ -9,7 +9,7 @@ export interface SystemPromptParams {
     identity: string;
     voice: string;
     tone: string;
-    leadCaptureInstructions?: string;
+    customerDetailsInstructions?: string;
     aiBehaviorInstructions?: string;
   };
   context: { chunkType: string; content: string }[];
@@ -21,12 +21,11 @@ export interface SystemPromptParams {
     media?: string;
     parentContext?: string;
   };
-  crmFields?: string[];
 }
 
-export const DEFAULT_LEAD_CAPTURE_INSTRUCTIONS = `
-1. PURPOSE: Captures a prospective lead's information for the CRM.
-2. TRIGGER: Only when the user explicitly expresses buying intent AND you have gathered their real details.
+export const DEFAULT_CUSTOMER_DETAILS_INSTRUCTIONS = `
+1. PURPOSE: Saves useful customer details to the local customer profile.
+2. TRIGGER: Only when the customer provides real details, asks for follow-up, wants to proceed, gives preferences, or corrects saved information.
 `.trim();
 
 const escapeXml = (value: unknown): string =>
@@ -134,7 +133,6 @@ export function buildSystemPrompt(params: SystemPromptParams): string {
     contextQuality = "specific_evidence_found",
     customerPhone,
     postContext,
-    crmFields,
   } = params;
 
   // ── Logic Extraction ────────────────────────────────────────────────────────
@@ -146,18 +144,13 @@ export function buildSystemPrompt(params: SystemPromptParams): string {
   );
   const businessVoice = escapeXml(businessProfile.voice || "Professional");
   const businessTone = escapeXml(businessProfile.tone || "Friendly");
-  const leadInstructions =
-    businessProfile.leadCaptureInstructions ||
-    DEFAULT_LEAD_CAPTURE_INSTRUCTIONS;
-  const safeLeadInstructions = escapeXml(leadInstructions);
+  const customerDetailsInstructions =
+    businessProfile.customerDetailsInstructions ||
+    DEFAULT_CUSTOMER_DETAILS_INSTRUCTIONS;
+  const safeCustomerDetailsInstructions = escapeXml(customerDetailsInstructions);
   const safeBehaviorInstructions = escapeXml(
     businessProfile.aiBehaviorInstructions || "",
   );
-
-  const crmSection =
-    crmFields && crmFields.length > 0
-      ? `\n<required_crm_fields>\n${crmFields.map((f: string) => `- ${escapeXml(f)}`).join("\n")}\n\nCRITICAL: In addition to Name and Phone, you MUST gather the fields listed above before calling the "capture_lead" tool.\n</required_crm_fields>`
-      : "";
 
   // ── Unified Data Collection Protocol ───────────────────────────────────────
   const dataCollectionProtocol = `
@@ -165,21 +158,22 @@ export function buildSystemPrompt(params: SystemPromptParams): string {
 1. METADATA CHECK: Before asking for a phone number, check <chat_context>. If <customer_phone> is NOT "Unknown", you already have it.
 2. AUTHENTICITY ONLY (CRITICAL): NEVER invent, hallucinate, or use placeholder data (like "User Name" or "+201234567890"). 
 3. MISSING DATA: If a field is missing from both <chat_context> and chat history, you MUST politely ask the user for it.
-4. VALIDATION: Only call the "capture_lead" tool once you have real, provided information for all required fields.
-5. DUPLICATE PREVENTION: After a successful "capture_lead" result in this conversation, do NOT call it again for the same lead details. Continue the chat normally.
-6. CORRECTIONS: If the customer explicitly corrects lead details after capture (for example: "wrong number, use this one"), call "capture_lead" once with the complete latest corrected details. Treat this as an update, not a new lead.
-7. NEW INTENT: Only call "capture_lead" again when the customer starts a clearly separate new request or provides materially changed contact/lead details.
-8. CUSTOMER REPLY AFTER SUCCESS: When "capture_lead" succeeds, write the customer-facing reply yourself in the business voice. Briefly acknowledge the next step without using technical words like CRM, webhook, tool, database, or API. Do not claim success if the tool result failed.
+4. VALIDATION: Only call the "save_customer_details" tool when you have real information provided by the customer or already available in chat context.
+5. DUPLICATE PREVENTION: After a successful "save_customer_details" result in this conversation, do NOT call it again for identical details. Continue the chat normally.
+6. CORRECTIONS: If the customer explicitly corrects saved details (for example: "wrong number, use this one"), call "save_customer_details" once with the latest corrected details.
+7. NEW INTENT: Only call "save_customer_details" again when the customer provides materially changed details or starts a clearly separate new request.
+8. CUSTOMER REPLY AFTER SUCCESS: When "save_customer_details" succeeds, write the customer-facing reply yourself in the business voice. Briefly acknowledge the next step without using technical words like CRM, webhook, tool, database, or API.
 </data_collection_protocol>`.trim();
 
   const externalToolProtocol = `
 <external_tool_protocol>
-1. External data tools are live lookup tools, not default context tools. Use them ONLY when the user's latest message asks for information that is dynamic, account/order-specific, inventory/availability-specific, booking/schedule-specific, price/quote-specific, or otherwise explicitly described by that tool.
-2. Do NOT call external data tools for greetings, small talk, generic business questions already answered by <business_context>, lead capture, complaints, handoff decisions, or conversation closing.
-3. Before calling an external data tool, confirm the tool description directly matches the user's request. If no available tool clearly matches, do not call any external data tool.
-4. Use only real parameters that the customer provided, chat history already contains, or <chat_context> provides. Never invent search terms, IDs, phone numbers, dates, emails, names, or a generic "q" value.
-5. If a required lookup parameter is missing, ask one concise clarification question instead of calling the tool with partial or placeholder data.
-6. After a tool returns data, answer only from the returned payload and cite no unavailable facts. If the tool fails or returns no data, do not guess; ask for corrected details or hand off.
+1. External action tools are live integration actions, not default business knowledge. Use them ONLY when the user's latest message explicitly needs the information or operation described by that exact tool.
+2. Use read-only action tools for dynamic/account/order/booking/availability/price/status data. Use mutation action tools only when the customer clearly asks to book, cancel, create, update, submit, or otherwise perform the described operation.
+3. Do NOT call external action tools for greetings, small talk, generic business questions already answered by <business_context>, customer detail saving, complaints, handoff decisions, or conversation closing.
+4. Before calling an external action tool, confirm the tool description directly matches the user's request. If no available tool clearly matches, do not call any external action tool.
+5. Use only real parameters that the customer provided, chat history already contains, or <chat_context> provides. Never invent search terms, IDs, phone numbers, dates, emails, names, or a generic "q" value.
+6. If a required action parameter is missing, ask one concise clarification question instead of calling the tool with partial or placeholder data.
+7. After a read-only tool returns data, answer only from the returned payload and cite no unavailable facts. After a mutation tool returns verified success, you may confirm the completed action in customer-safe wording. If the tool fails or returns no data, do not guess; ask for corrected details or hand off.
 </external_tool_protocol>`.trim();
 
   const channelFormattingProtocol = `
@@ -249,11 +243,9 @@ ${
     : ""
 }
 
-<lead_capture_strategy>
-${safeLeadInstructions}
-</lead_capture_strategy>
-
-${crmSection}
+<customer_details_strategy>
+  ${safeCustomerDetailsInstructions}
+</customer_details_strategy>
 
 ${dataCollectionProtocol}
 

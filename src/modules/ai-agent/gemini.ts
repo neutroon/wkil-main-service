@@ -278,7 +278,7 @@ const baseRoutingProperties: Record<string, Schema> = {
   reasoning: {
     type: Type.STRING,
     description:
-      "Internal thought process explaining the action and routing decision.",
+      "Brief internal routing note. Not customer-facing.",
   },
   requiresGrounding: {
     type: Type.BOOLEAN,
@@ -326,7 +326,7 @@ export function buildAiRoutingSchema(channel?: string | null): Schema {
         privateContent: {
           type: Type.STRING,
           description:
-            "Detailed, value-heavy response for a private DM. Prices, details, links. Required for SALES_DM.",
+            "Grounded private DM content or one useful follow-up question. Required for SALES_DM; do not invent prices, links, or details.",
         },
       },
       required: [

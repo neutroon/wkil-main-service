@@ -153,7 +153,7 @@ function buildLeadKey(lead: LeadPayload): string {
 }
 
 function publicLeadPayload(finalLead: LeadPayload): Record<string, unknown> {
-  const { idempotencyKey, conversationId, ...payload } = finalLead;
+  const { idempotencyKey, conversationId, customerId, ...payload } = finalLead;
   return cleanLeadValue(payload) as Record<string, unknown>;
 }
 
@@ -196,9 +196,9 @@ function resolveSystemFieldValue(value: unknown, finalLead: LeadPayload): {
 
 /**
  * Pushes a captured lead to all active CRM integrations for a given business profile.
- * Standardizes the AI's lead capture function so it scales easily across providers.
+ * Pushes locally saved customer details to active downstream CRM/webhook providers.
  */
-export async function pushLeadToCrm(
+export async function syncCustomerDetailsToCrm(
   businessProfileId: number,
   lead: LeadPayload,
 ): Promise<{ success: boolean; error?: string; deliveries?: CrmDeliveryOutcome[] }> {
@@ -250,6 +250,8 @@ export async function pushLeadToCrm(
       const payload = publicLeadPayload(finalLead);
       const payloadHash = hashPayload(payload);
       const leadKey = buildLeadKey(finalLead);
+      const customerId =
+        typeof finalLead.customerId === "number" ? finalLead.customerId : undefined;
       const idempotencyKey =
         typeof finalLead.idempotencyKey === "string" && finalLead.idempotencyKey
           ? finalLead.idempotencyKey
@@ -270,6 +272,7 @@ export async function pushLeadToCrm(
           data: {
             businessProfileId,
             integrationId: integration.id,
+            customerId,
             idempotencyKey,
             leadKey,
             payloadHash,
@@ -317,6 +320,7 @@ export async function pushLeadToCrm(
           data: {
             businessProfileId,
             integrationId: integration.id,
+            customerId,
             idempotencyKey,
             leadKey,
             payloadHash,

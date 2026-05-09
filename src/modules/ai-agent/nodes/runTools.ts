@@ -15,8 +15,12 @@ import { logger } from "@utils/logger";
 import { pushLeadToCrm } from "@modules/integrations/crm/crm.service";
 import { executeExternalQuery } from "@modules/integrations/external/externalData.service";
 import { updateEvidenceFromEnvelope } from "@modules/ai-agent/core/aiEngine.utils";
-import { generateSafeRecoveryReply } from "@modules/ai-agent/chat/aiRecoveryReply";
 import { classifyExternalToolFailureRecovery } from "@modules/ai-agent/chat/externalToolRecoveryClassifier";
+import {
+  buildAiRecoveryDecision,
+  latestUserText,
+} from "@modules/ai-agent/nodes/recoveryDecision";
+import type { ExternalFailureBehavior } from "@modules/integrations/external/externalDataSource.constants";
 import type { AgentStateType } from "@modules/ai-agent/core/agentState";
 
 // ── Zod Schemas for Tool Input Validation ─────────────────────────────────────
@@ -178,7 +182,7 @@ export async function runToolsNode(
           {
             customerPhone: state.customerPhone,
             conversationId: state.conversationId,
-            latestUserText: latestUserText(state.contents),
+            latestUserText: latestUserText(state),
             historyText: userHistoryText(state.contents),
           },
         );
@@ -241,21 +245,13 @@ function userHistoryText(contents: AgentStateType["contents"]): string {
     .join(" ");
 }
 
-function latestUserText(contents: AgentStateType["contents"]): string {
-  const latest = [...contents].reverse().find((turn) => turn.role === "user");
-  return (latest?.parts ?? [])
-    .filter((part) => typeof part.text === "string")
-    .map((part) => part.text)
-    .join(" ");
-}
-
 async function buildExternalLookupFailedDecision(
   state: AgentStateType,
   reasoning: string,
   failureReason: string,
   sourceId?: number,
 ): Promise<AgentStateType["decision"]> {
-  const customerMessage = latestUserText(state.contents);
+  const customerMessage = latestUserText(state);
   const recoveryRoute = await resolveExternalFailureRoute({
     state,
     customerMessage,
@@ -266,30 +262,20 @@ async function buildExternalLookupFailedDecision(
   const fallback = isNormalReply
     ? state.policy.fallbackTemplates.smallTalkRecovery
     : state.policy.fallbackTemplates.failed;
-  const recoveryReply = await generateSafeRecoveryReply({
-    systemInstruction: state.systemInstruction,
-    channel: state.channel,
-    customerMessage,
-    failureReason,
-    safeFallback: fallback,
-    allowHandoffLanguage: !isNormalReply,
-  });
-
-  return {
+  return buildAiRecoveryDecision(state, {
     action: isNormalReply ? "REPLY_AUTO" : "HANDOFF_TO_HUMAN",
     handoffCategory: isNormalReply ? null : "MISSING_KNOWLEDGE",
     reasoning: isNormalReply
       ? `${reasoning} Ignored non-essential external lookup failure.`
       : reasoning,
-    content: recoveryReply,
+    failureReason,
+    emergencyFallback: fallback,
+    allowHandoffLanguage: !isNormalReply,
     requiresGrounding: !isNormalReply,
-    grounded: false,
-    usedChunkTypes: [],
     missingInfo: isNormalReply
       ? null
       : "External live lookup could not be verified.",
-    attachment: null,
-  };
+  });
 }
 
 async function resolveExternalFailureRoute(params: {
@@ -301,7 +287,7 @@ async function resolveExternalFailureRoute(params: {
   const { state, customerMessage, failureReason, sourceId } = params;
   if (sourceId) {
     const failureBehavior =
-      state.externalSourceFailureBehaviors?.[sourceId] || "AUTO";
+      (state.externalSourceFailureBehaviors?.[sourceId] || "AUTO") as ExternalFailureBehavior;
 
     switch (failureBehavior) {
       case "HANDOFF_ON_FAILURE":

@@ -134,6 +134,7 @@ export async function runToolsNode(
             state,
             "The assistant tried to repeat a failed external lookup.",
             "duplicate_failed_lookup_blocked",
+            sourceId,
           );
           continue;
         }
@@ -161,6 +162,7 @@ export async function runToolsNode(
             state,
             "External lookup arguments failed validation.",
             "validation_failed",
+            sourceId,
           );
           continue;
         }
@@ -191,6 +193,7 @@ export async function runToolsNode(
             state,
             `External lookup failed: ${envelope.reason || "unknown"}.`,
             envelope.reason || "external_lookup_failed",
+            sourceId,
           );
         }
       }
@@ -250,11 +253,14 @@ async function buildExternalLookupFailedDecision(
   state: AgentStateType,
   reasoning: string,
   failureReason: string,
+  sourceId?: number,
 ): Promise<AgentStateType["decision"]> {
   const customerMessage = latestUserText(state.contents);
-  const recoveryRoute = await classifyExternalToolFailureRecovery({
+  const recoveryRoute = await resolveExternalFailureRoute({
+    state,
     customerMessage,
     failureReason,
+    sourceId,
   });
   const isNormalReply = recoveryRoute === "normal_reply";
   const fallback = isNormalReply
@@ -284,6 +290,35 @@ async function buildExternalLookupFailedDecision(
       : "External live lookup could not be verified.",
     attachment: null,
   };
+}
+
+async function resolveExternalFailureRoute(params: {
+  state: AgentStateType;
+  customerMessage: string;
+  failureReason: string;
+  sourceId?: number;
+}): Promise<"normal_reply" | "handoff"> {
+  const { state, customerMessage, failureReason, sourceId } = params;
+  if (sourceId) {
+    const failureBehavior =
+      state.externalSourceFailureBehaviors?.[sourceId] || "AUTO";
+
+    switch (failureBehavior) {
+      case "HANDOFF_ON_FAILURE":
+        return "handoff";
+      case "ANSWER_WITH_CONTEXT_ON_FAILURE":
+      case "SILENT_ON_FAILURE":
+        return "normal_reply";
+      case "AUTO":
+      default:
+        break;
+    }
+  }
+
+  return classifyExternalToolFailureRecovery({
+    customerMessage,
+    failureReason,
+  });
 }
 
 function applyEvidence(

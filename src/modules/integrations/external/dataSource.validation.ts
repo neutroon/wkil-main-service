@@ -1,6 +1,11 @@
 import { z } from "zod";
 import { assertExternalApiUrlLooksSafe } from "./externalData.service";
 import { aiSchemaObject } from "@modules/integrations/schemaRules.validation";
+import {
+  EXTERNAL_FAILURE_BEHAVIORS,
+  EXTERNAL_ROUTER_TIMEOUT,
+  EXTERNAL_ROUTING_MODES,
+} from "./externalDataSource.constants";
 
 const safeExternalUrl = z.string().url("Invalid API URL").superRefine((url, ctx) => {
   try {
@@ -13,18 +18,13 @@ const safeExternalUrl = z.string().url("Invalid API URL").superRefine((url, ctx)
   }
 });
 
-const routingMode = z.enum(["STRICT", "FAST"]);
-const failureBehavior = z.enum([
-  "AUTO",
-  "HANDOFF_ON_FAILURE",
-  "ANSWER_WITH_CONTEXT_ON_FAILURE",
-  "SILENT_ON_FAILURE",
-]);
+const routingMode = z.enum(EXTERNAL_ROUTING_MODES);
+const failureBehavior = z.enum(EXTERNAL_FAILURE_BEHAVIORS);
 const routerTimeoutMs = z.coerce
   .number()
   .int()
-  .min(1000, "Router timeout must be at least 1 second")
-  .max(10000, "Router timeout must be 10 seconds or less");
+  .min(EXTERNAL_ROUTER_TIMEOUT.minMs, "Router timeout must be at least 1 second")
+  .max(EXTERNAL_ROUTER_TIMEOUT.maxMs, "Router timeout must be 10 seconds or less");
 
 /**
  * Data Source Schema
@@ -42,7 +42,7 @@ export const dataSourceSchema = z.object({
     headers: z.record(z.string(), z.string()).optional(),
     queryParams: z.record(z.string(), z.string()).optional(),
     routingMode: routingMode.optional().default("STRICT"),
-    routerTimeoutMs: routerTimeoutMs.optional().default(2500),
+    routerTimeoutMs: routerTimeoutMs.optional().default(EXTERNAL_ROUTER_TIMEOUT.defaultMs),
     failureBehavior: failureBehavior.optional().default("AUTO"),
     expectedParamsSchema: aiSchemaObject.nullable().optional(),
     isActive: z.boolean().optional().default(true),

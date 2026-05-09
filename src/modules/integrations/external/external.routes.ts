@@ -69,6 +69,7 @@ externalDataSourceRoutes.post(
       queryParams,
       routingMode,
       routerTimeoutMs,
+      failureBehavior,
       expectedParamsSchema,
       isActive,
     } = req.body;
@@ -84,6 +85,7 @@ externalDataSourceRoutes.post(
         queryParams,
         routingMode,
         routerTimeoutMs,
+        failureBehavior,
         expectedParamsSchema,
         isActive: isActive !== undefined ? isActive : true,
       },
@@ -114,6 +116,7 @@ externalDataSourceRoutes.put(
       queryParams,
       routingMode,
       routerTimeoutMs,
+      failureBehavior,
       expectedParamsSchema,
       isActive,
     } = req.body;
@@ -137,6 +140,7 @@ externalDataSourceRoutes.put(
         queryParams,
         routingMode,
         routerTimeoutMs,
+        failureBehavior,
         expectedParamsSchema,
         isActive,
       },

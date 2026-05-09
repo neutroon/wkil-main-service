@@ -15,7 +15,7 @@ describe("classifyExternalToolFailureRecovery", () => {
     vi.mocked(generateContent).mockResolvedValue({
       text: JSON.stringify({
         route: "normal_reply",
-        reasoning: "The latest message is a greeting and does not need live data.",
+        reasoning: "The latest message is a greeting and does not need external data.",
       }),
       usage: {
         promptTokens: 0,
@@ -34,11 +34,11 @@ describe("classifyExternalToolFailureRecovery", () => {
     ).resolves.toBe("normal_reply");
   });
 
-  it("returns handoff when the classifier says the failed lookup was required", async () => {
+  it("returns handoff when the classifier says the failed action was required", async () => {
     vi.mocked(generateContent).mockResolvedValue({
       text: JSON.stringify({
         route: "handoff",
-        reasoning: "The user requested live price verification.",
+        reasoning: "The user requested current price verification.",
       }),
       usage: {
         promptTokens: 0,

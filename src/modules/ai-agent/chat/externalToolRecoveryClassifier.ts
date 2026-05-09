@@ -10,11 +10,11 @@ function buildRecoveryClassifierPrompt(params: {
   failureReason: string;
 }): string {
   return [
-    "You are a strict router for failed external API lookups in a customer-support chat.",
+    "You are a strict router for failed chat-requested external actions in a customer-support chat.",
     "Return ONLY compact JSON with this exact shape: {\"route\":\"normal_reply\"|\"handoff\",\"reasoning\":\"short reason\"}.",
     "",
-    "Choose normal_reply when the failed external lookup was not essential to answer the latest user message, such as greetings, small talk, thanks, broad business/context questions, or generic support that should be handled without live data.",
-    "Choose handoff when the user explicitly needed the failed live lookup, such as account/order/status/booking/availability/price/customer-specific verification, or when it is unsafe to answer without the failed external data.",
+    "Choose normal_reply when the failed external action was not essential to answer the latest user message, such as greetings, small talk, thanks, broad business/context questions, or generic support that should be handled without external data.",
+    "Choose handoff when the user explicitly needed the failed external action, such as account/order/status/booking/availability/price/customer-specific verification, or when it is unsafe to answer without the failed external data.",
     "If uncertain, choose handoff.",
     "",
     `Latest user message: ${JSON.stringify(params.customerMessage)}`,

@@ -133,6 +133,14 @@ export async function processWidgetChatMessage(params: {
       preview: (reply.content || "").substring(0, 80),
     });
 
+    const { scheduleConversationFollowUps } =
+      await import("@modules/follow-up/followUp.service");
+    await scheduleConversationFollowUps({
+      conversationId: conversation.id,
+      businessProfileId: install.businessProfileId,
+      triggerMessageId: botMsg.id,
+    });
+
     // Resolve attachment for web delivery if AI included one
     let attachmentForWidget: {
       url: string;

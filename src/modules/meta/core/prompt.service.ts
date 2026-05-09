@@ -41,6 +41,7 @@ export type ChannelPromptProfile = {
   label: string;
   customerField: "content" | "publicContent/privateContent";
   statusTarget: "content" | "publicContent";
+  styleTag: "direct_chat_style" | "facebook_comment_style";
   replyStyleRules: string[];
   statusStyleRules: string[];
   recoveryStyleRules: string[];
@@ -76,8 +77,8 @@ export const DEFAULT_CUSTOMER_DETAILS_INSTRUCTIONS = [
 ].join(" ");
 
 const DIRECT_CHAT_REPLY_RULES = [
-  "Use the same decision and reply behavior as web chat, WhatsApp, and Messenger.",
-  "Answer naturally and concisely from the allowed evidence.",
+  "Write a concise direct-chat reply from the allowed evidence.",
+  "Answer the customer's actual question before adding any next step.",
   "Ask at most one focused follow-up question when clarification is needed.",
   "Use short paragraphs; bullets are allowed only when they make the answer easier to scan.",
   "Avoid rich markdown, headings, long lists, and hidden links; raw URLs are allowed when needed.",
@@ -99,6 +100,7 @@ const CHANNEL_PROFILES: Record<PromptChannel, ChannelPromptProfile> = {
     label: "Web chat",
     customerField: "content",
     statusTarget: "content",
+    styleTag: "direct_chat_style",
     replyStyleRules: DIRECT_CHAT_REPLY_RULES,
     statusStyleRules: DIRECT_CHAT_STATUS_RULES,
     recoveryStyleRules: DIRECT_CHAT_RECOVERY_RULES,
@@ -108,6 +110,7 @@ const CHANNEL_PROFILES: Record<PromptChannel, ChannelPromptProfile> = {
     label: "WhatsApp",
     customerField: "content",
     statusTarget: "content",
+    styleTag: "direct_chat_style",
     replyStyleRules: DIRECT_CHAT_REPLY_RULES,
     statusStyleRules: DIRECT_CHAT_STATUS_RULES,
     recoveryStyleRules: DIRECT_CHAT_RECOVERY_RULES,
@@ -117,6 +120,7 @@ const CHANNEL_PROFILES: Record<PromptChannel, ChannelPromptProfile> = {
     label: "Messenger",
     customerField: "content",
     statusTarget: "content",
+    styleTag: "direct_chat_style",
     replyStyleRules: DIRECT_CHAT_REPLY_RULES,
     statusStyleRules: DIRECT_CHAT_STATUS_RULES,
     recoveryStyleRules: DIRECT_CHAT_RECOVERY_RULES,
@@ -126,6 +130,7 @@ const CHANNEL_PROFILES: Record<PromptChannel, ChannelPromptProfile> = {
     label: "Facebook comment",
     customerField: "publicContent/privateContent",
     statusTarget: "publicContent",
+    styleTag: "facebook_comment_style",
     replyStyleRules: [
       "publicContent is the public comment: keep it very short, social, and safe.",
       "privateContent is the private message: provide grounded details or one useful follow-up question.",
@@ -318,14 +323,11 @@ ${numbered([
 }
 
 function sectionChannelBehavior(ctx: PromptContext): string {
-  return `<channel_behavior>
-Channel: ${ctx.channelProfile.label}
-Customer-facing field: ${ctx.channelProfile.customerField}
-
+  return `<${ctx.channelProfile.styleTag}>
 ${ctx.channelProfile.replyStyleRules.map((rule) => `- ${rule}`).join("\n")}
 - Use structured plain text only. No markdown tables, code blocks, headings with #, decorative separators, hashtags, or tag clouds.
 - Use emojis sparingly and only when they fit the configured voice.
-</channel_behavior>`;
+</${ctx.channelProfile.styleTag}>`;
 }
 
 function sectionCoreRules(ctx: PromptContext): string {

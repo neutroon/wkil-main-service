@@ -8,6 +8,7 @@ import {
   mergeHeaderUpdate,
   toCanonicalVerificationRead,
 } from "./externalData.service";
+import { updateDataSourceSchema } from "./dataSource.validation";
 
 describe("toCanonicalVerificationRead", () => {
   it("marks non-empty JSON without explicit status as verified (data returned)", () => {
@@ -147,6 +148,17 @@ describe("toCanonicalVerificationRead", () => {
 });
 
 describe("external source production hardening helpers", () => {
+  it("treats null query params as an empty config object on update", () => {
+    const result = updateDataSourceSchema.parse({
+      params: { profileId: 1, sourceId: 2 },
+      body: {
+        queryParams: null,
+      },
+    });
+
+    expect(result.body.queryParams).toEqual({});
+  });
+
   it("rejects localhost and private IP URLs", () => {
     expect(() => assertExternalApiUrlLooksSafe("http://localhost:3000/data")).toThrow();
     expect(() => assertExternalApiUrlLooksSafe("http://127.0.0.1/data")).toThrow();

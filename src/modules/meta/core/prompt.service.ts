@@ -76,13 +76,15 @@ export const DEFAULT_CUSTOMER_DETAILS_INSTRUCTIONS = [
 ].join(" ");
 
 const DIRECT_CHAT_REPLY_RULES = [
-  "Use the same decision behavior as other direct-message channels.",
+  "Use the same decision and reply behavior as web chat, WhatsApp, and Messenger.",
   "Answer naturally and concisely from the allowed evidence.",
   "Ask at most one focused follow-up question when clarification is needed.",
+  "Use short paragraphs; bullets are allowed only when they make the answer easier to scan.",
+  "Avoid rich markdown, headings, long lists, and hidden links; raw URLs are allowed when needed.",
 ];
 
 const DIRECT_CHAT_STATUS_RULES = [
-  "Use one natural sentence.",
+  "Use one natural compact chat status update.",
   "Keep it calm and useful; do not answer the requested fact yet.",
 ];
 
@@ -97,57 +99,27 @@ const CHANNEL_PROFILES: Record<PromptChannel, ChannelPromptProfile> = {
     label: "Web chat",
     customerField: "content",
     statusTarget: "content",
-    replyStyleRules: [
-      ...DIRECT_CHAT_REPLY_RULES,
-      "Short paragraphs are preferred; bullets are allowed only when they make the answer easier to scan.",
-    ],
-    statusStyleRules: [
-      ...DIRECT_CHAT_STATUS_RULES,
-      "Web wording can be slightly more polished, but stay short.",
-    ],
-    recoveryStyleRules: [
-      ...DIRECT_CHAT_RECOVERY_RULES,
-    ],
+    replyStyleRules: DIRECT_CHAT_REPLY_RULES,
+    statusStyleRules: DIRECT_CHAT_STATUS_RULES,
+    recoveryStyleRules: DIRECT_CHAT_RECOVERY_RULES,
   },
   whatsapp: {
     channel: "whatsapp",
     label: "WhatsApp",
     customerField: "content",
     statusTarget: "content",
-    replyStyleRules: [
-      ...DIRECT_CHAT_REPLY_RULES,
-      "Avoid rich markdown, headings, long lists, and hidden links; raw URLs are allowed when needed.",
-      "Prefer the shortest mobile-friendly phrasing that still feels natural.",
-    ],
-    statusStyleRules: [
-      ...DIRECT_CHAT_STATUS_RULES,
-      "Keep the wording mobile-friendly without bullets or formal wording.",
-    ],
-    recoveryStyleRules: [
-      ...DIRECT_CHAT_RECOVERY_RULES,
-      "Prefer one short conversational sentence when possible.",
-      "Avoid long explanations.",
-    ],
+    replyStyleRules: DIRECT_CHAT_REPLY_RULES,
+    statusStyleRules: DIRECT_CHAT_STATUS_RULES,
+    recoveryStyleRules: DIRECT_CHAT_RECOVERY_RULES,
   },
   messenger: {
     channel: "messenger",
     label: "Messenger",
     customerField: "content",
     statusTarget: "content",
-    replyStyleRules: [
-      ...DIRECT_CHAT_REPLY_RULES,
-      "Keep the tone social but not noisy.",
-      "Avoid rich markdown, headings, long lists, and hidden links; raw URLs are allowed when needed.",
-    ],
-    statusStyleRules: [
-      ...DIRECT_CHAT_STATUS_RULES,
-      "Keep the wording compact and conversational.",
-    ],
-    recoveryStyleRules: [
-      ...DIRECT_CHAT_RECOVERY_RULES,
-      "Prefer one short friendly sentence when possible.",
-      "Avoid long explanations.",
-    ],
+    replyStyleRules: DIRECT_CHAT_REPLY_RULES,
+    statusStyleRules: DIRECT_CHAT_STATUS_RULES,
+    recoveryStyleRules: DIRECT_CHAT_RECOVERY_RULES,
   },
   facebook_comment: {
     channel: "facebook_comment",

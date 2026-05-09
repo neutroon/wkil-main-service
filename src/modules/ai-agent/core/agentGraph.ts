@@ -105,6 +105,9 @@ export interface AgentGraphParams {
   customerMessage:   string;
   tools?:            Tool[];
   businessProfileId: number;
+  businessName?:     string;
+  businessVoice?:    string;
+  businessTone?:     string;
   customerPhone?:    string;
   channel?:          "messenger" | "whatsapp" | "web" | "facebook_comment";
   contextQuality?:   "specific_evidence_found" | "core_context_only" | "no_context";
@@ -193,6 +196,9 @@ async function _runGraph(params: AgentGraphParams): Promise<AiRoutingDecision> {
       systemInstruction: params.systemInstruction,
       tools:             params.tools,
       businessProfileId: params.businessProfileId,
+      businessName:      params.businessName,
+      businessVoice:     params.businessVoice,
+      businessTone:      params.businessTone,
       userId:            profile.userId,
       customerPhone:     params.customerPhone,
       channel:           params.channel,

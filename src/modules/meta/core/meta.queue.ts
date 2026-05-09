@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/node";
 import { Queue, Worker, Job } from "bullmq";
 import { bullConnection } from "@config/redis";
 import { logger } from "@utils/logger";
+import type { IntegrationActionJob } from "@modules/integrations/external/externalLookup.job";
 
 import {
   processMetaMessage,
@@ -49,7 +50,8 @@ export type MetaJobType =
   | "webhook_subscription"
   | "page_token_validation"
   | "token_refresh_cron"
-  | "follow_up";
+  | "follow_up"
+  | "integration_action";
 
 export interface MetaEngineJob {
   type: MetaJobType;
@@ -109,6 +111,35 @@ export async function enqueueMediaSyncJob(assetId: number) {
   });
 }
 
+export async function enqueueIntegrationAction(
+  job: IntegrationActionJob,
+  opts: { jobId?: string } = {},
+): Promise<void> {
+  await metaExpressQueue.add(
+    "integration_action",
+    {
+      type: "integration_action",
+      payload: job,
+    },
+    {
+      jobId:
+        opts.jobId ??
+        `integration-action:${job.trigger}:${job.conversationId ?? job.customerId ?? "manual"}:${job.sourceId}:${Date.now()}`,
+      attempts: 2,
+      backoff: { type: "exponential", delay: 10_000 },
+      removeOnComplete: { count: 100 },
+      removeOnFail: { count: 500 },
+    },
+  );
+  logger.info("meta.queue.integration_action_enqueued", {
+    businessProfileId: job.businessProfileId,
+    conversationId: job.conversationId,
+    customerId: job.customerId,
+    trigger: job.trigger,
+    sourceId: job.sourceId,
+  });
+}
+
 /**
  * WORKER: Express Lane
  * High concurrency (8) for fast messaging.
@@ -143,6 +174,9 @@ export const expressWorker = new Worker(
     } else if (type === "follow_up") {
       const { processFollowUpJob } = await import("@modules/follow-up/followUp.service");
       await processFollowUpJob(payload);
+    } else if (type === "integration_action") {
+      const { processIntegrationActionJob } = await import("@modules/integrations/external/externalLookup.job");
+      await processIntegrationActionJob(payload);
     } else {
       await processMetaMessage(payload);
     }

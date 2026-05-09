@@ -8,6 +8,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "nodemon --exec ts-node -r tsconfig-paths/register src/server.ts",
+    "prebuild": "prisma generate",
     "build": "tsc && tsc-alias",
     "start": "node dist/server.js",
     "test": "vitest run",

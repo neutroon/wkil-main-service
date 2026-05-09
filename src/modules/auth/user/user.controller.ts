@@ -65,6 +65,7 @@ export const registerUser = async (req: Request, res: Response) => {
       role: user.role,
       isEmailVerified: user.isEmailVerified,
       lastVerificationSentAt: user.lastVerificationSentAt,
+      isBusinessProfileCreated: user.isBusinessProfileCreated,
     },
   });
 };
@@ -108,6 +109,7 @@ export const loginUserController = async (req: Request, res: Response) => {
       role: result.role,
       isEmailVerified: result.isEmailVerified,
       lastVerificationSentAt: result.lastVerificationSentAt,
+      isBusinessProfileCreated: result.isBusinessProfileCreated,
     },
   });
 };

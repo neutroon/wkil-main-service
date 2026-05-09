@@ -320,7 +320,7 @@ ${
   "intent": "SALES_DM" | "GREET_ONLY" | "IGNORE" | "NONE",
   "requiresGrounding": true | false,
   "grounded": true | false,
-  "usedChunkTypes": ["identity", "faq", "custom_section"],
+  "usedChunkTypes": ["identity", "contact", "intents", "faq", "product", "custom_section", "raw_content"],
   "missingInfo": "What exact evidence is missing, or null",
   "attachment": { "assetName": "string", "caption": "string" } | null
 }
@@ -332,7 +332,7 @@ ${
   "content": "Your message to the user",
   "requiresGrounding": true | false,
   "grounded": true | false,
-  "usedChunkTypes": ["identity", "faq", "custom_section"],
+  "usedChunkTypes": ["identity", "contact", "intents", "faq", "product", "custom_section", "raw_content"],
   "missingInfo": "What exact evidence is missing, or null",
   "attachment": { "assetName": "string", "caption": "string" } | null
 }

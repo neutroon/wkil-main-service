@@ -275,6 +275,13 @@ export async function handleMessengerMessage(
             data: { externalId: mid },
           });
         }
+
+        const { scheduleConversationFollowUps } = await import("@modules/follow-up/followUp.service");
+        await scheduleConversationFollowUps({
+          conversationId: conversation.id,
+          businessProfileId: page.businessProfileId,
+          triggerMessageId: modelSaved.id,
+        });
       } catch (sendErr: any) {
         logger.error("messenger.reply_send_failed", { error: sendErr.message });
       }

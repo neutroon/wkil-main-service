@@ -7,6 +7,10 @@ import {
 import { repairAndParseAiResponse } from "@modules/ai-agent/core/aiEngine.utils";
 import { logger } from "@utils/logger";
 import type { AiRoutingDecision } from "@modules/ai-agent/core/aiEngine.utils";
+import {
+  formatChannelStyleRules,
+  getChannelPromptProfile,
+} from "@modules/meta/core/prompt.service";
 
 const PENDING_LOOKUP_STATUS_TIMEOUT_MS = 1_500;
 const PENDING_LOOKUP_MODEL_TIERS = [
@@ -68,6 +72,7 @@ async function generatePendingLookupStatusDecisionUnsafe(
   params: PendingLookupStatusParams,
 ): Promise<AiRoutingDecision | null> {
   const channel = params.channel || "messenger";
+  const channelProfile = getChannelPromptProfile(channel);
   const recentContext = formatRecentTurns(params.recentTurns ?? []);
   const prompt = [
     `You write a single short customer-facing progress update for ${params.businessName}.`,
@@ -75,7 +80,7 @@ async function generatePendingLookupStatusDecisionUnsafe(
     "<context>",
     `Business voice/language: ${params.voice || "Professional"}`,
     `Tone: ${params.tone || "Friendly"}`,
-    `Channel: ${channel}`,
+    `Reply field: ${channelProfile.statusTarget}`,
     `Customer latest message: ${params.latestUserText || ""}`,
     recentContext ? `Recent chat context:\n${recentContext}` : "",
     `Queued action: ${params.source?.name || "business action"}`,
@@ -91,8 +96,12 @@ async function generatePendingLookupStatusDecisionUnsafe(
     "- Do not mention queues, tools, APIs, systems, providers, or background jobs.",
     "- Do not claim anything is confirmed, available, booked, saved, priced, delivered, completed, or guaranteed.",
     "- Do not ask for details unless the customer already asked an unrelated question.",
-    "- Keep it one natural sentence, under 120 characters where possible.",
     "- Match the customer's/business language and tone.",
+    "",
+    channelProfile.styleTag === "facebook_comment_style"
+      ? "facebook_comment_style:"
+      : "direct_chat_style:",
+    formatChannelStyleRules(channel, "status"),
   ]
     .filter(Boolean)
     .join("\n");
@@ -112,7 +121,7 @@ async function generatePendingLookupStatusDecisionUnsafe(
             properties: {
               content: {
                 type: Type.STRING,
-                description: "The short direct-chat progress update.",
+                description: "The short progress update for direct chat.",
               },
               publicContent: {
                 type: Type.STRING,

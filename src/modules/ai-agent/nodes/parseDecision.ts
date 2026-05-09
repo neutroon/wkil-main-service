@@ -15,23 +15,38 @@ import {
   sanitizeAiText,
   hasExcessiveRepetition,
 } from "../core/aiEngine.utils";
+import { generateSafeRecoveryReply } from "@modules/ai-agent/chat/aiRecoveryReply";
 import type { AgentStateType } from "../core/agentState";
 
-const MISSING_KNOWLEDGE_REPLY =
-  "I want to confirm this accurately for you. I'll connect you with a team member who can check the latest details.";
+async function missingKnowledgeDecision(state: AgentStateType, reasoning: string) {
+  const recoveryReply = await generateSafeRecoveryReply({
+    systemInstruction: state.systemInstruction,
+    channel: state.channel,
+    customerMessage: latestUserText(state),
+    failureReason: "missing_knowledge",
+    safeFallback: state.policy.fallbackTemplates.unverified,
+    allowHandoffLanguage: true,
+  });
 
-function missingKnowledgeDecision(reasoning: string) {
   return {
     action: "HANDOFF_TO_HUMAN" as const,
     handoffCategory: "MISSING_KNOWLEDGE",
     reasoning,
-    content: MISSING_KNOWLEDGE_REPLY,
-    publicContent: "Thanks! Our team will confirm the details with you.",
-    privateContent: MISSING_KNOWLEDGE_REPLY,
+    content: recoveryReply,
+    publicContent: recoveryReply,
+    privateContent: recoveryReply,
     requiresGrounding: true,
     grounded: false,
     usedChunkTypes: [],
   };
+}
+
+function latestUserText(state: AgentStateType): string {
+  const latest = [...state.contents].reverse().find((turn) => turn.role === "user");
+  return (latest?.parts ?? [])
+    .filter((part) => typeof part.text === "string")
+    .map((part) => part.text)
+    .join(" ");
 }
 
 function hasUnsupportedChunkClaim(
@@ -41,6 +56,15 @@ function hasUnsupportedChunkClaim(
   if (!usedChunkTypes || usedChunkTypes.length === 0) return false;
   const available = new Set(availableChunkTypes);
   return usedChunkTypes.some((chunkType) => !available.has(chunkType));
+}
+
+function hasSupportedGroundingEvidence(
+  usedChunkTypes: string[] | undefined,
+  availableChunkTypes: string[],
+): boolean {
+  if (!usedChunkTypes || usedChunkTypes.length === 0) return false;
+  const available = new Set(availableChunkTypes);
+  return usedChunkTypes.every((chunkType) => available.has(chunkType));
 }
 
 export async function parseDecisionNode(
@@ -172,7 +196,8 @@ export async function parseDecisionNode(
     });
 
     return {
-      decision: missingKnowledgeDecision(
+      decision: await missingKnowledgeDecision(
+        state,
         "AI cited unavailable business context chunk types.",
       ),
     };
@@ -181,7 +206,8 @@ export async function parseDecisionNode(
   if (
     decision.action !== "HANDOFF_TO_HUMAN" &&
     decision.requiresGrounding === true &&
-    state.contextQuality !== "specific_evidence_found"
+    state.contextQuality !== "specific_evidence_found" &&
+    !hasSupportedGroundingEvidence(decision.usedChunkTypes, state.availableChunkTypes)
   ) {
     logger.warn("ai.node.parseDecision.insufficient_context_blocked", {
       businessProfileId: state.businessProfileId,
@@ -191,7 +217,8 @@ export async function parseDecisionNode(
     });
 
     return {
-      decision: missingKnowledgeDecision(
+      decision: await missingKnowledgeDecision(
+        state,
         `Specific evidence was not retrieved for a grounded answer. Context quality: ${state.contextQuality ?? "unknown"}`,
       ),
     };
@@ -211,7 +238,8 @@ export async function parseDecisionNode(
     });
 
     return {
-      decision: missingKnowledgeDecision(
+      decision: await missingKnowledgeDecision(
+        state,
         `AI reported missing evidence: ${decision.missingInfo || "No evidence chunks cited."}`,
       ),
     };

@@ -329,6 +329,13 @@ export async function handleWhatsAppMessage(
             data: { externalId: modelWamid },
           });
         }
+
+        const { scheduleConversationFollowUps } = await import("@modules/follow-up/followUp.service");
+        await scheduleConversationFollowUps({
+          conversationId: conversation.id,
+          businessProfileId: account.businessProfileId,
+          triggerMessageId: modelSaved.id,
+        });
       } catch (sendErr: any) {
         logger.error("whatsapp.reply_send_failed", { error: sendErr.message });
       }

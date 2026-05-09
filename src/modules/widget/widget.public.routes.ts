@@ -1,7 +1,7 @@
 import { Router, Response } from "express";
 import prisma from "@config/prisma";
 import { processWidgetChatMessage } from "./services/widgetChat.service";
-import { listConversationMessages, saveMessage } from "@modules/meta/core/conversation.service";
+import { listConversationMessages } from "@modules/meta/core/conversation.service";
 import type { WidgetRequest } from "@modules/widget/widgetInstall.middleware";
 import { widgetInstallAndCors } from "@modules/widget/widgetInstall.middleware";
 import { validate } from "@middlewares/validate.middleware";
@@ -21,25 +21,6 @@ function normalizeWidgetText(input: string): string {
     .replace(/\s*\n\s*/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-}
-
-async function resolveWidgetAttachment(
-  attachment: { assetName: string; caption?: string | null } | null | undefined,
-  businessProfileId: number,
-) {
-  if (!attachment?.assetName) return null;
-  const { resolveAssetForChannel } = await import("@modules/media/services/mediaLibrary.service");
-  const resolved = await resolveAssetForChannel(
-    attachment.assetName,
-    businessProfileId,
-    "web",
-  );
-  if (!resolved?.url) return null;
-  return {
-    url: resolved.url,
-    type: resolved.mediaType,
-    caption: attachment.caption ?? null,
-  };
 }
 
 widgetPublicRoutes.options("/chat", widgetInstallAndCors);
@@ -112,114 +93,37 @@ widgetPublicRoutes.post(
     }
 
     if (stream) {
-      // ── Server-Sent Events (SSE) Streaming Path ───────────────────────
+      // ── Server-Sent Events Path ────────────────────────────────────────
+      // We keep SSE for progress/final delivery, but use the same approved
+      // non-streaming chat flow as Messenger/WhatsApp to avoid exposing
+      // unverified draft tokens before final guardrails.
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("Connection", "keep-alive");
 
-      const { processWidgetChatStreaming } = await import("./services/widgetChat.service");
-      const generator = processWidgetChatStreaming({
-        install,
-        visitorId: visitorId.trim(),
-        message: normalizedMessage,
-        conversationId,
-      });
+      try {
+        res.write(`data: ${JSON.stringify({ status: "processing" })}\n\n`);
+        const result = await processWidgetChatMessage({
+          install,
+          visitorId: visitorId.trim(),
+          message: normalizedMessage,
+          conversationId,
+        });
 
-      let finalDecision: any = null;
-      let fullContent = "";
-      let streamedConversationId: number | null = null;
-      let streamedError: string | null = null;
-
-      for await (const event of generator) {
-        if (event.type === "token") {
-          fullContent += event.data;
-        } else if (event.type === "conversation_id") {
-          streamedConversationId = event.data;
-          res.write(`data: ${JSON.stringify({ conversationId: event.data })}\n\n`);
-        } else if (event.type === "final_decision") {
-          finalDecision = event.data;
-        } else if (event.type === "error") {
-          streamedError = event.data.content || "Unable to complete chat response.";
-        }
-      }
-
-      let attachmentForWidget: {
-        url: string;
-        type: string;
-        caption?: string | null;
-      } | null = null;
-
-      // Persist final message (streaming doesn't automatically save model turn)
-      if (finalDecision) {
-        // Find the conversation again to get the ID (setupWidgetChat creates it if missing)
-        // Actually, we should yield the conversationId from the generator too.
-        // For now, I'll assume we have it or fetch it.
-        const pageId = `widget:${install.id}`;
-        const conversation = streamedConversationId
-          ? await prisma.conversation.findFirst({
-              where: {
-                id: streamedConversationId,
-                pageId,
-                senderId: visitorId,
-              },
-            })
-          : await prisma.conversation.findFirst({
-              where: { pageId, senderId: visitorId },
-              orderBy: { updatedAt: "desc" },
-            });
-
-        if (conversation) {
-          const isAutoMode = req.body.responseMode !== "MANUAL"; // Simplified
-          const status = finalDecision.action === "HANDOFF_TO_HUMAN" ? "PENDING_REVIEW" : "SENT";
-          
-          const savedFinalMessage = await saveMessage(conversation.id, "model", finalDecision.content || fullContent, {
-            status,
-            aiReasoning: finalDecision.reasoning,
-            handoffCategory: finalDecision.handoffCategory,
-          });
-
-          if (status === "SENT") {
-            const { scheduleConversationFollowUps } =
-              await import("@modules/follow-up/followUp.service");
-            await scheduleConversationFollowUps({
-              conversationId: conversation.id,
-              businessProfileId: install.businessProfileId,
-              triggerMessageId: savedFinalMessage.id,
-            });
-          }
-
-          attachmentForWidget = await resolveWidgetAttachment(
-            finalDecision.attachment,
-            install.businessProfileId,
-          );
-          if (attachmentForWidget?.url) {
-            await saveMessage(
-              conversation.id,
-              "model",
-              attachmentForWidget.caption ?? "",
-              {
-                type: attachmentForWidget.type,
-                status: "SENT",
-                mediaMetadata: { url: attachmentForWidget.url },
-              },
-            );
-          }
-
-          if (finalDecision.action === "RESOLVE_CONVERSATION") {
-            await prisma.conversation.update({ where: { id: conversation.id }, data: { status: "RESOLVED" } });
-          }
-        }
-      }
-
-      if (finalDecision || attachmentForWidget || streamedError) {
         res.write(
           `data: ${JSON.stringify({
             final: {
-              reply: finalDecision?.content || fullContent || streamedError || "",
-              action: finalDecision?.action || "REPLY_AUTO",
-              attachment: attachmentForWidget,
-              conversationId: streamedConversationId,
+              reply: result.reply,
+              action: "REPLY_AUTO",
+              attachment: result.attachment ?? null,
+              conversationId: result.conversationId,
             },
+          })}\n\n`,
+        );
+      } catch (err) {
+        res.write(
+          `data: ${JSON.stringify({
+            error: err instanceof Error ? err.message : "Unable to complete chat response.",
           })}\n\n`,
         );
       }

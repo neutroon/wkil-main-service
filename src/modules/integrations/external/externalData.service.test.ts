@@ -7,6 +7,7 @@ import {
   maskExternalHeaders,
   mergeHeaderUpdate,
   toCanonicalVerificationRead,
+  toCanonicalVerificationMutation,
 } from "./externalData.service";
 import { updateDataSourceSchema } from "./dataSource.validation";
 
@@ -147,6 +148,38 @@ describe("toCanonicalVerificationRead", () => {
   });
 });
 
+describe("toCanonicalVerificationMutation", () => {
+  it("marks successful mutation responses as verified", () => {
+    expect(toCanonicalVerificationMutation({ id: "booking_123" }, true)).toEqual({
+      verification: "verified",
+      reason: "http_success",
+    });
+  });
+
+  it("marks empty 2xx mutation responses as verified", () => {
+    expect(toCanonicalVerificationMutation(null, true)).toEqual({
+      verification: "verified",
+      reason: "http_success",
+    });
+  });
+
+  it("treats provider success false as failed", () => {
+    expect(
+      toCanonicalVerificationMutation({ success: false, message: "rejected" }, true),
+    ).toEqual({
+      verification: "failed",
+      reason: "provider_success_false",
+    });
+  });
+
+  it("treats failed HTTP mutation responses as failed", () => {
+    expect(toCanonicalVerificationMutation({ error: "bad request" }, false)).toEqual({
+      verification: "failed",
+      reason: "http_failed",
+    });
+  });
+});
+
 describe("external source production hardening helpers", () => {
   it("treats null query params as an empty config object on update", () => {
     const result = updateDataSourceSchema.parse({
@@ -184,7 +217,7 @@ describe("external source production hardening helpers", () => {
     });
   });
 
-  it("drops model args when a live data source declares no params", () => {
+  it("drops model args when a chat-requested action declares no params", () => {
     expect(filterExternalArgsBySchema(undefined, { q: "invented", id: "123" })).toEqual({});
     expect(filterExternalArgsBySchema({}, { q: "invented", id: "123" })).toEqual({});
   });

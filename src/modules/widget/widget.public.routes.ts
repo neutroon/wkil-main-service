@@ -133,7 +133,6 @@ widgetPublicRoutes.post(
       for await (const event of generator) {
         if (event.type === "token") {
           fullContent += event.data;
-          res.write(`data: ${JSON.stringify({ token: event.data })}\n\n`);
         } else if (event.type === "conversation_id") {
           streamedConversationId = event.data;
           res.write(`data: ${JSON.stringify({ conversationId: event.data })}\n\n`);
@@ -141,7 +140,6 @@ widgetPublicRoutes.post(
           finalDecision = event.data;
         } else if (event.type === "error") {
           streamedError = event.data.content || "Unable to complete chat response.";
-          res.write(`data: ${JSON.stringify({ error: streamedError })}\n\n`);
         }
       }
 

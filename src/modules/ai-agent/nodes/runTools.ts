@@ -12,9 +12,10 @@
  */
 import { z } from "zod";
 import { logger } from "@utils/logger";
-import { pushLeadToCrm } from "@modules/integrations/crm/crm.service";
-import { executeExternalQuery } from "@modules/integrations/external/externalData.service";
-import { updateEvidenceFromEnvelope } from "@modules/ai-agent/core/aiEngine.utils";
+import { updateCustomerFromSavedDetails } from "@modules/business/customer/customer.service";
+import { enqueueIntegrationAction } from "@modules/meta/core/meta.queue";
+import { getExternalDataSourceStatusMetadata } from "@modules/integrations/external/externalData.service";
+import { generatePendingLookupStatusDecision } from "@modules/ai-agent/chat/pendingLookupStatus";
 import { classifyExternalToolFailureRecovery } from "@modules/ai-agent/chat/externalToolRecoveryClassifier";
 import {
   buildAiRecoveryDecision,
@@ -25,12 +26,12 @@ import type { AgentStateType } from "@modules/ai-agent/core/agentState";
 
 // ── Zod Schemas for Tool Input Validation ─────────────────────────────────────
 
-const CaptureLeadSchema = z.object({
+const SaveCustomerDetailsSchema = z.object({
   name: z.string().min(1).optional(),
   phone: z.string().optional(),
   email: z.string().email().optional().or(z.literal("")),
   notes: z.string().optional(),
-}).passthrough(); // Crucial for production: allows custom fields from fieldMapping
+}).passthrough(); // Allows flexible customer fields such as interest, budget, or preferred time.
 
 const ExternalQuerySchema = z
   .object({
@@ -46,21 +47,16 @@ export async function runToolsNode(
 ): Promise<Partial<AgentStateType>> {
   const functionResponses: any[] = [];
   let updatedEvidence = { ...state.evidence };
-  const leadPhone = state.customerPhone;
+  const contextPhone = state.customerPhone;
   let blockingDecision: AgentStateType["decision"] | null = null;
 
   for (const call of state.functionCalls) {
     if (!call.name) continue;
 
-    // ── Idempotency key: unique per tool call instance ───────────────────
-    // If the node retries (crash, timeout), the CRM sees the same key
-    // and skips the duplicate insert.
-    const idempotencyKey = `${call.id ?? call.name}_${state.businessProfileId}`;
-
     try {
-      if (call.name === "capture_lead") {
+      if (call.name === "save_customer_details") {
         // ── Validate args with Zod ─────────────────────────────────────
-        const parseResult = CaptureLeadSchema.safeParse(call.args);
+        const parseResult = SaveCustomerDetailsSchema.safeParse(call.args);
         if (!parseResult.success) {
           logger.warn("ai.node.runTools.zod_rejection", {
             tool: call.name,
@@ -69,57 +65,47 @@ export async function runToolsNode(
           const envelope = {
             success: false,
             verification: "failed" as const,
-            actionType: "capture_lead",
+            actionType: "save_customer_details",
             reason: "validation_failed: " + parseResult.error.message,
           };
           updatedEvidence = applyEvidence(
             updatedEvidence,
             envelope,
-            "capture_lead",
+            "save_customer_details",
           );
           functionResponses.push(buildFunctionResponse(call.name, envelope));
           continue;
         }
 
         const args = parseResult.data;
-        const crmResult = await pushLeadToCrm(state.businessProfileId, {
-          ...args,
-          phone: args.phone || leadPhone,
-          idempotencyKey,
+        const customer = await updateCustomerFromSavedDetails({
+          businessProfileId: state.businessProfileId,
           conversationId: state.conversationId,
+          details: {
+            ...args,
+            phone: args.phone || contextPhone,
+          },
         });
 
-        const envelope = crmResult.success
-          ? {
-              success: true,
-              verification: "verified" as const,
-              actionType: "capture_lead",
-              reason: "crm_saved",
-              data: crmResult,
-            }
-          : {
-              success: false,
-              verification: "failed" as const,
-              actionType: "capture_lead",
-              reason: crmResult.error ?? "crm_rejected",
-              data: crmResult,
-            };
-
-        if (!crmResult.success) {
-          logger.warn("ai.node.runTools.crm_kickback", {
-            error: crmResult.error,
-          });
-        }
+        const envelope = {
+          success: true,
+          verification: "verified" as const,
+          actionType: "save_customer_details",
+          reason: "customer_details_saved",
+          data: {
+            customerId: customer.id,
+          },
+        };
 
         updatedEvidence = applyEvidence(
           updatedEvidence,
           envelope,
-          "capture_lead",
+          "save_customer_details",
         );
         functionResponses.push(buildFunctionResponse(call.name, envelope));
-      } else if (call.name.startsWith("query_external_api_")) {
+      } else if (call.name.startsWith("integration_action_")) {
         const sourceId = parseInt(call.name.split("_").pop() || "0", 10);
-        const actionType = `external_query_${sourceId}`;
+        const actionType = `integration_action_${sourceId}`;
 
         if (state.evidence.failedActions.includes(actionType)) {
           logger.warn("ai.node.runTools.external_query_retry_blocked", {
@@ -175,31 +161,76 @@ export async function runToolsNode(
           sourceId,
           args: parseResult.data,
         });
-        const envelope = await executeExternalQuery(
+
+        if (!state.conversationId) {
+          const envelope = {
+            success: false,
+            verification: "failed" as const,
+            actionType,
+            reason: "missing_conversation_context",
+            data: null,
+          };
+          updatedEvidence = applyEvidence(
+            updatedEvidence,
+            envelope,
+            actionType,
+          );
+          functionResponses.push(buildFunctionResponse(call.name, envelope));
+          blockingDecision = await buildExternalLookupFailedDecision(
+            state,
+            "Integration action could not be queued without conversation context.",
+            "missing_conversation_context",
+            sourceId,
+          );
+          continue;
+        }
+
+        const latestMessage = latestUserText(state);
+        const sourceMetadata = await getExternalDataSourceStatusMetadata(
           state.businessProfileId,
           sourceId,
-          parseResult.data,
+        );
+
+        await enqueueIntegrationAction(
           {
-            customerPhone: state.customerPhone,
+            businessProfileId: state.businessProfileId,
+            trigger: "CHAT_REQUESTED",
             conversationId: state.conversationId,
-            latestUserText: latestUserText(state),
+            sourceId,
+            toolName: call.name,
+            args: parseResult.data,
+            customerPhone: state.customerPhone,
+            latestUserText: latestMessage,
             historyText: userHistoryText(state.contents),
           },
+          { jobId: `integration-action:CHAT_REQUESTED:${state.conversationId}:${call.id || call.name}` },
         );
+
+        const envelope = {
+          success: true,
+          verification: "verified" as const,
+          actionType,
+          reason: "integration_action_queued",
+          data: {
+            queued: true,
+            sourceId,
+          },
+        };
         updatedEvidence = applyEvidence(
           updatedEvidence,
           envelope,
           actionType,
         );
         functionResponses.push(buildFunctionResponse(call.name, envelope));
-        if (envelope.verification === "failed") {
-          blockingDecision = await buildExternalLookupFailedDecision(
-            state,
-            `External lookup failed: ${envelope.reason || "unknown"}.`,
-            envelope.reason || "external_lookup_failed",
-            sourceId,
-          );
-        }
+        blockingDecision = await generatePendingLookupStatusDecision({
+          businessName: state.businessName || "the business",
+          voice: state.businessVoice,
+          tone: state.businessTone,
+          channel: state.channel,
+          latestUserText: latestMessage,
+          recentTurns: recentTextTurns(state.contents, 3),
+          source: sourceMetadata,
+        }) ?? buildSilentExternalLookupQueuedDecision();
       }
     } catch (toolError: any) {
       logger.error("ai.node.runTools.unexpected_error", {
@@ -214,6 +245,15 @@ export async function runToolsNode(
       };
       updatedEvidence = applyEvidence(updatedEvidence, envelope, call.name);
       functionResponses.push(buildFunctionResponse(call.name, envelope));
+      if (call.name.startsWith("integration_action_")) {
+        const sourceId = parseInt(call.name.split("_").pop() || "0", 10);
+        blockingDecision = await buildExternalLookupFailedDecision(
+          state,
+          `Integration action failed: ${toolError.message}.`,
+          "integration_action_failed",
+          sourceId,
+        );
+      }
     }
   }
 
@@ -230,6 +270,22 @@ export async function runToolsNode(
   };
 }
 
+function buildSilentExternalLookupQueuedDecision(): AgentStateType["decision"] {
+  return {
+    action: "REPLY_AUTO",
+    handoffCategory: null,
+    reasoning:
+      "Chat-requested action was queued, but pending-status generation timed out or returned no safe text.",
+    content: "",
+    publicContent: "",
+    privateContent: "",
+    requiresGrounding: false,
+    grounded: true,
+    usedChunkTypes: [],
+    missingInfo: null,
+  };
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function buildFunctionResponse(name: string, response: unknown) {
@@ -243,6 +299,24 @@ function userHistoryText(contents: AgentStateType["contents"]): string {
     .filter((part) => typeof part.text === "string")
     .map((part) => part.text)
     .join(" ");
+}
+
+function recentTextTurns(
+  contents: AgentStateType["contents"],
+  limit: number,
+): Array<{ role: "user" | "model"; text: string }> {
+  return contents
+    .filter((turn) => turn.role === "user" || turn.role === "model")
+    .map((turn) => ({
+      role: turn.role,
+      text: (turn.parts ?? [])
+        .filter((part) => typeof part.text === "string")
+        .map((part) => part.text)
+        .join(" ")
+        .trim(),
+    }))
+    .filter((turn) => turn.text.length > 0)
+    .slice(-limit);
 }
 
 async function buildExternalLookupFailedDecision(
@@ -274,7 +348,7 @@ async function buildExternalLookupFailedDecision(
     requiresGrounding: !isNormalReply,
     missingInfo: isNormalReply
       ? null
-      : "External live lookup could not be verified.",
+      : "External action result could not be verified.",
   });
 }
 

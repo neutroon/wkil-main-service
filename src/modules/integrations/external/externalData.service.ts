@@ -35,6 +35,22 @@ type ExternalToolContext = {
   historyText?: string;
 };
 
+export type ExternalDataSourceStatusMetadata = {
+  id: number;
+  name: string;
+  description: string;
+};
+
+export async function getExternalDataSourceStatusMetadata(
+  businessProfileId: number,
+  sourceId: number,
+): Promise<ExternalDataSourceStatusMetadata | null> {
+  return prisma.externalDataSource.findFirst({
+    where: { id: sourceId, businessProfileId, isActive: true },
+    select: { id: true, name: true, description: true },
+  });
+}
+
 function looksEmptyResult(data: unknown): boolean {
   if (data == null) return true;
   if (Array.isArray(data)) return data.length === 0;
@@ -410,6 +426,35 @@ export function toCanonicalVerificationRead(data: unknown): {
   return { verification: "verified", reason: "data_returned" };
 }
 
+export function toCanonicalVerificationMutation(
+  data: unknown,
+  responseOk: boolean,
+): {
+  verification: CanonicalVerification;
+  reason: string;
+} {
+  if (!responseOk) return { verification: "failed", reason: "http_failed" };
+  if (data == null || data === "") {
+    return { verification: "verified", reason: "http_success" };
+  }
+  if (isRecord(data)) {
+    if (data.success === false) {
+      return { verification: "failed", reason: "provider_success_false" };
+    }
+    const statusRaw = String(data.status ?? "").toLowerCase();
+    if (["failed", "error", "cancelled", "canceled", "rejected"].includes(statusRaw)) {
+      return { verification: "failed", reason: `provider_status_${statusRaw}` };
+    }
+    if (
+      data.success === true ||
+      ["ok", "success", "confirmed", "created", "updated", "completed"].includes(statusRaw)
+    ) {
+      return { verification: "verified", reason: "provider_confirmed" };
+    }
+  }
+  return { verification: "verified", reason: "http_success" };
+}
+
 export async function executeExternalQuery(
   businessProfileId: number,
   sourceId: number,
@@ -439,7 +484,7 @@ export async function executeExternalQuery(
       return {
         success: false,
         verification: "failed",
-        actionType: `external_query_${sourceId}`,
+        actionType: `integration_action_${sourceId}`,
         reason: policyCheck.reason,
         data: null,
         error: `External tool parameter "${policyCheck.field}" was not provided by an allowed source`,
@@ -500,7 +545,7 @@ export async function executeExternalQuery(
         return {
           success: false,
           verification: "failed",
-          actionType: `external_query_${sourceId}`,
+          actionType: `integration_action_${sourceId}`,
           reason: retryDecision.reason,
           data: null,
           error: `External API returned status ${response.status}`,
@@ -508,11 +553,16 @@ export async function executeExternalQuery(
     }
 
     const contentType = response.headers.get("content-type") || "";
-    if (!contentType.toLowerCase().includes("application/json")) {
+    const actionType = String((source as any).actionType || "LOOKUP").toUpperCase();
+    const requiresJsonResponse = actionType !== "MUTATION";
+    if (
+      requiresJsonResponse &&
+      !contentType.toLowerCase().includes("application/json")
+    ) {
       return {
         success: false,
         verification: "failed",
-        actionType: `external_query_${sourceId}`,
+        actionType: `integration_action_${sourceId}`,
         reason: "invalid_content_type",
         data: null,
         error: "External API did not return JSON",
@@ -524,19 +574,29 @@ export async function executeExternalQuery(
       return {
         success: false,
         verification: "failed",
-        actionType: `external_query_${sourceId}`,
+        actionType: `integration_action_${sourceId}`,
         reason: "response_too_large",
         data: null,
         error: "External API response exceeded size limit",
       };
     }
 
-    const data = JSON.parse(body);
-    const canonical = toCanonicalVerificationRead(data);
+    let data: unknown = null;
+    if (body.trim()) {
+      if (!contentType.toLowerCase().includes("application/json")) {
+        data = body;
+      } else {
+        data = JSON.parse(body);
+      }
+    }
+    const canonical =
+      actionType === "MUTATION"
+        ? toCanonicalVerificationMutation(data, response.ok)
+        : toCanonicalVerificationRead(data);
     return {
       success: canonical.verification !== "failed",
       verification: canonical.verification,
-      actionType: `external_query_${sourceId}`,
+      actionType: `integration_action_${sourceId}`,
       reason: canonical.reason,
       data,
     };
@@ -549,7 +609,7 @@ export async function executeExternalQuery(
     return {
       success: false,
       verification: "failed",
-      actionType: `external_query_${sourceId}`,
+      actionType: `integration_action_${sourceId}`,
       reason: "network_or_runtime_error",
       data: null,
       error: String(error),

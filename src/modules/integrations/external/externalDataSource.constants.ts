@@ -1,6 +1,28 @@
 export const EXTERNAL_ROUTING_MODES = ["STRICT", "FAST"] as const;
 export type ExternalRoutingMode = (typeof EXTERNAL_ROUTING_MODES)[number];
 
+export const INTEGRATION_ACTION_TYPES = ["LOOKUP", "MUTATION"] as const;
+export type IntegrationActionType = (typeof INTEGRATION_ACTION_TYPES)[number];
+
+export const INTEGRATION_ACTION_TRIGGERS = [
+  "CHAT_REQUESTED",
+  "CUSTOMER_DETAILS_SAVED",
+  "HANDOFF_CREATED",
+  "CONVERSATION_RESOLVED",
+  "FOLLOW_UP_DUE",
+] as const;
+export type IntegrationActionTrigger = (typeof INTEGRATION_ACTION_TRIGGERS)[number];
+
+export const INTEGRATION_EXECUTION_MODES = ["BACKGROUND"] as const;
+export type IntegrationExecutionMode = (typeof INTEGRATION_EXECUTION_MODES)[number];
+
+export const INTEGRATION_CONFIRMATION_POLICIES = [
+  "REQUIRE_VERIFIED_RESULT",
+  "ACCEPT_HTTP_SUCCESS",
+] as const;
+export type IntegrationConfirmationPolicy =
+  (typeof INTEGRATION_CONFIRMATION_POLICIES)[number];
+
 export const EXTERNAL_FAILURE_BEHAVIORS = [
   "AUTO",
   "HANDOFF_ON_FAILURE",

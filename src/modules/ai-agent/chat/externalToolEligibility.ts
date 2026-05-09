@@ -55,15 +55,15 @@ function buildRouterPrompt(
   }));
 
   return [
-    "You are a strict router that decides which live external API tools should be visible to a customer-support AI for this single user turn.",
+    "You are a strict router that decides which live integration action tools should be visible to a customer-support AI for this single user turn.",
     "Return ONLY compact JSON with this exact shape: {\"eligibleIds\":[number],\"reasoning\":\"short reason\"}.",
     "",
     "Routing rules:",
-    "- External API tools are live lookups, not default business knowledge.",
-    "- Select a tool only when the latest user message explicitly asks for the live/dynamic/account/order/booking/availability/price/status information described by that specific tool.",
-    "- Do not select tools for greetings, thanks, generic questions, broad feature/service questions, lead capture, complaints, handoff, or conversation closing.",
+    "- Integration action tools are live external actions, not default business knowledge.",
+    "- Select a tool only when the latest user message explicitly asks for the live/dynamic/account/order/booking/availability/price/status/create/update/cancel operation described by that specific tool.",
+    "- Do not select tools for greetings, thanks, generic questions, broad feature/service questions, customer detail saving, complaints, handoff, or conversation closing.",
     "- Do not infer missing intent from a tool name. If the user asks a broad question that can be answered from business context, return no tools.",
-    "- If the tool requires customer-provided identifiers and the user did not provide or ask about that lookup, return no tools.",
+    "- If the tool requires customer-provided identifiers and the user did not provide or ask about that action, return no tools.",
     "- It is better to return no tools than expose an unrelated tool.",
     "",
     `Latest user message: ${JSON.stringify(latestUserMessage)}`,

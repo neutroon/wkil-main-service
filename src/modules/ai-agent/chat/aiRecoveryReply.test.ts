@@ -34,17 +34,28 @@ describe("generateSafeRecoveryReply", () => {
     );
   });
 
-  it("falls back when AI recovery claims success", async () => {
-    vi.mocked(generateContent).mockResolvedValue({
-      text: "Done, your order has been confirmed and saved.",
-      usage: {
-        promptTokens: 0,
-        completionTokens: 0,
-        totalTokens: 0,
-        groundingCalls: 0,
-        model: "test",
-      },
-    });
+  it("retries cautiously when AI recovery claims success", async () => {
+    vi.mocked(generateContent)
+      .mockResolvedValueOnce({
+        text: "Done, your order has been confirmed and saved.",
+        usage: {
+          promptTokens: 0,
+          completionTokens: 0,
+          totalTokens: 0,
+          groundingCalls: 0,
+          model: "test",
+        },
+      })
+      .mockResolvedValueOnce({
+        text: "I can’t verify that right now. Please send the exact details so I can check safely.",
+        usage: {
+          promptTokens: 0,
+          completionTokens: 0,
+          totalTokens: 0,
+          groundingCalls: 0,
+          model: "test",
+        },
+      });
 
     await expect(
       generateSafeRecoveryReply({
@@ -52,7 +63,11 @@ describe("generateSafeRecoveryReply", () => {
         failureReason: "external_lookup_failed",
         safeFallback: "Fallback",
       }),
-    ).resolves.toBe("Fallback");
+    ).resolves.toBe(
+      "I can’t verify that right now. Please send the exact details so I can check safely.",
+    );
+
+    expect(generateContent).toHaveBeenCalledTimes(2);
   });
 
   it("extracts content when the model accidentally returns JSON", async () => {
@@ -149,7 +164,7 @@ describe("generateSafeRecoveryReply", () => {
     ).resolves.toBe("أهلاً بيك! فريقنا هيراجع رسالتك وهيتواصل معاك في أسرع وقت.");
   });
 
-  it("uses the static fallback after one unsafe AI recovery attempt", async () => {
+  it("uses the static emergency fallback only after two unsafe AI recovery attempts", async () => {
     vi.mocked(generateContent).mockResolvedValue({
       text: "Done, your request has been confirmed and saved.",
       usage: {
@@ -170,6 +185,6 @@ describe("generateSafeRecoveryReply", () => {
       }),
     ).resolves.toBe("Fallback");
 
-    expect(generateContent).toHaveBeenCalledTimes(1);
+    expect(generateContent).toHaveBeenCalledTimes(2);
   });
 });

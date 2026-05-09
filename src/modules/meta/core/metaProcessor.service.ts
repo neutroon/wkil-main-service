@@ -595,6 +595,12 @@ export async function processMetaMessage(job: MetaMessageJob) {
             }
             logger.info("meta.processor.messenger_reply_success", { messageId: res?.message_id });
             if (res?.message_id) await syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, { externalId: res.message_id });
+            const { scheduleConversationFollowUps } = await import("@modules/follow-up/followUp.service");
+            await scheduleConversationFollowUps({
+              conversationId: conversation.id,
+              businessProfileId,
+              triggerMessageId: modelSaved.id,
+            });
           } catch (err: any) {
             logger.error("meta.processor.messenger_reply_failed", { error: err.message });
             await syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, { status: "FAILED" });
@@ -617,6 +623,12 @@ export async function processMetaMessage(job: MetaMessageJob) {
           const wamid = res?.messages?.[0]?.id;
           logger.info("meta.processor.whatsapp_reply_success", { wamid });
           if (wamid) await prisma.conversationMessage.update({ where: { id: modelSaved.id }, data: { externalId: wamid } });
+          const { scheduleConversationFollowUps } = await import("@modules/follow-up/followUp.service");
+          await scheduleConversationFollowUps({
+            conversationId: conversation.id,
+            businessProfileId,
+            triggerMessageId: modelSaved.id,
+          });
         } catch (err: any) {
           logger.error("meta.processor.whatsapp_reply_failed", { error: err.message });
           await prisma.conversationMessage.update({ where: { id: modelSaved.id }, data: { status: "FAILED" } });

@@ -53,6 +53,7 @@ function buildRecoveryPrompt(params: {
   customerMessage?: string;
   failureReason: string;
   allowHandoffLanguage: boolean;
+  rewriteMoreCautiously?: boolean;
 }): string {
   const {
     systemInstruction,
@@ -60,6 +61,7 @@ function buildRecoveryPrompt(params: {
     customerMessage,
     failureReason,
     allowHandoffLanguage,
+    rewriteMoreCautiously,
   } = params;
 
   return [
@@ -73,6 +75,9 @@ function buildRecoveryPrompt(params: {
     customerMessage ? `Customer message: ${customerMessage}` : "",
     channel ? `Channel: ${channel}` : "",
     `Human handoff route is active: ${allowHandoffLanguage ? "yes" : "no"}`,
+    rewriteMoreCautiously
+      ? "Previous recovery wording was rejected by safety validation. Rewrite it more cautiously."
+      : "",
     "",
     "Hard safety rules:",
     "- Do not mention APIs, webhooks, CRM, tools, databases, internal errors, or technical details.",
@@ -81,6 +86,9 @@ function buildRecoveryPrompt(params: {
     allowHandoffLanguage
       ? "- You may say the team will confirm/review/follow up, because the backend has routed this to human review."
       : "- Do not promise that the team will contact the customer. Ask for corrected details or say the team can review it.",
+    rewriteMoreCautiously
+      ? "- Prefer neutral wording like: I could not verify this right now, so I routed it for review."
+      : "",
     "- Keep it concise: 1-2 short sentences, plain text only.",
     "</recovery_task>",
     "",
@@ -111,27 +119,32 @@ export async function generateSafeRecoveryReply({
   safeFallback,
   allowHandoffLanguage = false,
 }: RecoveryReplyParams): Promise<string> {
-  const prompt = buildRecoveryPrompt({
-    systemInstruction,
-    channel,
-    customerMessage,
-    failureReason,
-    allowHandoffLanguage,
-  });
-
-  try {
-    const text = await askRecoveryModel(prompt);
-    if (isSafeRecoveryReply(text, allowHandoffLanguage)) return text;
-
-    logger.warn("ai.recovery_reply.rejected", {
+  for (const rewriteMoreCautiously of [false, true]) {
+    const prompt = buildRecoveryPrompt({
+      systemInstruction,
+      channel,
+      customerMessage,
       failureReason,
-      preview: text.slice(0, 120),
+      allowHandoffLanguage,
+      rewriteMoreCautiously,
     });
-  } catch (error: any) {
-    logger.warn("ai.recovery_reply.failed", {
-      failureReason,
-      error: error?.message || String(error),
-    });
+
+    try {
+      const text = await askRecoveryModel(prompt);
+      if (isSafeRecoveryReply(text, allowHandoffLanguage)) return text;
+
+      logger.warn("ai.recovery_reply.rejected", {
+        failureReason,
+        rewriteMoreCautiously,
+        preview: text.slice(0, 120),
+      });
+    } catch (error: any) {
+      logger.warn("ai.recovery_reply.failed", {
+        failureReason,
+        rewriteMoreCautiously,
+        error: error?.message || String(error),
+      });
+    }
   }
 
   return safeFallback;

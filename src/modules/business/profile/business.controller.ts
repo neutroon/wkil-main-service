@@ -428,14 +428,8 @@ export const previewBusinessProfileChat = async (req: Request, res: Response) =>
       });
 
       for await (const event of stream) {
-        if (event.type === "token") {
-          res.write(`data: ${JSON.stringify({ token: event.data })}\n\n`);
-        }
         if (event.type === "error") {
           finalDecision = event.data;
-          res.write(
-            `data: ${JSON.stringify({ error: event.data.content || "Preview failed." })}\n\n`,
-          );
         }
         if (event.type === "final_decision") {
           finalDecision = event.data;

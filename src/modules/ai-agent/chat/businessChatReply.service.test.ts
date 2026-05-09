@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { prepareAgentParams } from "./businessChatReply.service";
 import { filterEligibleExternalDataSources } from "./externalToolEligibility";
 import { shouldExposeCrmTool } from "./crmToolEligibility";
+import { buildSystemPrompt } from "../../meta/core/prompt.service";
 
 vi.mock("../rag/rag.service", () => ({
   retrieveRelevantChunks: vi.fn().mockResolvedValue([
@@ -124,5 +125,40 @@ describe("prepareAgentParams", () => {
     expect(result.graphParams?.tools).toBeUndefined();
     expect(shouldExposeCrmTool).not.toHaveBeenCalled();
     expect(filterEligibleExternalDataSources).not.toHaveBeenCalled();
+  });
+
+  it("treats inactive tools as nonexistent for routers and prompt CRM fields", async () => {
+    const inactiveCrm = {
+      id: 9,
+      provider: "webhook",
+      isActive: false,
+      fieldMapping: {
+        interest: {
+          type: "STRING",
+          source: "USER_PROVIDED",
+          required: true,
+          description: "Customer interest",
+        },
+      },
+    };
+
+    const result = await prepareAgentParams({
+      businessProfile: {
+        ...businessProfile,
+        externalDataSources: [{ ...priceSource, isActive: false }],
+        crmIntegrations: [inactiveCrm],
+      },
+      messageText: "I want a callback",
+      historyTurns: [],
+      channel: "web",
+    });
+
+    expect(result.graphParams?.tools).toBeUndefined();
+    expect(shouldExposeCrmTool).not.toHaveBeenCalled();
+    expect(filterEligibleExternalDataSources).not.toHaveBeenCalled();
+    const promptCalls = vi.mocked(buildSystemPrompt).mock.calls;
+    expect(promptCalls[promptCalls.length - 1]?.[0]).toMatchObject({
+      crmFields: [],
+    });
   });
 });

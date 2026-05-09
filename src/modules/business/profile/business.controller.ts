@@ -53,6 +53,10 @@ interface BusinessProfileBody {
   watermarkPosition?: "TOP_LEFT" | "TOP_RIGHT" | "BOTTOM_LEFT" | "BOTTOM_RIGHT" | "CENTER";
   leadCaptureInstructions?: string;
   aiBehaviorInstructions?: string;
+  followUpEnabled?: boolean;
+  followUpMode?: "AUTO" | "CUSTOM";
+  followUpDelays?: { amount: number; unit: "MINUTES" | "HOURS" | "DAYS" }[];
+  followUpInstructions?: string;
 }
 
 export const createBusinessProfile = async (req: Request, res: Response) => {
@@ -72,6 +76,10 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
     knowledgeSections,
     leadCaptureInstructions,
     aiBehaviorInstructions,
+    followUpEnabled,
+    followUpMode,
+    followUpDelays,
+    followUpInstructions,
     brandLogoUrl,
     brandPrimaryColor,
     brandSecondaryColor,
@@ -101,6 +109,10 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
       address,
       leadCaptureInstructions,
       aiBehaviorInstructions,
+      followUpEnabled,
+      followUpMode,
+      followUpDelays,
+      followUpInstructions,
       brandLogoUrl,
       brandPrimaryColor,
       brandSecondaryColor,
@@ -210,6 +222,10 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
     knowledgeSections,
     leadCaptureInstructions,
     aiBehaviorInstructions,
+    followUpEnabled,
+    followUpMode,
+    followUpDelays,
+    followUpInstructions,
     brandLogoUrl,
     brandPrimaryColor,
     brandSecondaryColor,
@@ -246,6 +262,10 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
       address,
       leadCaptureInstructions,
       aiBehaviorInstructions,
+      followUpEnabled,
+      followUpMode,
+      followUpDelays,
+      followUpInstructions,
       brandLogoUrl,
       brandPrimaryColor,
       brandSecondaryColor,
@@ -322,6 +342,18 @@ export const deleteBusinessProfile = async (req: Request, res: Response) => {
   await prisma.businessProfile.delete({
     where: { id: profileId },
   });
+
+  // Check if any profiles are left to keep the onboarding gate state accurate
+  const profileCount = await prisma.businessProfile.count({
+    where: { userId },
+  });
+
+  if (profileCount === 0) {
+    await prisma.user.update({
+      where: { id: userId },
+      data: { isBusinessProfileCreated: false },
+    });
+  }
 
   return res.status(200).json({
     message: "Business profile deleted successfully",

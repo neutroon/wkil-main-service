@@ -50,6 +50,7 @@ export async function* streamAgentGraph(params: AgentGraphParams) {
     channel:           params.channel,
     contextQuality:    params.contextQuality,
     availableChunkTypes: params.availableChunkTypes ?? [],
+    externalSourceFailureBehaviors: params.externalSourceFailureBehaviors ?? {},
     policy,
     responseMode:      params.responseMode ?? "AUTO",
     contents:          initialContents as any,

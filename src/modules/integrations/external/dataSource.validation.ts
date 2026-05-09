@@ -25,6 +25,11 @@ const routerTimeoutMs = z.coerce
   .int()
   .min(EXTERNAL_ROUTER_TIMEOUT.minMs, "Router timeout must be at least 1 second")
   .max(EXTERNAL_ROUTER_TIMEOUT.maxMs, "Router timeout must be 10 seconds or less");
+const stringRecord = z.record(z.string(), z.string());
+const nullableStringRecordAsEmpty = z.preprocess(
+  (value) => (value === null ? {} : value),
+  stringRecord.optional(),
+);
 
 /**
  * Data Source Schema
@@ -39,8 +44,8 @@ export const dataSourceSchema = z.object({
     description: z.string().min(1, "Description is required"),
     apiUrl: safeExternalUrl,
     method: z.enum(["GET", "POST", "PUT", "DELETE"]).optional().default("GET"),
-    headers: z.record(z.string(), z.string()).optional(),
-    queryParams: z.record(z.string(), z.string()).optional(),
+    headers: nullableStringRecordAsEmpty,
+    queryParams: nullableStringRecordAsEmpty,
     routingMode: routingMode.optional().default("STRICT"),
     routerTimeoutMs: routerTimeoutMs.optional().default(EXTERNAL_ROUTER_TIMEOUT.defaultMs),
     failureBehavior: failureBehavior.optional().default("AUTO"),
@@ -63,8 +68,8 @@ export const updateDataSourceSchema = z.object({
     description: z.string().min(1).optional(),
     apiUrl: safeExternalUrl.optional(),
     method: z.enum(["GET", "POST", "PUT", "DELETE"]).optional(),
-    headers: z.record(z.string(), z.string()).optional(),
-    queryParams: z.record(z.string(), z.string()).optional(),
+    headers: nullableStringRecordAsEmpty,
+    queryParams: nullableStringRecordAsEmpty,
     routingMode: routingMode.optional(),
     routerTimeoutMs: routerTimeoutMs.optional(),
     failureBehavior: failureBehavior.optional(),

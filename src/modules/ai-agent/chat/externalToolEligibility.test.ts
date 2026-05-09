@@ -81,7 +81,7 @@ describe("external tool eligibility", () => {
     expect(generateContent).not.toHaveBeenCalled();
   });
 
-  it("uses router output to expose matching live tools", async () => {
+  it("uses router output to expose matching chat-requested actions", async () => {
     vi.mocked(generateContent).mockResolvedValue({
       text: JSON.stringify({
         eligibleIds: [2],

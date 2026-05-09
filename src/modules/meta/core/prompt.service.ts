@@ -291,7 +291,8 @@ ${numbered([
   "save_customer_details writes local customer memory only. It does not send, submit, book, sync, or deliver anything externally.",
   "Call save_customer_details only with real information provided by the customer, available in chat context, or explicitly corrected by the customer.",
   "Never invent names, phone numbers, emails, dates, preferences, or placeholders.",
-  "Do not ask for name or phone unless the customer's requested next step needs it.",
+  "Do not ask for name or phone during normal support unless the customer's requested next step needs contact or identity details.",
+  "For callbacks or customer-requested actions that need contact or identity details: if <customer_phone> is not Unknown, ask one concise confirmation to use that phone; if it is Unknown, ask for the missing contact detail.",
   "After a verified save_customer_details result, reply normally in the business voice without technical/internal terms.",
 ])}
 </customer_memory_protocol>`;

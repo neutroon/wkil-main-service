@@ -15,66 +15,11 @@ import {
   sanitizeAiText,
   hasExcessiveRepetition,
 } from "../core/aiEngine.utils";
-import { generateSafeRecoveryReply } from "@modules/ai-agent/chat/aiRecoveryReply";
+import {
+  buildMissingKnowledgeDecision,
+  buildSystemRecoveryDecision,
+} from "./recoveryDecision";
 import type { AgentStateType } from "../core/agentState";
-
-async function missingKnowledgeDecision(state: AgentStateType, reasoning: string) {
-  const recoveryReply = await generateSafeRecoveryReply({
-    systemInstruction: state.systemInstruction,
-    channel: state.channel,
-    customerMessage: latestUserText(state),
-    failureReason: "missing_knowledge",
-    safeFallback: state.policy.fallbackTemplates.unverified,
-    allowHandoffLanguage: true,
-  });
-
-  return {
-    action: "HANDOFF_TO_HUMAN" as const,
-    handoffCategory: "MISSING_KNOWLEDGE",
-    reasoning,
-    content: recoveryReply,
-    publicContent: recoveryReply,
-    privateContent: recoveryReply,
-    requiresGrounding: true,
-    grounded: false,
-    usedChunkTypes: [],
-  };
-}
-
-async function systemRecoveryDecision(
-  state: AgentStateType,
-  params: { reasoning: string; failureReason: string; handoffCategory?: string },
-) {
-  const recoveryReply = await generateSafeRecoveryReply({
-    systemInstruction: state.systemInstruction,
-    channel: state.channel,
-    customerMessage: latestUserText(state),
-    failureReason: params.failureReason,
-    safeFallback: state.policy.fallbackTemplates.failed,
-    allowHandoffLanguage: true,
-  });
-
-  return {
-    action: "HANDOFF_TO_HUMAN" as const,
-    handoffCategory: params.handoffCategory || "SYSTEM_ERROR",
-    reasoning: params.reasoning,
-    content: recoveryReply,
-    publicContent: recoveryReply,
-    privateContent: recoveryReply,
-    requiresGrounding: false,
-    grounded: false,
-    usedChunkTypes: [],
-    missingInfo: null,
-  };
-}
-
-function latestUserText(state: AgentStateType): string {
-  const latest = [...state.contents].reverse().find((turn) => turn.role === "user");
-  return (latest?.parts ?? [])
-    .filter((part) => typeof part.text === "string")
-    .map((part) => part.text)
-    .join(" ");
-}
 
 function hasUnsupportedChunkClaim(
   usedChunkTypes: string[] | undefined,
@@ -119,7 +64,7 @@ export async function parseDecisionNode(
       turnCount: state.turnCount,
     });
     return {
-      decision: await systemRecoveryDecision(state, {
+      decision: await buildSystemRecoveryDecision(state, {
         reasoning: "AI returned empty response. Requiring human intervention.",
         failureReason: "empty_ai_response",
       }),
@@ -136,7 +81,7 @@ export async function parseDecisionNode(
       businessProfileId: state.businessProfileId,
     });
     return {
-      decision: await systemRecoveryDecision(state, {
+      decision: await buildSystemRecoveryDecision(state, {
         reasoning: "AI response parsing failed (potential mid-stream truncation).",
         failureReason: "ai_response_parse_failed",
       }),
@@ -172,7 +117,7 @@ export async function parseDecisionNode(
       businessProfileId: state.businessProfileId,
     });
     return {
-      decision: await systemRecoveryDecision(state, {
+      decision: await buildSystemRecoveryDecision(state, {
         reasoning: "AI response contained excessive repetition after multiple correction attempts.",
         failureReason: "ai_loop_detected",
         handoffCategory: "AI_LOOP_DETECTED",
@@ -196,7 +141,7 @@ export async function parseDecisionNode(
     });
 
     return {
-      decision: await systemRecoveryDecision(state, {
+      decision: await buildSystemRecoveryDecision(state, {
         reasoning: "AI response omitted required direct-message content.",
         failureReason: "missing_direct_message_content",
       }),
@@ -216,7 +161,7 @@ export async function parseDecisionNode(
     });
 
     return {
-      decision: await missingKnowledgeDecision(
+      decision: await buildMissingKnowledgeDecision(
         state,
         "AI cited unavailable business context chunk types.",
       ),
@@ -237,7 +182,7 @@ export async function parseDecisionNode(
     });
 
     return {
-      decision: await missingKnowledgeDecision(
+      decision: await buildMissingKnowledgeDecision(
         state,
         `Specific evidence was not retrieved for a grounded answer. Context quality: ${state.contextQuality ?? "unknown"}`,
       ),
@@ -258,7 +203,7 @@ export async function parseDecisionNode(
     });
 
     return {
-      decision: await missingKnowledgeDecision(
+      decision: await buildMissingKnowledgeDecision(
         state,
         `AI reported missing evidence: ${decision.missingInfo || "No evidence chunks cited."}`,
       ),

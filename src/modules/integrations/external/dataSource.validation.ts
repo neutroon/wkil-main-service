@@ -14,6 +14,12 @@ const safeExternalUrl = z.string().url("Invalid API URL").superRefine((url, ctx)
 });
 
 const routingMode = z.enum(["STRICT", "FAST"]);
+const failureBehavior = z.enum([
+  "AUTO",
+  "HANDOFF_ON_FAILURE",
+  "ANSWER_WITH_CONTEXT_ON_FAILURE",
+  "SILENT_ON_FAILURE",
+]);
 const routerTimeoutMs = z.coerce
   .number()
   .int()
@@ -37,6 +43,7 @@ export const dataSourceSchema = z.object({
     queryParams: z.record(z.string(), z.string()).optional(),
     routingMode: routingMode.optional().default("STRICT"),
     routerTimeoutMs: routerTimeoutMs.optional().default(2500),
+    failureBehavior: failureBehavior.optional().default("AUTO"),
     expectedParamsSchema: aiSchemaObject.nullable().optional(),
     isActive: z.boolean().optional().default(true),
   }),
@@ -60,6 +67,7 @@ export const updateDataSourceSchema = z.object({
     queryParams: z.record(z.string(), z.string()).optional(),
     routingMode: routingMode.optional(),
     routerTimeoutMs: routerTimeoutMs.optional(),
+    failureBehavior: failureBehavior.optional(),
     expectedParamsSchema: aiSchemaObject.nullable().optional(),
     isActive: z.boolean().optional(),
   }),

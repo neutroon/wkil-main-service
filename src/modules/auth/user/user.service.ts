@@ -47,6 +47,7 @@ export const createUser = async (
       role: true,
       isEmailVerified: true,
       lastVerificationSentAt: true,
+      isBusinessProfileCreated: true,
       createdAt: true,
     },
   });
@@ -78,6 +79,7 @@ export const loginUser = async (email: string, password: string) => {
       role: true,
       isEmailVerified: true,
       lastVerificationSentAt: true,
+      isBusinessProfileCreated: true,
     },
   });
 
@@ -112,6 +114,7 @@ export const loginUser = async (email: string, password: string) => {
     role: user.role,
     isEmailVerified: user.isEmailVerified,
     lastVerificationSentAt: user.lastVerificationSentAt,
+    isBusinessProfileCreated: user.isBusinessProfileCreated,
     accessToken,
     refreshToken,
   };

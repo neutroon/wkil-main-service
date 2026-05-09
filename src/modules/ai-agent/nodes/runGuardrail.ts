@@ -12,7 +12,7 @@
  */
 import { logger } from "@utils/logger";
 import { evaluateGuardrailsForReply } from "../core/aiEngine.utils";
-import { generateSafeRecoveryReply } from "@modules/ai-agent/chat/aiRecoveryReply";
+import { buildAiRecoveryDecision } from "./recoveryDecision";
 import type { AgentStateType } from "../core/agentState";
 
 export async function runGuardrailNode(
@@ -46,43 +46,29 @@ export async function runGuardrailNode(
     },
   });
 
-  const recoveryReply = await generateSafeRecoveryReply({
-    systemInstruction: state.systemInstruction,
-    channel: state.channel,
-    customerMessage: latestUserText(state),
-    failureReason: result.ruleId,
-    safeFallback: result.safeReply,
-    allowHandoffLanguage: shouldRouteGuardrailToHuman(result.ruleId),
-  });
-
   // Override the decision with a safe reply
   const nextAction = shouldRouteGuardrailToHuman(result.ruleId)
     ? "HANDOFF_TO_HUMAN"
     : "REPLY_AUTO";
 
   return {
-    decision: {
-      ...state.decision,
-      action:    nextAction,
+    decision: await buildAiRecoveryDecision(state, {
+      action: nextAction,
       handoffCategory:
         nextAction === "HANDOFF_TO_HUMAN"
           ? state.decision.handoffCategory || "MISSING_KNOWLEDGE"
-          : state.decision.handoffCategory,
+          : null,
       reasoning: `Guardrail Triggered: ${result.ruleId}`,
-      content:   recoveryReply,
-      // Clear channel-specific content fields too
-      publicContent:  recoveryReply,
-      privateContent: recoveryReply,
-    },
+      failureReason: result.ruleId,
+      emergencyFallback: result.safeReply,
+      allowHandoffLanguage: shouldRouteGuardrailToHuman(result.ruleId),
+      requiresGrounding: nextAction === "HANDOFF_TO_HUMAN",
+      missingInfo:
+        nextAction === "HANDOFF_TO_HUMAN"
+          ? "The requested action could not be verified safely."
+          : null,
+    }),
   };
-}
-
-function latestUserText(state: AgentStateType): string {
-  const latest = [...state.contents].reverse().find((turn) => turn.role === "user");
-  return (latest?.parts ?? [])
-    .filter((part) => typeof part.text === "string")
-    .map((part) => part.text)
-    .join(" ");
 }
 
 function shouldRouteGuardrailToHuman(ruleId: string): boolean {

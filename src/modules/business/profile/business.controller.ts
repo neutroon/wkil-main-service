@@ -8,10 +8,7 @@ import {
 import { uploadToR2 } from "@modules/media/services/r2Storage.service";
 import { randomUUID } from "crypto";
 import path from "path";
-import {
-  computeBusinessChatReply,
-  computeBusinessChatStreaming,
-} from "@modules/ai-agent/chat/businessChatReply.service";
+import { computeBusinessChatReply } from "@modules/ai-agent/chat/businessChatReply.service";
 import { resolveAssetForChannel } from "@modules/media/services/mediaLibrary.service";
 
 import { AppError } from "@middlewares/errorHandler.middleware";
@@ -414,27 +411,16 @@ export const previewBusinessProfileChat = async (req: Request, res: Response) =>
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders?.();
 
-    let finalDecision = null as Awaited<
-      ReturnType<typeof computeBusinessChatReply>
-    > | null;
-
     try {
-      const stream = computeBusinessChatStreaming({
+      res.write(`data: ${JSON.stringify({ status: "processing" })}\n\n`);
+
+      const finalDecision = await computeBusinessChatReply({
         businessProfile,
         messageText: message,
         historyTurns,
         channel: "web",
         responseMode: "AUTO",
       });
-
-      for await (const event of stream) {
-        if (event.type === "error") {
-          finalDecision = event.data;
-        }
-        if (event.type === "final_decision") {
-          finalDecision = event.data;
-        }
-      }
 
       let attachment = null;
       if (finalDecision?.attachment?.assetName) {

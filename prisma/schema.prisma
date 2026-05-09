@@ -174,6 +174,7 @@ model ExternalDataSource {
   queryParams       Json?           // Optional required query params expected by the API
   routingMode       String          @default("STRICT") // STRICT = semantic pre-router, FAST = expose when active
   routerTimeoutMs   Int             @default(2500) // Max wait for STRICT semantic routing before falling back
+  failureBehavior   String          @default("AUTO") // AUTO = AI classifier, HANDOFF_ON_FAILURE, ANSWER_WITH_CONTEXT_ON_FAILURE, SILENT_ON_FAILURE
   
   // Defines the schema the AI is allowed to pass to the API (e.g. { category: "string", limit: "integer" })
   expectedParamsSchema Json?        

@@ -147,24 +147,6 @@ export async function prepareAgentParams(params: {
         (source) => source.isActive && (source as any).trigger === "CHAT_REQUESTED",
       );
 
-  const systemInstruction = buildSystemPrompt({
-    businessProfile: {
-      name: businessProfile.name,
-      identity: businessProfile.identity || "",
-      voice: businessProfile.voice || "Professional",
-      tone: businessProfile.tone || "Friendly",
-      customerDetailsInstructions:
-        businessProfile.customerDetailsInstructions || undefined,
-      aiBehaviorInstructions:
-        businessProfile.aiBehaviorInstructions || undefined,
-    },
-    context: relevantChunks,
-    channel: channel,
-    contextQuality,
-    customerPhone,
-    postContext: params.postContext,
-  });
-
   const mediaAssets = await prisma.businessProfileMedia.findMany({
     where: {
       businessProfileId: businessProfile.id,
@@ -174,21 +156,6 @@ export async function prepareAgentParams(params: {
     },
     select: { name: true, mediaType: true, instructions: true },
   });
-
-  let finalSystemInstruction = systemInstruction;
-  if (completedExternalLookup) {
-    const serializedLookup = stringifyForPrompt(
-      completedExternalLookup.envelope,
-      MAX_EXTERNAL_LOOKUP_PROMPT_CHARS,
-    );
-    finalSystemInstruction += `\n\n<completed_integration_action>\nThis external action already ran in a background worker. Do not call the same integration action tool again for this answer. Use this payload as verified tool evidence only when verification is "verified"; if it failed, explain that the external result could not be verified and ask for the exact missing/correct detail.\nTool: ${completedExternalLookup.toolName}\nSource: ${completedExternalLookup.sourceName || "External action"}\nPayload JSON:\n${serializedLookup}\n</completed_integration_action>\n\nWhen your customer-facing answer relies on this action result, include "external_tool" in usedChunkTypes.`;
-  }
-  if (mediaAssets.length > 0) {
-    const catalog = mediaAssets
-      .map((a) => `- "${a.name}" (${a.mediaType}): ${a.instructions}`)
-      .join("\n");
-    finalSystemInstruction += `\n\n## MEDIA CATALOG\nYou MAY send one file per response using the "attachment" field in your JSON output.\nAvailable assets:\n${catalog}\n\nCRITICAL RULES:\n1. Only reference EXACT names from the list above.\n2. NEVER invent an asset name.\n3. NEVER send attachments to public Facebook Comments.\n4. Only attach a file when it is genuinely relevant to the customer's request.`;
-  }
 
   const externalRouterPromise = activeExternalDataSources.length > 0
     ? filterEligibleExternalDataSources(
@@ -220,6 +187,43 @@ export async function prepareAgentParams(params: {
     mergedDeclarations.length > 0
       ? [{ functionDeclarations: mergedDeclarations }]
       : undefined;
+
+  const systemInstruction = buildSystemPrompt({
+    businessProfile: {
+      name: businessProfile.name,
+      identity: businessProfile.identity || "",
+      voice: businessProfile.voice || "Professional",
+      tone: businessProfile.tone || "Friendly",
+      customerDetailsInstructions:
+        businessProfile.customerDetailsInstructions || undefined,
+      aiBehaviorInstructions:
+        businessProfile.aiBehaviorInstructions || undefined,
+    },
+    context: relevantChunks,
+    channel: channel,
+    contextQuality,
+    customerPhone,
+    postContext: params.postContext,
+    hasCustomerMemoryTool: customerDetailsTool.length > 0,
+    hasChatRequestedActions: externalTools.length > 0,
+    hasMediaAssets: mediaAssets.length > 0,
+    hasCompletedActionResult: Boolean(completedExternalLookup),
+  });
+
+  let finalSystemInstruction = systemInstruction;
+  if (completedExternalLookup) {
+    const serializedLookup = stringifyForPrompt(
+      completedExternalLookup.envelope,
+      MAX_EXTERNAL_LOOKUP_PROMPT_CHARS,
+    );
+    finalSystemInstruction += `\n\n<completed_integration_action>\nThis action already ran after the previous chat turn. Do not call the same action again for this answer. Use this payload as verified evidence only when verification is "verified"; if it failed, explain that the result could not be verified and ask for the exact missing or corrected detail.\nTool: ${completedExternalLookup.toolName}\nSource: ${completedExternalLookup.sourceName || "External action"}\nPayload JSON:\n${serializedLookup}\n</completed_integration_action>\n\nWhen your customer-facing answer relies on this action result, include "external_tool" in usedChunkTypes.`;
+  }
+  if (mediaAssets.length > 0) {
+    const catalog = mediaAssets
+      .map((a) => `- "${a.name}" (${a.mediaType}): ${a.instructions}`)
+      .join("\n");
+    finalSystemInstruction += `\n\n<media_catalog>\nYou may send one file per response using the attachment field.\nAvailable assets:\n${catalog}\n\nRules:\n1. Only reference exact names from the list above.\n2. Never invent an asset name.\n3. Never send attachments to public Facebook comments.\n4. Only attach a file when it is genuinely relevant to the customer's request.\n</media_catalog>`;
+  }
 
   logger.info("ai.chat.prepared_tools", {
     businessProfileId: businessProfile.id,

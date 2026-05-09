@@ -123,7 +123,12 @@ export async function prepareAgentParams(params: {
     new Set(relevantChunks.map((chunk) => chunk.chunkType)),
   );
 
-  const crmIntegration = businessProfile.crmIntegrations?.[0];
+  const activeExternalDataSources = (businessProfile.externalDataSources || []).filter(
+    (source) => source.isActive,
+  );
+  const crmIntegration = businessProfile.crmIntegrations?.find(
+    (integration) => integration.isActive,
+  );
   const crmFields = crmIntegration?.fieldMapping 
     ? Object.entries(crmIntegration.fieldMapping as object)
         .filter(([_, v]) => isAiWritableFieldRule(v))
@@ -175,9 +180,9 @@ export async function prepareAgentParams(params: {
         integration: crmIntegration,
       })
     : Promise.resolve(false);
-  const externalRouterPromise = businessProfile.externalDataSources.length > 0
+  const externalRouterPromise = activeExternalDataSources.length > 0
     ? filterEligibleExternalDataSources(
-        businessProfile.externalDataSources,
+        activeExternalDataSources,
         messageText,
       )
     : Promise.resolve([]);
@@ -186,9 +191,9 @@ export async function prepareAgentParams(params: {
     externalRouterPromise,
   ]);
   const captureTool =
-    canExposeCrmTool && businessProfile.crmIntegrations.length > 0
+    canExposeCrmTool && crmIntegration
       ? buildCaptureLeadTool(
-          businessProfile.crmIntegrations[0].fieldMapping,
+          crmIntegration.fieldMapping,
           businessProfile.leadCaptureInstructions || undefined,
         )
       : [];

@@ -48,7 +48,7 @@ interface BusinessProfileBody {
   brandKitCompleted?: boolean;
   brandWatermarkEnabled?: boolean;
   watermarkPosition?: "TOP_LEFT" | "TOP_RIGHT" | "BOTTOM_LEFT" | "BOTTOM_RIGHT" | "CENTER";
-  leadCaptureInstructions?: string;
+  customerDetailsInstructions?: string;
   aiBehaviorInstructions?: string;
   followUpEnabled?: boolean;
   followUpMode?: "AUTO" | "CUSTOM";
@@ -71,7 +71,7 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
     address,
     faqs,
     knowledgeSections,
-    leadCaptureInstructions,
+    customerDetailsInstructions,
     aiBehaviorInstructions,
     followUpEnabled,
     followUpMode,
@@ -104,7 +104,7 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
       phoneNumbers,
       workingHours,
       address,
-      leadCaptureInstructions,
+      customerDetailsInstructions,
       aiBehaviorInstructions,
       followUpEnabled,
       followUpMode,
@@ -217,7 +217,7 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
     address,
     faqs,
     knowledgeSections,
-    leadCaptureInstructions,
+    customerDetailsInstructions,
     aiBehaviorInstructions,
     followUpEnabled,
     followUpMode,
@@ -257,7 +257,7 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
       phoneNumbers,
       workingHours,
       address,
-      leadCaptureInstructions,
+      customerDetailsInstructions,
       aiBehaviorInstructions,
       followUpEnabled,
       followUpMode,

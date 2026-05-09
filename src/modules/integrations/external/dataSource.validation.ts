@@ -5,6 +5,10 @@ import {
   EXTERNAL_FAILURE_BEHAVIORS,
   EXTERNAL_ROUTER_TIMEOUT,
   EXTERNAL_ROUTING_MODES,
+  INTEGRATION_ACTION_TYPES,
+  INTEGRATION_ACTION_TRIGGERS,
+  INTEGRATION_CONFIRMATION_POLICIES,
+  INTEGRATION_EXECUTION_MODES,
 } from "./externalDataSource.constants";
 
 const safeExternalUrl = z.string().url("Invalid API URL").superRefine((url, ctx) => {
@@ -20,6 +24,10 @@ const safeExternalUrl = z.string().url("Invalid API URL").superRefine((url, ctx)
 
 const routingMode = z.enum(EXTERNAL_ROUTING_MODES);
 const failureBehavior = z.enum(EXTERNAL_FAILURE_BEHAVIORS);
+const actionType = z.enum(INTEGRATION_ACTION_TYPES);
+const trigger = z.enum(INTEGRATION_ACTION_TRIGGERS);
+const executionMode = z.enum(INTEGRATION_EXECUTION_MODES);
+const confirmationPolicy = z.enum(INTEGRATION_CONFIRMATION_POLICIES);
 const routerTimeoutMs = z.coerce
   .number()
   .int()
@@ -46,9 +54,15 @@ export const dataSourceSchema = z.object({
     method: z.enum(["GET", "POST", "PUT", "DELETE"]).optional().default("GET"),
     headers: nullableStringRecordAsEmpty,
     queryParams: nullableStringRecordAsEmpty,
+    trigger: trigger.optional().default("CHAT_REQUESTED"),
+    actionType: actionType.optional().default("LOOKUP"),
+    executionMode: executionMode.optional().default("BACKGROUND"),
     routingMode: routingMode.optional().default("STRICT"),
     routerTimeoutMs: routerTimeoutMs.optional().default(EXTERNAL_ROUTER_TIMEOUT.defaultMs),
     failureBehavior: failureBehavior.optional().default("AUTO"),
+    confirmationPolicy: confirmationPolicy.optional().default("REQUIRE_VERIFIED_RESULT"),
+    requestMapping: z.record(z.string(), z.unknown()).nullable().optional(),
+    responseMapping: z.record(z.string(), z.unknown()).nullable().optional(),
     expectedParamsSchema: aiSchemaObject.nullable().optional(),
     isActive: z.boolean().optional().default(true),
   }),
@@ -70,9 +84,15 @@ export const updateDataSourceSchema = z.object({
     method: z.enum(["GET", "POST", "PUT", "DELETE"]).optional(),
     headers: nullableStringRecordAsEmpty,
     queryParams: nullableStringRecordAsEmpty,
+    trigger: trigger.optional(),
+    actionType: actionType.optional(),
+    executionMode: executionMode.optional(),
     routingMode: routingMode.optional(),
     routerTimeoutMs: routerTimeoutMs.optional(),
     failureBehavior: failureBehavior.optional(),
+    confirmationPolicy: confirmationPolicy.optional(),
+    requestMapping: z.record(z.string(), z.unknown()).nullable().optional(),
+    responseMapping: z.record(z.string(), z.unknown()).nullable().optional(),
     expectedParamsSchema: aiSchemaObject.nullable().optional(),
     isActive: z.boolean().optional(),
   }),

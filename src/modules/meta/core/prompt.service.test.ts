@@ -35,6 +35,28 @@ describe("buildSystemPrompt", () => {
     expect(prompt).not.toContain("Customer-facing field: content");
   });
 
+  it("uses one confirmation rule for callbacks and customer-requested actions needing contact details", () => {
+    const prompt = buildSystemPrompt({
+      businessProfile: baseProfile,
+      context: [],
+      channel: "whatsapp",
+      customerPhone: "+20100111222",
+      hasCustomerMemoryTool: true,
+      hasChatRequestedActions: true,
+    });
+
+    expect(prompt).toContain("<customer_phone>+20100111222</customer_phone>");
+    expect(prompt).toContain(
+      "Do not ask for name or phone during normal support unless the customer's requested next step needs contact or identity details.",
+    );
+    expect(prompt).toContain(
+      "For callbacks or customer-requested actions that need contact or identity details: if <customer_phone> is not Unknown, ask one concise confirmation to use that phone; if it is Unknown, ask for the missing contact detail.",
+    );
+    expect(prompt).toContain(
+      "If required parameters are missing, ask one concise clarification question instead of calling the action.",
+    );
+  });
+
   it("adds chat action rules only when actions are exposed or completed", () => {
     const promptWithAction = buildSystemPrompt({
       businessProfile: baseProfile,

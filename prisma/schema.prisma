@@ -135,6 +135,7 @@ model BusinessProfile {
   externalDataSources ExternalDataSource[]
   widgetInstalls    WidgetInstall[]
   conversations     Conversation[]
+  customers         Customer[]
   aiUsageStats      AiUsageStat[]
   aiCallLogs        AiCallLog[]
   billingFailureLogs BillingFailureLog[]
@@ -246,6 +247,8 @@ model CrmDeliveryLog {
   id                Int      @id @default(autoincrement())
   businessProfileId Int
   integrationId     Int
+  customerId         Int?
+  customer           Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
   idempotencyKey    String
   leadKey           String
   payloadHash       String
@@ -260,6 +263,52 @@ model CrmDeliveryLog {
   @@unique([businessProfileId, integrationId, idempotencyKey])
   @@index([businessProfileId, integrationId, leadKey, status])
   @@index([businessProfileId, integrationId, payloadHash, status])
+  @@index([customerId])
+}
+
+model Customer {
+  id                 Int             @id @default(autoincrement())
+  businessProfileId  Int
+  businessProfile    BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+
+  displayName        String
+  phone              String?
+  normalizedPhone    String?
+  email              String?
+  normalizedEmail    String?
+  avatarUrl          String?
+  primaryChannel     String?
+  externalIds        Json?
+  capturedFields     Json?
+  metadata           Json?
+  status             String          @default("ACTIVE")
+  notes              String?         @db.Text
+  lastInteractionAt  DateTime        @default(now())
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  conversations      Conversation[]
+  externalIdentities CustomerExternalIdentity[]
+  crmDeliveryLogs    CrmDeliveryLog[]
+
+  @@unique([businessProfileId, normalizedPhone])
+  @@unique([businessProfileId, normalizedEmail])
+  @@index([businessProfileId, lastInteractionAt])
+  @@index([businessProfileId, status])
+}
+
+model CustomerExternalIdentity {
+  id                Int      @id @default(autoincrement())
+  businessProfileId Int
+  customerId        Int
+  customer          Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  channel           String
+  externalId        String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([businessProfileId, channel, externalId])
+  @@index([customerId])
 }
 
 model Conversation {
@@ -268,6 +317,8 @@ model Conversation {
   senderId          String   // Facebook PSID or WhatsApp phone (raw)
   businessProfileId Int
   businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+  customerId         Int?
+  customer           Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
   /// "whatsapp" | "messenger" | "web" | "facebook_comment" — null means legacy/untagged
   channel           String?
   /// Human-readable customer phone for WhatsApp conversations
@@ -298,6 +349,7 @@ model Conversation {
   @@index([channel])
   @@index([externalId])
   @@index([postId])
+  @@index([customerId])
 }
 
 model ConversationMessage {

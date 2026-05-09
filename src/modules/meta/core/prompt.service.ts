@@ -169,6 +169,7 @@ export function buildSystemPrompt(params: SystemPromptParams): string {
 5. DUPLICATE PREVENTION: After a successful "capture_lead" result in this conversation, do NOT call it again for the same lead details. Continue the chat normally.
 6. CORRECTIONS: If the customer explicitly corrects lead details after capture (for example: "wrong number, use this one"), call "capture_lead" once with the complete latest corrected details. Treat this as an update, not a new lead.
 7. NEW INTENT: Only call "capture_lead" again when the customer starts a clearly separate new request or provides materially changed contact/lead details.
+8. CUSTOMER REPLY AFTER SUCCESS: When "capture_lead" succeeds, write the customer-facing reply yourself in the business voice. Briefly acknowledge the next step without using technical words like CRM, webhook, tool, database, or API. Do not claim success if the tool result failed.
 </data_collection_protocol>`.trim();
 
   const externalToolProtocol = `

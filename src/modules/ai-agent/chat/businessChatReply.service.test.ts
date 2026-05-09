@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { prepareAgentParams } from "./businessChatReply.service";
 import { filterEligibleExternalDataSources } from "./externalToolEligibility";
+import { buildSystemPrompt } from "../../meta/core/prompt.service";
 
 vi.mock("../rag/rag.service", () => ({
   retrieveRelevantChunks: vi.fn().mockResolvedValue([
@@ -106,6 +107,15 @@ describe("prepareAgentParams", () => {
         ],
       },
     ]);
+    expect(buildSystemPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "web",
+        hasCustomerMemoryTool: true,
+        hasChatRequestedActions: true,
+        hasMediaAssets: false,
+        hasCompletedActionResult: false,
+      }),
+    );
   });
 
   it("keeps customer details saving available when no external source is eligible", async () => {

@@ -1,8 +1,30 @@
 import prisma from "@config/prisma";
 import { AppError } from "@middlewares/errorHandler.middleware";
 import { getAccessibleProfileIds } from "@modules/auth/user/user.service";
+import { upsertCustomerFromConversation } from "@modules/business/customer/customer.service";
 
 const HISTORY_LIMIT = 10;
+
+async function attachCustomerMemory(
+  conversation: any,
+  opts?: {
+    channel?: string;
+    customerPhone?: string;
+    customerName?: string;
+    customerAvatar?: string;
+  },
+) {
+  const customer = await upsertCustomerFromConversation({
+    businessProfileId: conversation.businessProfileId,
+    conversationId: conversation.id,
+    channel: opts?.channel ?? conversation.channel,
+    senderId: conversation.senderId,
+    customerPhone: opts?.customerPhone ?? conversation.customerPhone,
+    customerName: opts?.customerName ?? conversation.customerName,
+    customerAvatar: opts?.customerAvatar ?? conversation.customerAvatar,
+  });
+  return { ...conversation, customerId: customer.id };
+}
 
 // ─── Core conversation helpers ────────────────────────────────────────────────
 
@@ -75,12 +97,13 @@ export async function getOrCreateConversation(
     }
 
     if (Object.keys(updateData).length > 0) {
-      return prisma.conversation.update({
+      const updated = await prisma.conversation.update({
         where: { id: existing.id },
         data: { ...updateData, updatedAt: new Date() },
       });
+      return attachCustomerMemory(updated, opts);
     }
-    return existing;
+    return attachCustomerMemory(existing, opts);
   }
 
   // 2. If creating a NEW Messenger conversation, try to link it to the most recent comment thread
@@ -101,7 +124,7 @@ export async function getOrCreateConversation(
   }
 
   // 3. Create a brand new conversation
-  return prisma.conversation.create({
+  const created = await prisma.conversation.create({
     data: {
       pageId,
       senderId,
@@ -117,6 +140,7 @@ export async function getOrCreateConversation(
       readAt: null,
     },
   });
+  return attachCustomerMemory(created, opts);
 }
 
 export async function getConversationHistory(
@@ -179,6 +203,17 @@ export async function saveMessage(
     where: { id: conversationId },
     data: { updatedAt: new Date() },
   });
+
+  const conversation = await prisma.conversation.findUnique({
+    where: { id: conversationId },
+    select: { customerId: true },
+  });
+  if (conversation?.customerId) {
+    await prisma.customer.updateMany({
+      where: { id: conversation.customerId },
+      data: { lastInteractionAt: new Date() },
+    });
+  }
 
   return msg;
 }
@@ -254,6 +289,7 @@ export async function listWhatsAppConversations(
 
   const data = rows.map((c) => ({
     id: c.id,
+    customerId: c.customerId,
     businessProfileId: c.businessProfileId,
     phoneNumberId: c.pageId,
     displayPhoneNumber: phoneMap[c.pageId] ?? c.pageId,
@@ -457,6 +493,7 @@ export async function listMessengerConversations(
 
   const data = rows.map((c: any) => ({
     id: c.id,
+    customerId: c.customerId,
     businessProfileId: c.businessProfileId,
     pageId: c.pageId,
     pageName: pageMap[c.pageId] ?? c.pageId,

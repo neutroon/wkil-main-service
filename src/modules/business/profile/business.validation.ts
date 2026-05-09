@@ -10,6 +10,11 @@ const knowledgeSectionSchema = z.object({
   content: z.string().min(1, "Content is required"),
 });
 
+const followUpDelaySchema = z.object({
+  amount: z.coerce.number().int().min(1).max(10080),
+  unit: z.enum(["MINUTES", "HOURS", "DAYS"]),
+});
+
 /**
  * Business Profile Creation/Update Schema
  */
@@ -39,6 +44,10 @@ export const businessProfileSchema = z.object({
     watermarkPosition: z.enum(["TOP_LEFT", "TOP_RIGHT", "BOTTOM_LEFT", "BOTTOM_RIGHT", "CENTER"]).optional().default("BOTTOM_RIGHT"),
     leadCaptureInstructions: z.string().optional(),
     aiBehaviorInstructions: z.string().max(4000, "AI behavior instructions must be 4000 characters or less").optional(),
+    followUpEnabled: z.boolean().optional().default(false),
+    followUpMode: z.enum(["AUTO", "CUSTOM"]).optional().default("AUTO"),
+    followUpDelays: z.array(followUpDelaySchema).max(5).optional().default([]),
+    followUpInstructions: z.string().max(2000, "Follow-up instructions must be 2000 characters or less").optional(),
   }),
 });
 

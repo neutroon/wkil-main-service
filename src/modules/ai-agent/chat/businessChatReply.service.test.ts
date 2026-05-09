@@ -108,4 +108,21 @@ describe("prepareAgentParams", () => {
 
     expect(result.graphParams?.tools).toBeUndefined();
   });
+
+  it("skips CRM and external routers when the profile has no active tools", async () => {
+    const result = await prepareAgentParams({
+      businessProfile: {
+        ...businessProfile,
+        externalDataSources: [],
+        crmIntegrations: [],
+      },
+      messageText: "hi",
+      historyTurns: [],
+      channel: "web",
+    });
+
+    expect(result.graphParams?.tools).toBeUndefined();
+    expect(shouldExposeCrmTool).not.toHaveBeenCalled();
+    expect(filterEligibleExternalDataSources).not.toHaveBeenCalled();
+  });
 });

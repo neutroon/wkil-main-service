@@ -224,10 +224,13 @@ widgetRoutes.get(
 
     const data = conversations.map((c: any) => ({
       id: c.id,
+      customerId: c.customerId,
       businessProfileId: c.businessProfileId,
       visitorId: c.senderId,
       installId: c.pageId.replace("widget:", ""),
       lastMessage: c.messages?.[0] || null,
+      aiEnabled: c.aiEnabled,
+      readAt: c.readAt,
       status: c.status,
       updatedAt: c.updatedAt,
       createdAt: c.createdAt,

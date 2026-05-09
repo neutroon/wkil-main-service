@@ -41,6 +41,33 @@ async function missingKnowledgeDecision(state: AgentStateType, reasoning: string
   };
 }
 
+async function systemRecoveryDecision(
+  state: AgentStateType,
+  params: { reasoning: string; failureReason: string; handoffCategory?: string },
+) {
+  const recoveryReply = await generateSafeRecoveryReply({
+    systemInstruction: state.systemInstruction,
+    channel: state.channel,
+    customerMessage: latestUserText(state),
+    failureReason: params.failureReason,
+    safeFallback: state.policy.fallbackTemplates.failed,
+    allowHandoffLanguage: true,
+  });
+
+  return {
+    action: "HANDOFF_TO_HUMAN" as const,
+    handoffCategory: params.handoffCategory || "SYSTEM_ERROR",
+    reasoning: params.reasoning,
+    content: recoveryReply,
+    publicContent: recoveryReply,
+    privateContent: recoveryReply,
+    requiresGrounding: false,
+    grounded: false,
+    usedChunkTypes: [],
+    missingInfo: null,
+  };
+}
+
 function latestUserText(state: AgentStateType): string {
   const latest = [...state.contents].reverse().find((turn) => turn.role === "user");
   return (latest?.parts ?? [])
@@ -92,12 +119,10 @@ export async function parseDecisionNode(
       turnCount: state.turnCount,
     });
     return {
-      decision: {
-        action: "HANDOFF_TO_HUMAN",
-        handoffCategory: "SYSTEM_ERROR",
+      decision: await systemRecoveryDecision(state, {
         reasoning: "AI returned empty response. Requiring human intervention.",
-        content: "",
-      },
+        failureReason: "empty_ai_response",
+      }),
     };
   }
 
@@ -111,12 +136,10 @@ export async function parseDecisionNode(
       businessProfileId: state.businessProfileId,
     });
     return {
-      decision: {
-        action: "HANDOFF_TO_HUMAN",
-        handoffCategory: "SYSTEM_ERROR",
+      decision: await systemRecoveryDecision(state, {
         reasoning: "AI response parsing failed (potential mid-stream truncation).",
-        content: "",
-      },
+        failureReason: "ai_response_parse_failed",
+      }),
     };
   }
 
@@ -149,12 +172,11 @@ export async function parseDecisionNode(
       businessProfileId: state.businessProfileId,
     });
     return {
-      decision: {
-        action: "HANDOFF_TO_HUMAN",
-        handoffCategory: "AI_LOOP_DETECTED",
+      decision: await systemRecoveryDecision(state, {
         reasoning: "AI response contained excessive repetition after multiple correction attempts.",
-        content: "",
-      },
+        failureReason: "ai_loop_detected",
+        handoffCategory: "AI_LOOP_DETECTED",
+      }),
     };
   }
 
@@ -174,12 +196,10 @@ export async function parseDecisionNode(
     });
 
     return {
-      decision: {
-        action: "HANDOFF_TO_HUMAN",
-        handoffCategory: "SYSTEM_ERROR",
+      decision: await systemRecoveryDecision(state, {
         reasoning: "AI response omitted required direct-message content.",
-        content: "",
-      },
+        failureReason: "missing_direct_message_content",
+      }),
     };
   }
 

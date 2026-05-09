@@ -26,6 +26,40 @@ const WHATSAPP_FREE_FORM_WINDOW_MS = 23 * 60 * 60 * 1000;
 const OPT_OUT_PATTERN =
   /\b(stop|unsubscribe|do not message|don't message|لا تراسل|وقف الرسائل|الغاء الاشتراك|إلغاء الاشتراك)\b/i;
 
+function isFollowUpConversationEligible<T extends {
+  businessProfile: {
+    followUpEnabled: boolean;
+    responseMode?: string;
+  };
+  channel?: string | null;
+  status: string;
+  aiEnabled: boolean;
+} | null | undefined>(
+  conversation: T,
+  options: { requireAutoMode?: boolean } = {},
+): conversation is NonNullable<T> {
+  if (!conversation?.businessProfile.followUpEnabled) return false;
+  if (!DIRECT_CHANNELS.has(conversation.channel || "")) return false;
+  if (conversation.status !== "OPEN" || conversation.aiEnabled === false) return false;
+  if (options.requireAutoMode && conversation.businessProfile.responseMode !== "AUTO") {
+    return false;
+  }
+  return true;
+}
+
+function isFollowUpTriggerEligible<T extends {
+  role: string;
+  origin?: string | null;
+  status: string;
+  handoffCategory?: string | null;
+} | null | undefined>(trigger: T): trigger is NonNullable<T> {
+  if (!trigger || trigger.role !== "model") return false;
+  if (trigger.origin === "follow_up") return false;
+  if (trigger.status !== "SENT") return false;
+  if (trigger.handoffCategory === "SYSTEM_ERROR") return false;
+  return true;
+}
+
 function parseFollowUpDelays(value: unknown): FollowUpDelay[] {
   if (!Array.isArray(value)) return [];
 
@@ -150,19 +184,14 @@ export async function scheduleConversationFollowUps(params: {
     include: { businessProfile: true },
   });
 
-  if (!conversation?.businessProfile.followUpEnabled) return;
-  if (!DIRECT_CHANNELS.has(conversation.channel || "")) return;
-  if (conversation.status !== "OPEN" || conversation.aiEnabled === false) return;
+  if (!isFollowUpConversationEligible(conversation)) return;
 
   const trigger = await prisma.conversationMessage.findUnique({
     where: { id: params.triggerMessageId },
     select: { id: true, role: true, status: true, origin: true, handoffCategory: true },
   });
 
-  if (!trigger || trigger.role !== "model") return;
-  if (trigger.origin === "follow_up") return;
-  if (trigger.status !== "SENT") return;
-  if (trigger.handoffCategory === "SYSTEM_ERROR") return;
+  if (!isFollowUpTriggerEligible(trigger)) return;
 
   const delays = parseFollowUpDelays(conversation.businessProfile.followUpDelays);
   if (delays.length === 0) return;
@@ -301,10 +330,7 @@ export async function processFollowUpJob(payload: FollowUpJobPayload) {
     },
   });
 
-  if (!conversation?.businessProfile.followUpEnabled) return;
-  if (!DIRECT_CHANNELS.has(conversation.channel || "")) return;
-  if (conversation.status !== "OPEN" || conversation.aiEnabled === false) return;
-  if (conversation.businessProfile.responseMode !== "AUTO") return;
+  if (!isFollowUpConversationEligible(conversation, { requireAutoMode: true })) return;
   if (conversation.channel === "whatsapp" && !(await isWhatsAppFreeFormWindowOpen(conversation.id))) {
     logger.info("follow_up.skipped.whatsapp_window_closed", {
       conversationId: conversation.id,
@@ -318,9 +344,7 @@ export async function processFollowUpJob(payload: FollowUpJobPayload) {
     select: { createdAt: true, status: true, role: true, origin: true, handoffCategory: true },
   });
 
-  if (!trigger || trigger.role !== "model") return;
-  if (trigger.status !== "SENT" || trigger.origin === "follow_up") return;
-  if (trigger.handoffCategory === "SYSTEM_ERROR") return;
+  if (!isFollowUpTriggerEligible(trigger)) return;
   if (await hasNewerHumanOrCustomerMessage(conversation.id, trigger.createdAt)) return;
 
   const text = await generateFollowUpText({

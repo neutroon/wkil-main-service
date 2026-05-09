@@ -89,7 +89,7 @@ model BusinessProfile {
   phoneNumbers        String[]
   workingHours        String?
   address             String?
-  leadCaptureInstructions String? @default("Captures a prospective lead's information. Trigger this ONLY when the user explicitly expresses strong buying intent, asks for a callback, tells you their contact details, or wants to proceed with an action.")
+  customerDetailsInstructions String? @default("Saves useful customer details. Trigger this ONLY when the customer provides contact details, asks for follow-up, wants to proceed, gives preferences, or corrects saved information.")
   aiBehaviorInstructions String?
   followUpEnabled      Boolean  @default(false)
   followUpMode         String   @default("AUTO") // "AUTO" = AI decides from chat context, "CUSTOM" = use extra admin guidance

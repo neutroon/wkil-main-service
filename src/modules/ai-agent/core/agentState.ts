@@ -91,6 +91,10 @@ export const AgentState = Annotation.Root({
     value:   (_, update) => update,
     default: () => [],
   }),
+  externalSourceFailureBehaviors: Annotation<Record<number, string>>({
+    value:   (_, update) => update,
+    default: () => ({}),
+  }),
   policy:            Annotation<AiTruthfulnessPolicy>(),
   responseMode:      Annotation<"AUTO" | "MANUAL">(),
   conversationId:    Annotation<number | undefined>(),

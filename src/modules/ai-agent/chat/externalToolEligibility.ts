@@ -1,24 +1,24 @@
 import { generateContent } from "@modules/ai-agent/gemini";
+import {
+  EXTERNAL_DATA_SOURCE_LIMITS,
+  EXTERNAL_ROUTER_TIMEOUT,
+  type ExternalRoutingMode,
+} from "@modules/integrations/external/externalDataSource.constants";
 import { logger } from "@utils/logger";
 import type { BusinessProfileForChat } from "./businessChatReply.service";
 
 type ExternalDataSource = BusinessProfileForChat["externalDataSources"][number];
 
-const DEFAULT_ROUTER_TIMEOUT_MS = 2_500;
-const MIN_ROUTER_TIMEOUT_MS = 1_000;
-const MAX_ROUTER_TIMEOUT_MS = 10_000;
-const MAX_ROUTER_SOURCES = 12;
-
-function routingMode(source: ExternalDataSource): "STRICT" | "FAST" {
+function routingMode(source: ExternalDataSource): ExternalRoutingMode {
   return source.routingMode === "FAST" ? "FAST" : "STRICT";
 }
 
 function clampRouterTimeoutMs(source: ExternalDataSource): number {
-  const raw = Number(source.routerTimeoutMs ?? DEFAULT_ROUTER_TIMEOUT_MS);
-  if (!Number.isFinite(raw)) return DEFAULT_ROUTER_TIMEOUT_MS;
+  const raw = Number(source.routerTimeoutMs ?? EXTERNAL_ROUTER_TIMEOUT.defaultMs);
+  if (!Number.isFinite(raw)) return EXTERNAL_ROUTER_TIMEOUT.defaultMs;
   return Math.min(
-    MAX_ROUTER_TIMEOUT_MS,
-    Math.max(MIN_ROUTER_TIMEOUT_MS, Math.trunc(raw)),
+    EXTERNAL_ROUTER_TIMEOUT.maxMs,
+    Math.max(EXTERNAL_ROUTER_TIMEOUT.minMs, Math.trunc(raw)),
   );
 }
 
@@ -47,7 +47,7 @@ function buildRouterPrompt(
   sources: ExternalDataSource[],
   latestUserMessage: string,
 ): string {
-  const toolList = sources.slice(0, MAX_ROUTER_SOURCES).map((source) => ({
+  const toolList = sources.slice(0, EXTERNAL_DATA_SOURCE_LIMITS.maxRouterSources).map((source) => ({
     id: source.id,
     name: source.name,
     whenToUse: source.description,
@@ -94,7 +94,7 @@ export async function filterEligibleExternalDataSources(
 ): Promise<ExternalDataSource[]> {
   const activeSources = sources
     .filter((source) => source.isActive)
-    .slice(0, MAX_ROUTER_SOURCES);
+    .slice(0, EXTERNAL_DATA_SOURCE_LIMITS.maxRouterSources);
 
   if (activeSources.length === 0) return [];
   if (!latestUserMessage.trim()) return [];

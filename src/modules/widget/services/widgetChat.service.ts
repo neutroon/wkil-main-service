@@ -5,6 +5,7 @@ import {
   getConversationHistory,
   saveMessage,
 } from "@modules/meta/core/conversation.service";
+import { upsertCustomerFromConversation } from "@modules/business/customer/customer.service";
 import { computeBusinessChatReply } from "@modules/ai-agent/chat/businessChatReply.service";
 import { AiRoutingDecision } from "@modules/ai-agent/core/aiEngine.utils";
 import {
@@ -206,6 +207,15 @@ async function setupWidgetChat(params: {
     if (!verified)
       throw new AppError("Invalid conversationId for this visitor", 400);
     conversation = verified;
+    if (!conversation.customerId) {
+      const customer = await upsertCustomerFromConversation({
+        businessProfileId: install.businessProfileId,
+        conversationId: conversation.id,
+        channel: "web",
+        senderId: visitorId,
+      });
+      conversation = { ...conversation, customerId: customer.id };
+    }
   } else {
     conversation = await getOrCreateConversation(
       pageId,

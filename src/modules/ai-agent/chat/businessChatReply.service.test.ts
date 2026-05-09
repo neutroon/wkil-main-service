@@ -1,8 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { prepareAgentParams } from "./businessChatReply.service";
 import { filterEligibleExternalDataSources } from "./externalToolEligibility";
-import { shouldExposeCrmTool } from "./crmToolEligibility";
-import { buildSystemPrompt } from "../../meta/core/prompt.service";
 
 vi.mock("../rag/rag.service", () => ({
   retrieveRelevantChunks: vi.fn().mockResolvedValue([
@@ -12,6 +10,10 @@ vi.mock("../rag/rag.service", () => ({
 
 vi.mock("../../meta/core/prompt.service", () => ({
   buildSystemPrompt: vi.fn().mockReturnValue("system prompt"),
+}));
+
+vi.mock("@modules/ai-agent/core/agentGraph", () => ({
+  runAgentGraph: vi.fn(),
 }));
 
 vi.mock("@config/prisma", () => ({
@@ -24,10 +26,6 @@ vi.mock("@config/prisma", () => ({
 
 vi.mock("./externalToolEligibility", () => ({
   filterEligibleExternalDataSources: vi.fn(),
-}));
-
-vi.mock("./crmToolEligibility", () => ({
-  shouldExposeCrmTool: vi.fn(),
 }));
 
 vi.mock("@utils/logger", () => ({
@@ -49,6 +47,7 @@ const priceSource = {
   headers: null,
   queryParams: null,
   expectedParamsSchema: null,
+  trigger: "CHAT_REQUESTED",
   routingMode: "STRICT",
 } as any;
 
@@ -59,7 +58,7 @@ const businessProfile = {
   identity: "AI content automation platform",
   voice: "Egyptian Arabic",
   tone: "Inspirational",
-  leadCaptureInstructions: null,
+  customerDetailsInstructions: null,
   aiBehaviorInstructions: null,
   ragIngested: true,
   externalDataSources: [priceSource],
@@ -69,10 +68,9 @@ const businessProfile = {
 describe("prepareAgentParams", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(shouldExposeCrmTool).mockResolvedValue(false);
   });
 
-  it("passes router-approved external sources into the final Gemini tool declarations", async () => {
+  it("always exposes customer details saving and merges router-approved external sources", async () => {
     vi.mocked(filterEligibleExternalDataSources).mockResolvedValue([priceSource]);
 
     const result = await prepareAgentParams({
@@ -86,7 +84,20 @@ describe("prepareAgentParams", () => {
       {
         functionDeclarations: [
           expect.objectContaining({
-            name: "query_external_api_2",
+            name: "save_customer_details",
+            parameters: expect.objectContaining({
+              type: "OBJECT",
+              properties: expect.objectContaining({
+                name: expect.any(Object),
+                phone: expect.any(Object),
+                email: expect.any(Object),
+                notes: expect.any(Object),
+              }),
+            }),
+          }),
+          expect.objectContaining({
+            name: "integration_action_2",
+            description: expect.stringContaining("queues the check in the background"),
             parameters: expect.objectContaining({
               type: "OBJECT",
               properties: {},
@@ -97,7 +108,7 @@ describe("prepareAgentParams", () => {
     ]);
   });
 
-  it("leaves Gemini tools undefined when no CRM or external source is eligible", async () => {
+  it("keeps customer details saving available when no external source is eligible", async () => {
     vi.mocked(filterEligibleExternalDataSources).mockResolvedValue([]);
 
     const result = await prepareAgentParams({
@@ -107,10 +118,12 @@ describe("prepareAgentParams", () => {
       channel: "web",
     });
 
-    expect(result.graphParams?.tools).toBeUndefined();
+    expect(result.graphParams?.tools?.[0].functionDeclarations).toEqual([
+      expect.objectContaining({ name: "save_customer_details" }),
+    ]);
   });
 
-  it("skips CRM and external routers when the profile has no active tools", async () => {
+  it("skips the external router when the profile has no active external sources", async () => {
     const result = await prepareAgentParams({
       businessProfile: {
         ...businessProfile,
@@ -122,17 +135,18 @@ describe("prepareAgentParams", () => {
       channel: "web",
     });
 
-    expect(result.graphParams?.tools).toBeUndefined();
-    expect(shouldExposeCrmTool).not.toHaveBeenCalled();
+    expect(result.graphParams?.tools?.[0].functionDeclarations).toEqual([
+      expect.objectContaining({ name: "save_customer_details" }),
+    ]);
     expect(filterEligibleExternalDataSources).not.toHaveBeenCalled();
   });
 
-  it("treats inactive tools as nonexistent for routers and prompt CRM fields", async () => {
-    const inactiveCrm = {
+  it("keeps customer memory independent from non-chat action schemas", async () => {
+    const futureEventAction = {
+      ...priceSource,
       id: 9,
-      provider: "webhook",
-      isActive: false,
-      fieldMapping: {
+      trigger: "CUSTOMER_DETAILS_SAVED",
+      expectedParamsSchema: {
         interest: {
           type: "STRING",
           source: "USER_PROVIDED",
@@ -140,25 +154,30 @@ describe("prepareAgentParams", () => {
           description: "Customer interest",
         },
       },
+      isActive: true,
     };
 
     const result = await prepareAgentParams({
       businessProfile: {
         ...businessProfile,
-        externalDataSources: [{ ...priceSource, isActive: false }],
-        crmIntegrations: [inactiveCrm],
+        externalDataSources: [{ ...priceSource, isActive: false }, futureEventAction],
+        crmIntegrations: [],
       },
       messageText: "I want a callback",
       historyTurns: [],
       channel: "web",
     });
 
-    expect(result.graphParams?.tools).toBeUndefined();
-    expect(shouldExposeCrmTool).not.toHaveBeenCalled();
+    expect(result.graphParams?.tools?.[0].functionDeclarations).toEqual([
+      expect.objectContaining({
+        name: "save_customer_details",
+        parameters: expect.objectContaining({
+          properties: expect.not.objectContaining({
+            interest: expect.any(Object),
+          }),
+        }),
+      }),
+    ]);
     expect(filterEligibleExternalDataSources).not.toHaveBeenCalled();
-    const promptCalls = vi.mocked(buildSystemPrompt).mock.calls;
-    expect(promptCalls[promptCalls.length - 1]?.[0]).toMatchObject({
-      crmFields: [],
-    });
   });
 });

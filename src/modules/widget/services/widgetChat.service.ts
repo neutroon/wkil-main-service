@@ -89,11 +89,24 @@ export async function processWidgetChatMessage(params: {
     reply.action === "HANDOFF_TO_HUMAN" || !isAutoMode
       ? "PENDING_REVIEW"
       : "SENT";
+  const replyContent = (reply.content || "").trim();
+
+  if (reply.action === "REPLY_AUTO" && replyContent.length === 0 && !reply.attachment) {
+    logger.info("widget.chat.empty_auto_reply_skipped", {
+      widgetInstallId: install.id,
+      conversationId: conversation.id,
+      reasoning: reply.reasoning,
+    });
+    return {
+      reply: "",
+      conversationId: conversation.id,
+    };
+  }
 
   const botMsg = await saveMessage(
     conversation.id,
     "model",
-    reply.content || "",
+    replyContent,
     {
       status,
       aiReasoning: reply.reasoning,

@@ -67,7 +67,7 @@ crmRoutes.post(
   authorizeBusinessProfile, 
   async (req: Request, res: Response) => {
     const profileId = parseInt(req.params.profileId);
-    const { provider, webhookUrl, apiKey, fieldMapping } = req.body;
+    const { provider, webhookUrl, apiKey, fieldMapping, isActive } = req.body;
 
     // Find existing integration to get its ID for upsert
     const existing = await prisma.crmIntegration.findFirst({
@@ -82,7 +82,7 @@ crmRoutes.post(
         webhookUrl,
         apiKey: resolveApiKeyUpdate(existing?.apiKey, apiKey),
         fieldMapping,
-        isActive: true,
+        isActive: isActive !== undefined ? isActive : true,
       },
       create: {
         businessProfileId: profileId,
@@ -90,7 +90,7 @@ crmRoutes.post(
         webhookUrl,
         apiKey: apiKey ? encryptFacebookSecret(apiKey) : undefined,
         fieldMapping,
-        isActive: true,
+        isActive: isActive !== undefined ? isActive : true,
       }
     });
 

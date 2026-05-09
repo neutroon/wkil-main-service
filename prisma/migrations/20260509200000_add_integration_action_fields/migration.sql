@@ -1,0 +1,6 @@
+ALTER TABLE "public"."ExternalDataSource"
+  ADD COLUMN "actionType" TEXT NOT NULL DEFAULT 'LOOKUP',
+  ADD COLUMN "executionMode" TEXT NOT NULL DEFAULT 'INTERACTIVE',
+  ADD COLUMN "confirmationPolicy" TEXT NOT NULL DEFAULT 'REQUIRE_VERIFIED_RESULT',
+  ADD COLUMN "requestMapping" JSONB,
+  ADD COLUMN "responseMapping" JSONB;

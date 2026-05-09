@@ -173,9 +173,15 @@ model ExternalDataSource {
   method            String          @default("GET")
   headers           Json?           // Optional API keys or Bearer tokens
   queryParams       Json?           // Optional required query params expected by the API
+  trigger           String          @default("CHAT_REQUESTED") // CHAT_REQUESTED | CUSTOMER_DETAILS_SAVED | HANDOFF_CREATED | CONVERSATION_RESOLVED | FOLLOW_UP_DUE
+  actionType        String          @default("LOOKUP") // LOOKUP | MUTATION
+  executionMode     String          @default("BACKGROUND") // External actions always run through BullMQ
   routingMode       String          @default("STRICT") // STRICT = semantic pre-router, FAST = expose when active
   routerTimeoutMs   Int             @default(2500) // Max wait for STRICT semantic routing before falling back
   failureBehavior   String          @default("AUTO") // AUTO = AI classifier, HANDOFF_ON_FAILURE, ANSWER_WITH_CONTEXT_ON_FAILURE, SILENT_ON_FAILURE
+  confirmationPolicy String         @default("REQUIRE_VERIFIED_RESULT") // REQUIRE_VERIFIED_RESULT | ACCEPT_HTTP_SUCCESS
+  requestMapping    Json?
+  responseMapping   Json?
   
   // Defines the schema the AI is allowed to pass to the API (e.g. { category: "string", limit: "integer" })
   expectedParamsSchema Json?        

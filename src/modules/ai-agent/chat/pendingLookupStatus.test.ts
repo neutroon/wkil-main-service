@@ -72,6 +72,12 @@ describe("generatePendingLookupStatusDecision", () => {
         ],
       }),
     );
+    const prompt = (vi.mocked(genAI.models.generateContent).mock.calls[0][0] as any)
+      .contents[0].parts[0].text;
+    expect(prompt).toContain("direct_chat_style:");
+    expect(prompt).not.toContain("Channel style:");
+    expect(prompt).not.toContain("Channel: Web chat");
+    expect(prompt).not.toContain("direct-message channels");
   });
 
   it("returns null on status generation failure instead of fallback copy", async () => {

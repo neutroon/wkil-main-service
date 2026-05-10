@@ -13,7 +13,7 @@ describe("customer reply delivery policy", () => {
     expect(initialCustomerReplyStatus(reply, true, "web")).toBe("SENT");
   });
 
-  it("auto-delivers sales handoff replies while keeping other handoffs for review", () => {
+  it("auto-delivers customer-facing handoff replies in auto mode", () => {
     expect(
       shouldAutoDeliverCustomerReply(
         { action: "HANDOFF_TO_HUMAN", handoffCategory: "SALES_OPPORTUNITY" },
@@ -33,7 +33,7 @@ describe("customer reply delivery policy", () => {
         { action: "HANDOFF_TO_HUMAN", handoffCategory: "MISSING_KNOWLEDGE" },
         true,
       ),
-    ).toBe("PENDING_REVIEW");
+    ).toBe("SENDING");
   });
 
   it("does not auto-deliver system errors or manual-mode replies", () => {

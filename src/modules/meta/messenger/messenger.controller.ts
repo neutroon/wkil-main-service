@@ -13,7 +13,6 @@ import { uploadMessengerMedia } from "../core/metaUpload.service";
 import { AppError } from "@middlewares/errorHandler.middleware";
 import { env } from "@config/env";
 import { verifyMetaWebhookSignature } from "../core/metaWebhook";
-import { redisClient } from "@config/redis";
 import { enqueueMetaJob } from "../core/meta.queue";
 import { isKnownFacebookPage } from "../core/webhookCache.service";
 
@@ -89,9 +88,6 @@ export class MessengerController {
                 const senderName = value.from?.name;
 
                 if (senderId && messageText && commentId) {
-                  const isNew = await redisClient.set(`webhook:dedup:fbcomment:${commentId}`, "1", "EX", 86400, "NX");
-                  if (!isNew) continue;
-
                   enqueueMetaJob({
                     platform: "messenger",
                     type: "FACEBOOK_COMMENT",
@@ -104,7 +100,7 @@ export class MessengerController {
                     messageText,
                     senderName,
                     isFromBusiness,
-                  } as any);
+                  } as any, { jobId: `fbcomment:${commentId}` });
                 }
               }
             }
@@ -180,11 +176,6 @@ export class MessengerController {
             if (msgType === "text" && !messageText) continue;
             if (msgType !== "text" && !attachments) continue;
 
-            if (messageMid) {
-              const isNew = await redisClient.set(`webhook:dedup:messenger:${messageMid}`, "1", "EX", 86400, "NX");
-              if (!isNew) continue;
-            }
-
             enqueueMetaJob({
               platform: "messenger",
               type: msgType,
@@ -197,7 +188,7 @@ export class MessengerController {
               mediaId: mediaId?.toString(),
               mediaMetadata,
               isFromBusiness,
-            } as any);
+            } as any, messageMid ? { jobId: `messenger:${messageMid}` } : undefined);
           }
         }
       }

@@ -156,7 +156,7 @@ export async function processIntegrationActionJob(
   const status =
     !isAutoMode || reply.action === "HANDOFF_TO_HUMAN"
       ? "PENDING_REVIEW"
-      : "SENT";
+      : channel === "web" ? "SENT" : "SENDING";
 
   const saved = await saveMessage(job.conversationId, "model", content, {
     status,
@@ -167,7 +167,7 @@ export async function processIntegrationActionJob(
     origin: "integration_action_result",
   });
 
-  if (status !== "SENT" || content.length === 0) {
+  if (status !== "SENDING" || content.length === 0) {
     logger.info("integration_action.job.delivery_deferred", {
       conversationId: job.conversationId,
       action: reply.action,
@@ -239,7 +239,7 @@ async function deliverExternalLookupReply(params: {
       if (wamid) {
         await prisma.conversationMessage.update({
           where: { id: messageId },
-          data: { externalId: wamid },
+          data: { status: "SENT", externalId: wamid },
         });
       }
       return;
@@ -263,7 +263,7 @@ async function deliverExternalLookupReply(params: {
       if (res?.message_id) {
         await prisma.conversationMessage.update({
           where: { id: messageId },
-          data: { externalId: res.message_id },
+          data: { status: "SENT", externalId: res.message_id },
         });
       }
       return;

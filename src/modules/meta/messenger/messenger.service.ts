@@ -1,7 +1,6 @@
 import prisma from "@config/prisma";
 import { logger } from "@utils/logger";
 import { decryptFacebookSecret } from "@modules/auth/core/tokenCrypto";
-import { redisClient } from "@config/redis";
 import {
   getOrCreateConversation,
   getConversationHistory,
@@ -110,11 +109,13 @@ export async function handleMessengerMessage(
   mediaId?: string,
   mediaMetadata?: any,
 ) {
-  // Idempotency: prevent processing same Message ID twice (Meta retries)
   if (externalId) {
-    const isNew = await redisClient.set(`webhook:dedup:messenger:${externalId}`, "1", "EX", 86400, "NX");
-    if (!isNew) {
-      logger.debug("messenger.duplicate_mid_skipped", { externalId });
+    const existing = await prisma.conversationMessage.findFirst({
+      where: { externalId },
+      select: { id: true },
+    });
+    if (existing) {
+      logger.info("messenger.message_already_exists", { externalId });
       return;
     }
   }
@@ -241,7 +242,7 @@ export async function handleMessengerMessage(
     const status =
       reply.action === "HANDOFF_TO_HUMAN" || !isAutoMode
         ? "PENDING_REVIEW"
-        : "SENT";
+        : "SENDING";
 
     // 5. Save AI turn (Draft or Sent)
     const modelSaved = await saveMessage(
@@ -257,7 +258,7 @@ export async function handleMessengerMessage(
 
     // 6. Send API call if AUTO
     if (
-      status === "SENT" &&
+      status === "SENDING" &&
       reply.content &&
       reply.handoffCategory !== "SYSTEM_ERROR"
     ) {
@@ -272,7 +273,7 @@ export async function handleMessengerMessage(
         if (mid) {
           await prisma.conversationMessage.update({
             where: { id: modelSaved.id },
-            data: { externalId: mid },
+            data: { status: "SENT", externalId: mid },
           });
         }
 
@@ -284,6 +285,10 @@ export async function handleMessengerMessage(
         });
       } catch (sendErr: any) {
         logger.error("messenger.reply_send_failed", { error: sendErr.message });
+        await prisma.conversationMessage.update({
+          where: { id: modelSaved.id },
+          data: { status: "FAILED" },
+        });
       }
     }
 

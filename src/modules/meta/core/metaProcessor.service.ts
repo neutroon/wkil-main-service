@@ -224,13 +224,25 @@ async function enrichContactInBackground(
   try {
     const profile = await getFacebookUserProfile(senderId, pageId, accessToken);
     if (profile?.name && String(profile.name).toLowerCase() !== "null") {
-      await prisma.conversation.update({
+      const updatedConversation = await prisma.conversation.update({
         where: { id: conversationId },
         data: {
           customerName: profile.name,
           customerAvatar: profile.pictureUrl || undefined
-        }
+        },
+        select: {
+          customerId: true,
+        },
       });
+      if (updatedConversation.customerId) {
+        await prisma.customer.update({
+          where: { id: updatedConversation.customerId },
+          data: {
+            displayName: profile.name,
+            avatarUrl: profile.pictureUrl || undefined,
+          },
+        });
+      }
       logger.info("meta.processor.profile_enriched_background", { conversationId, name: profile.name });
     }
   } catch (e: any) {

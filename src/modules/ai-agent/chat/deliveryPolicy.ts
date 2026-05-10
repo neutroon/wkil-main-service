@@ -6,8 +6,7 @@ export function shouldAutoDeliverCustomerReply(
 ): boolean {
   if (!isAutoMode) return false;
   if (reply.handoffCategory === "SYSTEM_ERROR") return false;
-  if (reply.action !== "HANDOFF_TO_HUMAN") return true;
-  return reply.handoffCategory === "SALES_OPPORTUNITY";
+  return true;
 }
 
 export function initialCustomerReplyStatus(

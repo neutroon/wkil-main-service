@@ -55,7 +55,7 @@ export interface SessionStats {
   modelName: string;
 }
 
-function makeEmptyEvidence(): AiEvidenceState {
+export function makeEmptyEvidence(): AiEvidenceState {
   return {
     verifiedActions: [],
     unverifiedActions: [],
@@ -123,7 +123,7 @@ export const AgentState = Annotation.Root({
     default: () => 0,
   }),
   hadToolExecution: Annotation<boolean>({
-    value:   (existing, update) => existing || update, // sticky: once true, stays true
+    value:   (_, update) => update,
     default: () => false,
   }),
 

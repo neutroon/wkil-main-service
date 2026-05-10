@@ -2,10 +2,7 @@ import type { Prisma } from "@prisma/client";
 import type { Tool } from "@google/genai";
 import { retrieveRelevantChunks } from "../rag/rag.service";
 import { buildSystemPrompt } from "../../meta/core/prompt.service";
-import {
-  buildSaveCustomerDetailsTool,
-  buildIntegrationActionTools,
-} from "@modules/ai-agent/gemini";
+import { buildIntegrationActionTools } from "@modules/ai-agent/gemini";
 import { runAgentGraph } from "@modules/ai-agent/core/agentGraph";
 import type { AiRoutingDecision } from "@modules/ai-agent/core/aiEngine.utils";
 import {
@@ -14,6 +11,7 @@ import {
 } from "./aiFallbackPolicy";
 import { generateSafeRecoveryReply } from "./aiRecoveryReply";
 import { filterEligibleExternalDataSources } from "./externalToolEligibility";
+import { enqueueCustomerMemoryCapture } from "@modules/meta/core/meta.queue";
 import prisma from "@config/prisma";
 import { logger } from "@utils/logger";
 export type { AiRoutingDecision };
@@ -164,10 +162,6 @@ export async function prepareAgentParams(params: {
       )
     : Promise.resolve([]);
   const eligibleExternalSources = await externalRouterPromise;
-  const customerDetailsTool = buildSaveCustomerDetailsTool(
-    undefined,
-    businessProfile.customerDetailsInstructions || undefined,
-  );
   const externalTools = buildIntegrationActionTools(eligibleExternalSources);
   const externalSourceFailureBehaviors = Object.fromEntries(
     eligibleExternalSources.map((source) => [
@@ -177,7 +171,6 @@ export async function prepareAgentParams(params: {
   );
 
   const toolBlocks: Tool[] = [];
-  toolBlocks.push(...customerDetailsTool);
   if (externalTools.length > 0) toolBlocks.push(...externalTools);
 
   const mergedDeclarations = toolBlocks.flatMap(
@@ -204,7 +197,7 @@ export async function prepareAgentParams(params: {
     contextQuality,
     customerPhone,
     postContext: params.postContext,
-    hasCustomerMemoryTool: customerDetailsTool.length > 0,
+    hasCustomerMemoryTool: false,
     hasChatRequestedActions: externalTools.length > 0,
     hasMediaAssets: mediaAssets.length > 0,
     hasCompletedActionResult: Boolean(completedExternalLookup),
@@ -228,7 +221,7 @@ export async function prepareAgentParams(params: {
   logger.info("ai.chat.prepared_tools", {
     businessProfileId: businessProfile.id,
     channel,
-    customerDetailsToolExposed: true,
+    customerDetailsToolExposed: false,
     eligibleExternalSourceIds: eligibleExternalSources.map((source) => source.id),
     toolNames: mergedDeclarations.map((declaration) => declaration.name),
   });
@@ -285,7 +278,9 @@ export async function computeBusinessChatReply(params: {
   const prep = await prepareAgentParams(params);
   if (prep.errorDecision) return prep.errorDecision;
 
-  return runAgentGraph(prep.graphParams!);
+  const decision = await runAgentGraph(prep.graphParams!);
+  enqueueCustomerMemoryCaptureFromChat(params);
+  return decision;
 }
 
 /**
@@ -306,8 +301,35 @@ export async function* computeBusinessChatStreaming(params: {
     return;
   }
 
+  enqueueCustomerMemoryCaptureFromChat(params);
   const { streamAgentGraph } = await import("../core/streamAgent");
   for await (const event of streamAgentGraph(prep.graphParams!)) {
     yield event;
   }
+}
+
+function enqueueCustomerMemoryCaptureFromChat(params: {
+  businessProfile: BusinessProfileForChat;
+  messageText: string;
+  historyTurns: { role: "user" | "model"; text: string }[];
+  channel: "messenger" | "whatsapp" | "web" | "facebook_comment";
+  customerPhone?: string;
+  conversationId?: number;
+}) {
+  if (!params.conversationId || !params.messageText.trim()) return;
+
+  enqueueCustomerMemoryCapture({
+    businessProfileId: params.businessProfile.id,
+    conversationId: params.conversationId,
+    channel: params.channel,
+    customerPhone: params.customerPhone,
+    latestUserText: params.messageText,
+    recentTurns: params.historyTurns.slice(-8),
+  }).catch((error: any) => {
+    logger.error("ai.chat.customer_memory_capture_enqueue_failed", {
+      businessProfileId: params.businessProfile.id,
+      conversationId: params.conversationId,
+      error: error?.message || String(error),
+    });
+  });
 }

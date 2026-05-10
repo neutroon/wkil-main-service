@@ -12,6 +12,12 @@ import {
 } from "@modules/ai-agent/chat/conversationTurns";
 import { computeBusinessChatReply } from "@modules/ai-agent/chat/businessChatReply.service";
 import { initialCustomerReplyStatus } from "@modules/ai-agent/chat/deliveryPolicy";
+import {
+  markIntegrationActionRunFailed,
+  markIntegrationActionRunRunning,
+  markIntegrationActionRunSkipped,
+  markIntegrationActionRunSucceeded,
+} from "./integrationActionRun.service";
 
 export type IntegrationActionTrigger =
   | "CHAT_REQUESTED"
@@ -24,6 +30,7 @@ export type IntegrationActionJob = {
   businessProfileId: number;
   trigger: IntegrationActionTrigger;
   sourceId: number;
+  actionRunId?: number | null;
   conversationId?: number | null;
   customerId?: number | null;
   toolName?: string;
@@ -36,6 +43,8 @@ export type IntegrationActionJob = {
 export async function processIntegrationActionJob(
   job: IntegrationActionJob,
 ): Promise<void> {
+  await markIntegrationActionRunRunning(job.actionRunId);
+
   const source = await prisma.externalDataSource.findFirst({
     where: {
       id: job.sourceId,
@@ -46,6 +55,10 @@ export async function processIntegrationActionJob(
   });
 
   if (!source) {
+    await markIntegrationActionRunSkipped({
+      id: job.actionRunId,
+      reason: "source_missing_or_inactive",
+    });
     logger.warn("integration_action.job.source_missing", {
       businessProfileId: job.businessProfileId,
       sourceId: job.sourceId,
@@ -55,18 +68,27 @@ export async function processIntegrationActionJob(
   }
 
   if (job.trigger !== "CHAT_REQUESTED") {
-    const args = await buildBackgroundActionArgs(job);
-    const envelope = await executeExternalQuery(
-      job.businessProfileId,
-      job.sourceId,
-      args,
-      {
-        customerPhone: job.customerPhone,
-        conversationId: job.conversationId ?? undefined,
-        latestUserText: job.latestUserText,
-        historyText: job.historyText,
-      },
-    );
+    let envelope: Awaited<ReturnType<typeof executeExternalQuery>>;
+    try {
+      const args = await buildBackgroundActionArgs(job);
+      envelope = await executeExternalQuery(
+        job.businessProfileId,
+        job.sourceId,
+        args,
+        {
+          customerPhone: job.customerPhone,
+          conversationId: job.conversationId ?? undefined,
+          latestUserText: job.latestUserText,
+          historyText: job.historyText,
+        },
+      );
+    } catch (error: any) {
+      await markIntegrationActionRunFailed({
+        id: job.actionRunId,
+        reason: error?.message || "integration_action_failed",
+      });
+      throw error;
+    }
 
     logger.info("integration_action.job.background_completed", {
       businessProfileId: job.businessProfileId,
@@ -79,12 +101,27 @@ export async function processIntegrationActionJob(
     });
 
     if (envelope.verification === "failed" && source.failureBehavior !== "SILENT_ON_FAILURE") {
+      await markIntegrationActionRunFailed({
+        id: job.actionRunId,
+        reason: envelope.error || envelope.reason || "integration_action_failed",
+        responsePayload: envelope,
+        verification: envelope.verification,
+      });
       throw new Error(envelope.error || envelope.reason || "integration_action_failed");
     }
+    await markIntegrationActionRunSucceeded({
+      id: job.actionRunId,
+      responsePayload: envelope,
+      verification: envelope.verification,
+    });
     return;
   }
 
   if (!job.conversationId) {
+    await markIntegrationActionRunSkipped({
+      id: job.actionRunId,
+      reason: "chat_conversation_missing",
+    });
     logger.warn("integration_action.job.chat_conversation_missing", {
       businessProfileId: job.businessProfileId,
       sourceId: job.sourceId,
@@ -105,23 +142,36 @@ export async function processIntegrationActionJob(
   });
 
   if (!conversation) {
+    await markIntegrationActionRunSkipped({
+      id: job.actionRunId,
+      reason: "conversation_missing",
+    });
     logger.warn("integration_action.job.conversation_missing", {
       conversationId: job.conversationId,
     });
     return;
   }
 
-  const envelope = await executeExternalQuery(
-    job.businessProfileId,
-    job.sourceId,
-    job.args ?? {},
-    {
-      customerPhone: job.customerPhone,
-      conversationId: job.conversationId,
-      latestUserText: job.latestUserText,
-      historyText: job.historyText,
-    },
-  );
+  let envelope: Awaited<ReturnType<typeof executeExternalQuery>>;
+  try {
+    envelope = await executeExternalQuery(
+      job.businessProfileId,
+      job.sourceId,
+      job.args ?? {},
+      {
+        customerPhone: job.customerPhone,
+        conversationId: job.conversationId,
+        latestUserText: job.latestUserText,
+        historyText: job.historyText,
+      },
+    );
+  } catch (error: any) {
+    await markIntegrationActionRunFailed({
+      id: job.actionRunId,
+      reason: error?.message || "integration_action_failed",
+    });
+    throw error;
+  }
 
   const historyRows = await getConversationHistory(job.conversationId);
   const historyTurns = historyToLlmTurns(toPromptMessages(historyRows));
@@ -149,6 +199,11 @@ export async function processIntegrationActionJob(
       where: { id: job.conversationId },
       data: { status: "RESOLVED" },
     });
+    await markIntegrationActionRunSucceeded({
+      id: job.actionRunId,
+      responsePayload: envelope,
+      verification: envelope.verification,
+    });
     return;
   }
 
@@ -167,6 +222,13 @@ export async function processIntegrationActionJob(
     intent: reply.intent,
     isPrivate: channel === "messenger" || channel === "whatsapp",
     origin: "integration_action_result",
+  });
+
+  await markIntegrationActionRunSucceeded({
+    id: job.actionRunId,
+    responsePayload: envelope,
+    verification: envelope.verification,
+    resultMessageId: saved.id,
   });
 
   if (status !== "SENDING" || content.length === 0) {

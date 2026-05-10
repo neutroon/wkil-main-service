@@ -482,7 +482,7 @@ function collectRequiredFields(
 }
 
 export const DEFAULT_CUSTOMER_DETAILS_INSTRUCTIONS =
-  "Saves useful customer details to the local customer profile only. Call this ONLY when the customer provides contact details, asks for follow-up, wants to proceed, gives a preference or requirement, or explicitly corrects previously saved details. Do not call it for greetings, generic questions, or identical details already saved in the conversation.";
+  "Saves useful customer details to the local customer profile only. Call this ONLY when the customer explicitly provides contact details, asks for follow-up, wants to proceed, gives a preference or requirement, corrects previously saved details, or real chat context metadata should create/enrich the customer profile. For greetings, save real identity/contact metadata only; do not save conversation-summary notes. Do not call it for thanks, generic questions, or identical details already saved in the conversation.";
 
 export function buildSaveCustomerDetailsTool(
   fieldMapping: any,

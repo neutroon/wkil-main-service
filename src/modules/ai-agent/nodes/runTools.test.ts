@@ -4,6 +4,10 @@ import { updateCustomerFromSavedDetails } from "@modules/business/customer/custo
 import { enqueueIntegrationAction } from "@modules/meta/core/meta.queue";
 import { getExternalDataSourceStatusMetadata } from "@modules/integrations/external/externalData.service";
 import { generatePendingLookupStatusDecision } from "@modules/ai-agent/chat/pendingLookupStatus";
+import {
+  createIntegrationActionRun,
+  markIntegrationActionRunFailed,
+} from "@modules/integrations/external/integrationActionRun.service";
 
 vi.mock("@modules/business/customer/customer.service", () => ({
   updateCustomerFromSavedDetails: vi.fn(),
@@ -19,6 +23,11 @@ vi.mock("@modules/integrations/external/externalData.service", () => ({
     name: "Product availability",
     description: "Checks live availability.",
   })),
+}));
+
+vi.mock("@modules/integrations/external/integrationActionRun.service", () => ({
+  createIntegrationActionRun: vi.fn(async () => ({ id: 7001 })),
+  markIntegrationActionRunFailed: vi.fn(async () => undefined),
 }));
 
 vi.mock("@modules/ai-agent/chat/pendingLookupStatus", () => ({
@@ -274,11 +283,22 @@ describe("runToolsNode external query guardrails", () => {
         trigger: "CHAT_REQUESTED",
         conversationId: 123,
         sourceId: 2,
+        actionRunId: 7001,
         toolName: "integration_action_2",
         args: { propertyName: "pagesPilot services" },
         latestUserText: "fd",
       }),
       expect.objectContaining({
+        jobId: expect.stringContaining("integration-action:CHAT_REQUESTED:123:"),
+      }),
+    );
+    expect(createIntegrationActionRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        businessProfileId: 1,
+        sourceId: 2,
+        conversationId: 123,
+        trigger: "CHAT_REQUESTED",
+        toolName: "integration_action_2",
         jobId: expect.stringContaining("integration-action:CHAT_REQUESTED:123:"),
       }),
     );
@@ -303,6 +323,13 @@ describe("runToolsNode external query guardrails", () => {
       requiresGrounding: false,
     });
     expect(result.evidence?.verifiedActions).toContain("integration_action_2");
+    const lastTurn = result.contents?.[result.contents.length - 1];
+    const response = (lastTurn as any)?.parts?.[0]?.functionResponse?.response;
+    expect(response.data).toMatchObject({
+      queued: true,
+      sourceId: 2,
+      actionRunId: 7001,
+    });
   });
 
   it("does not execute the same failed external lookup again", async () => {
@@ -350,6 +377,12 @@ describe("runToolsNode external query guardrails", () => {
 
     expect(result.decision).toMatchObject({ action: "HANDOFF_TO_HUMAN" });
     expect(result.evidence?.failedActions).toContain("integration_action_2");
+    expect(markIntegrationActionRunFailed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 7001,
+        reason: "redis down",
+      }),
+    );
     expect(generatePendingLookupStatusDecision).not.toHaveBeenCalled();
   });
 });

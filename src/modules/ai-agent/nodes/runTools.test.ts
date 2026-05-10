@@ -99,6 +99,14 @@ describe("runToolsNode external query guardrails", () => {
     const result = await runToolsNode(
       baseState({
         customerPhone: "+20100111222",
+        tools: [
+          {
+            functionDeclarations: [
+              { name: "save_customer_details" },
+              { name: "integration_action_2" },
+            ],
+          },
+        ],
         functionCalls: [
           {
             id: "tool_save",
@@ -110,13 +118,19 @@ describe("runToolsNode external query guardrails", () => {
     );
     await Promise.resolve();
 
+    expect(result.tools).toEqual([
+      {
+        functionDeclarations: [
+          { name: "integration_action_2" },
+        ],
+      },
+    ]);
     expect(updateCustomerFromSavedDetails).toHaveBeenCalledWith({
       businessProfileId: 1,
       conversationId: 123,
       details: {
         name: "Mona",
         interest: "pricing",
-        phone: "+20100111222",
       },
     });
     expect(enqueueIntegrationAction).not.toHaveBeenCalled();
@@ -131,6 +145,120 @@ describe("runToolsNode external query guardrails", () => {
             success: true,
             verification: "verified",
             reason: "customer_details_saved",
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("can save customer identity from a greeting, then removes the save tool to prevent loops", async () => {
+    vi.mocked(updateCustomerFromSavedDetails).mockResolvedValue({
+      id: 156,
+    } as never);
+
+    const result = await runToolsNode(
+      baseState({
+        customerPhone: "201202840018",
+        tools: [
+          {
+            functionDeclarations: [
+              { name: "save_customer_details" },
+              { name: "integration_action_2" },
+            ],
+          },
+        ],
+        contents: [
+          { role: "user", parts: [{ text: "السلام عليكم" }] },
+          { role: "model", parts: [{ text: "" }] },
+        ],
+        functionCalls: [
+          {
+            id: "tool_save",
+            name: "save_customer_details",
+            args: {
+              notes: "العميل بدأ المحادثة بالتحية",
+              phone: "201202840018",
+            },
+          },
+        ],
+      }),
+    );
+
+    expect(updateCustomerFromSavedDetails).toHaveBeenCalledWith({
+      businessProfileId: 1,
+      conversationId: 123,
+      details: {
+        notes: "العميل بدأ المحادثة بالتحية",
+        phone: "201202840018",
+      },
+    });
+    expect(result.tools).toEqual([
+      {
+        functionDeclarations: [
+          { name: "integration_action_2" },
+        ],
+      },
+    ]);
+    expect(result.evidence?.verifiedActions).toContain("save_customer_details");
+    const lastTurn = result.contents?.[result.contents.length - 1];
+    expect(lastTurn?.parts?.[0]).toEqual(
+      expect.objectContaining({
+        functionResponse: expect.objectContaining({
+          name: "save_customer_details",
+          response: expect.objectContaining({
+            verification: "verified",
+            reason: "customer_details_saved",
+            data: { customerId: 156 },
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("does not execute repeated customer-detail saves in the same graph turn", async () => {
+    const result = await runToolsNode(
+      baseState({
+        tools: [
+          {
+            functionDeclarations: [
+              { name: "save_customer_details" },
+              { name: "integration_action_2" },
+            ],
+          },
+        ],
+        evidence: {
+          verifiedActions: ["save_customer_details"],
+          unverifiedActions: [],
+          failedActions: [],
+          unknownActions: [],
+        },
+        functionCalls: [
+          {
+            id: "tool_save_again",
+            name: "save_customer_details",
+            args: { name: "Mona" },
+          },
+        ],
+      }),
+    );
+
+    expect(updateCustomerFromSavedDetails).not.toHaveBeenCalled();
+    expect(result.tools).toEqual([
+      {
+        functionDeclarations: [
+          { name: "integration_action_2" },
+        ],
+      },
+    ]);
+    const lastTurn = result.contents?.[result.contents.length - 1];
+    expect(lastTurn?.parts?.[0]).toEqual(
+      expect.objectContaining({
+        functionResponse: expect.objectContaining({
+          name: "save_customer_details",
+          response: expect.objectContaining({
+            verification: "not_applicable",
+            reason: "customer_details_already_saved_this_turn",
+            data: { saved: false },
           }),
         }),
       }),

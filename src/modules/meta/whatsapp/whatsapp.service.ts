@@ -294,7 +294,7 @@ export async function handleWhatsAppMessage(
     const status =
       reply.action === "HANDOFF_TO_HUMAN" || !isAutoMode
         ? "PENDING_REVIEW"
-        : "SENT";
+        : "SENDING";
 
     // 5. Save AI turn (Draft or Sent)
     const modelSaved = await saveMessage(
@@ -310,7 +310,7 @@ export async function handleWhatsAppMessage(
 
     // 6. Send API call if AUTO
     if (
-      status === "SENT" &&
+      status === "SENDING" &&
       reply.content &&
       reply.handoffCategory !== "SYSTEM_ERROR"
     ) {
@@ -326,7 +326,7 @@ export async function handleWhatsAppMessage(
         if (modelWamid) {
           await prisma.conversationMessage.update({
             where: { id: modelSaved.id },
-            data: { externalId: modelWamid },
+            data: { status: "SENT", externalId: modelWamid },
           });
         }
 
@@ -338,6 +338,10 @@ export async function handleWhatsAppMessage(
         });
       } catch (sendErr: any) {
         logger.error("whatsapp.reply_send_failed", { error: sendErr.message });
+        await prisma.conversationMessage.update({
+          where: { id: modelSaved.id },
+          data: { status: "FAILED" },
+        });
       }
     }
   } catch (err: unknown) {

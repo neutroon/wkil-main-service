@@ -11,6 +11,7 @@ import {
   toPromptMessages,
 } from "@modules/ai-agent/chat/conversationTurns";
 import { computeBusinessChatReply } from "@modules/ai-agent/chat/businessChatReply.service";
+import { initialCustomerReplyStatus } from "@modules/ai-agent/chat/deliveryPolicy";
 
 export type IntegrationActionTrigger =
   | "CHAT_REQUESTED"
@@ -153,10 +154,11 @@ export async function processIntegrationActionJob(
 
   const isAutoMode = conversation.businessProfile.responseMode === "AUTO";
   const content = (reply.privateContent || reply.content || "").trim();
-  const status =
-    !isAutoMode || reply.action === "HANDOFF_TO_HUMAN"
-      ? "PENDING_REVIEW"
-      : channel === "web" ? "SENT" : "SENDING";
+  const status = initialCustomerReplyStatus(
+    reply,
+    isAutoMode,
+    channel === "web" ? "web" : "platform",
+  );
 
   const saved = await saveMessage(job.conversationId, "model", content, {
     status,

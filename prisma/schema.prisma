@@ -368,7 +368,7 @@ model ConversationMessage {
   mediaId        String?      // Meta media_id
   mediaMetadata  Json?        // Stores duration, filename, mimeType, size etc.
   externalId     String?      @unique // Meta message ID (wamid or mid) for status tracking
-  status         String       @default("SENT") // "SENT", "DELIVERED", "READ", "PENDING_REVIEW", "EDITED_AND_SENT", "FAILED"
+  status         String       @default("SENT") // "SENDING", "SENT", "DELIVERED", "READ", "PENDING_REVIEW", "EDITED_AND_SENT", "FAILED"
   aiReasoning    String?      // Storing the AI's thought process for routing
   handoffCategory String?     // e.g. "SALES", "SUPPORT", "ANGRY_CUSTOMER"
   intent          String?     // AI-detected intent (e.g. "SALES_DM", "GREET_ONLY")

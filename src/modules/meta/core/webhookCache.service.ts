@@ -83,25 +83,3 @@ export async function invalidateWhatsAppAccountCache(phoneNumberId: string): Pro
   await cache.delete(cacheKey);
   logger.info("webhook_cache.invalidated_wa", { phoneNumberId });
 }
-
-/**
- * ELITE TIER: Atomic deduplication to prevent double AI replies.
- * Returns true if the webhook is currently being processed (idempotency lock).
- * TTL of 90s is enough to cover the AI thinking time.
- * Reasoning tag [v4.3]
- */
-export async function isDuplicateWebhook(externalId: string): Promise<boolean> {
-  if (!externalId) return false;
-  const cacheKey = `lock:webhook:${externalId}`;
-  
-  // We use redisClient directly for atomic SET NX since the cache utility
-  // currently doesn't expose the raw SET response for NX.
-  // This is acceptable as it's a specific atomic operation.
-  const { redisClient } = await import("@config/redis");
-  const result = await redisClient.set(cacheKey, "1", "EX", 90, "NX");
-  return result === null; 
-}
-
-
-
-

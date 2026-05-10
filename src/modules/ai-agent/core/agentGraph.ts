@@ -15,7 +15,7 @@
 import { StateGraph, START, END }        from "@langchain/langgraph";
 import { PostgresSaver }               from "@langchain/langgraph-checkpoint-postgres";
 import { Pool }                        from "pg";
-import { AgentState }                    from "./agentState";
+import { AgentState, makeEmptyEvidence } from "./agentState";
 import { callGeminiNode }                from "../nodes/callGemini";
 import { runToolsNode }                  from "../nodes/runTools";
 import { parseDecisionNode }             from "../nodes/parseDecision";
@@ -215,6 +215,7 @@ async function _runGraph(params: AgentGraphParams): Promise<AiRoutingDecision> {
       functionCalls:     [] as any,
       turnCount:         0 as any,
       hadToolExecution:  false as any,
+      evidence:          makeEmptyEvidence() as any,
       sessionStats: {
         promptTokens:     0,
         completionTokens: 0,

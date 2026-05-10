@@ -47,7 +47,7 @@ export async function runToolsNode(
 ): Promise<Partial<AgentStateType>> {
   const functionResponses: any[] = [];
   let updatedEvidence = { ...state.evidence };
-  const contextPhone = state.customerPhone;
+  let nextTools = state.tools;
   let blockingDecision: AgentStateType["decision"] | null = null;
 
   for (const call of state.functionCalls) {
@@ -78,13 +78,28 @@ export async function runToolsNode(
         }
 
         const args = parseResult.data;
+        if (state.evidence.verifiedActions.includes("save_customer_details")) {
+          nextTools = removeToolDeclaration(nextTools, "save_customer_details");
+          logger.info("ai.node.runTools.customer_details_duplicate_ignored", {
+            businessProfileId: state.businessProfileId,
+            conversationId: state.conversationId,
+          });
+          functionResponses.push(
+            buildFunctionResponse(call.name, {
+              success: true,
+              verification: "not_applicable",
+              actionType: "save_customer_details",
+              reason: "customer_details_already_saved_this_turn",
+              data: { saved: false },
+            }),
+          );
+          continue;
+        }
+
         const customer = await updateCustomerFromSavedDetails({
           businessProfileId: state.businessProfileId,
           conversationId: state.conversationId,
-          details: {
-            ...args,
-            phone: args.phone || contextPhone,
-          },
+          details: args,
         });
 
         const envelope = {
@@ -102,6 +117,7 @@ export async function runToolsNode(
           envelope,
           "save_customer_details",
         );
+        nextTools = removeToolDeclaration(nextTools, "save_customer_details");
         functionResponses.push(buildFunctionResponse(call.name, envelope));
       } else if (call.name.startsWith("integration_action_")) {
         const sourceId = parseInt(call.name.split("_").pop() || "0", 10);
@@ -263,6 +279,7 @@ export async function runToolsNode(
       functionResponses.length > 0
         ? [...state.contents, { role: "user", parts: functionResponses }]
         : state.contents,
+    tools: nextTools,
     evidence: updatedEvidence,
     hadToolExecution: true,
     functionCalls: [], // Clear for next turn
@@ -290,6 +307,24 @@ function buildSilentExternalLookupQueuedDecision(): AgentStateType["decision"] {
 
 function buildFunctionResponse(name: string, response: unknown) {
   return { functionResponse: { name, response } };
+}
+
+function removeToolDeclaration(
+  tools: AgentStateType["tools"],
+  functionName: string,
+): AgentStateType["tools"] {
+  if (!tools?.length) return tools;
+
+  const filtered = tools
+    .map((tool: any) => {
+      const functionDeclarations = tool.functionDeclarations?.filter(
+        (declaration: any) => declaration?.name !== functionName,
+      );
+      return { ...tool, functionDeclarations };
+    })
+    .filter((tool: any) => (tool.functionDeclarations?.length ?? 0) > 0);
+
+  return filtered.length > 0 ? filtered : undefined;
 }
 
 function userHistoryText(contents: AgentStateType["contents"]): string {

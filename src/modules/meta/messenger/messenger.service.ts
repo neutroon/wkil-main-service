@@ -7,6 +7,7 @@ import {
   saveMessage,
 } from "../core/conversation.service";
 import { computeBusinessChatReply } from "@modules/ai-agent/chat/businessChatReply.service";
+import { initialCustomerReplyStatus } from "@modules/ai-agent/chat/deliveryPolicy";
 import { historyToLlmTurns, toPromptMessages } from "@modules/ai-agent/chat/conversationTurns";
 import { AppError } from "@middlewares/errorHandler.middleware";
 
@@ -239,10 +240,7 @@ export async function handleMessengerMessage(
     }
 
     const isAutoMode = businessProfile.responseMode === "AUTO";
-    const status =
-      reply.action === "HANDOFF_TO_HUMAN" || !isAutoMode
-        ? "PENDING_REVIEW"
-        : "SENDING";
+    const status = initialCustomerReplyStatus(reply, isAutoMode);
 
     // 5. Save AI turn (Draft or Sent)
     const modelSaved = await saveMessage(

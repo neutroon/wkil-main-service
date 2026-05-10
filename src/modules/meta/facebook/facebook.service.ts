@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/node";
 import { metaClient } from "@utils/apiClient";
 import prisma from "@config/prisma";
 import { logger } from "@utils/logger";
@@ -16,6 +17,36 @@ import { metaExpressQueue } from "../core/meta.queue";
 import crypto from "crypto";
 
 const FB_API = env.FB_API_URL;
+
+function graphCodeFromProfileError(error: any): string {
+  if (error?.code) return String(error.code);
+  const match = String(error?.message || "").match(/\(code:\s*([^)]+)\)/i);
+  return match?.[1]?.trim() || "unknown";
+}
+
+function captureProfileFetchWarning(params: {
+  pageId: string;
+  psid: string;
+  error: any;
+}) {
+  const code = graphCodeFromProfileError(params.error);
+  Sentry.captureMessage("facebook.profile.fetch_failed", {
+    level: "warning",
+    fingerprint: ["facebook.profile.fetch_failed", `code:${code}`],
+    tags: {
+      service: "facebook",
+      action: "fetch_profile",
+      graph_code: code,
+    },
+    extra: {
+      pageId: params.pageId,
+      psidSuffix: params.psid.slice(-6),
+      error: params.error?.message,
+      code,
+      subcode: params.error?.subcode,
+    },
+  });
+}
 
 export interface FacebookAuthUrlParams {
   redirect_uri: string;
@@ -731,12 +762,14 @@ export const getFacebookUserProfile = async (
       pictureUrl: pictureUrl || null,
     };
   } catch (error: any) {
+    const cleanPsid = psid.trim();
     logger.warn("facebook.profile.fetch_failed", {
       pageId,
       error: error.message,
       code: error.code,
       subcode: error.subcode,
     });
+    captureProfileFetchWarning({ pageId, psid: cleanPsid, error });
 
     return null;
   }

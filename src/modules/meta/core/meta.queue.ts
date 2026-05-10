@@ -51,7 +51,8 @@ export type MetaJobType =
   | "page_token_validation"
   | "token_refresh_cron"
   | "follow_up"
-  | "integration_action";
+  | "integration_action"
+  | "customer_memory_capture";
 
 export interface MetaEngineJob {
   type: MetaJobType;
@@ -61,7 +62,10 @@ export interface MetaEngineJob {
 /**
  * Enqueues a job into the appropriate BullMQ lane.
  */
-export async function enqueueMetaJob(job: any): Promise<void> {
+export async function enqueueMetaJob(
+  job: any,
+  opts: { jobId?: string } = {},
+): Promise<void> {
   const { delaySeconds = 0, ...payload } = job;
 
   const isVisual =
@@ -72,12 +76,13 @@ export async function enqueueMetaJob(job: any): Promise<void> {
     await queue.add(
       isVisual ? "visual_task" : "message_task",
       { type: isVisual ? "visual_production" : "messaging", payload },
-      { delay: delaySeconds * 1000 },
+      { delay: delaySeconds * 1000, jobId: opts.jobId },
     );
     logger.info("meta.queue.enqueued", {
       type: isVisual ? "visual" : "messaging",
       platform: payload.platform,
       delaySeconds,
+      jobId: opts.jobId,
     });
   } catch (err: any) {
     logger.error("meta.queue.add_failed", { error: err.message, payload });
@@ -140,6 +145,44 @@ export async function enqueueIntegrationAction(
   });
 }
 
+export type CustomerMemoryCaptureJob = {
+  businessProfileId: number;
+  conversationId?: number;
+  channel?: "messenger" | "whatsapp" | "web" | "facebook_comment";
+  customerPhone?: string;
+  latestUserText: string;
+  recentTurns?: Array<{ role: "user" | "model"; text: string }>;
+};
+
+export async function enqueueCustomerMemoryCapture(
+  job: CustomerMemoryCaptureJob,
+  opts: { jobId?: string } = {},
+): Promise<void> {
+  if (!job.conversationId || !job.latestUserText.trim()) return;
+
+  await metaExpressQueue.add(
+    "customer_memory_capture",
+    {
+      type: "customer_memory_capture",
+      payload: job,
+    },
+    {
+      jobId:
+        opts.jobId ??
+        `customer-memory:${job.conversationId}:${hashJobText(job.latestUserText)}`,
+      attempts: 2,
+      backoff: { type: "exponential", delay: 10_000 },
+      removeOnComplete: { count: 100 },
+      removeOnFail: { count: 500 },
+    },
+  );
+  logger.info("meta.queue.customer_memory_capture_enqueued", {
+    businessProfileId: job.businessProfileId,
+    conversationId: job.conversationId,
+    channel: job.channel,
+  });
+}
+
 /**
  * WORKER: Express Lane
  * High concurrency (8) for fast messaging.
@@ -177,6 +220,9 @@ export const expressWorker = new Worker(
     } else if (type === "integration_action") {
       const { processIntegrationActionJob } = await import("@modules/integrations/external/externalLookup.job");
       await processIntegrationActionJob(payload);
+    } else if (type === "customer_memory_capture") {
+      const { processCustomerMemoryCaptureJob } = await import("@modules/business/customer/customerMemoryCapture.job");
+      await processCustomerMemoryCaptureJob(payload);
     } else {
       await processMetaMessage(payload);
     }
@@ -242,6 +288,14 @@ export function startMetaQueue() {
       jobId: "daily_token_refresh",
     }
   ).catch(err => logger.error("meta.queue.schedule_failed.token_refresh", { error: err.message }));
+}
+
+function hashJobText(text: string): string {
+  let hash = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    hash = (hash * 31 + text.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash).toString(36);
 }
 
 

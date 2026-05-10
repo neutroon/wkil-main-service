@@ -88,6 +88,20 @@ export class MessengerController {
                 const senderName = value.from?.name;
 
                 if (senderId && messageText && commentId) {
+                  if (isFromBusiness) {
+                    const existingOutbound = await prisma.conversationMessage.findFirst({
+                      where: { externalId: commentId },
+                      select: { id: true },
+                    });
+                    if (existingOutbound) {
+                      logger.info("messenger.webhook.comment_echo_skipped", {
+                        commentId,
+                        messageId: existingOutbound.id,
+                      });
+                      continue;
+                    }
+                  }
+
                   enqueueInboundMetaEvent({
                     platform: "facebook_comment",
                     eventId: commentId,

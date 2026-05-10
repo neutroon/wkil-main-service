@@ -133,6 +133,7 @@ model BusinessProfile {
   whatsAppAccounts WhatsAppAccount[]
   crmIntegrations CrmIntegration[]
   externalDataSources ExternalDataSource[]
+  integrationActionRuns IntegrationActionRun[]
   widgetInstalls    WidgetInstall[]
   conversations     Conversation[]
   customers         Customer[]
@@ -189,6 +190,8 @@ model ExternalDataSource {
   isActive          Boolean         @default(true)
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
+
+  runs              IntegrationActionRun[]
 
   @@index([businessProfileId])
 }
@@ -349,6 +352,7 @@ model Conversation {
   readAt            DateTime? // When the business team last read this conversation
 
   messages ConversationMessage[]
+  integrationActionRuns IntegrationActionRun[]
 
   @@index([pageId, senderId])
   @@index([pageId, senderId, updatedAt])
@@ -356,6 +360,38 @@ model Conversation {
   @@index([externalId])
   @@index([postId])
   @@index([customerId])
+}
+
+model IntegrationActionRun {
+  id                Int                 @id @default(autoincrement())
+  businessProfileId Int
+  businessProfile   BusinessProfile     @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+  sourceId          Int
+  source            ExternalDataSource  @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  conversationId    Int?
+  conversation      Conversation?       @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  customerId        Int?
+  trigger           String
+  actionType        String?
+  toolName          String?
+  status            String              @default("QUEUED") // QUEUED | RUNNING | SUCCEEDED | FAILED | SKIPPED
+  jobId             String?
+  requestPayload    Json?
+  responsePayload   Json?
+  verification      String?
+  failureReason     String?
+  resultMessageId   Int?
+  queuedAt          DateTime            @default(now())
+  startedAt         DateTime?
+  completedAt       DateTime?
+  failedAt          DateTime?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  @@index([businessProfileId, status, createdAt])
+  @@index([conversationId, createdAt])
+  @@index([sourceId, createdAt])
+  @@index([jobId])
 }
 
 model ConversationMessage {

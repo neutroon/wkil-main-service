@@ -50,6 +50,12 @@ describe("buildSystemPrompt", () => {
       "Do not ask for name or phone during normal support unless the customer's requested next step needs contact or identity details.",
     );
     expect(prompt).toContain(
+      "Call save_customer_details when the customer explicitly provides or corrects useful details, or when <chat_context> provides a real contact identity that should create or enrich the customer profile.",
+    );
+    expect(prompt).toContain(
+      "For greetings, only save real identity/contact metadata from <chat_context>; do not save a note that only summarizes normal conversation flow.",
+    );
+    expect(prompt).toContain(
       "For callbacks or customer-requested actions that need contact or identity details: if <customer_phone> is not Unknown, ask one concise confirmation to use that phone; if it is Unknown, ask for the missing contact detail.",
     );
     expect(prompt).toContain(

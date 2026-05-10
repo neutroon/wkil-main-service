@@ -59,6 +59,8 @@ export interface MetaEngineJob {
   payload: any;
 }
 
+type InboundMetaPlatform = "whatsapp" | "messenger" | "facebook_comment";
+
 /**
  * Enqueues a job into the appropriate BullMQ lane.
  */
@@ -88,6 +90,24 @@ export async function enqueueMetaJob(
     logger.error("meta.queue.add_failed", { error: err.message, payload });
     throw err;
   }
+}
+
+export async function enqueueInboundMetaEvent(params: {
+  platform: InboundMetaPlatform;
+  eventId?: string | null;
+  payload: any;
+}): Promise<void> {
+  const jobId = params.eventId
+    ? `inbound:${params.platform}:${params.eventId}`
+    : undefined;
+
+  await enqueueMetaJob(params.payload, jobId ? { jobId } : {});
+
+  logger.info("meta.queue.inbound_event_enqueued", {
+    platform: params.platform,
+    eventId: params.eventId,
+    jobId,
+  });
 }
 
 /** Legacy & Specialized Aliases */

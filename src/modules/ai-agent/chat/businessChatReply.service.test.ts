@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { prepareAgentParams } from "./businessChatReply.service";
+import { computeBusinessChatReply, prepareAgentParams } from "./businessChatReply.service";
 import { filterEligibleExternalDataSources } from "./externalToolEligibility";
 import { buildSystemPrompt } from "../../meta/core/prompt.service";
+import { enqueueCustomerMemoryCapture } from "@modules/meta/core/meta.queue";
+import { runAgentGraph } from "@modules/ai-agent/core/agentGraph";
 
 vi.mock("../rag/rag.service", () => ({
   retrieveRelevantChunks: vi.fn().mockResolvedValue([
@@ -14,7 +16,18 @@ vi.mock("../../meta/core/prompt.service", () => ({
 }));
 
 vi.mock("@modules/ai-agent/core/agentGraph", () => ({
-  runAgentGraph: vi.fn(),
+  runAgentGraph: vi.fn(async () => ({
+    action: "REPLY_AUTO",
+    reasoning: "ok",
+    content: "reply",
+    requiresGrounding: false,
+    grounded: false,
+    usedChunkTypes: [],
+  })),
+}));
+
+vi.mock("@modules/meta/core/meta.queue", () => ({
+  enqueueCustomerMemoryCapture: vi.fn(async () => undefined),
 }));
 
 vi.mock("@config/prisma", () => ({
@@ -71,7 +84,7 @@ describe("prepareAgentParams", () => {
     vi.clearAllMocks();
   });
 
-  it("always exposes customer details saving and merges router-approved external sources", async () => {
+  it("does not expose customer memory saving in the main chat tool path", async () => {
     vi.mocked(filterEligibleExternalDataSources).mockResolvedValue([priceSource]);
 
     const result = await prepareAgentParams({
@@ -84,18 +97,6 @@ describe("prepareAgentParams", () => {
     expect(result.graphParams?.tools).toEqual([
       {
         functionDeclarations: [
-          expect.objectContaining({
-            name: "save_customer_details",
-            parameters: expect.objectContaining({
-              type: "OBJECT",
-              properties: expect.objectContaining({
-                name: expect.any(Object),
-                phone: expect.any(Object),
-                email: expect.any(Object),
-                notes: expect.any(Object),
-              }),
-            }),
-          }),
           expect.objectContaining({
             name: "integration_action_2",
             description: expect.stringContaining("queues the check in the background"),
@@ -110,7 +111,7 @@ describe("prepareAgentParams", () => {
     expect(buildSystemPrompt).toHaveBeenCalledWith(
       expect.objectContaining({
         channel: "web",
-        hasCustomerMemoryTool: true,
+        hasCustomerMemoryTool: false,
         hasChatRequestedActions: true,
         hasMediaAssets: false,
         hasCompletedActionResult: false,
@@ -118,7 +119,7 @@ describe("prepareAgentParams", () => {
     );
   });
 
-  it("keeps customer details saving available when no external source is eligible", async () => {
+  it("has no tools when no chat-requested action is eligible", async () => {
     vi.mocked(filterEligibleExternalDataSources).mockResolvedValue([]);
 
     const result = await prepareAgentParams({
@@ -128,9 +129,7 @@ describe("prepareAgentParams", () => {
       channel: "web",
     });
 
-    expect(result.graphParams?.tools?.[0].functionDeclarations).toEqual([
-      expect.objectContaining({ name: "save_customer_details" }),
-    ]);
+    expect(result.graphParams?.tools).toBeUndefined();
   });
 
   it("skips the external router when the profile has no active external sources", async () => {
@@ -145,13 +144,11 @@ describe("prepareAgentParams", () => {
       channel: "web",
     });
 
-    expect(result.graphParams?.tools?.[0].functionDeclarations).toEqual([
-      expect.objectContaining({ name: "save_customer_details" }),
-    ]);
+    expect(result.graphParams?.tools).toBeUndefined();
     expect(filterEligibleExternalDataSources).not.toHaveBeenCalled();
   });
 
-  it("keeps customer memory independent from non-chat action schemas", async () => {
+  it("does not expose non-chat action schemas as customer memory tools", async () => {
     const futureEventAction = {
       ...priceSource,
       id: 9,
@@ -178,16 +175,38 @@ describe("prepareAgentParams", () => {
       channel: "web",
     });
 
-    expect(result.graphParams?.tools?.[0].functionDeclarations).toEqual([
-      expect.objectContaining({
-        name: "save_customer_details",
-        parameters: expect.objectContaining({
-          properties: expect.not.objectContaining({
-            interest: expect.any(Object),
-          }),
-        }),
-      }),
-    ]);
+    expect(result.graphParams?.tools).toBeUndefined();
     expect(filterEligibleExternalDataSources).not.toHaveBeenCalled();
+  });
+
+  it("enqueues customer memory capture after the main reply without exposing a save tool", async () => {
+    vi.mocked(filterEligibleExternalDataSources).mockResolvedValue([]);
+
+    const reply = await computeBusinessChatReply({
+      businessProfile,
+      messageText: "يا ريت ابعتيلي رقم ٢",
+      historyTurns: [{ role: "user", text: "علم النفس" }],
+      channel: "whatsapp",
+      customerPhone: "201202840018",
+      conversationId: 172,
+    });
+
+    expect(reply.content).toBe("reply");
+    expect(runAgentGraph).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tools: undefined,
+        customerPhone: "201202840018",
+      }),
+    );
+    expect(enqueueCustomerMemoryCapture).toHaveBeenCalledWith(
+      expect.objectContaining({
+        businessProfileId: 1,
+        conversationId: 172,
+        channel: "whatsapp",
+        customerPhone: "201202840018",
+        latestUserText: "يا ريت ابعتيلي رقم ٢",
+        recentTurns: [{ role: "user", text: "علم النفس" }],
+      }),
+    );
   });
 });

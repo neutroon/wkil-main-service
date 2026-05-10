@@ -8,7 +8,6 @@ import { cache } from "@utils/cache";
 import { env } from "@config/env";
 import { z } from "zod";
 import { AppError } from "@middlewares/errorHandler.middleware";
-import { redisClient } from "@config/redis";
 import { enqueueMetaJob } from "../core/meta.queue";
 import { verifyMetaWebhookSignature } from "../core/metaWebhook";
 import {
@@ -164,11 +163,6 @@ export class WhatsAppController {
             if (type === "text" && !messageText) continue;
             if (type !== "text" && !mediaId) continue;
 
-            if (wamid) {
-              const isNew = await redisClient.set(`webhook:dedup:whatsapp:${wamid}`, "1", "EX", 86400, "NX");
-              if (!isNew) continue;
-            }
-
             const fromDigits = from.replace(/\D/g, "");
             const isFromBusiness = fromDigits === businessDigits;
             const actualCustomerId = isFromBusiness ? msg.to : from;
@@ -187,7 +181,7 @@ export class WhatsAppController {
               customerName,
               type,
               isFromBusiness, 
-            } as any);
+            } as any, wamid ? { jobId: `whatsapp:${wamid}` } : undefined);
           }
         }
       }

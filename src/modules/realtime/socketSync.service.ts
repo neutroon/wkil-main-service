@@ -122,6 +122,28 @@ export const syncJobStatus = (params: {
   });
 };
 
+export const syncIntegrationActionStatus = (params: {
+  businessProfileId: number;
+  conversationId?: number | null;
+  actionRunId: number;
+  sourceId: number;
+  trigger: string;
+  status: string;
+}) => {
+  const payload = {
+    conversationId: params.conversationId ?? null,
+    actionRunId: params.actionRunId,
+    sourceId: params.sourceId,
+    trigger: params.trigger,
+    status: params.status,
+  };
+
+  emitToBusiness(params.businessProfileId, "integration_action_status", payload);
+  if (params.conversationId) {
+    emitToConversation(params.conversationId, "integration_action_status", payload);
+  }
+};
+
 /**
  * Handles real-time visual content updates (e.g., AI images).
  */

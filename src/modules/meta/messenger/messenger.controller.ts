@@ -13,7 +13,7 @@ import { uploadMessengerMedia } from "../core/metaUpload.service";
 import { AppError } from "@middlewares/errorHandler.middleware";
 import { env } from "@config/env";
 import { verifyMetaWebhookSignature } from "../core/metaWebhook";
-import { enqueueMetaJob } from "../core/meta.queue";
+import { enqueueInboundMetaEvent, enqueueMetaJob } from "../core/meta.queue";
 import { isKnownFacebookPage } from "../core/webhookCache.service";
 
 const isDev = env.NODE_ENV !== "production";
@@ -88,19 +88,23 @@ export class MessengerController {
                 const senderName = value.from?.name;
 
                 if (senderId && messageText && commentId) {
-                  enqueueMetaJob({
-                    platform: "messenger",
-                    type: "FACEBOOK_COMMENT",
-                    pageId,
-                    identifier: pageId,
-                    senderId,
-                    commentId,
-                    postId,
-                    parentId,
-                    messageText,
-                    senderName,
-                    isFromBusiness,
-                  } as any, { jobId: `fbcomment:${commentId}` });
+                  enqueueInboundMetaEvent({
+                    platform: "facebook_comment",
+                    eventId: commentId,
+                    payload: {
+                      platform: "messenger",
+                      type: "FACEBOOK_COMMENT",
+                      pageId,
+                      identifier: pageId,
+                      senderId,
+                      commentId,
+                      postId,
+                      parentId,
+                      messageText,
+                      senderName,
+                      isFromBusiness,
+                    } as any,
+                  });
                 }
               }
             }
@@ -176,19 +180,23 @@ export class MessengerController {
             if (msgType === "text" && !messageText) continue;
             if (msgType !== "text" && !attachments) continue;
 
-            enqueueMetaJob({
+            enqueueInboundMetaEvent({
               platform: "messenger",
-              type: msgType,
-              pageId,
-              identifier: pageId,
-              senderId: actualCustomerId,
-              messageText,
-              externalId: messageMid,
-              msgType,
-              mediaId: mediaId?.toString(),
-              mediaMetadata,
-              isFromBusiness,
-            } as any, messageMid ? { jobId: `messenger:${messageMid}` } : undefined);
+              eventId: messageMid,
+              payload: {
+                platform: "messenger",
+                type: msgType,
+                pageId,
+                identifier: pageId,
+                senderId: actualCustomerId,
+                messageText,
+                externalId: messageMid,
+                msgType,
+                mediaId: mediaId?.toString(),
+                mediaMetadata,
+                isFromBusiness,
+              } as any,
+            });
           }
         }
       }

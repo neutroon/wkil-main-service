@@ -160,6 +160,7 @@ export async function enqueueIntegrationAction(
     businessProfileId: job.businessProfileId,
     conversationId: job.conversationId,
     customerId: job.customerId,
+    actionRunId: job.actionRunId,
     trigger: job.trigger,
     sourceId: job.sourceId,
   });

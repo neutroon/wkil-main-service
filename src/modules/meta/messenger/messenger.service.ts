@@ -182,7 +182,7 @@ export async function handleMessengerMessage(
         const profile = await getFacebookUserProfile(senderId, pageId, pageAccessToken);
         if (profile) {
           customerNameSet = profile.name;
-          customerAvatarSet = profile.picture?.data?.url;
+          customerAvatarSet = profile.pictureUrl || undefined;
           logger.info("messenger.profile_synced", { senderId, name: customerNameSet });
         }
       } catch (e) {

@@ -8,7 +8,7 @@ import { cache } from "@utils/cache";
 import { env } from "@config/env";
 import { z } from "zod";
 import { AppError } from "@middlewares/errorHandler.middleware";
-import { enqueueMetaJob } from "../core/meta.queue";
+import { enqueueInboundMetaEvent, enqueueMetaJob } from "../core/meta.queue";
 import { verifyMetaWebhookSignature } from "../core/metaWebhook";
 import {
   exchangeCodeForToken,
@@ -169,19 +169,23 @@ export class WhatsAppController {
 
             if (!actualCustomerId) continue;
 
-            enqueueMetaJob({
+            enqueueInboundMetaEvent({
               platform: "whatsapp",
-              phoneNumberId,
-              identifier: phoneNumberId,
-              from: from,
-              senderId: actualCustomerId, 
-              messageText,
-              wamid,
-              externalId: wamid,
-              customerName,
-              type,
-              isFromBusiness, 
-            } as any, wamid ? { jobId: `whatsapp:${wamid}` } : undefined);
+              eventId: wamid,
+              payload: {
+                platform: "whatsapp",
+                phoneNumberId,
+                identifier: phoneNumberId,
+                from,
+                senderId: actualCustomerId,
+                messageText,
+                wamid,
+                externalId: wamid,
+                customerName,
+                type,
+                isFromBusiness,
+              } as any,
+            });
           }
         }
       }

@@ -9,6 +9,7 @@ import {
   saveMessage,
 } from "../core/conversation.service";
 import { computeBusinessChatReply } from "@modules/ai-agent/chat/businessChatReply.service";
+import { initialCustomerReplyStatus } from "@modules/ai-agent/chat/deliveryPolicy";
 import { historyToLlmTurns, toPromptMessages } from "@modules/ai-agent/chat/conversationTurns";
 import {
   getFacebookUserProfile,
@@ -433,8 +434,11 @@ export async function processMetaMessage(job: MetaMessageJob) {
 
     // 6. Delivery Orchestration
     const isAutoMode = responseMode === "AUTO";
-    const privateStatus = (isAutoMode && reply.action !== "HANDOFF_TO_HUMAN") ? "SENDING" : "PENDING_REVIEW";
-    const publicStatus = isAutoMode ? "SENDING" : "PENDING_REVIEW";
+    const privateStatus = initialCustomerReplyStatus(reply, isAutoMode);
+    const publicStatus = initialCustomerReplyStatus(
+      { action: "REPLY_AUTO", handoffCategory: reply.handoffCategory },
+      isAutoMode,
+    );
     const mainContent = (reply.privateContent || reply.content || "").trim();
 
     // A. Fetch Media Attachment Details (if AI requested one)

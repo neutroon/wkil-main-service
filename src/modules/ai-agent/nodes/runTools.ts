@@ -15,6 +15,10 @@ import { logger } from "@utils/logger";
 import { updateCustomerFromSavedDetails } from "@modules/business/customer/customer.service";
 import { enqueueIntegrationAction } from "@modules/meta/core/meta.queue";
 import { getExternalDataSourceStatusMetadata } from "@modules/integrations/external/externalData.service";
+import {
+  createIntegrationActionRun,
+  markIntegrationActionRunFailed,
+} from "@modules/integrations/external/integrationActionRun.service";
 import { generatePendingLookupStatusDecision } from "@modules/ai-agent/chat/pendingLookupStatus";
 import { classifyExternalToolFailureRecovery } from "@modules/ai-agent/chat/externalToolRecoveryClassifier";
 import {
@@ -206,21 +210,41 @@ export async function runToolsNode(
           state.businessProfileId,
           sourceId,
         );
+        const jobId = `integration-action:CHAT_REQUESTED:${state.conversationId}:${call.id || call.name}`;
+        const actionRun = await createIntegrationActionRun({
+          businessProfileId: state.businessProfileId,
+          sourceId,
+          conversationId: state.conversationId,
+          trigger: "CHAT_REQUESTED",
+          actionType,
+          toolName: call.name,
+          jobId,
+          requestPayload: parseResult.data,
+        });
 
-        await enqueueIntegrationAction(
-          {
-            businessProfileId: state.businessProfileId,
-            trigger: "CHAT_REQUESTED",
-            conversationId: state.conversationId,
-            sourceId,
-            toolName: call.name,
-            args: parseResult.data,
-            customerPhone: state.customerPhone,
-            latestUserText: latestMessage,
-            historyText: userHistoryText(state.contents),
-          },
-          { jobId: `integration-action:CHAT_REQUESTED:${state.conversationId}:${call.id || call.name}` },
-        );
+        try {
+          await enqueueIntegrationAction(
+            {
+              businessProfileId: state.businessProfileId,
+              trigger: "CHAT_REQUESTED",
+              conversationId: state.conversationId,
+              sourceId,
+              actionRunId: actionRun.id,
+              toolName: call.name,
+              args: parseResult.data,
+              customerPhone: state.customerPhone,
+              latestUserText: latestMessage,
+              historyText: userHistoryText(state.contents),
+            },
+            { jobId },
+          );
+        } catch (error: any) {
+          await markIntegrationActionRunFailed({
+            id: actionRun.id,
+            reason: error?.message || "queue_failed",
+          });
+          throw error;
+        }
 
         const envelope = {
           success: true,
@@ -230,6 +254,7 @@ export async function runToolsNode(
           data: {
             queued: true,
             sourceId,
+            actionRunId: actionRun.id,
           },
         };
         updatedEvidence = applyEvidence(

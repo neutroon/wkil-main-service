@@ -352,6 +352,15 @@ export async function processMetaMessage(job: MetaMessageJob) {
       }
     }
 
+    if (job.isFromBusiness && isComment && !conversationIdOverride) {
+      logger.info("meta.processor.business_comment_unmapped_skipped", {
+        commentId: job.commentId,
+        parentId: job.parentId,
+        senderId,
+      });
+      return;
+    }
+
     const conversation = conversationIdOverride 
       ? await prisma.conversation.findUnique({ where: { id: conversationIdOverride } })
       : await getOrCreateConversation(identifier, senderId, businessProfileId, {

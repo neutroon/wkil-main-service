@@ -742,8 +742,10 @@ export const getFacebookUserProfile = async (
     const cleanPsid = psid.trim();
     const token = accessToken || (await getPageAccessToken(pageId));
 
-    // For Messenger PSIDs, Meta prefers first_name, last_name, and profile_pic
-    const fields = "name,first_name,last_name,profile_pic,picture";
+    // Messenger User Profile API supports the PSID with Page access token and
+    // the Messenger profile fields. Avoid generic Graph profile fields here:
+    // they can trigger code 100 for otherwise valid PSIDs.
+    const fields = "first_name,last_name,profile_pic";
     const url = `${FB_API}/${cleanPsid}?fields=${fields}&access_token=${token}`;
 
     logger.debug("facebook.profile.fetching", { pageId, psid: cleanPsid });
@@ -753,8 +755,8 @@ export const getFacebookUserProfile = async (
     // Normalize name and picture for our database
     const firstName = data.first_name || "";
     const lastName = data.last_name || "";
-    const fullName = data.name || `${firstName} ${lastName}`.trim();
-    const pictureUrl = data.profile_pic || data.picture?.data?.url;
+    const fullName = `${firstName} ${lastName}`.trim();
+    const pictureUrl = data.profile_pic;
 
     return {
       ...data,

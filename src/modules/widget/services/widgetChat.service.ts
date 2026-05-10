@@ -7,6 +7,7 @@ import {
 } from "@modules/meta/core/conversation.service";
 import { upsertCustomerFromConversation } from "@modules/business/customer/customer.service";
 import { computeBusinessChatReply } from "@modules/ai-agent/chat/businessChatReply.service";
+import { initialCustomerReplyStatus } from "@modules/ai-agent/chat/deliveryPolicy";
 import { AiRoutingDecision } from "@modules/ai-agent/core/aiEngine.utils";
 import {
   historyToLlmTurns,
@@ -85,10 +86,7 @@ export async function processWidgetChatMessage(params: {
   }
 
   const isAutoMode = businessProfile.responseMode === "AUTO";
-  const status =
-    reply.action === "HANDOFF_TO_HUMAN" || !isAutoMode
-      ? "PENDING_REVIEW"
-      : "SENT";
+  const status = initialCustomerReplyStatus(reply, isAutoMode, "web");
   const replyContent = (reply.content || "").trim();
 
   if (reply.action === "REPLY_AUTO" && replyContent.length === 0 && !reply.attachment) {

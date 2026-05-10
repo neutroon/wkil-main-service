@@ -289,7 +289,9 @@ ${ctx.safeCustomerDetailsInstructions}
 Rules:
 ${numbered([
   "save_customer_details writes local customer memory only. It does not send, submit, book, sync, or deliver anything externally.",
-  "Call save_customer_details only with real information provided by the customer, available in chat context, or explicitly corrected by the customer.",
+  "Call save_customer_details when the customer explicitly provides or corrects useful details, or when <chat_context> provides a real contact identity that should create or enrich the customer profile.",
+  "For greetings, only save real identity/contact metadata from <chat_context>; do not save a note that only summarizes normal conversation flow.",
+  "Do not call save_customer_details for thanks, generic questions, or identical details already saved in this conversation.",
   "Never invent names, phone numbers, emails, dates, preferences, or placeholders.",
   "Do not ask for name or phone during normal support unless the customer's requested next step needs contact or identity details.",
   "For callbacks or customer-requested actions that need contact or identity details: if <customer_phone> is not Unknown, ask one concise confirmation to use that phone; if it is Unknown, ask for the missing contact detail.",

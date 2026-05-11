@@ -14,6 +14,12 @@ vi.mock("@modules/business/customer/customer.service", () => ({
 }));
 
 vi.mock("@modules/meta/core/meta.queue", () => ({
+  createBullMqJobId: vi.fn((...parts: Array<string | number | null | undefined>) =>
+    parts
+      .filter((part) => part !== null && part !== undefined && String(part).trim().length > 0)
+      .map((part) => String(part).replace(/[^a-zA-Z0-9_-]+/g, "-"))
+      .join("-"),
+  ),
   enqueueIntegrationAction: vi.fn(async () => undefined),
 }));
 
@@ -289,7 +295,7 @@ describe("runToolsNode external query guardrails", () => {
         latestUserText: "fd",
       }),
       expect.objectContaining({
-        jobId: expect.stringContaining("integration-action:CHAT_REQUESTED:123:"),
+        jobId: expect.stringContaining("integration-action-CHAT_REQUESTED-123-"),
       }),
     );
     expect(createIntegrationActionRun).toHaveBeenCalledWith(
@@ -299,7 +305,7 @@ describe("runToolsNode external query guardrails", () => {
         conversationId: 123,
         trigger: "CHAT_REQUESTED",
         toolName: "integration_action_2",
-        jobId: expect.stringContaining("integration-action:CHAT_REQUESTED:123:"),
+        jobId: expect.stringContaining("integration-action-CHAT_REQUESTED-123-"),
       }),
     );
     expect(generatePendingLookupStatusDecision).toHaveBeenCalledWith(

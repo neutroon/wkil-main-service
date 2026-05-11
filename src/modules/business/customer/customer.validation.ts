@@ -27,5 +27,11 @@ export const updateCustomerSchema = z.object({
     email: z.string().email().nullable().optional(),
     status: z.string().min(1).optional(),
     notes: z.string().nullable().optional(),
+    capturedFieldUpdates: z
+      .record(
+        z.string().min(1),
+        z.union([z.string(), z.number(), z.boolean(), z.null()]),
+      )
+      .optional(),
   }),
 });

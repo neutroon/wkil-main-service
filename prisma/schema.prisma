@@ -90,6 +90,7 @@ model BusinessProfile {
   workingHours        String?
   address             String?
   customerDetailsInstructions String? @default("Saves useful customer details. Trigger this ONLY when the customer provides contact details, asks for follow-up, wants to proceed, gives preferences, or corrects saved information.")
+  customerMemoryFields Json?
   aiBehaviorInstructions String?
   followUpEnabled      Boolean  @default(false)
   followUpMode         String   @default("AUTO") // "AUTO" = AI decides from chat context, "CUSTOM" = use extra admin guidance
@@ -131,7 +132,6 @@ model BusinessProfile {
   chunks          BusinessProfileChunk[]
   facebookPages   FacebookPage[]
   whatsAppAccounts WhatsAppAccount[]
-  crmIntegrations CrmIntegration[]
   externalDataSources ExternalDataSource[]
   integrationActionRuns IntegrationActionRun[]
   widgetInstalls    WidgetInstall[]
@@ -237,44 +237,6 @@ model BusinessProfileChunk {
   @@index([businessProfileId, chunkType]) // fast filtered deletes
 }
 
-model CrmIntegration {
-  id                Int             @id @default(autoincrement())
-  businessProfileId Int
-  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
-  provider          String          // e.g., "hubspot", "gohighlevel", "webhook"
-  apiKey            String?         // Optional: generic storage for CRM keys
-  webhookUrl        String?         // Optional: for custom integrations or Zapier/Make
-  fieldMapping      Json?           // Optional configuration for mapping fields
-  isActive          Boolean         @default(true)
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
-
-  @@index([businessProfileId])
-}
-
-model CrmDeliveryLog {
-  id                Int      @id @default(autoincrement())
-  businessProfileId Int
-  integrationId     Int
-  customerId         Int?
-  customer           Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  idempotencyKey    String
-  leadKey           String
-  payloadHash       String
-  eventType         String   // "lead_created" | "lead_updated"
-  status            String   @default("PENDING") // "PENDING" | "DELIVERED" | "FAILED" | "SKIPPED_DUPLICATE"
-  attempts          Int      @default(0)
-  lastError         String?
-  deliveredAt       DateTime?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
-  @@unique([businessProfileId, integrationId, idempotencyKey])
-  @@index([businessProfileId, integrationId, leadKey, status])
-  @@index([businessProfileId, integrationId, payloadHash, status])
-  @@index([customerId])
-}
-
 model Customer {
   id                 Int             @id @default(autoincrement())
   businessProfileId  Int
@@ -298,7 +260,6 @@ model Customer {
 
   conversations      Conversation[]
   externalIdentities CustomerExternalIdentity[]
-  crmDeliveryLogs    CrmDeliveryLog[]
 
   @@unique([businessProfileId, normalizedPhone])
   @@unique([businessProfileId, normalizedEmail])

@@ -132,7 +132,7 @@ describe("follow-up service", () => {
       }),
       expect.objectContaining({
         delay: 120000,
-        jobId: "followup:45:101:0",
+        jobId: "followup-45-101-0",
       }),
     );
     expect(metaExpressQueue.add).toHaveBeenNthCalledWith(
@@ -144,7 +144,7 @@ describe("follow-up service", () => {
       }),
       expect.objectContaining({
         delay: 18000000,
-        jobId: "followup:45:101:1",
+        jobId: "followup-45-101-1",
       }),
     );
   });

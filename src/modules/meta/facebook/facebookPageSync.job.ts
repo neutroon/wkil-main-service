@@ -2,7 +2,7 @@ import prisma from "@config/prisma";
 import { logger } from "@utils/logger";
 import { getUserPages, saveFacebookPages } from "./facebook.service";
 import { decryptFacebookSecret } from "@modules/auth/core/tokenCrypto";
-import { metaExpressQueue } from "../core/meta.queue";
+import { createBullMqJobId, metaExpressQueue } from "../core/meta.queue";
 import crypto from "crypto";
 
 const FB_AUTH_ERROR_CODES = [190, 102, 2500]; // OAuthException codes
@@ -82,14 +82,14 @@ export async function processFacebookPageSync(payload: { facebookAccountId: numb
       metaExpressQueue.add(
         "webhook_subscription",
         { type: "webhook_subscription", payload: { pageId: page.id, accessToken: page.access_token } },
-        { jobId: `webhook_sub:${page.id}:${traceId}` }
+        { jobId: createBullMqJobId("webhook-sub", page.id, traceId) }
       ).catch(() => {});
 
       // Token validation — deduplicated per page per day
       metaExpressQueue.add(
         "page_token_validation",
         { type: "page_token_validation", payload: { pageId: page.id } },
-        { jobId: `token_validate:${page.id}:${today}` }
+        { jobId: createBullMqJobId("token-validate", page.id, today) }
       ).catch(() => {});
     }
 

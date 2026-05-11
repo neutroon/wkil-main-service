@@ -1,6 +1,6 @@
 import prisma from "@config/prisma";
 import { logger } from "@utils/logger";
-import { metaExpressQueue } from "../core/meta.queue";
+import { createBullMqJobId, metaExpressQueue } from "../core/meta.queue";
 import { env } from "@config/env";
 import { decryptFacebookSecret } from "@modules/auth/core/tokenCrypto";
 
@@ -73,7 +73,7 @@ export async function processTokenRefresh() {
           },
           {
             // Deduplication: prevent flooding queue with identical validation jobs
-            jobId: `token_validate:${page.pageId}:${now.toISOString().slice(0, 10)}`,
+            jobId: createBullMqJobId("token-validate", page.pageId, now.toISOString().slice(0, 10)),
           }
         ).catch((err) => {
           // jobId collision (already queued today) = expected and safe to ignore

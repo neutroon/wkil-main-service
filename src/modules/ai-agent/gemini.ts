@@ -67,11 +67,80 @@ const MODELS = {
 /**
  * Robust execution wrapper with exponential backoff and model failover.
  */
+function parseGeminiErrorMessage(error: any): string {
+  let message = error?.message || String(error);
+
+  for (let i = 0; i < 2; i++) {
+    try {
+      const parsed = JSON.parse(message);
+      const next = parsed?.error?.message || parsed?.message;
+      if (!next || next === message) break;
+      message = next;
+    } catch {
+      break;
+    }
+  }
+
+  return message;
+}
+
+export function isRetryableGeminiError(error: any): boolean {
+  const message = parseGeminiErrorMessage(error).toLowerCase();
+  const status = Number(error?.status ?? error?.code);
+
+  return (
+    status === 503 ||
+    status === 429 ||
+    message.includes("high demand") ||
+    message.includes("unavailable") ||
+    message.includes("service unavailable") ||
+    message.includes("deadline") ||
+    message.includes("timeout") ||
+    message.includes("timed out") ||
+    message.includes("rate limit") ||
+    message.includes("too many requests")
+  );
+}
+
+function throwIfAborted(abortSignal?: AbortSignal) {
+  if (abortSignal?.aborted) {
+    throw new Error("GEMINI_TIMEOUT");
+  }
+}
+
+function waitWithAbort(ms: number, abortSignal?: AbortSignal) {
+  if (!abortSignal) {
+    return new Promise((res) => setTimeout(res, ms));
+  }
+  const signal = abortSignal;
+  if (signal.aborted) {
+    return Promise.reject(new Error("GEMINI_TIMEOUT"));
+  }
+
+  return new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(cleanupAndResolve, ms);
+
+    function cleanupAndResolve() {
+      signal.removeEventListener("abort", cleanupAndReject);
+      resolve();
+    }
+
+    function cleanupAndReject() {
+      clearTimeout(timeout);
+      signal.removeEventListener("abort", cleanupAndReject);
+      reject(new Error("GEMINI_TIMEOUT"));
+    }
+
+    signal.addEventListener("abort", cleanupAndReject, { once: true });
+  });
+}
+
 export async function executeWithFallback<T>(
   operation: (model: string) => Promise<T>,
   context: string,
   onRetry?: (message: string) => void,
   customTiers?: string[],
+  abortSignal?: AbortSignal,
 ): Promise<{ result: T; model: string }> {
   const tiers = customTiers || [MODELS.PRIMARY, MODELS.RESERVE, MODELS.STABLE];
   let lastError: any;
@@ -83,14 +152,13 @@ export async function executeWithFallback<T>(
 
     while (attempts < maxAttempts) {
       try {
+        throwIfAborted(abortSignal);
         const result = await operation(currentModel);
         return { result, model: currentModel };
       } catch (error: any) {
         lastError = error;
-        const isRetryable =
-          error?.status === 503 ||
-          error?.status === 429 ||
-          error?.message?.includes("high demand");
+        throwIfAborted(abortSignal);
+        const isRetryable = isRetryableGeminiError(error);
 
         if (isRetryable && attempts < maxAttempts - 1) {
           attempts++;
@@ -99,7 +167,7 @@ export async function executeWithFallback<T>(
           const msg = `[GeminiResilience] ${context} - Model ${currentModel} hit ${error.status || "spike"}. Retrying in ${Math.round(delay)}ms...`;
           logger.warn(msg);
           if (onRetry) onRetry(msg);
-          await new Promise((res) => setTimeout(res, delay));
+          await waitWithAbort(delay, abortSignal);
           continue;
         }
 
@@ -114,12 +182,7 @@ export async function executeWithFallback<T>(
         }
 
         // Non-retryable error or exhausted all options
-        let errorMessage = error.message;
-        try {
-          // Gemini sometimes wraps error messages as JSON strings; try to extract the clean message
-          const parsed = JSON.parse(error.message);
-          if (parsed.error?.message) errorMessage = parsed.error.message;
-        } catch (e) {}
+        const errorMessage = parseGeminiErrorMessage(error);
 
         logger.error(`Gemini final failure: ${errorMessage}`);
         throw new AppError(errorMessage, 502);

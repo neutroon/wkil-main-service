@@ -61,6 +61,28 @@ export interface MetaEngineJob {
 
 type InboundMetaPlatform = "whatsapp" | "messenger" | "facebook_comment";
 
+export function safeBullMqJobId(value: string): string {
+  const sanitized = value
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+
+  const safeValue = sanitized.length > 180
+    ? `${sanitized.slice(0, 160).replace(/-$/g, "")}-${hashJobText(value)}`
+    : sanitized || "job";
+  return /^\d+$/.test(safeValue) ? `job-${safeValue}` : safeValue;
+}
+
+export function createBullMqJobId(...parts: Array<string | number | null | undefined>): string {
+  return safeBullMqJobId(
+    parts
+      .filter((part) => part !== null && part !== undefined && String(part).trim().length > 0)
+      .map((part) => String(part))
+      .join("-"),
+  );
+}
+
 /**
  * Enqueues a job into the appropriate BullMQ lane.
  */
@@ -73,18 +95,19 @@ export async function enqueueMetaJob(
   const isVisual =
     payload.type === "visual_production" || payload.type === "visual_refine";
   const queue = isVisual ? metaProductionQueue : metaExpressQueue;
+  const jobId = opts.jobId ? safeBullMqJobId(opts.jobId) : undefined;
 
   try {
     await queue.add(
       isVisual ? "visual_task" : "message_task",
       { type: isVisual ? "visual_production" : "messaging", payload },
-      { delay: delaySeconds * 1000, jobId: opts.jobId },
+      { delay: delaySeconds * 1000, jobId },
     );
     logger.info("meta.queue.enqueued", {
       type: isVisual ? "visual" : "messaging",
       platform: payload.platform,
       delaySeconds,
-      jobId: opts.jobId,
+      jobId,
     });
   } catch (err: any) {
     logger.error("meta.queue.add_failed", { error: err.message, payload });
@@ -98,7 +121,7 @@ export async function enqueueInboundMetaEvent(params: {
   payload: any;
 }): Promise<void> {
   const jobId = params.eventId
-    ? `inbound:${params.platform}:${params.eventId}`
+    ? createBullMqJobId("inbound", params.platform, params.eventId)
     : undefined;
 
   await enqueueMetaJob(params.payload, jobId ? { jobId } : {});
@@ -148,8 +171,15 @@ export async function enqueueIntegrationAction(
     },
     {
       jobId:
-        opts.jobId ??
-        `integration-action:${job.trigger}:${job.conversationId ?? job.customerId ?? "manual"}:${job.sourceId}:${Date.now()}`,
+        opts.jobId
+          ? safeBullMqJobId(opts.jobId)
+          : createBullMqJobId(
+              "integration-action",
+              job.trigger,
+              job.conversationId ?? job.customerId ?? "manual",
+              job.sourceId,
+              Date.now(),
+            ),
       attempts: 2,
       backoff: { type: "exponential", delay: 10_000 },
       removeOnComplete: { count: 100 },
@@ -189,8 +219,9 @@ export async function enqueueCustomerMemoryCapture(
     },
     {
       jobId:
-        opts.jobId ??
-        `customer-memory:${job.conversationId}:${hashJobText(job.latestUserText)}`,
+        opts.jobId
+          ? safeBullMqJobId(opts.jobId)
+          : createBullMqJobId("customer-memory", job.conversationId, hashJobText(job.latestUserText)),
       attempts: 2,
       backoff: { type: "exponential", delay: 10_000 },
       removeOnComplete: { count: 100 },

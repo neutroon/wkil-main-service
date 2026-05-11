@@ -20,6 +20,7 @@ export type FollowUpJobPayload = {
 };
 
 const DIRECT_CHANNELS = new Set(["web", "messenger", "whatsapp"]);
+const DELIVERED_TRIGGER_STATUSES = new Set(["SENT", "DELIVERED", "READ"]);
 const MAX_FOLLOW_UP_CHARS = 700;
 const FOLLOW_UP_TIMEOUT_MS = 8_000;
 const WHATSAPP_FREE_FORM_WINDOW_MS = 23 * 60 * 60 * 1000;
@@ -29,21 +30,16 @@ const OPT_OUT_PATTERN =
 function isFollowUpConversationEligible<T extends {
   businessProfile: {
     followUpEnabled: boolean;
-    responseMode?: string;
   };
   channel?: string | null;
   status: string;
   aiEnabled: boolean;
 } | null | undefined>(
   conversation: T,
-  options: { requireAutoMode?: boolean } = {},
 ): conversation is NonNullable<T> {
   if (!conversation?.businessProfile.followUpEnabled) return false;
   if (!DIRECT_CHANNELS.has(conversation.channel || "")) return false;
   if (conversation.status !== "OPEN" || conversation.aiEnabled === false) return false;
-  if (options.requireAutoMode && conversation.businessProfile.responseMode !== "AUTO") {
-    return false;
-  }
   return true;
 }
 
@@ -55,9 +51,30 @@ function isFollowUpTriggerEligible<T extends {
 } | null | undefined>(trigger: T): trigger is NonNullable<T> {
   if (!trigger || trigger.role !== "model") return false;
   if (trigger.origin === "follow_up") return false;
-  if (trigger.status !== "SENT") return false;
+  if (!DELIVERED_TRIGGER_STATUSES.has(trigger.status)) return false;
   if (trigger.handoffCategory === "SYSTEM_ERROR") return false;
   return true;
+}
+
+async function isAutoDeliveryEnabledForConversation(conversation: {
+  channel?: string | null;
+  pageId: string;
+  businessProfileId: number;
+  businessProfile: { responseMode?: string };
+}) {
+  if (conversation.channel === "messenger") {
+    const page = await prisma.facebookPage.findFirst({
+      where: {
+        pageId: conversation.pageId,
+        businessProfileId: conversation.businessProfileId,
+        isActive: true,
+      },
+      select: { responseMode: true },
+    });
+    return (page?.responseMode || conversation.businessProfile.responseMode) === "AUTO";
+  }
+
+  return conversation.businessProfile.responseMode === "AUTO";
 }
 
 function parseFollowUpDelays(value: unknown): FollowUpDelay[] {
@@ -184,17 +201,37 @@ export async function scheduleConversationFollowUps(params: {
     include: { businessProfile: true },
   });
 
-  if (!isFollowUpConversationEligible(conversation)) return;
+  if (!isFollowUpConversationEligible(conversation)) {
+    logger.info("follow_up.schedule_skipped.ineligible_conversation", {
+      conversationId: params.conversationId,
+    });
+    return;
+  }
 
   const trigger = await prisma.conversationMessage.findUnique({
     where: { id: params.triggerMessageId },
     select: { id: true, role: true, status: true, origin: true, handoffCategory: true },
   });
 
-  if (!isFollowUpTriggerEligible(trigger)) return;
+  if (!isFollowUpTriggerEligible(trigger)) {
+    logger.info("follow_up.schedule_skipped.ineligible_trigger", {
+      conversationId: params.conversationId,
+      triggerMessageId: params.triggerMessageId,
+      status: (trigger as any)?.status,
+      role: (trigger as any)?.role,
+      origin: (trigger as any)?.origin,
+      handoffCategory: (trigger as any)?.handoffCategory,
+    });
+    return;
+  }
 
   const delays = parseFollowUpDelays(conversation.businessProfile.followUpDelays);
-  if (delays.length === 0) return;
+  if (delays.length === 0) {
+    logger.info("follow_up.schedule_skipped.no_delays", {
+      conversationId: params.conversationId,
+    });
+    return;
+  }
 
   await Promise.all(
     delays.map((delay, delayIndex) =>
@@ -330,22 +367,55 @@ export async function processFollowUpJob(payload: FollowUpJobPayload) {
     },
   });
 
-  if (!isFollowUpConversationEligible(conversation, { requireAutoMode: true })) return;
+  if (!isFollowUpConversationEligible(conversation)) {
+    logger.info("follow_up.skipped.ineligible_conversation", {
+      conversationId: payload.conversationId,
+    });
+    return;
+  }
+  if (!(await isAutoDeliveryEnabledForConversation(conversation))) {
+    logger.info("follow_up.skipped.manual_mode", {
+      conversationId: conversation.id,
+      channel: conversation.channel,
+    });
+    return;
+  }
   if (conversation.channel === "whatsapp" && !(await isWhatsAppFreeFormWindowOpen(conversation.id))) {
     logger.info("follow_up.skipped.whatsapp_window_closed", {
       conversationId: conversation.id,
     });
     return;
   }
-  if (await customerOptedOut(conversation.id)) return;
+  if (await customerOptedOut(conversation.id)) {
+    logger.info("follow_up.skipped.customer_opted_out", {
+      conversationId: conversation.id,
+    });
+    return;
+  }
 
   const trigger = await prisma.conversationMessage.findUnique({
     where: { id: payload.triggerMessageId },
     select: { createdAt: true, status: true, role: true, origin: true, handoffCategory: true },
   });
 
-  if (!isFollowUpTriggerEligible(trigger)) return;
-  if (await hasNewerHumanOrCustomerMessage(conversation.id, trigger.createdAt)) return;
+  if (!isFollowUpTriggerEligible(trigger)) {
+    logger.info("follow_up.skipped.ineligible_trigger", {
+      conversationId: conversation.id,
+      triggerMessageId: payload.triggerMessageId,
+      status: (trigger as any)?.status,
+      role: (trigger as any)?.role,
+      origin: (trigger as any)?.origin,
+      handoffCategory: (trigger as any)?.handoffCategory,
+    });
+    return;
+  }
+  if (await hasNewerHumanOrCustomerMessage(conversation.id, trigger.createdAt)) {
+    logger.info("follow_up.skipped.newer_human_or_customer_message", {
+      conversationId: conversation.id,
+      triggerMessageId: payload.triggerMessageId,
+    });
+    return;
+  }
 
   const text = await generateFollowUpText({
     businessProfile: conversation.businessProfile,

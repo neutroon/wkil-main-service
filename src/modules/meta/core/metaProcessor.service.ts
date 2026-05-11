@@ -67,7 +67,7 @@ const IDENTITY_CACHE_TTL = 900; // 15 minutes
  * Identity & Account Resolver — with 15-minute Redis cache.
  *
  * Strategy:
- * - The heavy JOIN query result (businessProfile + externalDataSources + crmIntegrations)
+ * - The heavy JOIN query result (businessProfile + externalDataSources)
  *   is cached for 15 minutes to protect the DB on high-volume webhook spikes.
  * - The accessToken is NEVER cached in Redis. On a cache hit, we do a fast single-field
  *   indexed lookup (pageId/phoneNumberId) to get the fresh token.
@@ -125,7 +125,6 @@ async function resolveAccountIdentity(job: MetaMessageJob): Promise<IdentityReso
         businessProfile: {
           include: {
             externalDataSources: { where: { isActive: true } },
-            crmIntegrations: { where: { isActive: true }, take: 1 },
           },
         },
       },
@@ -165,7 +164,6 @@ async function resolveAccountIdentity(job: MetaMessageJob): Promise<IdentityReso
         businessProfile: {
           include: {
             externalDataSources: { where: { isActive: true } },
-            crmIntegrations: { where: { isActive: true }, take: 1 },
           },
         },
       },

@@ -76,7 +76,6 @@ const businessProfile = {
   aiBehaviorInstructions: null,
   ragIngested: true,
   externalDataSources: [priceSource],
-  crmIntegrations: [],
 } as any;
 
 describe("prepareAgentParams", () => {
@@ -137,7 +136,6 @@ describe("prepareAgentParams", () => {
       businessProfile: {
         ...businessProfile,
         externalDataSources: [],
-        crmIntegrations: [],
       },
       messageText: "hi",
       historyTurns: [],
@@ -168,7 +166,6 @@ describe("prepareAgentParams", () => {
       businessProfile: {
         ...businessProfile,
         externalDataSources: [{ ...priceSource, isActive: false }, futureEventAction],
-        crmIntegrations: [],
       },
       messageText: "I want a callback",
       historyTurns: [],

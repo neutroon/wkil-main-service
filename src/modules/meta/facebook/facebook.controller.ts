@@ -27,7 +27,7 @@ import { logger } from "@utils/logger";
 import prisma from "@config/prisma";
 import { AppError } from "@middlewares/errorHandler.middleware";
 import { invalidateIdentityCache, invalidateFacebookPageCache } from "../core/webhookCache.service";
-import { metaExpressQueue } from "../core/meta.queue";
+import { createBullMqJobId, metaExpressQueue } from "../core/meta.queue";
 
 export class FacebookController {
   /**
@@ -101,7 +101,7 @@ export class FacebookController {
             type: "webhook_subscription",
             payload: { pageId: p.pageId },
           }, { 
-            jobId: `webhook_sub_auto:${p.pageId}` // Deduplicate to avoid queue flood on rapid refreshes
+            jobId: createBullMqJobId("webhook-sub-auto", p.pageId) // Deduplicate to avoid queue flood on rapid refreshes
           }).catch(() => {});
         }
 

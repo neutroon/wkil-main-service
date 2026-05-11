@@ -19,7 +19,6 @@ export type { AiRoutingDecision };
 export type BusinessProfileForChat = Prisma.BusinessProfileGetPayload<{
   include: {
     externalDataSources: true;
-    crmIntegrations: true;
   };
 }>;
 
@@ -324,7 +323,7 @@ function enqueueCustomerMemoryCaptureFromChat(params: {
     channel: params.channel,
     customerPhone: params.customerPhone,
     latestUserText: params.messageText,
-    recentTurns: params.historyTurns.slice(-8),
+    recentTurns: params.historyTurns.slice(-20),
   }).catch((error: any) => {
     logger.error("ai.chat.customer_memory_capture_enqueue_failed", {
       businessProfileId: params.businessProfile.id,

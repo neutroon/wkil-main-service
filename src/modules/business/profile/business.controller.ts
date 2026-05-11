@@ -49,11 +49,55 @@ interface BusinessProfileBody {
   brandWatermarkEnabled?: boolean;
   watermarkPosition?: "TOP_LEFT" | "TOP_RIGHT" | "BOTTOM_LEFT" | "BOTTOM_RIGHT" | "CENTER";
   customerDetailsInstructions?: string;
+  customerMemoryFields?: CustomerMemoryFieldInput[];
   aiBehaviorInstructions?: string;
   followUpEnabled?: boolean;
   followUpMode?: "AUTO" | "CUSTOM";
   followUpDelays?: { amount: number; unit: "MINUTES" | "HOURS" | "DAYS" }[];
   followUpInstructions?: string;
+}
+
+interface CustomerMemoryFieldInput {
+  key?: string;
+  label?: string;
+  description?: string;
+}
+
+function normalizeCustomerMemoryFields(
+  fields?: CustomerMemoryFieldInput[],
+): CustomerMemoryFieldInput[] {
+  return Array.from({ length: 3 }, (_, index) => {
+    const field = fields?.[index] || {};
+    const label = cleanProfileString(field.label);
+    const description = cleanProfileString(field.description);
+    const key = label
+      ? cleanMemoryFieldKey(field.key) || generateMemoryFieldKey(label, index)
+      : "";
+
+    return { key, label, description };
+  });
+}
+
+function cleanProfileString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function cleanMemoryFieldKey(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 64);
+}
+
+function generateMemoryFieldKey(label: string, index: number): string {
+  let hash = 0;
+  for (let i = 0; i < label.length; i += 1) {
+    hash = (hash * 31 + label.charCodeAt(i)) | 0;
+  }
+  return `field_${index + 1}_${Math.abs(hash).toString(36)}`;
 }
 
 export const createBusinessProfile = async (req: Request, res: Response) => {
@@ -72,6 +116,7 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
     faqs,
     knowledgeSections,
     customerDetailsInstructions,
+    customerMemoryFields,
     aiBehaviorInstructions,
     followUpEnabled,
     followUpMode,
@@ -105,6 +150,7 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
       workingHours,
       address,
       customerDetailsInstructions,
+      customerMemoryFields: normalizeCustomerMemoryFields(customerMemoryFields),
       aiBehaviorInstructions,
       followUpEnabled,
       followUpMode,
@@ -218,6 +264,7 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
     faqs,
     knowledgeSections,
     customerDetailsInstructions,
+    customerMemoryFields,
     aiBehaviorInstructions,
     followUpEnabled,
     followUpMode,
@@ -258,6 +305,10 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
       workingHours,
       address,
       customerDetailsInstructions,
+      customerMemoryFields:
+        customerMemoryFields !== undefined
+          ? normalizeCustomerMemoryFields(customerMemoryFields)
+          : undefined,
       aiBehaviorInstructions,
       followUpEnabled,
       followUpMode,
@@ -310,7 +361,9 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
   ) as (keyof BusinessProfileBody)[];
   await partialReIngestBusinessProfile(profileId, updatedFields);
 
-  const { facebookPages, ...rest } = businessProfile;
+  const { facebookPages = [], ...rest } = businessProfile as typeof businessProfile & {
+    facebookPages?: { pageId: string }[];
+  };
   const formattedProfile = {
     ...rest,
     isConnectedToMeta: facebookPages.length > 0,
@@ -397,7 +450,6 @@ export const previewBusinessProfileChat = async (req: Request, res: Response) =>
     where: { id: profileId, userId },
     include: {
       externalDataSources: { where: { isActive: true } },
-      crmIntegrations: { where: { isActive: true }, take: 1 },
     },
   });
 

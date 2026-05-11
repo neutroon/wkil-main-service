@@ -13,7 +13,7 @@ import {
 import { AppError } from "@middlewares/errorHandler.middleware";
 import { cache } from "@utils/cache";
 import { env } from "@config/env";
-import { metaExpressQueue } from "../core/meta.queue";
+import { createBullMqJobId, metaExpressQueue } from "../core/meta.queue";
 import crypto from "crypto";
 
 const FB_API = env.FB_API_URL;
@@ -850,7 +850,7 @@ export const saveFacebookToken = async (
       metaExpressQueue.add("webhook_subscription", {
         type: "webhook_subscription",
         payload: { pageId: page.id, accessToken: page.access_token }
-      }, { jobId: `webhook_sub:${page.id}:${traceId}` }).catch(() => {});
+      }, { jobId: createBullMqJobId("webhook-sub", page.id, traceId) }).catch(() => {});
     }
 
     // Log the connection activity

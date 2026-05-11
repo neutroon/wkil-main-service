@@ -127,7 +127,6 @@ export async function handleMessengerMessage(
       businessProfile: {
         include: {
           externalDataSources: { where: { isActive: true } },
-          crmIntegrations: { where: { isActive: true }, take: 1 },
         },
       },
     },

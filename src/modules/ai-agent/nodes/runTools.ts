@@ -13,7 +13,7 @@
 import { z } from "zod";
 import { logger } from "@utils/logger";
 import { updateCustomerFromSavedDetails } from "@modules/business/customer/customer.service";
-import { enqueueIntegrationAction } from "@modules/meta/core/meta.queue";
+import { createBullMqJobId, enqueueIntegrationAction } from "@modules/meta/core/meta.queue";
 import { getExternalDataSourceStatusMetadata } from "@modules/integrations/external/externalData.service";
 import {
   createIntegrationActionRun,
@@ -210,7 +210,12 @@ export async function runToolsNode(
           state.businessProfileId,
           sourceId,
         );
-        const jobId = `integration-action:CHAT_REQUESTED:${state.conversationId}:${call.id || call.name}`;
+        const jobId = createBullMqJobId(
+          "integration-action",
+          "CHAT_REQUESTED",
+          state.conversationId,
+          call.id || call.name,
+        );
         const actionRun = await createIntegrationActionRun({
           businessProfileId: state.businessProfileId,
           sourceId,

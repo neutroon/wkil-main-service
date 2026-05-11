@@ -233,27 +233,36 @@ export async function scheduleConversationFollowUps(params: {
     return;
   }
 
-  await Promise.all(
-    delays.map((delay, delayIndex) =>
-      metaExpressQueue.add(
-        "follow_up",
-        {
-          type: "follow_up",
-          payload: {
-            conversationId: params.conversationId,
-            businessProfileId: params.businessProfileId,
-            triggerMessageId: params.triggerMessageId,
-            delayIndex,
-          } satisfies FollowUpJobPayload,
-        },
-        {
-          delay: delayToMs(delay),
-          jobId: `followup:${params.conversationId}:${params.triggerMessageId}:${delayIndex}`,
-          attempts: 1,
-        },
+  try {
+    await Promise.all(
+      delays.map((delay, delayIndex) =>
+        metaExpressQueue.add(
+          "follow_up",
+          {
+            type: "follow_up",
+            payload: {
+              conversationId: params.conversationId,
+              businessProfileId: params.businessProfileId,
+              triggerMessageId: params.triggerMessageId,
+              delayIndex,
+            } satisfies FollowUpJobPayload,
+          },
+          {
+            delay: delayToMs(delay),
+            jobId: `followup-${params.conversationId}-${params.triggerMessageId}-${delayIndex}`,
+            attempts: 1,
+          },
+        ),
       ),
-    ),
-  );
+    );
+  } catch (error: any) {
+    logger.error("follow_up.schedule_failed", {
+      conversationId: params.conversationId,
+      triggerMessageId: params.triggerMessageId,
+      error: error?.message || String(error),
+    });
+    return;
+  }
 
   logger.info("follow_up.scheduled", {
     conversationId: params.conversationId,

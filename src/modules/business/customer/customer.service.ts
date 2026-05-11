@@ -65,6 +65,29 @@ function mergeJsonObject(
   return { ...base, ...incoming };
 }
 
+function applyCapturedFieldUpdates(
+  current: Prisma.JsonValue | null | undefined,
+  updates?: Record<string, string | number | boolean | null>,
+) {
+  if (!updates || Object.keys(updates).length === 0) return undefined;
+  const next =
+    current && typeof current === "object" && !Array.isArray(current)
+      ? { ...(current as Record<string, unknown>) }
+      : {};
+
+  for (const [rawKey, value] of Object.entries(updates)) {
+    const key = cleanString(rawKey);
+    if (!key) continue;
+    if (value === null) {
+      delete next[key];
+    } else {
+      next[key] = typeof value === "string" ? value.trim() : value;
+    }
+  }
+
+  return next as Prisma.InputJsonObject;
+}
+
 function mergeExternalIds(
   current: Prisma.JsonValue | null | undefined,
   channel: string,
@@ -374,10 +397,6 @@ export async function mergeCustomerIdentity(params: {
       where: { customerId: source.id },
       data: { customerId: target.id },
     }),
-    prisma.crmDeliveryLog.updateMany({
-      where: { customerId: source.id },
-      data: { customerId: target.id },
-    }),
     prisma.customer.update({
       where: { id: target.id },
       data: {
@@ -465,14 +484,14 @@ export async function listCustomers(params: {
       skip: (page - 1) * limit,
       take: limit,
       include: {
-        businessProfile: { select: { id: true, name: true } },
+        businessProfile: { select: { id: true, name: true, customerMemoryFields: true } },
         externalIdentities: true,
         conversations: {
           orderBy: { updatedAt: "desc" },
           take: 1,
           include: { messages: { orderBy: { createdAt: "desc" }, take: 1 } },
         },
-        _count: { select: { conversations: true, crmDeliveryLogs: true } },
+        _count: { select: { conversations: true } },
       },
     }),
   ]);
@@ -488,15 +507,14 @@ export async function getCustomerForUser(userId: number, customerId: number) {
   const customer = await prisma.customer.findFirst({
     where: { id: customerId, businessProfileId: { in: profileIds } },
     include: {
-      businessProfile: { select: { id: true, name: true } },
+      businessProfile: { select: { id: true, name: true, customerMemoryFields: true } },
       externalIdentities: true,
       conversations: {
         orderBy: { updatedAt: "desc" },
         take: 10,
         include: { messages: { orderBy: { createdAt: "desc" }, take: 1 } },
       },
-      crmDeliveryLogs: { orderBy: { createdAt: "desc" }, take: 10 },
-      _count: { select: { conversations: true, crmDeliveryLogs: true } },
+      _count: { select: { conversations: true } },
     },
   });
   if (!customer) throw new AppError("Customer not found", 404);
@@ -512,11 +530,16 @@ export async function updateCustomerForUser(
     email?: string | null;
     status?: string;
     notes?: string | null;
+    capturedFieldUpdates?: Record<string, string | number | boolean | null>;
   },
 ) {
   const existing = await getCustomerForUser(userId, customerId);
   const phone = data.phone !== undefined ? cleanString(data.phone) : undefined;
   const email = data.email !== undefined ? cleanString(data.email) : undefined;
+  const capturedFields = applyCapturedFieldUpdates(
+    existing.capturedFields,
+    data.capturedFieldUpdates,
+  );
   const updated = await prisma.customer.update({
     where: { id: existing.id },
     data: {
@@ -527,6 +550,7 @@ export async function updateCustomerForUser(
       normalizedEmail: email !== undefined ? normalizeCustomerEmail(email) : undefined,
       status: data.status,
       notes: data.notes,
+      capturedFields,
     },
   });
   return getCustomerForUser(userId, updated.id);
@@ -568,6 +592,7 @@ function serializeCustomerSummary(customer: any) {
     id: customer.id,
     businessProfileId: customer.businessProfileId,
     businessProfileName: customer.businessProfile?.name,
+    customerMemoryFields: customer.businessProfile?.customerMemoryFields || [],
     displayName: customer.displayName,
     phone: customer.phone,
     email: customer.email,
@@ -581,7 +606,6 @@ function serializeCustomerSummary(customer: any) {
     createdAt: customer.createdAt,
     updatedAt: customer.updatedAt,
     conversationCount: customer._count?.conversations || 0,
-    crmDeliveryCount: customer._count?.crmDeliveryLogs || 0,
     lastConversation: customer.conversations?.[0]
       ? serializeConversationLink(customer.conversations[0])
       : null,
@@ -593,15 +617,5 @@ function serializeCustomerDetail(customer: any) {
     ...serializeCustomerSummary(customer),
     metadata: customer.metadata || {},
     conversations: (customer.conversations || []).map(serializeConversationLink),
-    crmDeliveryLogs: (customer.crmDeliveryLogs || []).map((log: any) => ({
-      id: log.id,
-      integrationId: log.integrationId,
-      eventType: log.eventType,
-      status: log.status,
-      attempts: log.attempts,
-      lastError: log.lastError,
-      deliveredAt: log.deliveredAt,
-      createdAt: log.createdAt,
-    })),
   };
 }

@@ -87,7 +87,11 @@ async function resolveAccountIdentity(job: MetaMessageJob): Promise<IdentityReso
       // Fetch ONLY the token — fast indexed single-field query
       const tokenRow = platform === "messenger"
         ? await prisma.facebookPage.findFirst({
-            where: { pageId: identifier, isActive: true },
+            where: {
+              pageId: identifier,
+              isActive: true,
+              businessProfileId: cached.businessProfileId,
+            },
             select: { pageAccessToken: true, isTokenValid: true }
           })
         : await prisma.whatsAppAccount.findFirst({
@@ -120,7 +124,12 @@ async function resolveAccountIdentity(job: MetaMessageJob): Promise<IdentityReso
   // 2. Cache miss — full DB lookup
   if (platform === "messenger") {
     const page = await prisma.facebookPage.findFirst({
-      where: { pageId: identifier, isActive: true },
+      where: {
+        pageId: identifier,
+        isActive: true,
+        businessProfileId: { not: null },
+      },
+      orderBy: { updatedAt: "desc" },
       include: {
         businessProfile: {
           include: {

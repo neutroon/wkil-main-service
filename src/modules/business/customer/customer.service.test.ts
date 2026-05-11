@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getCustomerForUser,
+  updateCustomerForUser,
   updateCustomerFromSavedDetails,
   upsertCustomerFromConversation,
 } from "./customer.service";
@@ -23,9 +24,6 @@ vi.mock("@config/prisma", () => ({
     },
     conversation: {
       findFirst: vi.fn(),
-      updateMany: vi.fn(),
-    },
-    crmDeliveryLog: {
       updateMany: vi.fn(),
     },
     $transaction: vi.fn(),
@@ -255,5 +253,56 @@ describe("customer service", () => {
         where: { id: 99, businessProfileId: { in: [1] } },
       }),
     );
+  });
+
+  it("updates and deletes saved captured fields for an accessible customer", async () => {
+    const baseCustomer = {
+      id: 30,
+      businessProfileId: 1,
+      displayName: "Mona",
+      phone: null,
+      email: null,
+      avatarUrl: null,
+      primaryChannel: "web",
+      status: "ACTIVE",
+      notes: null,
+      capturedFields: { interest: "pricing", budget: "100" },
+      externalIdentities: [],
+      lastInteractionAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      businessProfile: {
+        id: 1,
+        name: "PagesPilot",
+        customerMemoryFields: [],
+      },
+      conversations: [],
+      _count: { conversations: 0 },
+    };
+    mockedPrisma.customer.findFirst
+      .mockResolvedValueOnce(baseCustomer as never)
+      .mockResolvedValueOnce({
+        ...baseCustomer,
+        capturedFields: { interest: "enterprise" },
+      } as never);
+    mockedPrisma.customer.update.mockResolvedValue({
+      ...baseCustomer,
+      capturedFields: { interest: "enterprise" },
+    } as never);
+
+    const updated = await updateCustomerForUser(5, 30, {
+      capturedFieldUpdates: {
+        interest: "enterprise",
+        budget: null,
+      },
+    });
+
+    expect(mockedPrisma.customer.update).toHaveBeenCalledWith({
+      where: { id: 30 },
+      data: expect.objectContaining({
+        capturedFields: { interest: "enterprise" },
+      }),
+    });
+    expect(updated.capturedFields).toEqual({ interest: "enterprise" });
   });
 });

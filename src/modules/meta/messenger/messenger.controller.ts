@@ -14,7 +14,7 @@ import { AppError } from "@middlewares/errorHandler.middleware";
 import { env } from "@config/env";
 import { verifyMetaWebhookSignature } from "../core/metaWebhook";
 import { enqueueInboundMetaEvent, enqueueMetaJob } from "../core/meta.queue";
-import { isKnownFacebookPage } from "../core/webhookCache.service";
+import { isRoutableFacebookPage } from "../core/webhookCache.service";
 
 const isDev = env.NODE_ENV !== "production";
 
@@ -67,9 +67,9 @@ export class MessengerController {
 
       for (const entry of body.entry) {
         const pageId = entry.id;
-        const isKnown = await isKnownFacebookPage(pageId);
-        if (!isKnown) {
-          logger.warn("messenger.webhook.unknown_page_discarded", { pageId });
+        const isRoutable = await isRoutableFacebookPage(pageId);
+        if (!isRoutable) {
+          logger.warn("messenger.webhook.unroutable_page_discarded", { pageId });
           continue;
         }
 

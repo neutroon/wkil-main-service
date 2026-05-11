@@ -19,7 +19,6 @@ export async function* generateContentStrategyStream(briefing: BriefingInput) {
     where: { id: briefing.businessProfileId },
     include: {
       faqs: true,
-      crmIntegrations: true,
     },
   });
 
@@ -233,7 +232,6 @@ export async function generateContentStrategy(briefing: BriefingInput) {
     where: { id: briefing.businessProfileId },
     include: {
       faqs: true,
-      crmIntegrations: true,
     },
   });
 

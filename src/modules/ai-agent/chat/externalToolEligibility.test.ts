@@ -81,6 +81,14 @@ describe("external tool eligibility", () => {
     expect(generateContent).not.toHaveBeenCalled();
   });
 
+  it("does not expose even fast routing sources for pure greetings", async () => {
+    await expect(
+      filterEligibleExternalDataSources([fastSource], "اهلا"),
+    ).resolves.toEqual([]);
+
+    expect(generateContent).not.toHaveBeenCalled();
+  });
+
   it("uses router output to expose matching chat-requested actions", async () => {
     vi.mocked(generateContent).mockResolvedValue({
       text: JSON.stringify({

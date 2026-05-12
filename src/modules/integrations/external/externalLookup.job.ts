@@ -12,6 +12,7 @@ import {
 } from "@modules/ai-agent/chat/conversationTurns";
 import { computeBusinessChatReply } from "@modules/ai-agent/chat/businessChatReply.service";
 import { initialCustomerReplyStatus } from "@modules/ai-agent/chat/deliveryPolicy";
+import { validateChatRequestedExternalAction } from "@modules/ai-agent/chat/externalToolEligibility";
 import {
   markIntegrationActionRunFailed,
   markIntegrationActionRunRunning,
@@ -147,6 +148,29 @@ export async function processIntegrationActionJob(
     });
     logger.warn("integration_action.job.conversation_missing", {
       conversationId: job.conversationId,
+    });
+    return;
+  }
+
+  const actionValidation = await validateChatRequestedExternalAction({
+    source,
+    latestUserMessage: job.latestUserText || "",
+    args: job.args,
+    historyText: job.historyText,
+    customerPhone: job.customerPhone,
+    conversationId: job.conversationId ?? undefined,
+  });
+  if (!actionValidation.shouldQueue) {
+    await markIntegrationActionRunSkipped({
+      id: job.actionRunId,
+      reason: "action_policy_rejected",
+    });
+    logger.warn("integration_action.job.chat_action_policy_skipped", {
+      businessProfileId: job.businessProfileId,
+      sourceId: job.sourceId,
+      conversationId: job.conversationId,
+      reason: actionValidation.reasoning,
+      latestUserText: job.latestUserText?.slice(0, 120),
     });
     return;
   }

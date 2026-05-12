@@ -1,6 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import type { Tool } from "@google/genai";
-import { retrieveRelevantChunks } from "../rag/rag.service";
+import { retrieveRelevantChunksWithEmbedding } from "../rag/rag.service";
 import { buildSystemPrompt } from "../../meta/core/prompt.service";
 import { buildIntegrationActionTools } from "@modules/ai-agent/gemini";
 import { runAgentGraph } from "@modules/ai-agent/core/agentGraph";
@@ -12,6 +12,7 @@ import {
 import { generateSafeRecoveryReply } from "./aiRecoveryReply";
 import { filterEligibleExternalDataSources } from "./externalToolEligibility";
 import { enqueueCustomerMemoryCapture } from "@modules/meta/core/meta.queue";
+import { ensureExternalActionSemanticIndexes } from "@modules/integrations/external/externalActionSemanticIndex.service";
 import prisma from "@config/prisma";
 import { logger } from "@utils/logger";
 export type { AiRoutingDecision };
@@ -125,11 +126,12 @@ export async function prepareAgentParams(params: {
     };
   }
 
-  const relevantChunks = await retrieveRelevantChunks(
+  const retrieval = await retrieveRelevantChunksWithEmbedding(
     businessProfile.id,
     messageText,
     5,
   );
+  const relevantChunks = retrieval.chunks;
   const contextQuality = resolveContextQuality(relevantChunks);
   const availableChunkTypes = Array.from(
     new Set(relevantChunks.map((chunk) => chunk.chunkType)),
@@ -155,9 +157,11 @@ export async function prepareAgentParams(params: {
   });
 
   const externalRouterPromise = activeExternalDataSources.length > 0
-    ? filterEligibleExternalDataSources(
-        activeExternalDataSources,
-        messageText,
+    ? ensureExternalActionSemanticIndexes(activeExternalDataSources).then(() =>
+        filterEligibleExternalDataSources(activeExternalDataSources, messageText, {
+          businessProfileId: businessProfile.id,
+          queryEmbedding: retrieval.queryEmbedding,
+        }),
       )
     : Promise.resolve([]);
   const eligibleExternalSources = await externalRouterPromise;

@@ -20,6 +20,7 @@ import {
   markIntegrationActionRunFailed,
 } from "@modules/integrations/external/integrationActionRun.service";
 import { generatePendingLookupStatusDecision } from "@modules/ai-agent/chat/pendingLookupStatus";
+import { validateChatRequestedExternalAction } from "@modules/ai-agent/chat/externalToolEligibility";
 import { classifyExternalToolFailureRecovery } from "@modules/ai-agent/chat/externalToolRecoveryClassifier";
 import {
   buildAiRecoveryDecision,
@@ -126,6 +127,30 @@ export async function runToolsNode(
       } else if (call.name.startsWith("integration_action_")) {
         const sourceId = parseInt(call.name.split("_").pop() || "0", 10);
         const actionType = `integration_action_${sourceId}`;
+        const latestMessage = latestUserText(state);
+
+        if (!isToolDeclarationExposed(state.tools, call.name)) {
+          const envelope = {
+            success: false,
+            verification: "failed" as const,
+            actionType,
+            reason: "tool_not_exposed_for_turn",
+            data: null,
+          };
+          updatedEvidence = applyEvidence(
+            updatedEvidence,
+            envelope,
+            actionType,
+          );
+          functionResponses.push(buildFunctionResponse(call.name, envelope));
+          blockingDecision = await buildExternalLookupFailedDecision(
+            state,
+            "The assistant tried to call an integration action that was not exposed for this turn.",
+            "tool_not_exposed_for_turn",
+            sourceId,
+          );
+          continue;
+        }
 
         if (state.evidence.failedActions.includes(actionType)) {
           logger.warn("ai.node.runTools.external_query_retry_blocked", {
@@ -205,11 +230,64 @@ export async function runToolsNode(
           continue;
         }
 
-        const latestMessage = latestUserText(state);
         const sourceMetadata = await getExternalDataSourceStatusMetadata(
           state.businessProfileId,
           sourceId,
         );
+        if (!sourceMetadata) {
+          const envelope = {
+            success: false,
+            verification: "failed" as const,
+            actionType,
+            reason: "source_missing_or_inactive",
+            data: null,
+          };
+          updatedEvidence = applyEvidence(
+            updatedEvidence,
+            envelope,
+            actionType,
+          );
+          functionResponses.push(buildFunctionResponse(call.name, envelope));
+          blockingDecision = await buildExternalLookupFailedDecision(
+            state,
+            "Integration action source was missing or inactive.",
+            "source_missing_or_inactive",
+            sourceId,
+          );
+          continue;
+        }
+
+        const validation = await validateChatRequestedExternalAction({
+          source: sourceMetadata,
+          latestUserMessage: latestMessage,
+          args: parseResult.data,
+          historyText: userHistoryText(state.contents),
+          customerPhone: state.customerPhone,
+          conversationId: state.conversationId,
+        });
+        if (!validation.shouldQueue) {
+          logger.warn("ai.node.runTools.external_query_blocked_by_policy", {
+            sourceId,
+            latestMessage: latestMessage.slice(0, 120),
+            reason: validation.reasoning,
+            businessProfileId: state.businessProfileId,
+            conversationId: state.conversationId,
+          });
+          functionResponses.push(
+            buildFunctionResponse(call.name, {
+              success: true,
+              verification: "not_applicable",
+              actionType,
+              reason: "action_policy_rejected",
+              data: {
+                queued: false,
+                policyReason: validation.reasoning,
+              },
+            }),
+          );
+          nextTools = removeToolDeclaration(nextTools, call.name);
+          continue;
+        }
         const jobId = createBullMqJobId(
           "integration-action",
           "CHAT_REQUESTED",
@@ -355,6 +433,19 @@ function removeToolDeclaration(
     .filter((tool: any) => (tool.functionDeclarations?.length ?? 0) > 0);
 
   return filtered.length > 0 ? filtered : undefined;
+}
+
+function isToolDeclarationExposed(
+  tools: AgentStateType["tools"],
+  functionName: string,
+): boolean {
+  return Boolean(
+    tools?.some((tool: any) =>
+      tool.functionDeclarations?.some(
+        (declaration: any) => declaration?.name === functionName,
+      ),
+    ),
+  );
 }
 
 function userHistoryText(contents: AgentStateType["contents"]): string {

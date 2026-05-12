@@ -14,6 +14,10 @@ import {
   mergeHeaderUpdate,
   serializeExternalDataSource,
 } from "./externalData.service";
+import {
+  clearExternalActionSemanticIndex,
+  ensureExternalActionSemanticIndex,
+} from "./externalActionSemanticIndex.service";
 
 const externalDataSourceRoutes = Router();
 
@@ -103,6 +107,10 @@ externalDataSourceRoutes.post(
       },
     });
 
+    if (newSource.isActive && newSource.trigger === "CHAT_REQUESTED") {
+      await ensureExternalActionSemanticIndex(newSource);
+    }
+
     return res.json({
       success: true,
       source: serializeExternalDataSource(newSource),
@@ -170,6 +178,12 @@ externalDataSourceRoutes.put(
       },
     });
 
+    if (updatedSource.isActive && updatedSource.trigger === "CHAT_REQUESTED") {
+      await ensureExternalActionSemanticIndex(updatedSource);
+    } else {
+      await clearExternalActionSemanticIndex(updatedSource.id, profileId);
+    }
+
     return res.json({
       success: true,
       source: serializeExternalDataSource(updatedSource),
@@ -187,6 +201,7 @@ externalDataSourceRoutes.delete(
     const profileId = parseInt(req.params.profileId);
     const sourceId = parseInt(req.params.sourceId);
 
+    await clearExternalActionSemanticIndex(sourceId, profileId);
     await prisma.externalDataSource.deleteMany({
       where: { id: sourceId, businessProfileId: profileId },
     });

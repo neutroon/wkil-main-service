@@ -19,6 +19,12 @@ type RetrievedChunk = {
   lexicalScore?: number;
 };
 
+export type PublicRetrievedChunk = {
+  chunkType: string;
+  content: string;
+  similarity: number;
+};
+
 export function getRagSimilarityThreshold(): number {
   return env.RAG_MIN_SIMILARITY;
 }
@@ -207,7 +213,22 @@ export async function retrieveRelevantChunks(
   query: string,
   topK: number = 5,
   options?: { minSimilarity?: number; fetchLimit?: number },
-): Promise<{ chunkType: string; content: string; similarity: number }[]> {
+): Promise<PublicRetrievedChunk[]> {
+  const result = await retrieveRelevantChunksWithEmbedding(
+    businessProfileId,
+    query,
+    topK,
+    options,
+  );
+  return result.chunks;
+}
+
+export async function retrieveRelevantChunksWithEmbedding(
+  businessProfileId: number,
+  query: string,
+  topK: number = 5,
+  options?: { minSimilarity?: number; fetchLimit?: number },
+): Promise<{ chunks: PublicRetrievedChunk[]; queryEmbedding: number[] | null }> {
   const minSimilarity = options?.minSimilarity ?? getRagSimilarityThreshold();
   const fetchLimit =
     options?.fetchLimit ?? Math.min(50, Math.max(topK * 5, 15));
@@ -218,7 +239,10 @@ export async function retrieveRelevantChunks(
     // we should return the "Global Identity" chunks so the AI knows who it is.
     if (!query || query.trim().length === 0) {
       logger.debug("rag.retrieve.empty_query_using_identity", { businessProfileId });
-      return await getIdentityContext(businessProfileId);
+      return {
+        chunks: await getIdentityContext(businessProfileId),
+        queryEmbedding: null,
+      };
     }
 
   const { vector: queryEmbedding, totalTokens } = await embedQuery(query);
@@ -229,7 +253,7 @@ export async function retrieveRelevantChunks(
     select: { userId: true },
   });
 
-  if (!profile) return [];
+  if (!profile) return { chunks: [], queryEmbedding };
 
   // Pre-flight quota check
   await assertQuotaAvailable(profile.userId, businessProfileId);
@@ -337,7 +361,7 @@ export async function retrieveRelevantChunks(
     }))
   });
 
-  return publicChunks;
+  return { chunks: publicChunks, queryEmbedding };
 }
 
 /**

@@ -6,9 +6,10 @@ import { enqueueCustomerMemoryCapture } from "@modules/meta/core/meta.queue";
 import { runAgentGraph } from "@modules/ai-agent/core/agentGraph";
 
 vi.mock("../rag/rag.service", () => ({
-  retrieveRelevantChunks: vi.fn().mockResolvedValue([
-    { chunkType: "identity", content: "Business: pagesPilot" },
-  ]),
+  retrieveRelevantChunksWithEmbedding: vi.fn().mockResolvedValue({
+    chunks: [{ chunkType: "identity", content: "Business: pagesPilot" }],
+    queryEmbedding: [0.1, 0.2, 0.3],
+  }),
 }));
 
 vi.mock("../../meta/core/prompt.service", () => ({
@@ -40,6 +41,10 @@ vi.mock("@config/prisma", () => ({
 
 vi.mock("./externalToolEligibility", () => ({
   filterEligibleExternalDataSources: vi.fn(),
+}));
+
+vi.mock("@modules/integrations/external/externalActionSemanticIndex.service", () => ({
+  ensureExternalActionSemanticIndexes: vi.fn(async () => undefined),
 }));
 
 vi.mock("@utils/logger", () => ({
@@ -114,6 +119,14 @@ describe("prepareAgentParams", () => {
         hasChatRequestedActions: true,
         hasMediaAssets: false,
         hasCompletedActionResult: false,
+      }),
+    );
+    expect(filterEligibleExternalDataSources).toHaveBeenCalledWith(
+      [priceSource],
+      "what are the prices",
+      expect.objectContaining({
+        businessProfileId: 1,
+        queryEmbedding: [0.1, 0.2, 0.3],
       }),
     );
   });

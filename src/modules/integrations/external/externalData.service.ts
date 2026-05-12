@@ -37,8 +37,13 @@ type ExternalToolContext = {
 
 export type ExternalDataSourceStatusMetadata = {
   id: number;
+  businessProfileId: number;
   name: string;
   description: string;
+  trigger: string;
+  actionType: string;
+  isActive: boolean;
+  expectedParamsSchema: unknown;
 };
 
 export async function getExternalDataSourceStatusMetadata(
@@ -47,7 +52,16 @@ export async function getExternalDataSourceStatusMetadata(
 ): Promise<ExternalDataSourceStatusMetadata | null> {
   return prisma.externalDataSource.findFirst({
     where: { id: sourceId, businessProfileId, isActive: true },
-    select: { id: true, name: true, description: true },
+    select: {
+      id: true,
+      businessProfileId: true,
+      name: true,
+      description: true,
+      trigger: true,
+      actionType: true,
+      isActive: true,
+      expectedParamsSchema: true,
+    },
   });
 }
 
@@ -184,12 +198,29 @@ export function mergeHeaderUpdate(
   return Object.keys(merged).length > 0 ? merged : undefined;
 }
 
-export function serializeExternalDataSource<T extends { headers?: unknown }>(
+export function serializeExternalDataSource<
+  T extends {
+    headers?: unknown;
+    routingEmbedding?: unknown;
+    routingTextHash?: unknown;
+    routingIndexedAt?: unknown;
+  },
+>(
   source: T,
-): Omit<T, "headers"> & { headers?: Record<string, string> } {
+): Omit<T, "headers" | "routingEmbedding" | "routingTextHash" | "routingIndexedAt"> & {
+  headers?: Record<string, string>;
+} {
+  const {
+    headers,
+    routingEmbedding: _routingEmbedding,
+    routingTextHash: _routingTextHash,
+    routingIndexedAt: _routingIndexedAt,
+    ...publicSource
+  } = source;
+
   return {
-    ...source,
-    headers: maskExternalHeaders(source.headers),
+    ...publicSource,
+    headers: maskExternalHeaders(headers),
   };
 }
 

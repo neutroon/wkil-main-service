@@ -121,11 +121,11 @@ export class WhatsAppController {
           if (!phoneNumberId || !Array.isArray(messages)) continue;
 
           const account = await prisma.whatsAppAccount.findFirst({
-            where: { phoneNumberId, isActive: true }
+            where: { phoneNumberId, isActive: true, businessProfileId: { not: null } }
           });
 
           if (!account) {
-            logger.warn("whatsapp.webhook.unknown_account_discarded", { phoneNumberId });
+            logger.warn("whatsapp.webhook.unroutable_account_discarded", { phoneNumberId });
             continue;
           }
 
@@ -176,6 +176,7 @@ export class WhatsAppController {
                 platform: "whatsapp",
                 phoneNumberId,
                 identifier: phoneNumberId,
+                businessProfileId: account.businessProfileId,
                 from,
                 senderId: actualCustomerId,
                 messageText,
@@ -479,6 +480,7 @@ export class WhatsAppController {
       where: { id },
       data: { businessProfileId: businessProfileIdNum },
     });
+    await invalidateWhatsAppAccountCache(account.phoneNumberId).catch(() => {});
 
     return res.json({ success: true, account: this.sanitiseAccount(updated) });
   }
@@ -494,6 +496,7 @@ export class WhatsAppController {
     if (!account) throw new AppError("WhatsApp account not found", 404);
 
     const updated = await prisma.whatsAppAccount.update({ where: { id }, data: { businessProfileId: null } });
+    await invalidateWhatsAppAccountCache(account.phoneNumberId).catch(() => {});
     return res.json({ success: true, account: this.sanitiseAccount(updated) });
   }
 

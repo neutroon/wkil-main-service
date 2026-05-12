@@ -5,15 +5,16 @@
  * Replaces the try/catch block inside the while-loop.
  *
  * Production features:
- * - 25-second per-call timeout via Promise.race
+ * - Abortable 60-second total call budget
  * - Automatic 3-tier model fallback (PRIMARY → RESERVE → STABLE)
  * - Accumulates token usage into sessionStats for billing
- * - Routes to HANDOFF_TO_HUMAN on timeout or unrecoverable error
+ * - Routes provider outages to review instead of inventing unsupported facts
  */
 import { dispatchCustomEvent } from "@langchain/core/callbacks/dispatch";
 import {
   genAI,
   executeWithFallback,
+  isRetryableGeminiError,
   MESSENGER_SAFETY_SETTINGS,
   buildAiRoutingSchema,
 } from "../gemini";
@@ -32,87 +33,94 @@ export async function callGeminiNode(
 
   let responseResult: any;
   let usedModel = state.sessionStats.modelName;
+  const abortController = new AbortController();
+  const timeout = setTimeout(
+    () => abortController.abort("GEMINI_TIMEOUT"),
+    GEMINI_TIMEOUT_MS,
+  );
 
   try {
-    const raceResult = await Promise.race([
-      executeWithFallback<any>(
-        async (currentModel) => {
-          const r = await genAI.models.generateContentStream({
-            model: currentModel,
-            contents: windowedContents as any,
-            config: {
-              systemInstruction: state.systemInstruction,
-              temperature: 0.4,
-              maxOutputTokens: 2048,
-              safetySettings: MESSENGER_SAFETY_SETTINGS,
-              tools: state.tools as any,
-              responseMimeType: "application/json",
-              responseSchema: buildAiRoutingSchema(state.channel),
-            },
-          });
+    const raceResult = await executeWithFallback<any>(
+      async (currentModel) => {
+        const r = await genAI.models.generateContentStream({
+          model: currentModel,
+          contents: windowedContents as any,
+          config: {
+            abortSignal: abortController.signal,
+            httpOptions: { timeout: GEMINI_TIMEOUT_MS },
+            systemInstruction: state.systemInstruction,
+            temperature: 0.4,
+            maxOutputTokens: 2048,
+            safetySettings: MESSENGER_SAFETY_SETTINGS,
+            tools: state.tools as any,
+            responseMimeType: "application/json",
+            responseSchema: buildAiRoutingSchema(state.channel),
+          },
+        });
 
-          // ── Stream Aggregator ──────────────────────────────────────────
-          let fullText = "";
-          let accumulatedParts: any[] = [];
-          let usageMetadata: any = null;
-          let groundingMetadata: any = null;
+        // ── Stream Aggregator ──────────────────────────────────────────
+        let fullText = "";
+        let accumulatedParts: any[] = [];
+        let usageMetadata: any = null;
+        let groundingMetadata: any = null;
 
-          for await (const chunk of r) {
-            // 1. Process Parts (Text & Function Calls)
-            const parts = chunk.candidates?.[0]?.content?.parts || [];
-            for (const part of parts) {
-              if (part.text) {
-                fullText += part.text;
-                await dispatchCustomEvent("ai_token", { token: part.text });
-              }
-              accumulatedParts.push(part);
+        for await (const chunk of r) {
+          // 1. Process Parts (Text & Function Calls)
+          const parts = chunk.candidates?.[0]?.content?.parts || [];
+          for (const part of parts) {
+            if (part.text) {
+              fullText += part.text;
+              await dispatchCustomEvent("ai_token", { token: part.text });
             }
-
-            // 2. Capture Usage & Safety
-            if (chunk.usageMetadata) usageMetadata = chunk.usageMetadata;
-            if (chunk.candidates?.[0]?.groundingMetadata) {
-              groundingMetadata = chunk.candidates[0].groundingMetadata;
-            }
+            accumulatedParts.push(part);
           }
 
-          // ── Post-Stream Validation ───────────────────────────────────
-          if (accumulatedParts.length === 0) {
-            throw new Error("EMPTY_RESPONSE");
+          // 2. Capture Usage & Safety
+          if (chunk.usageMetadata) usageMetadata = chunk.usageMetadata;
+          if (chunk.candidates?.[0]?.groundingMetadata) {
+            groundingMetadata = chunk.candidates[0].groundingMetadata;
           }
+        }
 
-          return {
-            fullText,
-            usageMetadata,
-            parts: accumulatedParts,
-            // Reconstruct a candidate-like structure for downstream usage nodes
-            candidate: {
-              content: { parts: accumulatedParts },
-              groundingMetadata,
-            },
-            functionCalls: accumulatedParts
-              .filter((p: any) => p.functionCall)
-              .map((p: any) => p.functionCall),
-          };
-        },
-        "AgentGraph.callGemini",
-      ),
-      new Promise<never>((_, reject) =>
-        setTimeout(
-          () => reject(new Error("GEMINI_TIMEOUT")),
-          GEMINI_TIMEOUT_MS,
-        ),
-      ),
-    ]);
+        // ── Post-Stream Validation ───────────────────────────────────
+        if (accumulatedParts.length === 0) {
+          throw new Error("EMPTY_RESPONSE");
+        }
+
+        return {
+          fullText,
+          usageMetadata,
+          parts: accumulatedParts,
+          // Reconstruct a candidate-like structure for downstream usage nodes
+          candidate: {
+            content: { parts: accumulatedParts },
+            groundingMetadata,
+          },
+          functionCalls: accumulatedParts
+            .filter((p: any) => p.functionCall)
+            .map((p: any) => p.functionCall),
+        };
+      },
+      "AgentGraph.callGemini",
+      undefined,
+      undefined,
+      abortController.signal,
+    );
 
     responseResult = raceResult.result;
     usedModel = raceResult.model;
   } catch (error: any) {
-    const isTimeout = error.message === "GEMINI_TIMEOUT";
+    const isTimeout =
+      error.message === "GEMINI_TIMEOUT" ||
+      abortController.signal.aborted ||
+      error?.name === "AbortError";
     const isEmpty = error.message === "EMPTY_RESPONSE";
+    const isTransientProviderFailure = isTimeout || isRetryableGeminiError(error);
     
     logger.error("ai.node.callGemini.failed", {
       isTimeout,
       isEmpty,
+      isTransientProviderFailure,
       error: error.message,
       businessProfileId: state.businessProfileId,
       channel: state.channel,
@@ -132,6 +140,8 @@ export async function callGeminiNode(
       },
       sessionStats: { ...state.sessionStats, modelName: usedModel },
     };
+  } finally {
+    clearTimeout(timeout);
   }
 
   // ── Parse Gemini response structure ────────────────────────────────────────

@@ -355,7 +355,8 @@ export class FacebookController {
     const { businessProfileId } = req.body;
 
     const page = await prisma.facebookPage.findFirst({
-      where: { pageId, facebookAccount: { userId } },
+      where: { pageId, facebookAccount: { userId }, isActive: true },
+      orderBy: { updatedAt: "desc" },
     });
     if (!page) throw new AppError("Page not found", 404);
 
@@ -369,8 +370,11 @@ export class FacebookController {
       data: { businessProfileId },
     });
 
-    // Invalidate identity cache — businessProfile reference has changed
-    await invalidateIdentityCache("messenger", pageId).catch(() => {});
+    // Invalidate routing and identity caches — businessProfile reference has changed.
+    await Promise.all([
+      invalidateFacebookPageCache(pageId).catch(() => {}),
+      invalidateIdentityCache("messenger", pageId).catch(() => {}),
+    ]);
 
     return res.json({ success: true, page: updated });
   }
@@ -383,7 +387,8 @@ export class FacebookController {
     const { pageId } = req.params;
 
     const page = await prisma.facebookPage.findFirst({
-      where: { pageId, facebookAccount: { userId } },
+      where: { pageId, facebookAccount: { userId }, isActive: true },
+      orderBy: { updatedAt: "desc" },
     });
     if (!page) throw new AppError("Page not found", 404);
     if (!page.businessProfileId) throw new AppError("Page is not linked", 400);
@@ -393,8 +398,11 @@ export class FacebookController {
       data: { businessProfileId: null },
     });
 
-    // Invalidate identity cache — businessProfile reference has been removed
-    await invalidateIdentityCache("messenger", pageId).catch(() => {});
+    // Invalidate routing and identity caches — businessProfile reference has been removed.
+    await Promise.all([
+      invalidateFacebookPageCache(pageId).catch(() => {}),
+      invalidateIdentityCache("messenger", pageId).catch(() => {}),
+    ]);
 
     return res.json({ success: true, page: updated });
   }
@@ -408,7 +416,8 @@ export class FacebookController {
     const { responseMode, commentAutoDmEnabled, commentPublicGreeting } = req.body;
 
     const page = await prisma.facebookPage.findFirst({
-      where: { pageId, facebookAccount: { userId } },
+      where: { pageId, facebookAccount: { userId }, isActive: true },
+      orderBy: { updatedAt: "desc" },
     });
     if (!page) throw new AppError("Page not found", 404);
 

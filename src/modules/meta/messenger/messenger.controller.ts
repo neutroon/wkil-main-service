@@ -14,7 +14,7 @@ import { AppError } from "@middlewares/errorHandler.middleware";
 import { env } from "@config/env";
 import { verifyMetaWebhookSignature } from "../core/metaWebhook";
 import { enqueueInboundMetaEvent, enqueueMetaJob } from "../core/meta.queue";
-import { isRoutableFacebookPage } from "../core/webhookCache.service";
+import { getRoutableFacebookPageRoute } from "../core/webhookCache.service";
 
 const isDev = env.NODE_ENV !== "production";
 
@@ -67,8 +67,8 @@ export class MessengerController {
 
       for (const entry of body.entry) {
         const pageId = entry.id;
-        const isRoutable = await isRoutableFacebookPage(pageId);
-        if (!isRoutable) {
+        const route = await getRoutableFacebookPageRoute(pageId);
+        if (!route) {
           logger.warn("messenger.webhook.unroutable_page_discarded", { pageId });
           continue;
         }
@@ -110,6 +110,7 @@ export class MessengerController {
                       type: "FACEBOOK_COMMENT",
                       pageId,
                       identifier: pageId,
+                      businessProfileId: route.businessProfileId,
                       senderId,
                       commentId,
                       postId,
@@ -135,6 +136,7 @@ export class MessengerController {
                  platform: "messenger",
                  type: "typing_indicator",
                  identifier: pageId,
+                 businessProfileId: route.businessProfileId,
                  senderId,
                  isTyping: event.sender_action === "typing_on"
                } as any);
@@ -146,6 +148,7 @@ export class MessengerController {
                  platform: "messenger",
                  type: "status_update",
                  identifier: pageId,
+                 businessProfileId: route.businessProfileId,
                  senderId,
                  statusEvent: "READ",
                  watermark: event.read.watermark
@@ -160,6 +163,7 @@ export class MessengerController {
                    platform: "messenger",
                    type: "status_update",
                    identifier: pageId,
+                   businessProfileId: route.businessProfileId,
                    senderId,
                    statusEvent: "DELIVERED",
                    mids
@@ -202,6 +206,7 @@ export class MessengerController {
                 type: msgType,
                 pageId,
                 identifier: pageId,
+                businessProfileId: route.businessProfileId,
                 senderId: actualCustomerId,
                 messageText,
                 externalId: messageMid,

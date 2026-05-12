@@ -4,6 +4,7 @@ import { updateCustomerFromSavedDetails } from "@modules/business/customer/custo
 import { enqueueIntegrationAction } from "@modules/meta/core/meta.queue";
 import { getExternalDataSourceStatusMetadata } from "@modules/integrations/external/externalData.service";
 import { generatePendingLookupStatusDecision } from "@modules/ai-agent/chat/pendingLookupStatus";
+import { validateChatRequestedExternalAction } from "@modules/ai-agent/chat/externalToolEligibility";
 import {
   createIntegrationActionRun,
   markIntegrationActionRunFailed,
@@ -26,8 +27,13 @@ vi.mock("@modules/meta/core/meta.queue", () => ({
 vi.mock("@modules/integrations/external/externalData.service", () => ({
   getExternalDataSourceStatusMetadata: vi.fn(async () => ({
     id: 2,
+    businessProfileId: 1,
     name: "Product availability",
     description: "Checks live availability.",
+    trigger: "CHAT_REQUESTED",
+    actionType: "LOOKUP",
+    isActive: true,
+    expectedParamsSchema: null,
   })),
 }));
 
@@ -48,6 +54,13 @@ vi.mock("@modules/ai-agent/chat/pendingLookupStatus", () => ({
     grounded: true,
     usedChunkTypes: [],
     missingInfo: null,
+  })),
+}));
+
+vi.mock("@modules/ai-agent/chat/externalToolEligibility", () => ({
+  validateChatRequestedExternalAction: vi.fn(async () => ({
+    shouldQueue: true,
+    reasoning: "Action matches the latest customer message.",
   })),
 }));
 
@@ -79,6 +92,13 @@ function baseState(overrides: Record<string, unknown> = {}) {
         id: "tool_1",
         name: "integration_action_2",
         args: { propertyName: "pagesPilot services" },
+      },
+    ],
+    tools: [
+      {
+        functionDeclarations: [
+          { name: "integration_action_2" },
+        ],
       },
     ],
     evidence: {
@@ -280,7 +300,7 @@ describe("runToolsNode external query guardrails", () => {
     );
   });
 
-  it("queues integration actions and returns AI-generated status content", async () => {
+  it("queues integration actions and returns deterministic status content", async () => {
     const result = await runToolsNode(baseState());
 
     expect(enqueueIntegrationAction).toHaveBeenCalledWith(
@@ -338,6 +358,52 @@ describe("runToolsNode external query guardrails", () => {
     });
   });
 
+  it("blocks integration actions for pure greetings even when the model calls one", async () => {
+    vi.mocked(validateChatRequestedExternalAction).mockResolvedValueOnce({
+      shouldQueue: false,
+      reasoning: "The latest customer message is only a greeting.",
+    });
+
+    const result = await runToolsNode(
+      baseState({
+        contents: [{ role: "user", parts: [{ text: "اهلا" }] }],
+      }),
+    );
+
+    expect(createIntegrationActionRun).not.toHaveBeenCalled();
+    expect(enqueueIntegrationAction).not.toHaveBeenCalled();
+    expect(generatePendingLookupStatusDecision).not.toHaveBeenCalled();
+    expect(result.decision).toBeUndefined();
+    const lastTurn = result.contents?.[result.contents.length - 1];
+    const response = (lastTurn as any)?.parts?.[0]?.functionResponse?.response;
+    expect(response).toMatchObject({
+      verification: "not_applicable",
+      reason: "action_policy_rejected",
+      data: {
+        queued: false,
+        policyReason: "The latest customer message is only a greeting.",
+      },
+    });
+  });
+
+  it("blocks hallucinated integration actions that were not exposed for the turn", async () => {
+    const result = await runToolsNode(
+      baseState({
+        tools: undefined,
+        contents: [{ role: "user", parts: [{ text: "what is the price?" }] }],
+      }),
+    );
+
+    expect(getExternalDataSourceStatusMetadata).not.toHaveBeenCalled();
+    expect(createIntegrationActionRun).not.toHaveBeenCalled();
+    expect(enqueueIntegrationAction).not.toHaveBeenCalled();
+    expect(result.decision).toMatchObject({
+      action: "HANDOFF_TO_HUMAN",
+      content: failedFallback,
+    });
+    expect(result.evidence?.failedActions).toContain("integration_action_2");
+  });
+
   it("does not execute the same failed external lookup again", async () => {
     const result = await runToolsNode(
       baseState({
@@ -359,7 +425,7 @@ describe("runToolsNode external query guardrails", () => {
   });
 
   it("does not block queueing if AI status generation returns no text", async () => {
-    vi.mocked(generatePendingLookupStatusDecision).mockResolvedValueOnce(null);
+    vi.mocked(generatePendingLookupStatusDecision).mockResolvedValueOnce(null as any);
 
     const result = await runToolsNode(
       baseState({

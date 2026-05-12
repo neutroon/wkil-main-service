@@ -63,6 +63,23 @@ type CachedIdentity = Omit<IdentityResolution, "accessToken">;
 
 const IDENTITY_CACHE_TTL = 900; // 15 minutes
 
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function clearMessengerIdentityCaches(pageId: string) {
+  await Promise.all([
+    cache.delete(`identity:messenger:${pageId}`),
+    cache.delete(`cache:routable_page:${pageId}`),
+    cache.delete(`cache:known_page:${pageId}`),
+  ]).catch(() => {});
+}
+
+async function clearWhatsAppIdentityCaches(phoneNumberId: string) {
+  await Promise.all([
+    cache.delete(`identity:whatsapp:${phoneNumberId}`),
+    cache.delete(`cache:known_wa:${phoneNumberId}`),
+  ]).catch(() => {});
+}
+
 /**
  * Identity & Account Resolver — with 15-minute Redis cache.
  *
@@ -76,44 +93,68 @@ const IDENTITY_CACHE_TTL = 900; // 15 minutes
 async function resolveAccountIdentity(job: MetaMessageJob): Promise<IdentityResolution> {
   const { platform, identifier } = job;
   const cacheKey = `identity:${platform}:${identifier}`;
+  const routedBusinessProfileId = Number.isInteger(job.businessProfileId)
+    ? job.businessProfileId
+    : undefined;
 
   // 1. Try cache (non-sensitive data only)
   const cachedRaw = await cache.get<string>(cacheKey);
   if (cachedRaw) {
     try {
       const cached = JSON.parse(cachedRaw) as CachedIdentity;
-      logger.debug("meta.processor.identity_cache_hit", { platform, identifier });
-
-      // Fetch ONLY the token — fast indexed single-field query
-      const tokenRow = platform === "messenger"
-        ? await prisma.facebookPage.findFirst({
-            where: {
-              pageId: identifier,
-              isActive: true,
-              businessProfileId: cached.businessProfileId,
-            },
-            select: { pageAccessToken: true, isTokenValid: true }
-          })
-        : await prisma.whatsAppAccount.findFirst({
-            where: { phoneNumberId: identifier, isActive: true },
-            select: { accessToken: true, isTokenValid: true }
-          });
-
-      if (!tokenRow) {
-        // Cache is stale — page was disconnected. Invalidate and fall through to DB lookup.
+      if (
+        routedBusinessProfileId &&
+        cached.businessProfileId !== routedBusinessProfileId
+      ) {
         await cache.delete(cacheKey);
-        logger.warn("meta.processor.identity_cache_stale", { platform, identifier });
+        logger.warn("meta.processor.identity_cache_route_mismatch", {
+          platform,
+          identifier,
+          cachedBusinessProfileId: cached.businessProfileId,
+          routedBusinessProfileId,
+        });
       } else {
-        // T6: Guard — reject jobs for pages/accounts with known-invalid tokens
-        if ((tokenRow as any).isTokenValid === false) {
-          throw new UnrecoverableError(
-            `${platform === "messenger" ? "Page" : "WhatsApp account"} ${identifier} token is invalid. User must reconnect. Job stopped to prevent billing waste.`
-          );
+        logger.debug("meta.processor.identity_cache_hit", {
+          platform,
+          identifier,
+          businessProfileId: cached.businessProfileId,
+        });
+
+        // Fetch ONLY the token — fast indexed single-field query
+        const tokenRow = platform === "messenger"
+          ? await prisma.facebookPage.findFirst({
+              where: {
+                pageId: identifier,
+                isActive: true,
+                businessProfileId: cached.businessProfileId,
+              },
+              select: { pageAccessToken: true, isTokenValid: true }
+            })
+          : await prisma.whatsAppAccount.findFirst({
+              where: {
+                phoneNumberId: identifier,
+                isActive: true,
+                businessProfileId: cached.businessProfileId,
+              },
+              select: { accessToken: true, isTokenValid: true }
+            });
+
+        if (!tokenRow) {
+          // Cache is stale — page was disconnected. Invalidate and fall through to DB lookup.
+          await cache.delete(cacheKey);
+          logger.warn("meta.processor.identity_cache_stale", { platform, identifier });
+        } else {
+          // T6: Guard — reject jobs for pages/accounts with known-invalid tokens
+          if ((tokenRow as any).isTokenValid === false) {
+            throw new UnrecoverableError(
+              `${platform === "messenger" ? "Page" : "WhatsApp account"} ${identifier} token is invalid. User must reconnect. Job stopped to prevent billing waste.`
+            );
+          }
+          const rawToken = platform === "messenger"
+            ? (tokenRow as any).pageAccessToken
+            : (tokenRow as any).accessToken;
+          return { ...cached, accessToken: decryptFacebookSecret(rawToken) };
         }
-        const rawToken = platform === "messenger"
-          ? (tokenRow as any).pageAccessToken
-          : (tokenRow as any).accessToken;
-        return { ...cached, accessToken: decryptFacebookSecret(rawToken) };
       }
     } catch {
       // Corrupted cache entry — fall through to DB
@@ -123,12 +164,12 @@ async function resolveAccountIdentity(job: MetaMessageJob): Promise<IdentityReso
 
   // 2. Cache miss — full DB lookup
   if (platform === "messenger") {
-    const page = await prisma.facebookPage.findFirst({
-      where: {
-        pageId: identifier,
-        isActive: true,
-        businessProfileId: { not: null },
-      },
+    const facebookPageWhere = routedBusinessProfileId
+      ? { pageId: identifier, isActive: true, businessProfileId: routedBusinessProfileId }
+      : { pageId: identifier, isActive: true, businessProfileId: { not: null } };
+
+    let page = await prisma.facebookPage.findFirst({
+      where: facebookPageWhere,
       orderBy: { updatedAt: "desc" },
       include: {
         businessProfile: {
@@ -140,7 +181,28 @@ async function resolveAccountIdentity(job: MetaMessageJob): Promise<IdentityReso
     });
 
     if (!page || !page.businessProfileId) {
-      throw new UnrecoverableError(`Messenger page ${identifier} is not connected to a profile.`);
+      await clearMessengerIdentityCaches(identifier);
+      await wait(300);
+      page = await prisma.facebookPage.findFirst({
+        where: facebookPageWhere,
+        orderBy: { updatedAt: "desc" },
+        include: {
+          businessProfile: {
+            include: {
+              externalDataSources: { where: { isActive: true } },
+            },
+          },
+        },
+      });
+    }
+
+    if (!page || !page.businessProfileId) {
+      logger.warn("meta.processor.identity_missing_profile_retryable", {
+        platform,
+        identifier,
+        routedBusinessProfileId,
+      });
+      throw new Error(`Messenger page ${identifier} is not connected to a profile.`);
     }
 
     // T6: Guard — stop processing for pages with known-invalid tokens
@@ -167,8 +229,12 @@ async function resolveAccountIdentity(job: MetaMessageJob): Promise<IdentityReso
 
     return resolved;
   } else {
-    const account = await prisma.whatsAppAccount.findFirst({
-      where: { phoneNumberId: identifier, isActive: true },
+    const whatsAppAccountWhere = routedBusinessProfileId
+      ? { phoneNumberId: identifier, isActive: true, businessProfileId: routedBusinessProfileId }
+      : { phoneNumberId: identifier, isActive: true, businessProfileId: { not: null } };
+
+    let account = await prisma.whatsAppAccount.findFirst({
+      where: whatsAppAccountWhere,
       include: {
         businessProfile: {
           include: {
@@ -179,7 +245,27 @@ async function resolveAccountIdentity(job: MetaMessageJob): Promise<IdentityReso
     });
 
     if (!account || !account.businessProfileId) {
-      throw new UnrecoverableError(`WhatsApp account ${identifier} is not connected to a profile.`);
+      await clearWhatsAppIdentityCaches(identifier);
+      await wait(300);
+      account = await prisma.whatsAppAccount.findFirst({
+        where: whatsAppAccountWhere,
+        include: {
+          businessProfile: {
+            include: {
+              externalDataSources: { where: { isActive: true } },
+            },
+          },
+        },
+      });
+    }
+
+    if (!account || !account.businessProfileId) {
+      logger.warn("meta.processor.identity_missing_profile_retryable", {
+        platform,
+        identifier,
+        routedBusinessProfileId,
+      });
+      throw new Error(`WhatsApp account ${identifier} is not connected to a profile.`);
     }
 
     // T6: Guard — stop processing for accounts with known-invalid tokens
@@ -324,7 +410,11 @@ export async function processMetaMessage(job: MetaMessageJob) {
     // --- END BACKGROUND EVENTS BRANCH ---
 
     // 1. Resolve Identity
-    logger.info("meta.processor.resolving_identity", { platform, identifier });
+    logger.info("meta.processor.resolving_identity", {
+      platform,
+      identifier,
+      businessProfileId: job.businessProfileId,
+    });
     const { businessProfileId, businessProfile, accessToken, responseMode, pageSettings } = await resolveAccountIdentity(job);
     logger.info("meta.processor.identity_resolved", { 
       businessProfileId, 

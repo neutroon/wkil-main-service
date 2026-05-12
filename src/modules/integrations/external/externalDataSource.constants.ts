@@ -39,4 +39,6 @@ export const EXTERNAL_ROUTER_TIMEOUT = {
 
 export const EXTERNAL_DATA_SOURCE_LIMITS = {
   maxRouterSources: 12,
+  maxSemanticTools: 2,
+  minSemanticSimilarity: 0.45,
 } as const;

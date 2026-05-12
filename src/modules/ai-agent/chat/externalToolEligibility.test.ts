@@ -1,16 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { generateContent } from "@modules/ai-agent/gemini";
-import { filterEligibleExternalDataSources } from "./externalToolEligibility";
+import { findSemanticallyEligibleExternalDataSources } from "@modules/integrations/external/externalActionSemanticIndex.service";
+import {
+  filterEligibleExternalDataSources,
+  validateChatRequestedExternalAction,
+} from "./externalToolEligibility";
 
-vi.mock("@modules/ai-agent/gemini", () => ({
-  generateContent: vi.fn(),
+vi.mock("@modules/integrations/external/externalActionSemanticIndex.service", () => ({
+  findSemanticallyEligibleExternalDataSources: vi.fn(),
 }));
 
 const priceSource = {
   id: 2,
+  businessProfileId: 1,
   name: "product subscriptions price",
-  description: "fetch only if user ask about the price",
+  description: "fetch only if user asks about the price",
   isActive: true,
+  trigger: "CHAT_REQUESTED",
+  actionType: "LOOKUP",
   expectedParamsSchema: {
     propertyName: {
       type: "STRING",
@@ -23,9 +29,12 @@ const priceSource = {
 
 const orderSource = {
   id: 3,
+  businessProfileId: 1,
   name: "order status lookup",
   description: "Use when customer asks to check delivery status by order ID",
   isActive: true,
+  trigger: "CHAT_REQUESTED",
+  actionType: "LOOKUP",
   expectedParamsSchema: {
     orderId: {
       type: "STRING",
@@ -36,163 +45,125 @@ const orderSource = {
   },
 } as any;
 
-const fastSource = {
-  ...priceSource,
-  id: 4,
-  routingMode: "FAST",
-} as any;
-
 describe("external tool eligibility", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("uses router output to hide tools for broad offer questions", async () => {
-    vi.mocked(generateContent).mockResolvedValue({
-      text: JSON.stringify({
-        eligibleIds: [],
-        reasoning: "Broad business-context question, not a live price lookup.",
-      }),
-      usage: {
-        promptTokens: 0,
-        completionTokens: 0,
-        totalTokens: 0,
-        groundingCalls: 0,
-        model: "test",
-      },
-    });
-
-    await expect(
-      filterEligibleExternalDataSources(
-        [priceSource],
-        "what did pages pilot offer tome",
-      ),
-    ).resolves.toEqual([]);
-  });
-
-  it("exposes fast routing sources without calling the semantic router", async () => {
-    await expect(
-      filterEligibleExternalDataSources(
-        [fastSource],
-        "what did pages pilot offer tome",
-      ),
-    ).resolves.toEqual([fastSource]);
-
-    expect(generateContent).not.toHaveBeenCalled();
-  });
-
-  it("does not expose even fast routing sources for pure greetings", async () => {
-    await expect(
-      filterEligibleExternalDataSources([fastSource], "اهلا"),
-    ).resolves.toEqual([]);
-
-    expect(generateContent).not.toHaveBeenCalled();
-  });
-
-  it("uses router output to expose matching chat-requested actions", async () => {
-    vi.mocked(generateContent).mockResolvedValue({
-      text: JSON.stringify({
-        eligibleIds: [2],
-        reasoning: "User explicitly asked for subscription price.",
-      }),
-      usage: {
-        promptTokens: 0,
-        completionTokens: 0,
-        totalTokens: 0,
-        groundingCalls: 0,
-        model: "test",
-      },
-    });
+  it("uses the semantic DB router instead of a generative AI router", async () => {
+    vi.mocked(findSemanticallyEligibleExternalDataSources).mockResolvedValue([
+      priceSource,
+    ]);
 
     await expect(
       filterEligibleExternalDataSources(
         [priceSource, orderSource],
         "what is the subscription price?",
+        {
+          businessProfileId: 1,
+          queryEmbedding: [0.1, 0.2, 0.3],
+        },
       ),
     ).resolves.toEqual([priceSource]);
-  });
 
-  it("drops inactive sources even if the router returns them", async () => {
-    vi.mocked(generateContent).mockResolvedValue({
-      text: JSON.stringify({
-        eligibleIds: [2],
-        reasoning: "User explicitly asked for price.",
+    expect(findSemanticallyEligibleExternalDataSources).toHaveBeenCalledWith(
+      expect.objectContaining({
+        businessProfileId: 1,
+        sources: [priceSource, orderSource],
+        queryEmbedding: [0.1, 0.2, 0.3],
       }),
-      usage: {
-        promptTokens: 0,
-        completionTokens: 0,
-        totalTokens: 0,
-        groundingCalls: 0,
-        model: "test",
-      },
-    });
-
-    await expect(
-      filterEligibleExternalDataSources(
-        [{ ...priceSource, isActive: false }],
-        "what is the price?",
-      ),
-    ).resolves.toEqual([]);
-    expect(generateContent).not.toHaveBeenCalled();
+    );
   });
 
-  it("safely exposes no tools when router output is invalid", async () => {
-    vi.mocked(generateContent).mockResolvedValue({
-      text: "not-json",
-      usage: {
-        promptTokens: 0,
-        completionTokens: 0,
-        totalTokens: 0,
-        groundingCalls: 0,
-        model: "test",
-      },
-    });
-
+  it("fails closed when no query embedding is available", async () => {
     await expect(
-      filterEligibleExternalDataSources([priceSource], "what is the price?"),
-    ).resolves.toEqual([]);
-  });
-
-  it("keeps fast sources available when strict router output is invalid", async () => {
-    vi.mocked(generateContent).mockResolvedValue({
-      text: "not-json",
-      usage: {
-        promptTokens: 0,
-        completionTokens: 0,
-        totalTokens: 0,
-        groundingCalls: 0,
-        model: "test",
-      },
-    });
-
-    await expect(
-      filterEligibleExternalDataSources(
-        [fastSource, priceSource],
-        "what is the price?",
-      ),
-    ).resolves.toEqual([fastSource]);
-  });
-
-  it("ignores router ids that are not in the active source set", async () => {
-    vi.mocked(generateContent).mockResolvedValue({
-      text: JSON.stringify({
-        eligibleIds: [999, 3],
-        reasoning: "Only order source is valid.",
+      filterEligibleExternalDataSources([priceSource], "what is the price?", {
+        businessProfileId: 1,
+        queryEmbedding: null,
       }),
-      usage: {
-        promptTokens: 0,
-        completionTokens: 0,
-        totalTokens: 0,
-        groundingCalls: 0,
-        model: "test",
-      },
+    ).resolves.toEqual([]);
+
+    expect(findSemanticallyEligibleExternalDataSources).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for empty customer messages", async () => {
+    await expect(
+      filterEligibleExternalDataSources([priceSource], "   ", {
+        businessProfileId: 1,
+        queryEmbedding: [0.1],
+      }),
+    ).resolves.toEqual([]);
+
+    expect(findSemanticallyEligibleExternalDataSources).not.toHaveBeenCalled();
+  });
+
+  it("accepts a chat-requested action when required user values are present", async () => {
+    await expect(
+      validateChatRequestedExternalAction({
+        source: priceSource,
+        latestUserMessage: "what is the price for pagesPilot services?",
+        args: { propertyName: "pagesPilot services" },
+      }),
+    ).resolves.toEqual({
+      shouldQueue: true,
+      reasoning: "Deterministic action validation passed.",
     });
+  });
+
+  it("rejects missing required parameters", async () => {
+    await expect(
+      validateChatRequestedExternalAction({
+        source: priceSource,
+        latestUserMessage: "what is the price?",
+        args: {},
+      }),
+    ).resolves.toMatchObject({
+      shouldQueue: false,
+      reasoning: "Missing required parameters: propertyName",
+    });
+  });
+
+  it("rejects invented user-provided parameter values", async () => {
+    await expect(
+      validateChatRequestedExternalAction({
+        source: orderSource,
+        latestUserMessage: "can you check my order status?",
+        args: { orderId: "ABC-123" },
+      }),
+    ).resolves.toMatchObject({
+      shouldQueue: false,
+      reasoning: "unprovided_parameter:orderId",
+    });
+  });
+
+  it("allows user-provided values from trusted recent history", async () => {
+    await expect(
+      validateChatRequestedExternalAction({
+        source: orderSource,
+        latestUserMessage: "can you check my order status?",
+        historyText: "My order ID is ABC-123",
+        args: { orderId: "ABC-123" },
+      }),
+    ).resolves.toMatchObject({
+      shouldQueue: true,
+    });
+  });
+
+  it("rejects inactive or non-chat-requested sources", async () => {
+    await expect(
+      validateChatRequestedExternalAction({
+        source: { ...priceSource, isActive: false },
+        latestUserMessage: "what is the price?",
+        args: { propertyName: "price" },
+      }),
+    ).resolves.toMatchObject({ shouldQueue: false });
 
     await expect(
-      filterEligibleExternalDataSources(
-        [priceSource, orderSource],
-        "can you check my order status?",
-      ),
-    ).resolves.toEqual([orderSource]);
+      validateChatRequestedExternalAction({
+        source: { ...priceSource, trigger: "CUSTOMER_DETAILS_SAVED" },
+        latestUserMessage: "what is the price?",
+        args: { propertyName: "price" },
+      }),
+    ).resolves.toMatchObject({ shouldQueue: false });
   });
 });

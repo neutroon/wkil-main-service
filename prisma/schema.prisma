@@ -179,6 +179,9 @@ model ExternalDataSource {
   executionMode     String          @default("BACKGROUND") // External actions always run through BullMQ
   routingMode       String          @default("STRICT") // STRICT = semantic pre-router, FAST = expose when active
   routerTimeoutMs   Int             @default(2500) // Max wait for STRICT semantic routing before falling back
+  routingEmbedding  Unsupported("vector(768)")?
+  routingTextHash   String?
+  routingIndexedAt  DateTime?
   failureBehavior   String          @default("AUTO") // AUTO = AI classifier, HANDOFF_ON_FAILURE, ANSWER_WITH_CONTEXT_ON_FAILURE, SILENT_ON_FAILURE
   confirmationPolicy String         @default("REQUIRE_VERIFIED_RESULT") // REQUIRE_VERIFIED_RESULT | ACCEPT_HTTP_SUCCESS
   requestMapping    Json?
@@ -194,6 +197,8 @@ model ExternalDataSource {
   runs              IntegrationActionRun[]
 
   @@index([businessProfileId])
+  @@index([businessProfileId, trigger, isActive])
+  @@index([routingTextHash])
 }
 
 model BusinessProfileFaq {

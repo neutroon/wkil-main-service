@@ -586,6 +586,57 @@ function isMissingParamValue(value: unknown): boolean {
   return value === undefined || value === null || value === "";
 }
 
+function parseExternalResponseBody(body: string, contentType: string): unknown {
+  if (!body.trim()) return null;
+  if (!contentType.toLowerCase().includes("application/json")) return body;
+  try {
+    return JSON.parse(body);
+  } catch {
+    return body;
+  }
+}
+
+function extractExternalErrorMessage(data: unknown): string | undefined {
+  if (!isRecord(data)) return undefined;
+
+  const candidates = [
+    isRecord(data.error) && isRecord(data.error.details)
+      ? firstStringInValue(data.error.details.errors)
+      : undefined,
+    isRecord(data.error) ? data.error.message : undefined,
+    isRecord(data.error) ? firstStringInValue(data.error) : undefined,
+    firstStringInValue(data.errors),
+    data.message,
+    data.error,
+    data.detail,
+    data.reason,
+    isRecord(data.errors) ? data.errors.message : undefined,
+  ];
+
+  const value = candidates.find(
+    (candidate) => typeof candidate === "string" && candidate.trim(),
+  );
+  return typeof value === "string" ? value.slice(0, 500) : undefined;
+}
+
+function firstStringInValue(value: unknown): string | undefined {
+  if (typeof value === "string" && value.trim()) return value;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const nested = firstStringInValue(item);
+      if (nested) return nested;
+    }
+    return undefined;
+  }
+  if (isRecord(value)) {
+    for (const nested of Object.values(value)) {
+      const text = firstStringInValue(nested);
+      if (text) return text;
+    }
+  }
+  return undefined;
+}
+
 function flattenScalarValues(value: unknown): string[] {
   if (typeof value === "string") return [value];
   if (typeof value === "number" || typeof value === "boolean") return [String(value)];
@@ -806,41 +857,9 @@ export async function executeExternalQuery(
     const response = fetchResult.response;
     finalUrl = fetchResult.finalUrl;
 
-    if (!response.ok) {
-        const retryDecision = classifyHttpRetry(response.status);
-        logger.warn("external_api_failed", {
-          host: new URL(finalUrl).host,
-          status: response.status,
-          attempts: fetchResult.attempts,
-          retryable: retryDecision.retryable,
-        });
-        return {
-          success: false,
-          verification: "failed",
-          actionType: `integration_action_${sourceId}`,
-          reason: retryDecision.reason,
-          data: null,
-          error: `External API returned status ${response.status}`,
-        };
-    }
-
     const contentType = response.headers.get("content-type") || "";
     const actionType = String((source as any).actionType || "LOOKUP").toUpperCase();
     const requiresJsonResponse = actionType !== "MUTATION";
-    if (
-      requiresJsonResponse &&
-      !contentType.toLowerCase().includes("application/json")
-    ) {
-      return {
-        success: false,
-        verification: "failed",
-        actionType: `integration_action_${sourceId}`,
-        reason: "invalid_content_type",
-        data: null,
-        error: "External API did not return JSON",
-      };
-    }
-
     const body = await response.text();
     if (Buffer.byteLength(body, "utf8") > MAX_EXTERNAL_RESPONSE_BYTES) {
       return {
@@ -852,19 +871,11 @@ export async function executeExternalQuery(
         error: "External API response exceeded size limit",
       };
     }
-
-    let data: unknown = null;
-    if (body.trim()) {
-      if (!contentType.toLowerCase().includes("application/json")) {
-        data = body;
-      } else {
-        data = JSON.parse(body);
-      }
-    }
+    const parsedBody = parseExternalResponseBody(body, contentType);
     const mappedResponse = applyObjectMapping(source.responseMapping, {
       args: allParams,
       context,
-      response: data,
+      response: parsedBody,
       responseMeta: {
         ok: response.ok,
         status: response.status,
@@ -876,7 +887,40 @@ export async function executeExternalQuery(
         ),
       },
     });
-    const canonicalData = mappedResponse ?? data;
+    const canonicalData = mappedResponse ?? parsedBody;
+
+    if (!response.ok) {
+      const retryDecision = classifyHttpRetry(response.status);
+      logger.warn("external_api_failed", {
+        host: new URL(finalUrl).host,
+        status: response.status,
+        attempts: fetchResult.attempts,
+        retryable: retryDecision.retryable,
+      });
+      return {
+        success: false,
+        verification: "failed",
+        actionType: `integration_action_${sourceId}`,
+        reason: retryDecision.reason,
+        data: canonicalData,
+        error: extractExternalErrorMessage(canonicalData) || `External API returned status ${response.status}`,
+      };
+    }
+
+    if (
+      requiresJsonResponse &&
+      !contentType.toLowerCase().includes("application/json")
+    ) {
+      return {
+        success: false,
+        verification: "failed",
+        actionType: `integration_action_${sourceId}`,
+        reason: "invalid_content_type",
+        data: canonicalData,
+        error: "External API did not return JSON",
+      };
+    }
+
     const canonical =
       actionType === "MUTATION"
         ? toCanonicalVerificationMutation(canonicalData, response.ok)

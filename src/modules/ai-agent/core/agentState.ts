@@ -21,6 +21,7 @@ import type {
   AiEvidenceState,
   DEFAULT_AI_TRUTHFULNESS_POLICY,
 } from "./aiEngine.utils";
+import type { ReplyPolicy } from "./replyPolicy";
 
 // ── Re-export convenience types ────────────────────────────────────────────────
 export type { AiRoutingDecision, AiTruthfulnessPolicy, AiEvidenceState };
@@ -36,7 +37,7 @@ export interface GeminiPart {
   text?: string;
   inlineData?: { data: string; mimeType: string };
   functionCall?: { name: string; args: unknown };
-  functionResponse?: { name: string; response: unknown };
+  functionResponse?: { id?: string; name: string; response: unknown };
 }
 
 export interface FunctionCall {
@@ -108,6 +109,10 @@ export const AgentState = Annotation.Root({
   activeWorkflowId:  Annotation<number | undefined>(),
   parentActionRunId: Annotation<number | undefined>(),
   actionStepKey:     Annotation<string | undefined>(),
+  replyPolicy:       Annotation<ReplyPolicy | undefined>({
+    value:   (_, update) => update,
+    default: () => undefined,
+  }),
 
   // ─── Mutable: conversation turns (append-only via reducer) ───────────────
   // Each node that adds a turn pushes to this array.

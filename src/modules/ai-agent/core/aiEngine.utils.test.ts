@@ -34,7 +34,7 @@ describe("AI truthfulness guardrails", () => {
       {
         verifiedActions: [],
         unverifiedActions: [],
-        failedActions: ["save_customer_details"],
+        failedActions: ["integration_action_2"],
         unknownActions: [],
       },
       "Done, everything is complete.",
@@ -53,7 +53,7 @@ describe("AI truthfulness guardrails", () => {
 
     const result = evaluateGuardrailsForReply(
       {
-        verifiedActions: ["save_customer_details"],
+        verifiedActions: ["integration_action_2"],
         unverifiedActions: [],
         failedActions: [],
         unknownActions: [],
@@ -71,7 +71,7 @@ describe("AI truthfulness guardrails", () => {
 
     const result = evaluateGuardrailsForReply(
       {
-        verifiedActions: ["save_customer_details"],
+        verifiedActions: ["integration_action_2"],
         unverifiedActions: [],
         failedActions: [],
         unknownActions: [],

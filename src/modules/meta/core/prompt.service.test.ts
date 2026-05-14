@@ -11,6 +11,7 @@ const baseProfile = {
   voice: "Egyptian Arabic",
   tone: "Inspirational",
 };
+const legacyCustomerDetailsTool = ["save", "customer", "details"].join("_");
 
 describe("buildSystemPrompt", () => {
   it("builds only relevant capability sections for direct chat", () => {
@@ -19,14 +20,13 @@ describe("buildSystemPrompt", () => {
       context: [{ chunkType: "faq", content: "pagesPilot helps automate content." }],
       channel: "web",
       customerPhone: "+20100111222",
-      hasCustomerMemoryTool: true,
       hasChatRequestedActions: false,
       hasMediaAssets: false,
       hasCompletedActionResult: false,
     });
 
-    expect(prompt).toContain("<customer_memory_protocol>");
-    expect(prompt).toContain("local customer memory only");
+    expect(prompt).not.toContain("<customer_memory_protocol>");
+    expect(prompt).not.toContain(legacyCustomerDetailsTool);
     expect(prompt).not.toContain("<chat_requested_action_protocol>");
     expect(prompt).not.toContain("If sending a file");
     expect(prompt).toContain("<direct_chat_style>");
@@ -35,28 +35,20 @@ describe("buildSystemPrompt", () => {
     expect(prompt).not.toContain("Customer-facing field: content");
   });
 
-  it("uses one confirmation rule for callbacks and customer-requested actions needing contact details", () => {
+  it("keeps customer memory out of chat actions and enforces real action parameters", () => {
     const prompt = buildSystemPrompt({
       businessProfile: baseProfile,
       context: [],
       channel: "whatsapp",
       customerPhone: "+20100111222",
-      hasCustomerMemoryTool: true,
       hasChatRequestedActions: true,
     });
 
     expect(prompt).toContain("<customer_phone>+20100111222</customer_phone>");
+    expect(prompt).not.toContain(legacyCustomerDetailsTool);
+    expect(prompt).toContain("customer memory saving");
     expect(prompt).toContain(
-      "Do not ask for name or phone during normal support unless the customer's requested next step needs contact or identity details.",
-    );
-    expect(prompt).toContain(
-      "Call save_customer_details when the customer explicitly provides or corrects useful details, or when <chat_context> provides a real contact identity that should create or enrich the customer profile.",
-    );
-    expect(prompt).toContain(
-      "For greetings, only save real identity/contact metadata from <chat_context>; do not save a note that only summarizes normal conversation flow.",
-    );
-    expect(prompt).toContain(
-      "For callbacks or customer-requested actions that need contact or identity details: if <customer_phone> is not Unknown, ask one concise confirmation to use that phone; if it is Unknown, ask for the missing contact detail.",
+      "Use only real parameters from the customer, chat history, or <chat_context>.",
     );
     expect(prompt).toContain(
       "If required parameters are missing, ask one concise clarification question instead of calling the action.",
@@ -94,7 +86,6 @@ describe("buildSystemPrompt", () => {
       businessProfile: baseProfile,
       context: [],
       channel: "facebook_comment",
-      hasCustomerMemoryTool: true,
     });
 
     expect(prompt).toContain("<facebook_comment_style>");

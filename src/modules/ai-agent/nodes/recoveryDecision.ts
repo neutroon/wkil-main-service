@@ -37,6 +37,7 @@ export async function buildAiRecoveryDecision(
 
   return {
     action: params.action,
+    replyType: params.action === "HANDOFF_TO_HUMAN" ? "HANDOFF" : "SAFE_ACTION_FAILURE",
     handoffCategory:
       params.action === "HANDOFF_TO_HUMAN"
         ? params.handoffCategory || "MISSING_KNOWLEDGE"

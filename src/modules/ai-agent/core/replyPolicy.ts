@@ -111,7 +111,6 @@ Rules:
 export function validateDecisionAgainstReplyPolicy(params: {
   decision: AiRoutingDecision;
   policy?: ReplyPolicy;
-  customerAskedForHumanOrEscalated: boolean;
 }): { ok: true } | { ok: false; reason: string } {
   const { decision, policy } = params;
   if (!policy?.active) return { ok: true };
@@ -124,10 +123,7 @@ export function validateDecisionAgainstReplyPolicy(params: {
     };
   }
 
-  const handoffOverride =
-    decision.action === "HANDOFF_TO_HUMAN" &&
-    params.customerAskedForHumanOrEscalated;
-  if (!policy.allowedActions.includes(decision.action) && !handoffOverride) {
+  if (!policy.allowedActions.includes(decision.action)) {
     return {
       ok: false,
       reason: `action ${decision.action} is not allowed. Allowed actions: ${policy.allowedActions.join(", ")}`,
@@ -136,8 +132,7 @@ export function validateDecisionAgainstReplyPolicy(params: {
 
   if (
     decision.action === "HANDOFF_TO_HUMAN" &&
-    !policy.canHandoff &&
-    !handoffOverride
+    !policy.canHandoff
   ) {
     return { ok: false, reason: "handoff is not allowed by reply policy" };
   }

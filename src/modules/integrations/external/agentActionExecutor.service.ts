@@ -10,6 +10,7 @@ import {
 } from "@modules/integrations/retryPolicy";
 import dns from "dns/promises";
 import net from "net";
+import type { AgentActionTrigger, AgentActionType } from "@prisma/client";
 
 type CanonicalVerification = "verified" | "unverified" | "failed";
 const MASKED_SECRET = "********";
@@ -33,24 +34,26 @@ type ExternalToolContext = {
   conversationId?: number;
   latestUserText?: string;
   historyText?: string;
+  parentActionResponse?: unknown;
+  workflowInputBindings?: unknown;
 };
 
-export type ExternalDataSourceStatusMetadata = {
+export type AgentActionSourceStatusMetadata = {
   id: number;
   businessProfileId: number;
   name: string;
   description: string;
-  trigger: string;
-  actionType: string;
+  trigger: AgentActionTrigger;
+  actionType: AgentActionType;
   isActive: boolean;
   expectedParamsSchema: unknown;
 };
 
-export async function getExternalDataSourceStatusMetadata(
+export async function getAgentActionSourceStatusMetadata(
   businessProfileId: number,
   sourceId: number,
-): Promise<ExternalDataSourceStatusMetadata | null> {
-  return prisma.externalDataSource.findFirst({
+): Promise<AgentActionSourceStatusMetadata | null> {
+  return prisma.agentActionSource.findFirst({
     where: { id: sourceId, businessProfileId, isActive: true },
     select: {
       id: true,
@@ -198,7 +201,7 @@ export function mergeHeaderUpdate(
   return Object.keys(merged).length > 0 ? merged : undefined;
 }
 
-export function serializeExternalDataSource<
+export function serializeAgentActionSource<
   T extends {
     headers?: unknown;
     routingEmbedding?: unknown;
@@ -230,14 +233,48 @@ export function filterExternalArgsBySchema(
 ): Record<string, any> {
   if (!isRecord(expectedParamsSchema)) return {};
 
-  const allowedKeys = new Set(
-    Object.entries(expectedParamsSchema)
-      .filter(([, value]) => isAiWritableFieldRule(value))
-      .map(([key]) => key),
-  );
-  return Object.fromEntries(
-    Object.entries(args).filter(([key]) => allowedKeys.has(key)),
-  );
+  const filtered: Record<string, any> = {};
+  for (const [key, rule] of Object.entries(expectedParamsSchema)) {
+    if (!isAiWritableFieldRule(rule)) continue;
+    if (!Object.prototype.hasOwnProperty.call(args, key)) continue;
+
+    const value = filterExternalArgValueByRule(rule, args[key]);
+    if (!isMissingParamValue(value)) {
+      filtered[key] = value;
+    }
+  }
+  return filtered;
+}
+
+function filterExternalArgValueByRule(rule: unknown, value: unknown): unknown {
+  if (!isRecord(rule)) return value;
+
+  const type = String(rule.type || "STRING").toUpperCase();
+  if (type === "OBJECT" && isRecord(rule.properties) && isRecord(value)) {
+    const filtered: Record<string, any> = {};
+    for (const [childKey, childRule] of Object.entries(rule.properties)) {
+      if (!isAiWritableFieldRule(childRule)) continue;
+      if (!Object.prototype.hasOwnProperty.call(value, childKey)) continue;
+
+      const childValue = filterExternalArgValueByRule(
+        childRule,
+        (value as Record<string, unknown>)[childKey],
+      );
+      if (!isMissingParamValue(childValue)) {
+        filtered[childKey] = childValue;
+      }
+    }
+    return Object.keys(filtered).length > 0 ? filtered : undefined;
+  }
+
+  if (type === "ARRAY" && Array.isArray(value) && isRecord(rule.items)) {
+    const filteredItems = value
+      .map((item) => filterExternalArgValueByRule(rule.items, item))
+      .filter((item) => !isMissingParamValue(item));
+    return filteredItems.length > 0 ? filteredItems : undefined;
+  }
+
+  return value;
 }
 
 function getFieldSource(value: unknown): string {
@@ -317,32 +354,232 @@ export function buildServerInjectedParams(
   const params: Record<string, any> = {};
   for (const [field, rule] of Object.entries(schema)) {
     if (!isRecord(rule)) continue;
-    const source = getFieldSource(rule);
-
-    if (source === "DEFAULT") {
-      if (
-        Object.prototype.hasOwnProperty.call(rule, "value") &&
-        isMissingParamValue(existingParams[field])
-      ) {
-        params[field] = rule.value;
-      }
-    }
-
-    if (source === "FIXED") {
-      if (Object.prototype.hasOwnProperty.call(rule, "value")) {
-        params[field] = rule.value;
-      }
-    }
-
-    if (source === "CHAT_CONTEXT") {
-      const contextValue = getContextValue(context, rule.contextKey);
-      if (contextValue !== undefined && contextValue !== null && contextValue !== "") {
-        params[field] = contextValue;
-      }
+    const injectedValue = buildServerInjectedValueByRule(
+      rule,
+      context,
+      existingParams[field],
+    );
+    if (!isMissingParamValue(injectedValue)) {
+      params[field] = injectedValue;
     }
   }
 
   return params;
+}
+
+function buildServerInjectedValueByRule(
+  rule: Record<string, unknown>,
+  context: ExternalToolContext,
+  existingValue: unknown,
+): unknown {
+  const source = getFieldSource(rule);
+
+  if (source === "DEFAULT") {
+    if (
+      Object.prototype.hasOwnProperty.call(rule, "value") &&
+      isMissingParamValue(existingValue)
+    ) {
+      return rule.value;
+    }
+    return undefined;
+  }
+
+  if (source === "FIXED") {
+    return Object.prototype.hasOwnProperty.call(rule, "value")
+      ? rule.value
+      : undefined;
+  }
+
+  if (source === "CHAT_CONTEXT") {
+    const contextValue = getContextValue(context, rule.contextKey);
+    return isMissingParamValue(contextValue) ? undefined : contextValue;
+  }
+
+  if (source === "ACTION_RESULT") {
+    const actionValue = getByPath(
+      context.parentActionResponse,
+      String(rule.path || rule.resultPath || ""),
+    );
+    return isMissingParamValue(actionValue) ? undefined : actionValue;
+  }
+
+  const type = String(rule.type || "STRING").toUpperCase();
+  if (type === "OBJECT" && isRecord(rule.properties)) {
+    const injected: Record<string, any> = {};
+    const existingObject = isRecord(existingValue) ? existingValue : {};
+    for (const [childKey, childRule] of Object.entries(rule.properties)) {
+      if (!isRecord(childRule)) continue;
+      const childValue = buildServerInjectedValueByRule(
+        childRule,
+        context,
+        existingObject[childKey],
+      );
+      if (!isMissingParamValue(childValue)) {
+        injected[childKey] = childValue;
+      }
+    }
+    return Object.keys(injected).length > 0 ? injected : undefined;
+  }
+
+  return undefined;
+}
+
+function buildWorkflowBoundParams(
+  bindings: unknown,
+  args: Record<string, any>,
+  context: ExternalToolContext,
+): Record<string, any> {
+  if (!isRecord(bindings)) return {};
+  const output: Record<string, any> = {};
+
+  for (const [targetPath, binding] of Object.entries(bindings)) {
+    if (!isRecord(binding)) continue;
+    const source = String(binding.source || "USER_PROVIDED").toUpperCase();
+    let value: unknown;
+
+    if (source === "ACTION_RESULT") {
+      value = getByPath(context.parentActionResponse, String(binding.path || ""));
+    } else if (source === "CHAT_CONTEXT") {
+      value = getByPath(context as unknown as Record<string, unknown>, String(binding.path || ""));
+    } else if (source === "FIXED") {
+      value = binding.value;
+    } else if (source === "DEFAULT") {
+      value = getByPath(args, targetPath);
+      if (isMissingParamValue(value)) value = binding.default ?? binding.value;
+    } else {
+      value = getByPath(args, String(binding.path || targetPath));
+    }
+
+    if (!isMissingParamValue(value)) {
+      setByPath(output, targetPath, value);
+    }
+  }
+
+  return output;
+}
+
+function deepMergeRecords(
+  base: Record<string, any>,
+  update: Record<string, any>,
+): Record<string, any> {
+  const merged = { ...base };
+  for (const [key, value] of Object.entries(update)) {
+    if (isRecord(value) && isRecord(merged[key])) {
+      merged[key] = deepMergeRecords(
+        merged[key] as Record<string, any>,
+        value as Record<string, any>,
+      );
+    } else {
+      merged[key] = value;
+    }
+  }
+  return merged;
+}
+
+type MappingContext = {
+  args: Record<string, any>;
+  context: ExternalToolContext;
+  response?: unknown;
+  responseMeta?: {
+    ok: boolean;
+    status: number;
+    headers: Record<string, string>;
+  };
+};
+
+function applyObjectMapping(
+  mapping: unknown,
+  context: MappingContext,
+): Record<string, any> | null {
+  if (!isRecord(mapping) || Object.keys(mapping).length === 0) return null;
+
+  const output: Record<string, any> = {};
+  for (const [targetPath, rule] of Object.entries(mapping)) {
+    const value = resolveMappingRule(rule, context);
+    if (value !== undefined) {
+      setByPath(output, targetPath, value);
+    }
+  }
+  return output;
+}
+
+function resolveMappingRule(rule: unknown, context: MappingContext): unknown {
+  if (typeof rule === "string") {
+    if (rule.includes("{{")) return interpolateTemplate(rule, context);
+    if (rule.startsWith("$")) return resolveExpression(rule, context);
+    return rule;
+  }
+
+  if (isRecord(rule)) {
+    const from = rule.from ?? rule.path ?? rule.sourcePath;
+    if (typeof from === "string") {
+      const value = resolveExpression(from.startsWith("$") ? from : `$${from}`, context);
+      if (isMissingParamValue(value) && Object.prototype.hasOwnProperty.call(rule, "default")) {
+        return rule.default;
+      }
+      return value;
+    }
+    if (Object.prototype.hasOwnProperty.call(rule, "value")) {
+      return rule.value;
+    }
+  }
+
+  return rule;
+}
+
+function interpolateTemplate(template: string, context: MappingContext): string {
+  return template.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_match, expr) => {
+    const value = resolveExpression(`$${String(expr).replace(/^\$/, "")}`, context);
+    return value === undefined || value === null ? "" : String(value);
+  });
+}
+
+function resolveExpression(expression: string, context: MappingContext): unknown {
+  const normalized = expression.replace(/^\$/, "");
+  if (normalized === "ok") return context.responseMeta?.ok;
+  if (normalized === "status") return context.responseMeta?.status;
+  if (normalized.startsWith("args.")) {
+    return getByPath(context.args, normalized.slice("args.".length));
+  }
+  if (normalized.startsWith("context.")) {
+    return getByPath(context.context as unknown as Record<string, unknown>, normalized.slice("context.".length));
+  }
+  if (normalized.startsWith("response.")) {
+    return getByPath(context.response, normalized.slice("response.".length));
+  }
+  if (normalized === "response") return context.response;
+  if (normalized.startsWith("headers.")) {
+    return context.responseMeta?.headers[normalized.slice("headers.".length).toLowerCase()];
+  }
+  return undefined;
+}
+
+function getByPath(source: unknown, path: string): unknown {
+  if (!path) return source;
+  return path.split(".").reduce<unknown>((current, segment) => {
+    if (current === undefined || current === null) return undefined;
+    if (Array.isArray(current)) {
+      const index = Number(segment);
+      return Number.isInteger(index) ? current[index] : undefined;
+    }
+    if (typeof current === "object") {
+      return (current as Record<string, unknown>)[segment];
+    }
+    return undefined;
+  }, source);
+}
+
+function setByPath(target: Record<string, any>, path: string, value: unknown) {
+  const segments = path.split(".").filter(Boolean);
+  if (segments.length === 0) return;
+  let cursor = target;
+  for (const segment of segments.slice(0, -1)) {
+    if (!isRecord(cursor[segment])) {
+      cursor[segment] = {};
+    }
+    cursor = cursor[segment] as Record<string, any>;
+  }
+  cursor[segments[segments.length - 1]] = value;
 }
 
 function isMissingParamValue(value: unknown): boolean {
@@ -492,12 +729,12 @@ export async function executeExternalQuery(
   args: Record<string, any>,
   context: ExternalToolContext = {},
 ): Promise<ExternalQueryEnvelope> {
-  const source = await prisma.externalDataSource.findFirst({
+  const source = await prisma.agentActionSource.findFirst({
     where: { id: sourceId, businessProfileId, isActive: true },
   });
 
   if (!source) {
-    throw new AppError(`Active data source with id ${sourceId} not found`, 404);
+    throw new AppError(`Active Agent Action source with id ${sourceId} not found`, 404);
   }
 
   try {
@@ -527,6 +764,19 @@ export async function executeExternalQuery(
       context,
       { ...filteredArgs, ...configuredParams },
     );
+    const baseParams = {
+      ...filteredArgs,
+      ...injectedParams,
+      ...configuredParams,
+    };
+    const allParams = deepMergeRecords(
+      baseParams,
+      buildWorkflowBoundParams(context.workflowInputBindings, baseParams, context),
+    );
+    const mappedRequest = applyObjectMapping(source.requestMapping, {
+      args: allParams,
+      context,
+    });
     let finalUrl = source.apiUrl;
     let options: RequestInit = {
       method: source.method,
@@ -542,23 +792,14 @@ export async function executeExternalQuery(
 
     if (source.method === "GET") {
       const url = new URL(source.apiUrl);
-      const allParams = {
-        ...filteredArgs,
-        ...injectedParams,
-        ...configuredParams,
-      };
-      for (const [key, val] of Object.entries(allParams)) {
+      for (const [key, val] of Object.entries(mappedRequest ?? allParams)) {
         if (val !== undefined && val !== null) {
           url.searchParams.set(key, String(val));
         }
       }
       finalUrl = url.toString();
     } else {
-      options.body = JSON.stringify({
-        ...filteredArgs,
-        ...injectedParams,
-        ...configuredParams,
-      });
+      options.body = JSON.stringify(mappedRequest ?? allParams);
     }
 
     const fetchResult = await fetchExternalWithRetry(finalUrl, options);
@@ -620,16 +861,32 @@ export async function executeExternalQuery(
         data = JSON.parse(body);
       }
     }
+    const mappedResponse = applyObjectMapping(source.responseMapping, {
+      args: allParams,
+      context,
+      response: data,
+      responseMeta: {
+        ok: response.ok,
+        status: response.status,
+        headers: Object.fromEntries(
+          Array.from(response.headers.entries()).map(([key, value]) => [
+            key.toLowerCase(),
+            value,
+          ]),
+        ),
+      },
+    });
+    const canonicalData = mappedResponse ?? data;
     const canonical =
       actionType === "MUTATION"
-        ? toCanonicalVerificationMutation(data, response.ok)
-        : toCanonicalVerificationRead(data);
+        ? toCanonicalVerificationMutation(canonicalData, response.ok)
+        : toCanonicalVerificationRead(canonicalData);
     return {
       success: canonical.verification !== "failed",
       verification: canonical.verification,
       actionType: `integration_action_${sourceId}`,
       reason: canonical.reason,
-      data,
+      data: canonicalData,
     };
   } catch (error: any) {
     logger.error("external_api_error", {

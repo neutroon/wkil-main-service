@@ -32,11 +32,6 @@ conversationsRoutes.patch("/:id/ai-toggle", authenticateToken, validate(idParamS
 conversationsRoutes.patch("/:id/status", authenticateToken, validate(idParamSchema), validate(updateStatusSchema), (req, res) => conversationsController.updateStatus(req, res));
 conversationsRoutes.delete("/:id", authenticateToken, validate(idParamSchema), (req, res) => conversationsController.deleteConversation(req, res));
 
-// ─── AI Draft Management (HITL) ───────────────────────────────────────────────
-conversationsRoutes.put("/:id/messages/:mid/approve", authenticateToken, validate(idParamSchema), (req, res) => conversationsController.approveAiDraft(req, res));
-conversationsRoutes.delete("/:id/messages/:mid", authenticateToken, validate(idParamSchema), (req, res) => conversationsController.dismissAiDraft(req, res));
-conversationsRoutes.post("/:id/suggest", authenticateToken, validate(idParamSchema), (req, res) => conversationsController.suggestReply(req, res));
-
 export default conversationsRoutes;
 
 

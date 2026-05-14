@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { assertExternalApiUrlLooksSafe } from "./externalData.service";
+import { assertExternalApiUrlLooksSafe } from "./agentActionExecutor.service";
 import { aiSchemaObject } from "@modules/integrations/schemaRules.validation";
 import {
   EXTERNAL_FAILURE_BEHAVIORS,
@@ -9,7 +9,7 @@ import {
   INTEGRATION_ACTION_TRIGGERS,
   INTEGRATION_CONFIRMATION_POLICIES,
   INTEGRATION_EXECUTION_MODES,
-} from "./externalDataSource.constants";
+} from "./agentActionSource.constants";
 
 const safeExternalUrl = z.string().url("Invalid API URL").superRefine((url, ctx) => {
   try {
@@ -40,10 +40,10 @@ const nullableStringRecordAsEmpty = z.preprocess(
 );
 
 /**
- * Data Source Schema
- * POST /v1/external-data-sources/business-profiles/:profileId
+ * Agent Action source schema
+ * POST /v1/agent-actions/business-profiles/:profileId
  */
-export const dataSourceSchema = z.object({
+export const agentActionSourceSchema = z.object({
   params: z.object({
     profileId: z.coerce.number(),
   }),
@@ -69,10 +69,10 @@ export const dataSourceSchema = z.object({
 });
 
 /**
- * Update Data Source Schema
- * PUT /v1/external-data-sources/business-profiles/:profileId/:sourceId
+ * Update Agent Action source schema
+ * PUT /v1/agent-actions/business-profiles/:profileId/:sourceId
  */
-export const updateDataSourceSchema = z.object({
+export const updateAgentActionSourceSchema = z.object({
   params: z.object({
     profileId: z.coerce.number(),
     sourceId: z.coerce.number(),
@@ -99,20 +99,82 @@ export const updateDataSourceSchema = z.object({
 });
 
 /**
- * Get Data Sources Schema
+ * Get Agent Action source schema
  */
-export const getDataSourceSchema = z.object({
+export const getAgentActionSourceSchema = z.object({
   params: z.object({
     profileId: z.coerce.number(),
   }),
 });
 
 /**
- * Delete Data Source Schema
+ * Delete Agent Action source schema
  */
-export const deleteDataSourceSchema = z.object({
+export const deleteAgentActionSourceSchema = z.object({
   params: z.object({
     profileId: z.coerce.number(),
     sourceId: z.coerce.number(),
+  }),
+});
+
+const inputBindingSource = z.enum([
+  "USER_PROVIDED",
+  "CHAT_CONTEXT",
+  "ACTION_RESULT",
+  "FIXED",
+  "DEFAULT",
+]);
+
+const workflowFields = z.object({
+  name: z.string().min(1, "Workflow name is required"),
+  description: z.string().optional().nullable(),
+  lookupSourceId: z.coerce.number().int().positive().nullable().optional(),
+  mutationSourceId: z.coerce.number().int().positive().nullable().optional(),
+  inputBindings: z.record(
+    z.string(),
+    z.object({
+      source: inputBindingSource,
+      path: z.string().optional(),
+      value: z.unknown().optional(),
+      default: z.unknown().optional(),
+    }),
+  ).nullable().optional(),
+  isActive: z.boolean().optional().default(true),
+});
+
+const workflowBody = workflowFields.refine(
+  (body) => Boolean(body.lookupSourceId || body.mutationSourceId),
+  "Workflow must include at least one action step",
+);
+
+export const workflowSchema = z.object({
+  params: z.object({
+    profileId: z.coerce.number(),
+  }),
+  body: workflowBody,
+});
+
+export const updateWorkflowSchema = z.object({
+  params: z.object({
+    profileId: z.coerce.number(),
+    workflowId: z.coerce.number(),
+  }),
+  body: workflowFields.partial().refine(
+    (body) =>
+      Object.keys(body).length > 0 &&
+      (body.lookupSourceId !== undefined ||
+        body.mutationSourceId !== undefined ||
+        body.name !== undefined ||
+        body.description !== undefined ||
+        body.inputBindings !== undefined ||
+        body.isActive !== undefined),
+    "No workflow changes provided",
+  ),
+});
+
+export const workflowIdSchema = z.object({
+  params: z.object({
+    profileId: z.coerce.number(),
+    workflowId: z.coerce.number(),
   }),
 });

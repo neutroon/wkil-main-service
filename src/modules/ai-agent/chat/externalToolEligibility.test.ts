@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { findSemanticallyEligibleExternalDataSources } from "@modules/integrations/external/externalActionSemanticIndex.service";
+import { findSemanticallyEligibleAgentActionSources } from "@modules/integrations/external/agentActionSemanticIndex.service";
 import {
-  filterEligibleExternalDataSources,
+  filterEligibleAgentActionSources,
   validateChatRequestedExternalAction,
 } from "./externalToolEligibility";
 
-vi.mock("@modules/integrations/external/externalActionSemanticIndex.service", () => ({
-  findSemanticallyEligibleExternalDataSources: vi.fn(),
+vi.mock("@modules/integrations/external/agentActionSemanticIndex.service", () => ({
+  findSemanticallyEligibleAgentActionSources: vi.fn(),
 }));
 
 const priceSource = {
@@ -51,12 +51,12 @@ describe("external tool eligibility", () => {
   });
 
   it("uses the semantic DB router instead of a generative AI router", async () => {
-    vi.mocked(findSemanticallyEligibleExternalDataSources).mockResolvedValue([
+    vi.mocked(findSemanticallyEligibleAgentActionSources).mockResolvedValue([
       priceSource,
     ]);
 
     await expect(
-      filterEligibleExternalDataSources(
+      filterEligibleAgentActionSources(
         [priceSource, orderSource],
         "what is the subscription price?",
         {
@@ -66,7 +66,7 @@ describe("external tool eligibility", () => {
       ),
     ).resolves.toEqual([priceSource]);
 
-    expect(findSemanticallyEligibleExternalDataSources).toHaveBeenCalledWith(
+    expect(findSemanticallyEligibleAgentActionSources).toHaveBeenCalledWith(
       expect.objectContaining({
         businessProfileId: 1,
         sources: [priceSource, orderSource],
@@ -77,24 +77,54 @@ describe("external tool eligibility", () => {
 
   it("fails closed when no query embedding is available", async () => {
     await expect(
-      filterEligibleExternalDataSources([priceSource], "what is the price?", {
+      filterEligibleAgentActionSources([priceSource], "what is the price?", {
         businessProfileId: 1,
         queryEmbedding: null,
       }),
     ).resolves.toEqual([]);
 
-    expect(findSemanticallyEligibleExternalDataSources).not.toHaveBeenCalled();
+    expect(findSemanticallyEligibleAgentActionSources).not.toHaveBeenCalled();
   });
 
   it("fails closed for empty customer messages", async () => {
     await expect(
-      filterEligibleExternalDataSources([priceSource], "   ", {
+      filterEligibleAgentActionSources([priceSource], "   ", {
         businessProfileId: 1,
         queryEmbedding: [0.1],
       }),
     ).resolves.toEqual([]);
 
-    expect(findSemanticallyEligibleExternalDataSources).not.toHaveBeenCalled();
+    expect(findSemanticallyEligibleAgentActionSources).not.toHaveBeenCalled();
+  });
+
+  it("does not expose chat-requested actions for pure greetings", async () => {
+    await expect(
+      filterEligibleAgentActionSources([priceSource, orderSource], "السلام عليكم", {
+        businessProfileId: 1,
+        queryEmbedding: [0.1, 0.2, 0.3],
+      }),
+    ).resolves.toEqual([]);
+
+    expect(findSemanticallyEligibleAgentActionSources).not.toHaveBeenCalled();
+  });
+
+  it("still routes actionable messages that start with a greeting", async () => {
+    vi.mocked(findSemanticallyEligibleAgentActionSources).mockResolvedValue([
+      orderSource,
+    ]);
+
+    await expect(
+      filterEligibleAgentActionSources(
+        [priceSource, orderSource],
+        "السلام عليكم عاوز الغي الاوردر 332",
+        {
+          businessProfileId: 1,
+          queryEmbedding: [0.1, 0.2, 0.3],
+        },
+      ),
+    ).resolves.toEqual([orderSource]);
+
+    expect(findSemanticallyEligibleAgentActionSources).toHaveBeenCalled();
   });
 
   it("accepts a chat-requested action when required user values are present", async () => {
@@ -120,6 +150,65 @@ describe("external tool eligibility", () => {
     ).resolves.toMatchObject({
       shouldQueue: false,
       reasoning: "Missing required parameters: propertyName",
+    });
+  });
+
+  it("validates required nested user fields while ignoring server-injected action-result fields", async () => {
+    const leadSource = {
+      id: 4,
+      businessProfileId: 1,
+      name: "capture lead",
+      description: "Capture a lead after a lookup action selected the program",
+      isActive: true,
+      trigger: "CHAT_REQUESTED",
+      actionType: "MUTATION",
+      expectedParamsSchema: {
+        selectedProgram: {
+          type: "OBJECT",
+          source: "USER_PROVIDED",
+          description: "Selected program details",
+          properties: {
+            name: {
+              type: "STRING",
+              source: "USER_PROVIDED",
+              required: true,
+              description: "Program name from the customer",
+            },
+            courseId: {
+              type: "STRING",
+              source: "ACTION_RESULT",
+              path: "data.courses.0.id",
+              description: "Program id from lookup result",
+            },
+          },
+        },
+      },
+    } as any;
+
+    await expect(
+      validateChatRequestedExternalAction({
+        source: leadSource,
+        latestUserMessage: "عاوز احجز الدعم النفسى بالفنون",
+        args: { selectedProgram: { courseId: "invented-id" } },
+      }),
+    ).resolves.toMatchObject({
+      shouldQueue: false,
+      reasoning: "Missing required parameters: selectedProgram.name",
+    });
+
+    await expect(
+      validateChatRequestedExternalAction({
+        source: leadSource,
+        latestUserMessage: "عاوز احجز الدعم النفسى بالفنون",
+        args: {
+          selectedProgram: {
+            name: "الدعم النفسى بالفنون",
+            courseId: "invented-id",
+          },
+        },
+      }),
+    ).resolves.toMatchObject({
+      shouldQueue: true,
     });
   });
 
@@ -160,7 +249,7 @@ describe("external tool eligibility", () => {
 
     await expect(
       validateChatRequestedExternalAction({
-        source: { ...priceSource, trigger: "CUSTOMER_DETAILS_SAVED" },
+        source: { ...priceSource, trigger: "NOT_CHAT_REQUESTED" as any },
         latestUserMessage: "what is the price?",
         args: { propertyName: "price" },
       }),

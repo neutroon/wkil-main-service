@@ -69,6 +69,7 @@ const envSchema = z.object({
   
   // ── Infrastructure & Security ──────────────────────────────────────────────
   REDIS_URL: z.string().url(),
+  BULLMQ_PREFIX: z.string().min(1).optional(),
   FRONTEND_URL: z.string().url(),
   ADMIN_IP_WHITELIST: z.string().optional(),
   

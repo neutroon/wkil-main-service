@@ -314,7 +314,7 @@ function sectionCoreRules(ctx: PromptContext): string {
       ? "Valid actions: REPLY_AUTO, HANDOFF_TO_HUMAN, RESOLVE_CONVERSATION."
       : "Valid actions: REPLY_AUTO, RESOLVE_CONVERSATION. Do not use HANDOFF_TO_HUMAN.",
     ctx.handoffEnabled
-      ? "Use HANDOFF_TO_HUMAN for complex issues, anger, missing required evidence, unsafe uncertainty, or failed essential action results."
+      ? "Use HANDOFF_TO_HUMAN for complex issues, anger, missing required evidence, or unsafe uncertainty. For correctable failed action results, ask for the corrected or missing detail instead of handing off."
       : "When unsure, ask one focused clarification or say you cannot confirm from the available evidence; do not mention staff follow-up or human transfer.",
     "Use RESOLVE_CONVERSATION only when the customer clearly says thanks, goodbye, or that the issue is complete.",
     "Keep reasoning as a brief internal routing note in the same language as the conversation.",
@@ -397,13 +397,15 @@ function sectionOutputContract(ctx: PromptContext): string {
   if (ctx.channel === "facebook_comment") {
     return `<output_contract>
 Return exactly one JSON object; no markdown code blocks.
-Fields: action, reasoning (brief routing note, not hidden model reasoning), publicContent, privateContent, intent, requiresGrounding, grounded, usedChunkTypes, missingInfo, optional attachment.
+Fields: action, replyType, reasoning (brief routing note, not hidden model reasoning), publicContent, privateContent, intent, requiresGrounding, grounded, usedChunkTypes, missingInfo, optional attachment.
+If a <reply_policy> block exists, replyType and action must satisfy it.
 </output_contract>`;
   }
 
   return `<output_contract>
 Return exactly one JSON object; no markdown code blocks.
-Fields: action, reasoning (brief routing note, not hidden model reasoning), content, requiresGrounding, grounded, usedChunkTypes, missingInfo, optional attachment.
+Fields: action, replyType, reasoning (brief routing note, not hidden model reasoning), content, requiresGrounding, grounded, usedChunkTypes, missingInfo, optional attachment.
+If a <reply_policy> block exists, replyType and action must satisfy it.
 </output_contract>`;
 }
 

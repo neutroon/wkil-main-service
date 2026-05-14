@@ -75,6 +75,7 @@ export async function markIntegrationActionRunFailed(params: {
   reason: string;
   responsePayload?: unknown;
   verification?: string | null;
+  resultMessageId?: number | null;
 }) {
   if (!params.id) return;
   await updateActionRun(params.id, {
@@ -82,6 +83,7 @@ export async function markIntegrationActionRunFailed(params: {
     failureReason: params.reason,
     responsePayload: normalizeJson(params.responsePayload),
     verification: params.verification ?? null,
+    resultMessageId: params.resultMessageId ?? null,
     failedAt: new Date(),
   });
 }

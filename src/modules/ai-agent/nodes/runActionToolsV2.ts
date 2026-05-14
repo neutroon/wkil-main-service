@@ -12,10 +12,8 @@ import {
   markIntegrationActionRunFailed,
 } from "@modules/integrations/external/integrationActionRun.service";
 import { validateChatRequestedExternalAction } from "@modules/ai-agent/chat/externalToolEligibility";
-import { generatePendingLookupStatusDecision } from "@modules/ai-agent/chat/pendingLookupStatus";
 import { updateAgentTurnStatus } from "@modules/ai-agent/core/agentTurn.service";
 import type { AiRoutingDecision } from "@modules/ai-agent/core/aiEngine.utils";
-import { buildAiRecoveryDecision } from "./recoveryDecision";
 
 export async function runActionToolsV2Node(
   state: AgentStateType,
@@ -76,19 +74,25 @@ export async function runActionToolsV2Node(
       sourceId,
       reason: validation.reasoning,
     });
+
     return {
-      decision: await buildAiRecoveryDecision(state, {
-        action: "REPLY_AUTO",
-        handoffCategory: null,
-        reasoning: `Action rejected by field-source policy: ${validation.reasoning}`,
-        failureReason: validation.reasoning,
-        emergencyFallback:
-          state.policy?.fallbackTemplates?.unverified ||
-          "I cannot confirm that from the available information.",
-        allowHandoffLanguage: false,
-        requiresGrounding: false,
-        missingInfo: validation.reasoning,
+      contents: appendFunctionResponse(state, call, {
+        success: false,
+        verification: "failed",
+        actionType: call.name,
+        reason: "action_policy_rejected",
+        data: {
+          queued: false,
+          policyReason: validation.reasoning,
+        },
       }),
+      functionCalls: [],
+      tools: undefined,
+      // This was rejected by deterministic policy before any external request ran.
+      // Feed the function response back to Gemini so it can ask one clarification,
+      // but do not run the post-tool guardrail/recovery layer on top of it.
+      hadToolExecution: false,
+      decision: null,
     };
   }
 
@@ -148,21 +152,22 @@ export async function runActionToolsV2Node(
 
   await updateAgentTurnStatus(state.agentTurnId, "WAITING_ACTION");
 
-  const pendingDecision = await generatePendingLookupStatusDecision({
-    businessName: state.businessName || "the business",
-    voice: state.businessVoice,
-    tone: state.businessTone,
-    channel: state.channel,
-    latestUserText: latestMessage,
-    recentTurns: recentTextTurns(state.contents, 3),
-    source,
-  });
-
   return {
     hadToolExecution: true,
     queuedActionRunId: actionRun.id,
     decision: {
-      ...pendingDecision,
+      action: "REPLY_AUTO",
+      replyType: "NORMAL_REPLY",
+      handoffCategory: null,
+      reasoning: "Queued chat-requested action; waiting for background result.",
+      content: "",
+      publicContent: "",
+      privateContent: "",
+      requiresGrounding: false,
+      grounded: true,
+      usedChunkTypes: [],
+      missingInfo: null,
+      attachment: null,
       queuedActionRunId: actionRun.id,
       queuedActionSourceId: sourceId,
       agentTurnStatus: "WAITING_ACTION",
@@ -205,22 +210,32 @@ function textHistory(contents: GeminiContent[]): string {
     .join("\n");
 }
 
-function recentTextTurns(contents: GeminiContent[], count: number) {
-  return contents
-    .map((turn) => ({
-      role: turn.role,
-      text: turn.parts
-        .map((part) => part.text || "")
-        .filter(Boolean)
-        .join("\n"),
-    }))
-    .filter((turn) => turn.text.trim().length > 0)
-    .slice(-count);
+function appendFunctionResponse(
+  state: AgentStateType,
+  call: NonNullable<AgentStateType["functionCalls"][number]>,
+  response: Record<string, unknown>,
+): GeminiContent[] {
+  return [
+    ...state.contents,
+    {
+      role: "user" as const,
+      parts: [
+        {
+          functionResponse: {
+            ...(call.id ? { id: call.id } : {}),
+            name: call.name,
+            response,
+          },
+        },
+      ],
+    },
+  ];
 }
 
 function buildToolFailureDecision(content: string): AiRoutingDecision {
   return {
     action: "HANDOFF_TO_HUMAN",
+    replyType: "HANDOFF",
     handoffCategory: "SYSTEM_ERROR",
     reasoning: content,
     content: "",

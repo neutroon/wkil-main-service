@@ -73,6 +73,19 @@ async function clearMessengerIdentityCaches(pageId: string) {
   ]).catch(() => {});
 }
 
+function describeConnectionCandidate(candidate: any) {
+  return {
+    id: candidate.id,
+    businessProfileId: candidate.businessProfileId,
+    isActive: candidate.isActive,
+    isTokenValid: candidate.isTokenValid,
+    accountIsActive: candidate.facebookAccount?.isActive,
+    accountTokenValid: candidate.facebookAccount?.isTokenValid,
+    userId: candidate.userId ?? candidate.facebookAccount?.userId,
+    updatedAt: candidate.updatedAt,
+  };
+}
+
 async function clearWhatsAppIdentityCaches(phoneNumberId: string) {
   await Promise.all([
     cache.delete(`identity:whatsapp:${phoneNumberId}`),
@@ -164,27 +177,16 @@ async function resolveAccountIdentity(job: MetaMessageJob): Promise<IdentityReso
 
   // 2. Cache miss — full DB lookup
   if (platform === "messenger") {
-    const facebookPageWhere = routedBusinessProfileId
-      ? { pageId: identifier, isActive: true, businessProfileId: routedBusinessProfileId }
-      : { pageId: identifier, isActive: true, businessProfileId: { not: null } };
-
-    let page = await prisma.facebookPage.findFirst({
-      where: facebookPageWhere,
-      orderBy: { updatedAt: "desc" },
-      include: {
-        businessProfile: {
-          include: {
-            externalDataSources: { where: { isActive: true } },
-          },
+    const findFacebookPageIdentity = (businessProfileId?: number) =>
+      prisma.facebookPage.findFirst({
+        where: {
+          pageId: identifier,
+          isActive: true,
+          facebookAccount: { isActive: true },
+          ...(businessProfileId
+            ? { businessProfileId }
+            : { businessProfileId: { not: null } }),
         },
-      },
-    });
-
-    if (!page || !page.businessProfileId) {
-      await clearMessengerIdentityCaches(identifier);
-      await wait(300);
-      page = await prisma.facebookPage.findFirst({
-        where: facebookPageWhere,
         orderBy: { updatedAt: "desc" },
         include: {
           businessProfile: {
@@ -194,13 +196,52 @@ async function resolveAccountIdentity(job: MetaMessageJob): Promise<IdentityReso
           },
         },
       });
+
+    let page = await findFacebookPageIdentity(routedBusinessProfileId);
+
+    if (!page || !page.businessProfileId) {
+      await clearMessengerIdentityCaches(identifier);
+      await wait(300);
+      page = await findFacebookPageIdentity(routedBusinessProfileId);
+    }
+
+    if (!page && routedBusinessProfileId) {
+      page = await findFacebookPageIdentity();
+      if (page?.businessProfileId) {
+        logger.warn("meta.processor.identity_route_changed", {
+          platform,
+          identifier,
+          routedBusinessProfileId,
+          resolvedBusinessProfileId: page.businessProfileId,
+        });
+      }
     }
 
     if (!page || !page.businessProfileId) {
+      const candidates = await prisma.facebookPage.findMany({
+        where: { pageId: identifier },
+        orderBy: { updatedAt: "desc" },
+        take: 5,
+        select: {
+          id: true,
+          businessProfileId: true,
+          isActive: true,
+          isTokenValid: true,
+          updatedAt: true,
+          facebookAccount: {
+            select: {
+              userId: true,
+              isActive: true,
+              isTokenValid: true,
+            },
+          },
+        },
+      });
       logger.warn("meta.processor.identity_missing_profile_retryable", {
         platform,
         identifier,
         routedBusinessProfileId,
+        candidates: candidates.map(describeConnectionCandidate),
       });
       throw new Error(`Messenger page ${identifier} is not connected to a profile.`);
     }
@@ -229,26 +270,15 @@ async function resolveAccountIdentity(job: MetaMessageJob): Promise<IdentityReso
 
     return resolved;
   } else {
-    const whatsAppAccountWhere = routedBusinessProfileId
-      ? { phoneNumberId: identifier, isActive: true, businessProfileId: routedBusinessProfileId }
-      : { phoneNumberId: identifier, isActive: true, businessProfileId: { not: null } };
-
-    let account = await prisma.whatsAppAccount.findFirst({
-      where: whatsAppAccountWhere,
-      include: {
-        businessProfile: {
-          include: {
-            externalDataSources: { where: { isActive: true } },
-          },
+    const findWhatsAppAccountIdentity = (businessProfileId?: number) =>
+      prisma.whatsAppAccount.findFirst({
+        where: {
+          phoneNumberId: identifier,
+          isActive: true,
+          ...(businessProfileId
+            ? { businessProfileId }
+            : { businessProfileId: { not: null } }),
         },
-      },
-    });
-
-    if (!account || !account.businessProfileId) {
-      await clearWhatsAppIdentityCaches(identifier);
-      await wait(300);
-      account = await prisma.whatsAppAccount.findFirst({
-        where: whatsAppAccountWhere,
         include: {
           businessProfile: {
             include: {
@@ -257,13 +287,46 @@ async function resolveAccountIdentity(job: MetaMessageJob): Promise<IdentityReso
           },
         },
       });
+
+    let account = await findWhatsAppAccountIdentity(routedBusinessProfileId);
+
+    if (!account || !account.businessProfileId) {
+      await clearWhatsAppIdentityCaches(identifier);
+      await wait(300);
+      account = await findWhatsAppAccountIdentity(routedBusinessProfileId);
+    }
+
+    if (!account && routedBusinessProfileId) {
+      account = await findWhatsAppAccountIdentity();
+      if (account?.businessProfileId) {
+        logger.warn("meta.processor.identity_route_changed", {
+          platform,
+          identifier,
+          routedBusinessProfileId,
+          resolvedBusinessProfileId: account.businessProfileId,
+        });
+      }
     }
 
     if (!account || !account.businessProfileId) {
+      const candidates = await prisma.whatsAppAccount.findMany({
+        where: { phoneNumberId: identifier },
+        orderBy: { updatedAt: "desc" },
+        take: 5,
+        select: {
+          id: true,
+          userId: true,
+          businessProfileId: true,
+          isActive: true,
+          isTokenValid: true,
+          updatedAt: true,
+        },
+      });
       logger.warn("meta.processor.identity_missing_profile_retryable", {
         platform,
         identifier,
         routedBusinessProfileId,
+        candidates: candidates.map(describeConnectionCandidate),
       });
       throw new Error(`WhatsApp account ${identifier} is not connected to a profile.`);
     }

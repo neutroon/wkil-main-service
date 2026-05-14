@@ -99,8 +99,15 @@ export const AgentState = Annotation.Root({
     default: () => ({}),
   }),
   policy:            Annotation<AiTruthfulnessPolicy>(),
-  responseMode:      Annotation<"AUTO" | "MANUAL">(),
+  handoffEnabled:    Annotation<boolean>({
+    value:   (_, update) => update,
+    default: () => true,
+  }),
   conversationId:    Annotation<number | undefined>(),
+  agentTurnId:       Annotation<number | undefined>(),
+  activeWorkflowId:  Annotation<number | undefined>(),
+  parentActionRunId: Annotation<number | undefined>(),
+  actionStepKey:     Annotation<string | undefined>(),
 
   // ─── Mutable: conversation turns (append-only via reducer) ───────────────
   // Each node that adds a turn pushes to this array.
@@ -145,11 +152,9 @@ export const AgentState = Annotation.Root({
     default: () => null,
   }),
 
-  // ─── HITL: set by hitlInterrupt node when MANUAL mode is active ──────────
-  // The graph pauses here. External caller resumes with approved content.
-  pendingHumanApproval: Annotation<boolean>({
+  queuedActionRunId: Annotation<number | undefined>({
     value:   (_, update) => update,
-    default: () => false,
+    default: () => undefined,
   }),
 
 });

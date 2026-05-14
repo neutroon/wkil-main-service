@@ -544,69 +544,6 @@ function collectRequiredFields(
   return required;
 }
 
-export const DEFAULT_CUSTOMER_DETAILS_INSTRUCTIONS =
-  "Saves useful customer details to the local customer profile only. Call this ONLY when the customer explicitly provides contact details, asks for follow-up, wants to proceed, gives a preference or requirement, corrects previously saved details, or real chat context metadata should create/enrich the customer profile. For greetings, save real identity/contact metadata only; do not save conversation-summary notes. Do not call it for thanks, generic questions, or identical details already saved in the conversation.";
-
-export function buildSaveCustomerDetailsTool(
-  fieldMapping: any,
-  customInstructions?: string,
-): Tool[] {
-  const properties: Record<string, any> = {
-    name: {
-      type: Type.STRING,
-      description: "The customer's real name, if provided.",
-    },
-    email: {
-      type: Type.STRING,
-      description: "The customer's email address, if provided.",
-    },
-    phone: {
-      type: Type.STRING,
-      description: "The customer's phone number, if provided.",
-    },
-    notes: {
-      type: Type.STRING,
-      description:
-        "A concise summary of the customer's request, preferences, or next step.",
-    },
-  };
-
-  if (
-    fieldMapping &&
-    typeof fieldMapping === "object" &&
-    Object.keys(fieldMapping).length > 0
-  ) {
-    const dynamicMapping: Record<string, any> = {};
-    for (const [key, value] of Object.entries(fieldMapping)) {
-      if (isAiWritableFieldRule(value)) {
-        dynamicMapping[key] = value;
-      }
-    }
-
-    for (const [key, propConfig] of Object.entries(
-      buildDynamicProperties(dynamicMapping),
-    )) {
-      properties[key] = propConfig;
-    }
-  }
-
-  return [
-    {
-      functionDeclarations: [
-        {
-          name: "save_customer_details",
-          description:
-            customInstructions || DEFAULT_CUSTOMER_DETAILS_INSTRUCTIONS,
-          parameters: {
-            type: Type.OBJECT,
-            properties,
-          },
-        },
-      ],
-    },
-  ];
-}
-
 export function buildIntegrationActionTools(dataSources: any[]): Tool[] {
   if (!dataSources || dataSources.length === 0) return [];
 

@@ -3,23 +3,32 @@ import type { Tool } from "@google/genai";
 import { retrieveRelevantChunksWithEmbedding } from "../rag/rag.service";
 import { buildSystemPrompt } from "../../meta/core/prompt.service";
 import { buildIntegrationActionTools } from "@modules/ai-agent/gemini";
-import { runAgentGraph } from "@modules/ai-agent/core/agentGraph";
+import { runAgentGraphV2 } from "@modules/ai-agent/core/agentGraphV2";
 import type { AiRoutingDecision } from "@modules/ai-agent/core/aiEngine.utils";
 import {
   buildNotIngestedReply,
   buildTruthfulnessPolicyForVoice,
 } from "./aiFallbackPolicy";
 import { generateSafeRecoveryReply } from "./aiRecoveryReply";
-import { filterEligibleExternalDataSources } from "./externalToolEligibility";
+import { filterEligibleAgentActionSources } from "./externalToolEligibility";
 import { enqueueCustomerMemoryCapture } from "@modules/meta/core/meta.queue";
-import { ensureExternalActionSemanticIndexes } from "@modules/integrations/external/externalActionSemanticIndex.service";
+import {
+  createAgentTurn,
+  updateAgentTurnStatus,
+} from "@modules/ai-agent/core/agentTurn.service";
+import { ensureExternalActionSemanticIndexes } from "@modules/integrations/external/agentActionSemanticIndex.service";
+import {
+  activeWorkflowSourceIds,
+  listActiveAgentActionWorkflows,
+} from "@modules/integrations/external/agentActionWorkflow.service";
 import prisma from "@config/prisma";
 import { logger } from "@utils/logger";
+import { effectiveCustomerRequestText } from "./completedActionRequest";
 export type { AiRoutingDecision };
 
 export type BusinessProfileForChat = Prisma.BusinessProfileGetPayload<{
   include: {
-    externalDataSources: true;
+    agentActionSources: true;
   };
 }>;
 
@@ -46,6 +55,7 @@ async function notIngestedReply(params: {
   tone?: string | null;
   channel: "messenger" | "whatsapp" | "web" | "facebook_comment";
   messageText: string;
+  handoffEnabled?: boolean;
 }): Promise<AiRoutingDecision> {
   const voice = params.voice || "Professional";
   const systemInstruction = [
@@ -66,12 +76,12 @@ async function notIngestedReply(params: {
     customerMessage: params.messageText,
     failureReason: "knowledge_not_ready",
     safeFallback: buildNotIngestedReply(voice),
-    allowHandoffLanguage: true,
+    allowHandoffLanguage: params.handoffEnabled !== false,
   });
 
   return {
-    action: "HANDOFF_TO_HUMAN",
-    handoffCategory: "MISSING_KNOWLEDGE",
+    action: params.handoffEnabled === false ? "REPLY_AUTO" : "HANDOFF_TO_HUMAN",
+    handoffCategory: params.handoffEnabled === false ? null : "MISSING_KNOWLEDGE",
     reasoning: "Business profile knowledge base (RAG) is not yet ingested.",
     content,
   };
@@ -99,7 +109,11 @@ export async function prepareAgentParams(params: {
   mediaInfo?: { id: string; type: string; url?: string };
   postContext?: { content: string; media?: string };
   conversationId?: number;
-  responseMode?: "AUTO" | "MANUAL";
+  agentTurnId?: number;
+  activeWorkflowId?: number | null;
+  parentActionRunId?: number | null;
+  actionStepKey?: string | null;
+  allowedActionSourceIds?: number[];
   completedExternalLookup?: CompletedExternalLookup;
 }) {
   const {
@@ -109,7 +123,11 @@ export async function prepareAgentParams(params: {
     channel,
     customerPhone,
     conversationId,
-    responseMode,
+    agentTurnId,
+    activeWorkflowId,
+    parentActionRunId,
+    actionStepKey,
+    allowedActionSourceIds,
     completedExternalLookup,
   } = params;
 
@@ -122,13 +140,18 @@ export async function prepareAgentParams(params: {
         tone: businessProfile.tone,
         channel,
         messageText,
+        handoffEnabled: businessProfile.handoffEnabled,
       }),
     };
   }
 
+  const effectiveMessageText = completedExternalLookup
+    ? effectiveCustomerRequestText(messageText)
+    : messageText;
+
   const retrieval = await retrieveRelevantChunksWithEmbedding(
     businessProfile.id,
-    messageText,
+    effectiveMessageText,
     5,
   );
   const relevantChunks = retrieval.chunks;
@@ -140,11 +163,32 @@ export async function prepareAgentParams(params: {
     availableChunkTypes.push("external_tool");
   }
 
-  const activeExternalDataSources = completedExternalLookup
-    ? []
-    : (businessProfile.externalDataSources || []).filter(
-        (source) => source.isActive && (source as any).trigger === "CHAT_REQUESTED",
+  const activeWorkflows = await listActiveAgentActionWorkflows(businessProfile.id);
+  const workflowStartSourceIds = activeWorkflowSourceIds(activeWorkflows);
+  const activeAgentActionSources = (businessProfile.agentActionSources || []).filter(
+    (source) => {
+      if (!source.isActive || (source as any).trigger !== "CHAT_REQUESTED") {
+        return false;
+      }
+      if (allowedActionSourceIds) {
+        return allowedActionSourceIds.includes(source.id);
+      }
+      if (completedExternalLookup) {
+        return false;
+      }
+      if (workflowStartSourceIds.size === 0) {
+        return true;
+      }
+      if (workflowStartSourceIds.has(source.id)) {
+        return true;
+      }
+      return !activeWorkflows.some(
+        (workflow) =>
+          workflow.mutationSourceId === source.id &&
+          workflow.lookupSourceId !== null,
       );
+    },
+  );
 
   const mediaAssets = await prisma.businessProfileMedia.findMany({
     where: {
@@ -156,15 +200,16 @@ export async function prepareAgentParams(params: {
     select: { name: true, mediaType: true, instructions: true },
   });
 
-  const externalRouterPromise = activeExternalDataSources.length > 0
-    ? ensureExternalActionSemanticIndexes(activeExternalDataSources).then(() =>
-        filterEligibleExternalDataSources(activeExternalDataSources, messageText, {
-          businessProfileId: businessProfile.id,
-          queryEmbedding: retrieval.queryEmbedding,
-        }),
-      )
-    : Promise.resolve([]);
-  const eligibleExternalSources = await externalRouterPromise;
+  const eligibleExternalSources = allowedActionSourceIds
+    ? activeAgentActionSources
+    : activeAgentActionSources.length > 0
+      ? await ensureExternalActionSemanticIndexes(activeAgentActionSources).then(() =>
+          filterEligibleAgentActionSources(activeAgentActionSources, effectiveMessageText, {
+            businessProfileId: businessProfile.id,
+            queryEmbedding: retrieval.queryEmbedding,
+          }),
+        )
+      : [];
   const externalTools = buildIntegrationActionTools(eligibleExternalSources);
   const externalSourceFailureBehaviors = Object.fromEntries(
     eligibleExternalSources.map((source) => [
@@ -190,8 +235,6 @@ export async function prepareAgentParams(params: {
       identity: businessProfile.identity || "",
       voice: businessProfile.voice || "Professional",
       tone: businessProfile.tone || "Friendly",
-      customerDetailsInstructions:
-        businessProfile.customerDetailsInstructions || undefined,
       aiBehaviorInstructions:
         businessProfile.aiBehaviorInstructions || undefined,
     },
@@ -200,7 +243,7 @@ export async function prepareAgentParams(params: {
     contextQuality,
     customerPhone,
     postContext: params.postContext,
-    hasCustomerMemoryTool: false,
+    handoffEnabled: businessProfile.handoffEnabled,
     hasChatRequestedActions: externalTools.length > 0,
     hasMediaAssets: mediaAssets.length > 0,
     hasCompletedActionResult: Boolean(completedExternalLookup),
@@ -209,10 +252,13 @@ export async function prepareAgentParams(params: {
   let finalSystemInstruction = systemInstruction;
   if (completedExternalLookup) {
     const serializedLookup = stringifyForPrompt(
-      completedExternalLookup.envelope,
+      completedActionEnvelopeForPrompt(completedExternalLookup),
       MAX_EXTERNAL_LOOKUP_PROMPT_CHARS,
     );
-    finalSystemInstruction += `\n\n<completed_integration_action>\nThis action already ran after the previous chat turn. Do not call the same action again for this answer. Use this payload as verified evidence only when verification is "verified"; if it failed, explain that the result could not be verified and ask for the exact missing or corrected detail.\nTool: ${completedExternalLookup.toolName}\nSource: ${completedExternalLookup.sourceName || "External action"}\nPayload JSON:\n${serializedLookup}\n</completed_integration_action>\n\nWhen your customer-facing answer relies on this action result, include "external_tool" in usedChunkTypes.`;
+    const actionChainInstruction = allowedActionSourceIds && allowedActionSourceIds.length > 0
+      ? "This verified lookup/helper result may support one different exposed follow-up business action if the original customer request still requires that action. Do not call another lookup/helper action."
+      : "Do not call any other action for this completed-action result turn. If this result failed, explain that the request could not be completed safely and ask for the exact corrected or missing detail.";
+    finalSystemInstruction += `\n\n<completed_integration_action>\nThis action already ran after the previous chat turn. Do not call the same action again for this answer. Use this payload as evidence only when success is true and verification is "verified". If it failed, do not confirm completion, booking, submission, delivery, or saving.\n${actionChainInstruction}\nTool: ${completedExternalLookup.toolName}\nSource: ${completedExternalLookup.sourceName || "External action"}\nPayload JSON:\n${serializedLookup}\n</completed_integration_action>\n\nWhen your customer-facing answer relies on a verified action result, include "external_tool" in usedChunkTypes.`;
   }
   if (mediaAssets.length > 0) {
     const catalog = mediaAssets
@@ -246,7 +292,11 @@ export async function prepareAgentParams(params: {
       externalSourceFailureBehaviors,
       mediaInfo: params.mediaInfo,
       conversationId,
-      responseMode,
+      agentTurnId,
+      activeWorkflowId,
+      parentActionRunId,
+      actionStepKey,
+      handoffEnabled: businessProfile.handoffEnabled,
       policy: buildTruthfulnessPolicyForVoice(businessProfile.voice || ""),
     },
   };
@@ -263,6 +313,58 @@ function stringifyForPrompt(value: unknown, maxChars: number): string {
   return `${text.slice(0, maxChars)}\n...[truncated]`;
 }
 
+function parseIntegrationActionSourceId(toolName: string): number | null {
+  const match = toolName.match(/^integration_action_(\d+)$/);
+  if (!match) return null;
+  const sourceId = Number(match[1]);
+  return Number.isInteger(sourceId) ? sourceId : null;
+}
+
+function isVerifiedCompletedAction(completed: CompletedExternalLookup): boolean {
+  return completed.envelope.success === true &&
+    completed.envelope.verification === "verified";
+}
+
+function isLookupActionSource(source: unknown): boolean {
+  return String((source as any)?.actionType || "").toUpperCase() === "LOOKUP";
+}
+
+function isMutationActionSource(source: unknown): boolean {
+  return String((source as any)?.actionType || "").toUpperCase() === "MUTATION";
+}
+
+function canExposeFollowUpActionsAfterCompletedAction(
+  completed: CompletedExternalLookup,
+  completedSource: unknown,
+): boolean {
+  return isVerifiedCompletedAction(completed) && isLookupActionSource(completedSource);
+}
+
+function completedActionEnvelopeForPrompt(
+  completed: CompletedExternalLookup,
+): CompletedExternalLookup["envelope"] {
+  if (isVerifiedCompletedAction(completed)) return completed.envelope;
+
+  return {
+    success: false,
+    verification: "failed",
+    actionType: completed.envelope.actionType,
+    reason: completedActionFailureCode(completed.envelope.reason),
+    data: null,
+  };
+}
+
+function completedActionFailureCode(reason?: string): string {
+  if (!reason) return "action_result_failed";
+  const normalized = reason.toLowerCase();
+  if (normalized.includes("policy")) return "action_policy_rejected";
+  if (normalized.includes("timeout")) return "action_timeout";
+  if (normalized.includes("validation") || normalized.includes("422")) {
+    return "action_validation_failed";
+  }
+  return "action_result_failed";
+}
+
 /**
  * Standard (non-streaming) AI loop execution.
  */
@@ -275,14 +377,43 @@ export async function computeBusinessChatReply(params: {
   mediaInfo?: { id: string; type: string; url?: string };
   postContext?: { content: string; media?: string };
   conversationId?: number;
-  responseMode?: "AUTO" | "MANUAL";
+  agentTurnId?: number;
+  activeWorkflowId?: number | null;
+  parentActionRunId?: number | null;
+  actionStepKey?: string | null;
+  allowedActionSourceIds?: number[];
   completedExternalLookup?: CompletedExternalLookup;
 }): Promise<AiRoutingDecision> {
   const prep = await prepareAgentParams(params);
   if (prep.errorDecision) return prep.errorDecision;
 
-  const decision = await runAgentGraph(prep.graphParams!);
-  enqueueCustomerMemoryCaptureFromChat(params);
+  let agentTurnId = params.agentTurnId;
+  if (!agentTurnId && params.conversationId) {
+    const turn = await createAgentTurn({
+      businessProfileId: params.businessProfile.id,
+      conversationId: params.conversationId,
+      channel: params.channel,
+      mode: params.completedExternalLookup ? "ACTION_RESULT" : "CUSTOMER_MESSAGE",
+      customerText: params.messageText,
+      parentActionRunId: params.parentActionRunId ?? null,
+      activeWorkflowId: params.activeWorkflowId ?? null,
+    });
+    agentTurnId = turn.id;
+  }
+
+  const decision = await runAgentGraphV2({
+    ...prep.graphParams!,
+    agentTurnId: agentTurnId ?? Date.now(),
+  });
+  if (agentTurnId) {
+    await updateAgentTurnStatus(
+      agentTurnId,
+      decision.agentTurnStatus || "COMPLETED",
+    );
+  }
+  if (!params.completedExternalLookup) {
+    enqueueCustomerMemoryCaptureFromChat(params);
+  }
   return decision;
 }
 
@@ -296,17 +427,40 @@ export async function* computeBusinessChatStreaming(params: {
   channel: "web"; // Currently only web supports streaming
   customerPhone?: string;
   conversationId?: number;
-  responseMode?: "AUTO" | "MANUAL";
 }) {
-  const prep = await prepareAgentParams(params);
+  let agentTurnId = Date.now();
+  let persistedTurnId: number | null = null;
+  if (params.conversationId) {
+    const turn = await createAgentTurn({
+      businessProfileId: params.businessProfile.id,
+      conversationId: params.conversationId,
+      channel: params.channel,
+      mode: "CUSTOMER_MESSAGE",
+      customerText: params.messageText,
+    });
+    agentTurnId = turn.id;
+    persistedTurnId = turn.id;
+  }
+
+  const prep = await prepareAgentParams({ ...params, agentTurnId });
   if (prep.errorDecision) {
     yield { type: "error", data: prep.errorDecision };
+    if (persistedTurnId) await updateAgentTurnStatus(persistedTurnId, "FAILED");
     return;
   }
 
   enqueueCustomerMemoryCaptureFromChat(params);
   const { streamAgentGraph } = await import("../core/streamAgent");
-  for await (const event of streamAgentGraph(prep.graphParams!)) {
+  for await (const event of streamAgentGraph({
+    ...prep.graphParams!,
+    agentTurnId,
+  })) {
+    if (event.type === "final_decision" && persistedTurnId) {
+      await updateAgentTurnStatus(
+        persistedTurnId,
+        event.data?.agentTurnStatus || "COMPLETED",
+      );
+    }
     yield event;
   }
 }

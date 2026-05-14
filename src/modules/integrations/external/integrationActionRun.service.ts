@@ -1,5 +1,6 @@
 import prisma from "@config/prisma";
 import { logger } from "@utils/logger";
+import type { AgentActionTrigger, AgentActionType, Prisma } from "@prisma/client";
 
 export type IntegrationActionRunStatus =
   | "QUEUED"
@@ -15,8 +16,12 @@ export async function createIntegrationActionRun(params: {
   sourceId: number;
   conversationId?: number | null;
   customerId?: number | null;
-  trigger: string;
-  actionType?: string | null;
+  agentTurnId?: number | null;
+  parentRunId?: number | null;
+  workflowId?: number | null;
+  stepKey?: string | null;
+  trigger: AgentActionTrigger;
+  actionType?: AgentActionType | null;
   toolName?: string | null;
   jobId: string;
   requestPayload?: JsonRecord | null;
@@ -27,6 +32,10 @@ export async function createIntegrationActionRun(params: {
       sourceId: params.sourceId,
       conversationId: params.conversationId ?? null,
       customerId: params.customerId ?? null,
+      agentTurnId: params.agentTurnId ?? null,
+      parentRunId: params.parentRunId ?? null,
+      workflowId: params.workflowId ?? null,
+      stepKey: params.stepKey ?? null,
       trigger: params.trigger,
       actionType: params.actionType ?? null,
       toolName: params.toolName ?? null,
@@ -89,7 +98,7 @@ export async function markIntegrationActionRunSkipped(params: {
   });
 }
 
-async function updateActionRun(id: number, data: Record<string, unknown>) {
+async function updateActionRun(id: number, data: Prisma.IntegrationActionRunUpdateInput) {
   try {
     const run = await prisma.integrationActionRun.update({
       where: { id },

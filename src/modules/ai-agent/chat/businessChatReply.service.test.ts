@@ -42,6 +42,9 @@ vi.mock("@config/prisma", () => ({
     businessProfileMedia: {
       findMany: vi.fn().mockResolvedValue([]),
     },
+    integrationActionRun: {
+      findFirst: vi.fn().mockResolvedValue(null),
+    },
   },
 }));
 
@@ -297,8 +300,16 @@ describe("prepareAgentParams", () => {
       }),
     );
     expect(result.graphParams?.systemInstruction).toContain(
-      "Do not call any other action for this completed-action result turn",
+      "<reply_policy>",
     );
+    expect(result.graphParams).toMatchObject({
+      replyPolicy: expect.objectContaining({
+        allowedActions: ["REPLY_AUTO"],
+        allowedReplyTypes: ["ASK_FOR_CORRECTION"],
+        requiresCustomerCorrection: true,
+        canConfirmActionSuccess: false,
+      }),
+    });
     expect(result.graphParams?.systemInstruction).toContain(
       '"reason": "action_validation_failed"',
     );
@@ -361,6 +372,68 @@ describe("prepareAgentParams", () => {
         customerPhone: "201202840018",
         latestUserText: "يا ريت ابعتيلي رقم ٢",
         recentTurns: [{ role: "user", text: "علم النفس" }],
+      }),
+    );
+  });
+
+  it("continues a failed mutation workflow with the same verified lookup context", async () => {
+    const prisma = (await import("@config/prisma")).default as any;
+    prisma.integrationActionRun.findFirst
+      .mockResolvedValueOnce({
+        id: 88,
+        sourceId: leadCaptureSource.id,
+        workflowId: 12,
+        parentRunId: 77,
+        createdAt: new Date(),
+        source: leadCaptureSource,
+        workflow: {
+          mutationSourceId: leadCaptureSource.id,
+          mutationSource: leadCaptureSource,
+        },
+        parentRun: {
+          sourceId: priceSource.id,
+          toolName: "integration_action_2",
+          source: priceSource,
+          responsePayload: {
+            success: true,
+            verification: "verified",
+            actionType: "integration_action_2",
+            reason: "data_returned",
+            data: { courses: [{ title: "الدعم النفسى بالفنون" }] },
+          },
+        },
+      })
+      .mockResolvedValueOnce(null);
+
+    vi.mocked(filterEligibleAgentActionSources).mockResolvedValue([leadCaptureSource]);
+
+    await computeBusinessChatReply({
+      businessProfile: {
+        ...businessProfile,
+        agentActionSources: [priceSource, leadCaptureSource],
+      },
+      messageText: "رقمي الصحيح 01020304050",
+      historyTurns: [
+        { role: "user", text: "عاوز احجز الدعم النفسى بالفنون" },
+        { role: "model", text: "ابعتلي الرقم الصحيح" },
+      ],
+      channel: "messenger",
+      conversationId: 172,
+    });
+
+    expect(filterEligibleAgentActionSources).not.toHaveBeenCalled();
+    expect(runAgentGraphV2).toHaveBeenCalledWith(
+      expect.objectContaining({
+        activeWorkflowId: 12,
+        parentActionRunId: 77,
+        actionStepKey: "mutation",
+        tools: [
+          {
+            functionDeclarations: [
+              expect.objectContaining({ name: "integration_action_7" }),
+            ],
+          },
+        ],
       }),
     );
   });

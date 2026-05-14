@@ -73,7 +73,6 @@ const baseConversation = {
     voice: "Egyptian Arabic",
     tone: "Professional",
     targetAudience: "Students",
-    responseMode: "AUTO",
     followUpEnabled: true,
     followUpMode: "AUTO",
     followUpDelays: [

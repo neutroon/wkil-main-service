@@ -12,6 +12,7 @@ import { logger } from "@utils/logger";
 import prisma from "@config/prisma";
 import type { Tool } from "@google/genai";
 import type { AiRoutingDecision, AiTruthfulnessPolicy } from "./aiEngine.utils";
+import type { ReplyPolicy } from "./replyPolicy";
 
 const workflowV2 = new StateGraph(AgentState)
   .addNode("callGemini", callGeminiNode)
@@ -28,7 +29,10 @@ workflowV2.addConditionalEdges("callGemini", (state) => {
   return "parseDecision";
 });
 
-workflowV2.addEdge("runActionTool", "recordUsage");
+workflowV2.addConditionalEdges("runActionTool", (state) => {
+  if (state.decision !== null) return "recordUsage";
+  return "callGemini";
+});
 
 workflowV2.addConditionalEdges("parseDecision", (state) => {
   if (state.decision === null) return "callGemini";
@@ -62,6 +66,7 @@ export interface AgentGraphV2Params {
   activeWorkflowId?: number | null;
   parentActionRunId?: number | null;
   actionStepKey?: string | null;
+  replyPolicy?: ReplyPolicy;
 }
 
 export async function runAgentGraphV2(
@@ -77,6 +82,7 @@ export async function runAgentGraphV2(
     });
     return {
       action: "HANDOFF_TO_HUMAN",
+      replyType: "HANDOFF",
       handoffCategory: "SYSTEM_ERROR",
       reasoning: `Critical Graph V2 Failure: ${graphError.message}`,
       content: "",
@@ -137,6 +143,7 @@ async function _runGraphV2(params: AgentGraphV2Params): Promise<AiRoutingDecisio
       activeWorkflowId: params.activeWorkflowId ?? undefined,
       parentActionRunId: params.parentActionRunId ?? undefined,
       actionStepKey: params.actionStepKey ?? undefined,
+      replyPolicy: params.replyPolicy,
       contents: [
         ...historyContents,
         { role: "user" as const, parts: [{ text: params.customerMessage || "" }] },

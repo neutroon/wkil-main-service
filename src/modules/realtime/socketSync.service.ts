@@ -107,6 +107,21 @@ export const syncSystemError = (params: {
 };
 
 /**
+ * Handles customer-facing AI handoff requests.
+ * The message is already saved/sent normally; this is only the admin alert.
+ */
+export const syncHandoffRequested = (params: {
+  businessProfileId: number;
+  conversationId: number;
+  message: any;
+}) => {
+  emitToBusiness(params.businessProfileId, "handoff_requested", {
+    conversationId: params.conversationId,
+    message: params.message,
+  });
+};
+
+/**
  * Handles background job failure notifications.
  */
 export const syncJobStatus = (params: {

@@ -77,7 +77,6 @@ export const facebookLinkBusinessSchema = z.object({
  */
 export const facebookPageSettingsSchema = z.object({
   body: z.object({
-    responseMode: z.string().optional(),
     commentAutoDmEnabled: z.boolean().optional(),
     commentPublicGreeting: z.string().optional(),
   }),

@@ -228,6 +228,7 @@ export function repairAndParseAiResponse(text: string): AiRoutingDecision {
 
       decision = {
         action: action || "REPLY_AUTO",
+        replyType: "NORMAL_REPLY",
         intent: intent || "NONE",
         reasoning,
         content,
@@ -247,6 +248,7 @@ export function repairAndParseAiResponse(text: string): AiRoutingDecision {
   // 4. Normalization & Sanitization
   const finalDecision: AiRoutingDecision = {
     action: decision.action || "REPLY_AUTO",
+    replyType: decision.replyType || "NORMAL_REPLY",
     intent: decision.intent || "NONE",
     reasoning: decision.reasoning || "",
     content: sanitizeAiText(decision.content || ""),
@@ -312,6 +314,13 @@ export function hasExcessiveRepetition(text: string): boolean {
 
 export interface AiRoutingDecision {
   action: "REPLY_AUTO" | "HANDOFF_TO_HUMAN" | "RESOLVE_CONVERSATION";
+  replyType?:
+    | "NORMAL_REPLY"
+    | "ASK_FOR_CORRECTION"
+    | "CONFIRM_ACTION_SUCCESS"
+    | "SAFE_ACTION_FAILURE"
+    | "HANDOFF"
+    | "RESOLVE";
   intent?: "SALES_DM" | "GREET_ONLY" | "IGNORE" | "NONE";
   handoffCategory?: string | null;
   reasoning: string;

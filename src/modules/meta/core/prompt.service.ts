@@ -18,7 +18,6 @@ export interface SystemPromptParams {
     identity: string;
     voice: string;
     tone: string;
-    customerDetailsInstructions?: string;
     aiBehaviorInstructions?: string;
   };
   context: { chunkType: string; content: string }[];
@@ -30,7 +29,7 @@ export interface SystemPromptParams {
     media?: string;
     parentContext?: string;
   };
-  hasCustomerMemoryTool?: boolean;
+  handoffEnabled?: boolean;
   hasChatRequestedActions?: boolean;
   hasMediaAssets?: boolean;
   hasCompletedActionResult?: boolean;
@@ -48,7 +47,6 @@ export type ChannelPromptProfile = {
 };
 
 type PromptCapabilities = {
-  hasCustomerMemoryTool: boolean;
   hasChatRequestedActions: boolean;
   hasMediaAssets: boolean;
   hasCompletedActionResult: boolean;
@@ -65,16 +63,10 @@ type PromptContext = {
   customerPhone?: string;
   postContext?: SystemPromptParams["postContext"];
   context: SystemPromptParams["context"];
+  handoffEnabled: boolean;
   capabilities: PromptCapabilities;
-  safeCustomerDetailsInstructions: string;
   safeBehaviorInstructions: string;
 };
-
-export const DEFAULT_CUSTOMER_DETAILS_INSTRUCTIONS = [
-  "Purpose: save useful customer details to the local customer profile only.",
-  "Use only when the customer provides real details, asks for follow-up, wants to proceed, gives preferences, or corrects saved information.",
-  "Do not use for greetings, generic questions, or details already saved in this conversation.",
-].join(" ");
 
 const DIRECT_CHAT_REPLY_RULES = [
   "Write a concise direct-chat reply from the allowed evidence.",
@@ -199,16 +191,12 @@ function makePromptContext(params: SystemPromptParams): PromptContext {
     customerPhone: params.customerPhone,
     postContext: params.postContext,
     context: params.context,
+    handoffEnabled: params.handoffEnabled !== false,
     capabilities: {
-      hasCustomerMemoryTool: params.hasCustomerMemoryTool === true,
       hasChatRequestedActions: params.hasChatRequestedActions === true,
       hasMediaAssets: params.hasMediaAssets === true,
       hasCompletedActionResult: params.hasCompletedActionResult === true,
     },
-    safeCustomerDetailsInstructions: escapeXml(
-      businessProfile.customerDetailsInstructions ||
-        DEFAULT_CUSTOMER_DETAILS_INSTRUCTIONS,
-    ),
     safeBehaviorInstructions: escapeXml(
       businessProfile.aiBehaviorInstructions || "",
     ),
@@ -240,12 +228,14 @@ ${numbered([
 </security_protocol>`;
 }
 
-function sectionGrounding(): string {
+function sectionGrounding(ctx: PromptContext): string {
   return `<business_grounding_protocol>
 ${numbered([
   "For factual business answers, use only <business_context>, <post_identity>, chat history, and verified completed action results.",
   "Do not use internet knowledge, general model knowledge, assumptions, or invented prices, policies, availability, contact details, identifiers, guarantees, or offers.",
-  "If required evidence is missing, ask one concise clarification question or set action to HANDOFF_TO_HUMAN with a concise customer-facing explanation.",
+  ctx.handoffEnabled
+    ? "If required evidence is missing, ask one concise clarification question or set action to HANDOFF_TO_HUMAN with a concise customer-facing explanation."
+    : "If required evidence is missing, ask one concise clarification question or say you cannot confirm from the available information. Do not set action to HANDOFF_TO_HUMAN.",
   "Set requiresGrounding=true for business facts about prices, policies, services, availability, contact details, locations, schedules, guarantees, offers, orders, bookings, or account-specific data.",
   "Set grounded=true only when every factual claim is supported by allowed evidence. If not, set grounded=false and explain the missing fact in missingInfo.",
 ])}
@@ -279,25 +269,6 @@ function sectionPostContext(ctx: PromptContext): string {
   <content>${escapeXml(ctx.postContext.content || "No text content")}</content>
   <media_context>${escapeXml(ctx.postContext.media || "Standard Post")}</media_context>${parent}
 </post_identity>`;
-}
-
-function sectionCustomerMemory(ctx: PromptContext): string {
-  if (!ctx.capabilities.hasCustomerMemoryTool) return "";
-  return `<customer_memory_protocol>
-${ctx.safeCustomerDetailsInstructions}
-
-Rules:
-${numbered([
-  "save_customer_details writes local customer memory only. It does not send, submit, book, sync, or deliver anything externally.",
-  "Call save_customer_details when the customer explicitly provides or corrects useful details, or when <chat_context> provides a real contact identity that should create or enrich the customer profile.",
-  "For greetings, only save real identity/contact metadata from <chat_context>; do not save a note that only summarizes normal conversation flow.",
-  "Do not call save_customer_details for thanks, generic questions, or identical details already saved in this conversation.",
-  "Never invent names, phone numbers, emails, dates, preferences, or placeholders.",
-  "Do not ask for name or phone during normal support unless the customer's requested next step needs contact or identity details.",
-  "For callbacks or customer-requested actions that need contact or identity details: if <customer_phone> is not Unknown, ask one concise confirmation to use that phone; if it is Unknown, ask for the missing contact detail.",
-  "After a verified save_customer_details result, reply normally in the business voice without technical/internal terms.",
-])}
-</customer_memory_protocol>`;
 }
 
 function sectionChatRequestedActions(ctx: PromptContext): string {
@@ -339,8 +310,12 @@ function sectionCoreRules(ctx: PromptContext): string {
   const rules = [
     "Speak strictly in the language and dialect specified in <persona>.",
     "Return one structured JSON object only.",
-    "Valid actions: REPLY_AUTO, HANDOFF_TO_HUMAN, RESOLVE_CONVERSATION.",
-    "Use HANDOFF_TO_HUMAN for complex issues, anger, missing required evidence, unsafe uncertainty, or failed essential action results.",
+    ctx.handoffEnabled
+      ? "Valid actions: REPLY_AUTO, HANDOFF_TO_HUMAN, RESOLVE_CONVERSATION."
+      : "Valid actions: REPLY_AUTO, RESOLVE_CONVERSATION. Do not use HANDOFF_TO_HUMAN.",
+    ctx.handoffEnabled
+      ? "Use HANDOFF_TO_HUMAN for complex issues, anger, missing required evidence, unsafe uncertainty, or failed essential action results."
+      : "When unsure, ask one focused clarification or say you cannot confirm from the available evidence; do not mention staff follow-up or human transfer.",
     "Use RESOLVE_CONVERSATION only when the customer clearly says thanks, goodbye, or that the issue is complete.",
     "Keep reasoning as a brief internal routing note in the same language as the conversation.",
     "Never expose technical/internal words to the customer.",
@@ -378,14 +353,10 @@ function sectionExamples(ctx: PromptContext): string {
       : [
           "Greeting: REPLY_AUTO, requiresGrounding=false, grounded=false; warm reply without factual claims.",
           "Grounded answer: answer only from allowed evidence and mark grounded=true.",
-          "Missing evidence: ask one clarification question or HANDOFF_TO_HUMAN; never invent.",
+          ctx.handoffEnabled
+            ? "Missing evidence: ask one clarification question or HANDOFF_TO_HUMAN; never invent."
+            : "Missing evidence: ask one clarification question or say you cannot confirm; never invent.",
         ];
-
-  if (ctx.capabilities.hasCustomerMemoryTool) {
-    examples.push(
-      "Customer details: call save_customer_details only with real details the customer provided.",
-    );
-  }
 
   if (ctx.capabilities.hasChatRequestedActions) {
     examples.push(
@@ -407,7 +378,11 @@ ${examples.map((example) => `- ${example}`).join("\n")}
 function sectionBusinessContext(ctx: PromptContext): string {
   if (ctx.context.length === 0) {
     return `<business_context>
-No specific background information was found. Do not invent business facts. Ask a concise clarification question or hand off when factual evidence is required.
+No specific background information was found. Do not invent business facts. ${
+  ctx.handoffEnabled
+    ? "Ask a concise clarification question or hand off when factual evidence is required."
+    : "Ask a concise clarification question or say you cannot confirm from the available information."
+}
 </business_context>`;
   }
 
@@ -437,10 +412,9 @@ export function buildSystemPrompt(params: SystemPromptParams): string {
   const sections = [
     sectionPersona(ctx),
     sectionSecurity(ctx),
-    sectionGrounding(),
+    sectionGrounding(ctx),
     sectionChatContext(ctx),
     sectionPostContext(ctx),
-    sectionCustomerMemory(ctx),
     sectionChatRequestedActions(ctx),
     sectionChannelBehavior(ctx),
     sectionCoreRules(ctx),

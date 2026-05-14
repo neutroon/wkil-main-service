@@ -12,6 +12,10 @@ import { computeBusinessChatReply } from "@modules/ai-agent/chat/businessChatRep
 import { initialCustomerReplyStatus } from "@modules/ai-agent/chat/deliveryPolicy";
 import { historyToLlmTurns, toPromptMessages } from "@modules/ai-agent/chat/conversationTurns";
 import {
+  notifySavedModelReplySideEffects,
+  scheduleFollowUpsForDeliveredReply,
+} from "@modules/ai-agent/chat/replySideEffects.service";
+import {
   getFacebookUserProfile,
   likeComment,
 } from "../facebook/facebook.service";
@@ -51,7 +55,6 @@ interface IdentityResolution {
   businessProfileId: number;
   businessProfile: any;
   accessToken: string;
-  responseMode: "AUTO" | "MANUAL";
   pageSettings: {
     commentAutoDmEnabled?: boolean;
     commentPublicGreeting?: string;
@@ -97,7 +100,7 @@ async function clearWhatsAppIdentityCaches(phoneNumberId: string) {
  * Identity & Account Resolver — with 15-minute Redis cache.
  *
  * Strategy:
- * - The heavy JOIN query result (businessProfile + externalDataSources)
+ * - The heavy JOIN query result (businessProfile + agentActionSources)
  *   is cached for 15 minutes to protect the DB on high-volume webhook spikes.
  * - The accessToken is NEVER cached in Redis. On a cache hit, we do a fast single-field
  *   indexed lookup (pageId/phoneNumberId) to get the fresh token.
@@ -191,7 +194,7 @@ async function resolveAccountIdentity(job: MetaMessageJob): Promise<IdentityReso
         include: {
           businessProfile: {
             include: {
-              externalDataSources: { where: { isActive: true } },
+              agentActionSources: { where: { isActive: true } },
             },
           },
         },
@@ -257,7 +260,6 @@ async function resolveAccountIdentity(job: MetaMessageJob): Promise<IdentityReso
       businessProfileId: page.businessProfileId,
       businessProfile: page.businessProfile,
       accessToken: decryptFacebookSecret(page.pageAccessToken),
-      responseMode: (page.responseMode || page.businessProfile!.responseMode) as "AUTO" | "MANUAL",
       pageSettings: {
         commentAutoDmEnabled: page.commentAutoDmEnabled,
         commentPublicGreeting: page.commentPublicGreeting,
@@ -282,7 +284,7 @@ async function resolveAccountIdentity(job: MetaMessageJob): Promise<IdentityReso
         include: {
           businessProfile: {
             include: {
-              externalDataSources: { where: { isActive: true } },
+              agentActionSources: { where: { isActive: true } },
             },
           },
         },
@@ -342,7 +344,6 @@ async function resolveAccountIdentity(job: MetaMessageJob): Promise<IdentityReso
       businessProfileId: account.businessProfileId,
       businessProfile: account.businessProfile,
       accessToken: decryptFacebookSecret(account.accessToken),
-      responseMode: account.businessProfile!.responseMode as "AUTO" | "MANUAL",
       pageSettings: null,
     };
 
@@ -478,10 +479,9 @@ export async function processMetaMessage(job: MetaMessageJob) {
       identifier,
       businessProfileId: job.businessProfileId,
     });
-    const { businessProfileId, businessProfile, accessToken, responseMode, pageSettings } = await resolveAccountIdentity(job);
+    const { businessProfileId, businessProfile, accessToken, pageSettings } = await resolveAccountIdentity(job);
     logger.info("meta.processor.identity_resolved", { 
       businessProfileId, 
-      responseMode, 
       tokenSnippet: accessToken.substring(0, 10) + "..." 
     });
 
@@ -565,9 +565,9 @@ export async function processMetaMessage(job: MetaMessageJob) {
       isPrivate: platform === "messenger" ? true : (job.isPrivate ?? false),
     });
 
-    if (job.isFromBusiness || responseMode === "MANUAL" || !(conversation as any).aiEnabled) {
+    if (job.isFromBusiness || !(conversation as any).aiEnabled) {
       logger.info("meta.processor.skipping_ai", { 
-        reason: job.isFromBusiness ? "MIRRORED_MESSAGE" : (responseMode === "MANUAL" ? "MANUAL_MODE" : "AI_DISABLED_FOR_THREAD")
+        reason: job.isFromBusiness ? "MIRRORED_MESSAGE" : "AI_DISABLED_FOR_THREAD"
       });
       return;
     }
@@ -588,6 +588,15 @@ export async function processMetaMessage(job: MetaMessageJob) {
     }
 
     const { syncTypingStatus } = await import("@modules/realtime/socketSync.service");
+    const { createAgentTurn } = await import("@modules/ai-agent/core/agentTurn.service");
+    const agentTurn = await createAgentTurn({
+      businessProfileId,
+      conversationId: conversation.id,
+      inputMessageId: userSaved.id,
+      channel: isComment ? "facebook_comment" : platform,
+      mode: "CUSTOMER_MESSAGE",
+      customerText: messageText || "",
+    });
     syncTypingStatus({ businessProfileId, conversationId: conversation.id, isTyping: true });
 
     const reply = await computeBusinessChatReply({
@@ -599,6 +608,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
       mediaInfo: mediaId ? { id: mediaId, type: type || "image", url: mediaMetadata?.url } : undefined,
       postContext,
       conversationId: conversation.id,
+      agentTurnId: agentTurn.id,
     });
 
     syncTypingStatus({ businessProfileId, conversationId: conversation.id, isTyping: false });
@@ -614,11 +624,9 @@ export async function processMetaMessage(job: MetaMessageJob) {
     }
 
     // 6. Delivery Orchestration
-    const isAutoMode = responseMode === "AUTO";
-    const privateStatus = initialCustomerReplyStatus(reply, isAutoMode);
+    const privateStatus = initialCustomerReplyStatus(reply);
     const publicStatus = initialCustomerReplyStatus(
       { action: "REPLY_AUTO", handoffCategory: reply.handoffCategory },
-      isAutoMode,
     );
     const mainContent = (reply.privateContent || reply.content || "").trim();
 
@@ -674,6 +682,12 @@ export async function processMetaMessage(job: MetaMessageJob) {
         mediaMetadata: aiMediaAsset ? { url: aiMediaAsset.publicUrl, name: aiMediaAsset.name } : undefined
       });
       logger.info("meta.processor.model_saved", { messageId: modelSaved.id, status: privateStatus, hasMedia: !!aiMediaAsset });
+      await notifySavedModelReplySideEffects({
+        businessProfileId,
+        conversationId: conversation.id,
+        message: modelSaved,
+        reply,
+      });
     }
 
     let publicSaved: any;
@@ -694,7 +708,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
     // B. Platform Delivery
     const { mirrorCommentReplyToMessenger, syncMessageStatus } = await import("../core/metaDelivery.service");
 
-    if (isAutoMode && reply.handoffCategory !== "SYSTEM_ERROR") {
+    if (reply.handoffCategory !== "SYSTEM_ERROR") {
 
       if (platform === "messenger") {
 
@@ -774,11 +788,11 @@ export async function processMetaMessage(job: MetaMessageJob) {
             }
             logger.info("meta.processor.messenger_reply_success", { messageId: res?.message_id });
             if (res?.message_id) await syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, { status: "SENT", externalId: res.message_id });
-            const { scheduleConversationFollowUps } = await import("@modules/follow-up/followUp.service");
-            await scheduleConversationFollowUps({
+            await scheduleFollowUpsForDeliveredReply({
               conversationId: conversation.id,
               businessProfileId,
-              triggerMessageId: modelSaved.id,
+              message: modelSaved,
+              reply,
             });
           } catch (err: any) {
             logger.error("meta.processor.messenger_reply_failed", { error: err.message });
@@ -802,11 +816,11 @@ export async function processMetaMessage(job: MetaMessageJob) {
           const wamid = res?.messages?.[0]?.id;
           logger.info("meta.processor.whatsapp_reply_success", { wamid });
           if (wamid) await prisma.conversationMessage.update({ where: { id: modelSaved.id }, data: { status: "SENT", externalId: wamid } });
-          const { scheduleConversationFollowUps } = await import("@modules/follow-up/followUp.service");
-          await scheduleConversationFollowUps({
+          await scheduleFollowUpsForDeliveredReply({
             conversationId: conversation.id,
             businessProfileId,
-            triggerMessageId: modelSaved.id,
+            message: modelSaved,
+            reply,
           });
         } catch (err: any) {
           logger.error("meta.processor.whatsapp_reply_failed", { error: err.message });
@@ -816,7 +830,6 @@ export async function processMetaMessage(job: MetaMessageJob) {
 
     } else {
       logger.info("meta.processor.delivery_skipped", {
-        isAutoMode,
         handoff: reply.handoffCategory,
         contentLength: mainContent.length
       });

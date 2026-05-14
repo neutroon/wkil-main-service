@@ -41,19 +41,6 @@ function hasSupportedGroundingEvidence(
   return usedChunkTypes.every((chunkType) => available.has(chunkType));
 }
 
-function customerAskedForHumanOrEscalated(state: AgentStateType): boolean {
-  const text = state.contents
-    .filter((turn) => turn.role === "user")
-    .flatMap((turn) => turn.parts)
-    .map((part) => part.text || "")
-    .join(" ")
-    .toLowerCase();
-
-  return /human|agent|representative|manager|complaint|angry|موظف|انسان|إنسان|بني آدم|حد يكلمني|كلموني|شكوى|غاضب|زعلان|مش راضي/.test(
-    text,
-  );
-}
-
 function replyPolicyCorrectionPrompt(state: AgentStateType, reason: string): string {
   const policy = state.replyPolicy;
   return [
@@ -158,7 +145,6 @@ export async function parseDecisionNode(
   const replyPolicyValidation = validateDecisionAgainstReplyPolicy({
     decision,
     policy: state.replyPolicy,
-    customerAskedForHumanOrEscalated: customerAskedForHumanOrEscalated(state),
   });
   if (!replyPolicyValidation.ok) {
     if (state.turnCount < 3) {

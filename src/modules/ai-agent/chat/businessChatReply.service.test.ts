@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { computeBusinessChatReply, prepareAgentParams } from "./businessChatReply.service";
-import { filterEligibleExternalDataSources } from "./externalToolEligibility";
+import { filterEligibleAgentActionSources } from "./externalToolEligibility";
 import { buildSystemPrompt } from "../../meta/core/prompt.service";
 import { enqueueCustomerMemoryCapture } from "@modules/meta/core/meta.queue";
-import { runAgentGraph } from "@modules/ai-agent/core/agentGraph";
+import { runAgentGraphV2 } from "@modules/ai-agent/core/agentGraphV2";
+import { retrieveRelevantChunksWithEmbedding } from "../rag/rag.service";
 
 vi.mock("../rag/rag.service", () => ({
   retrieveRelevantChunksWithEmbedding: vi.fn().mockResolvedValue({
@@ -16,8 +17,8 @@ vi.mock("../../meta/core/prompt.service", () => ({
   buildSystemPrompt: vi.fn().mockReturnValue("system prompt"),
 }));
 
-vi.mock("@modules/ai-agent/core/agentGraph", () => ({
-  runAgentGraph: vi.fn(async () => ({
+vi.mock("@modules/ai-agent/core/agentGraphV2", () => ({
+  runAgentGraphV2: vi.fn(async () => ({
     action: "REPLY_AUTO",
     reasoning: "ok",
     content: "reply",
@@ -25,6 +26,11 @@ vi.mock("@modules/ai-agent/core/agentGraph", () => ({
     grounded: false,
     usedChunkTypes: [],
   })),
+}));
+
+vi.mock("@modules/ai-agent/core/agentTurn.service", () => ({
+  createAgentTurn: vi.fn(async () => ({ id: 999 })),
+  updateAgentTurnStatus: vi.fn(async () => undefined),
 }));
 
 vi.mock("@modules/meta/core/meta.queue", () => ({
@@ -40,11 +46,16 @@ vi.mock("@config/prisma", () => ({
 }));
 
 vi.mock("./externalToolEligibility", () => ({
-  filterEligibleExternalDataSources: vi.fn(),
+  filterEligibleAgentActionSources: vi.fn(),
 }));
 
-vi.mock("@modules/integrations/external/externalActionSemanticIndex.service", () => ({
+vi.mock("@modules/integrations/external/agentActionSemanticIndex.service", () => ({
   ensureExternalActionSemanticIndexes: vi.fn(async () => undefined),
+}));
+
+vi.mock("@modules/integrations/external/agentActionWorkflow.service", () => ({
+  listActiveAgentActionWorkflows: vi.fn(async () => []),
+  activeWorkflowSourceIds: vi.fn(() => new Set()),
 }));
 
 vi.mock("@utils/logger", () => ({
@@ -67,7 +78,17 @@ const priceSource = {
   queryParams: null,
   expectedParamsSchema: null,
   trigger: "CHAT_REQUESTED",
+  actionType: "LOOKUP",
   routingMode: "STRICT",
+} as any;
+
+const leadCaptureSource = {
+  ...priceSource,
+  id: 7,
+  name: "capture and send leads to the crm",
+  description: "use after the customer confirms registration and provides program data",
+  method: "POST",
+  actionType: "MUTATION",
 } as any;
 
 const businessProfile = {
@@ -80,7 +101,7 @@ const businessProfile = {
   customerDetailsInstructions: null,
   aiBehaviorInstructions: null,
   ragIngested: true,
-  externalDataSources: [priceSource],
+  agentActionSources: [priceSource],
 } as any;
 
 describe("prepareAgentParams", () => {
@@ -89,7 +110,7 @@ describe("prepareAgentParams", () => {
   });
 
   it("does not expose customer memory saving in the main chat tool path", async () => {
-    vi.mocked(filterEligibleExternalDataSources).mockResolvedValue([priceSource]);
+    vi.mocked(filterEligibleAgentActionSources).mockResolvedValue([priceSource]);
 
     const result = await prepareAgentParams({
       businessProfile,
@@ -115,13 +136,12 @@ describe("prepareAgentParams", () => {
     expect(buildSystemPrompt).toHaveBeenCalledWith(
       expect.objectContaining({
         channel: "web",
-        hasCustomerMemoryTool: false,
         hasChatRequestedActions: true,
         hasMediaAssets: false,
         hasCompletedActionResult: false,
       }),
     );
-    expect(filterEligibleExternalDataSources).toHaveBeenCalledWith(
+    expect(filterEligibleAgentActionSources).toHaveBeenCalledWith(
       [priceSource],
       "what are the prices",
       expect.objectContaining({
@@ -132,7 +152,7 @@ describe("prepareAgentParams", () => {
   });
 
   it("has no tools when no chat-requested action is eligible", async () => {
-    vi.mocked(filterEligibleExternalDataSources).mockResolvedValue([]);
+    vi.mocked(filterEligibleAgentActionSources).mockResolvedValue([]);
 
     const result = await prepareAgentParams({
       businessProfile,
@@ -144,11 +164,11 @@ describe("prepareAgentParams", () => {
     expect(result.graphParams?.tools).toBeUndefined();
   });
 
-  it("skips the external router when the profile has no active external sources", async () => {
+  it("skips Agent Action routing when the profile has no active action sources", async () => {
     const result = await prepareAgentParams({
       businessProfile: {
         ...businessProfile,
-        externalDataSources: [],
+        agentActionSources: [],
       },
       messageText: "hi",
       historyTurns: [],
@@ -156,14 +176,14 @@ describe("prepareAgentParams", () => {
     });
 
     expect(result.graphParams?.tools).toBeUndefined();
-    expect(filterEligibleExternalDataSources).not.toHaveBeenCalled();
+    expect(filterEligibleAgentActionSources).not.toHaveBeenCalled();
   });
 
-  it("does not expose non-chat action schemas as customer memory tools", async () => {
+  it("does not expose non-chat action schemas", async () => {
     const futureEventAction = {
       ...priceSource,
       id: 9,
-      trigger: "CUSTOMER_DETAILS_SAVED",
+      trigger: "NOT_CHAT_REQUESTED" as any,
       expectedParamsSchema: {
         interest: {
           type: "STRING",
@@ -178,7 +198,7 @@ describe("prepareAgentParams", () => {
     const result = await prepareAgentParams({
       businessProfile: {
         ...businessProfile,
-        externalDataSources: [{ ...priceSource, isActive: false }, futureEventAction],
+        agentActionSources: [{ ...priceSource, isActive: false }, futureEventAction],
       },
       messageText: "I want a callback",
       historyTurns: [],
@@ -186,11 +206,135 @@ describe("prepareAgentParams", () => {
     });
 
     expect(result.graphParams?.tools).toBeUndefined();
-    expect(filterEligibleExternalDataSources).not.toHaveBeenCalled();
+    expect(filterEligibleAgentActionSources).not.toHaveBeenCalled();
+  });
+
+  it("can expose a different action after a completed helper action result", async () => {
+    vi.mocked(filterEligibleAgentActionSources).mockResolvedValue([leadCaptureSource]);
+    const originalRequest =
+      "ايوه احجز مكان في الدفعه الجديده كورس علم النفس بالفنون";
+
+    const result = await prepareAgentParams({
+      businessProfile: {
+        ...businessProfile,
+        agentActionSources: [priceSource, leadCaptureSource],
+      },
+      messageText:
+        `The queued external action for the customer's request has completed. Original customer request: ${originalRequest}`,
+      historyTurns: [],
+      channel: "whatsapp",
+      customerPhone: "201202840018",
+      completedExternalLookup: {
+        sourceName: "courses or programs",
+        toolName: "integration_action_2",
+        envelope: {
+          success: true,
+          verification: "verified",
+          actionType: "integration_action_2",
+          reason: "data_returned",
+          data: { courses: [{ title: "الدعم النفسى بالفنون", availableSeats: 5 }] },
+        },
+      },
+      allowedActionSourceIds: [leadCaptureSource.id],
+    });
+
+    expect(retrieveRelevantChunksWithEmbedding).toHaveBeenCalledWith(
+      1,
+      originalRequest,
+      5,
+    );
+    expect(filterEligibleAgentActionSources).not.toHaveBeenCalled();
+    expect(result.graphParams?.tools).toEqual([
+      {
+        functionDeclarations: [
+          expect.objectContaining({
+            name: "integration_action_7",
+            description: expect.stringContaining("queues the action in the background"),
+          }),
+        ],
+      },
+    ]);
+    expect(buildSystemPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hasChatRequestedActions: true,
+        hasCompletedActionResult: true,
+      }),
+    );
+    expect(result.graphParams?.systemInstruction).toContain(
+      "verified lookup/helper result",
+    );
+  });
+
+  it("does not expose more actions after a failed completed action result", async () => {
+    const result = await prepareAgentParams({
+      businessProfile: {
+        ...businessProfile,
+        agentActionSources: [priceSource, leadCaptureSource],
+      },
+      messageText: "كورس علم النفس بالفنون\nالاسم هشام \nرقم الموبايل 01202840018",
+      historyTurns: [],
+      channel: "messenger",
+      completedExternalLookup: {
+        sourceName: "capture and send leads to the crm",
+        toolName: "integration_action_7",
+        envelope: {
+          success: false,
+          verification: "failed",
+          actionType: "integration_action_7",
+          reason: "non_retryable_http_422",
+          data: null,
+          error: "External API returned status 422",
+        },
+      },
+    });
+
+    expect(filterEligibleAgentActionSources).not.toHaveBeenCalled();
+    expect(result.graphParams?.tools).toBeUndefined();
+    expect(buildSystemPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hasChatRequestedActions: false,
+        hasCompletedActionResult: true,
+      }),
+    );
+    expect(result.graphParams?.systemInstruction).toContain(
+      "Do not call any other action for this completed-action result turn",
+    );
+    expect(result.graphParams?.systemInstruction).toContain(
+      '"reason": "action_validation_failed"',
+    );
+    expect(result.graphParams?.systemInstruction).not.toContain("422");
+    expect(result.graphParams?.systemInstruction).not.toContain("External API");
+  });
+
+  it("does not enqueue customer memory capture for internal completed-action turns", async () => {
+    vi.mocked(filterEligibleAgentActionSources).mockResolvedValue([]);
+
+    await computeBusinessChatReply({
+      businessProfile,
+      messageText:
+        "The queued external action for the customer's request has completed. Original customer request: الدعم النفسي بالفنون",
+      historyTurns: [],
+      channel: "whatsapp",
+      customerPhone: "201202840018",
+      conversationId: 172,
+      completedExternalLookup: {
+        sourceName: "courses or programs",
+        toolName: "integration_action_2",
+        envelope: {
+          success: true,
+          verification: "verified",
+          actionType: "integration_action_2",
+          reason: "data_returned",
+          data: { courses: [{ title: "الدعم النفسى بالفنون" }] },
+        },
+      },
+    });
+
+    expect(enqueueCustomerMemoryCapture).not.toHaveBeenCalled();
   });
 
   it("enqueues customer memory capture after the main reply without exposing a save tool", async () => {
-    vi.mocked(filterEligibleExternalDataSources).mockResolvedValue([]);
+    vi.mocked(filterEligibleAgentActionSources).mockResolvedValue([]);
 
     const reply = await computeBusinessChatReply({
       businessProfile,
@@ -202,10 +346,11 @@ describe("prepareAgentParams", () => {
     });
 
     expect(reply.content).toBe("reply");
-    expect(runAgentGraph).toHaveBeenCalledWith(
+    expect(runAgentGraphV2).toHaveBeenCalledWith(
       expect.objectContaining({
         tools: undefined,
         customerPhone: "201202840018",
+        agentTurnId: 999,
       }),
     );
     expect(enqueueCustomerMemoryCapture).toHaveBeenCalledWith(

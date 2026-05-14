@@ -1,6 +1,6 @@
 import * as Sentry from "@sentry/node";
 import { Worker, Job } from "bullmq";
-import { bullConnection } from "@config/redis";
+import { bullConnection, bullQueuePrefix } from "@config/redis";
 import prisma from "@config/prisma";
 import { createPost } from "../meta/facebook/facebook.service";
 import { logger } from "@utils/logger";
@@ -82,6 +82,7 @@ export const socialWorker = new Worker(
   },
   { 
     connection: bullConnection,
+    prefix: bullQueuePrefix,
     concurrency: 5 // Allow 5 parallel publishing operations
   }
 );

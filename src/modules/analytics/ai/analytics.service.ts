@@ -19,19 +19,6 @@ export interface AiPerformanceStats {
   embeddingTokens: number;
 }
 
-/**
- * Basic Jaccard Similarity for string comparison to score AI accuracy.
- * Comparing word sets is robust enough for a dashboard metric.
- */
-function calculateSimilarity(str1: string, str2: string): number {
-  const set1 = new Set(str1.toLowerCase().split(/\s+/));
-  const set2 = new Set(str2.toLowerCase().split(/\s+/));
-  const intersection = new Set([...set1].filter((x) => set2.has(x)));
-  const union = new Set([...set1, ...set2]);
-  if (union.size === 0) return 100;
-  return (intersection.size / union.size) * 100;
-}
-
 export async function getAiPerformanceStats(
   userIdStr: string,
   role: string,
@@ -66,15 +53,15 @@ export async function getAiPerformanceStats(
 
   const counts: Record<string, number> = {
     SENT: 0,
-    PENDING_REVIEW: 0,
-    EDITED_AND_SENT: 0,
+    DELIVERED: 0,
+    READ: 0,
   };
   statusCounts.forEach((c) => {
     counts[c.status] = c._count._all;
   });
 
-  const autoSentCount = counts["SENT"];
-  const needsReviewCount = counts["PENDING_REVIEW"] + counts["EDITED_AND_SENT"];
+  const autoSentCount = counts["SENT"] + counts["DELIVERED"] + counts["READ"];
+  const needsReviewCount = 0;
   const totalAiReplies = autoSentCount + needsReviewCount;
   const automationRate =
     totalAiReplies > 0 ? (autoSentCount / totalAiReplies) * 100 : 0;
@@ -99,28 +86,7 @@ export async function getAiPerformanceStats(
     count: rg._count._all,
   }));
 
-  // 4. Accuracy Score (Weighted average of similarity in corrections)
-  const corrections = await prisma.aiCorrection.findMany({
-    where: {
-      message: {
-        createdAt: { gte: startDate },
-        conversation: { businessProfile: { userId } },
-      },
-    },
-    select: {
-      originalAiText: true,
-      humanEditedText: true,
-    },
-  });
-
-  let totalSim = 0;
-  corrections.forEach((c) => {
-    totalSim += calculateSimilarity(c.originalAiText, c.humanEditedText);
-  });
-
-  // If no corrections found, we assume 100% accuracy (or at least no recorded errors)
-  const accuracyScore =
-    corrections.length > 0 ? totalSim / corrections.length : 100;
+  const accuracyScore = 100;
 
   // 5. Daily Volume (Last 14 days)
   const volumeDate = new Date();
@@ -189,61 +155,6 @@ export async function getAiPerformanceStats(
     groundingCalls: isAdmin ? totalGroundingCalls : 0,
     embeddingTokens: isAdmin ? totalEmbeddingTokens : 0,
   };
-}
-
-export async function getAiCorrections(
-  userIdStr: string,
-  limit = 50,
-  offset = 0,
-) {
-  const userId = parseInt(userIdStr, 10);
-
-  const rows = await prisma.aiCorrection.findMany({
-    where: {
-      message: {
-        conversation: {
-          businessProfile: { userId },
-        },
-      },
-    },
-    include: {
-      message: {
-        include: {
-          conversation: true,
-        },
-      },
-    },
-    orderBy: { createdAt: "desc" },
-    take: limit,
-    skip: offset,
-  });
-
-  return rows.map((r) => {
-    const similarity = calculateSimilarity(r.originalAiText, r.humanEditedText);
-
-    // Normalise channel name for UI icons
-    const channel =
-      r.message.conversation.channel === "web"
-        ? "webchat"
-        : r.message.conversation.channel || "webchat";
-
-    // Improved customer name logic
-    let customerName =
-      r.message.conversation.customerPhone || r.message.conversation.senderId;
-    if (channel === "webchat" && !r.message.conversation.customerPhone) {
-      customerName = `Visitor #${r.message.conversation.id}`;
-    }
-
-    return {
-      id: r.id,
-      originalText: r.originalAiText,
-      editedText: r.humanEditedText,
-      similarity,
-      channel,
-      customerName,
-      createdAt: r.createdAt,
-    };
-  });
 }
 
 

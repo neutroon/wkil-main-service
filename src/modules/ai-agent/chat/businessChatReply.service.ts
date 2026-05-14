@@ -21,6 +21,10 @@ import {
   activeWorkflowSourceIds,
   listActiveAgentActionWorkflows,
 } from "@modules/integrations/external/agentActionWorkflow.service";
+import {
+  buildCompletedActionReplyPolicy,
+  replyPolicyPromptBlock,
+} from "@modules/ai-agent/core/replyPolicy";
 import prisma from "@config/prisma";
 import { logger } from "@utils/logger";
 import { effectiveCustomerRequestText } from "./completedActionRequest";
@@ -45,8 +49,17 @@ type CompletedExternalLookup = {
   };
 };
 
+type WorkflowContinuationContext = {
+  activeWorkflowId: number;
+  parentActionRunId: number;
+  actionStepKey: "mutation";
+  allowedActionSourceIds: number[];
+  completedExternalLookup: CompletedExternalLookup;
+};
+
 const CORE_CONTEXT_TYPES = new Set(["identity", "contact", "intents"]);
 const MAX_EXTERNAL_LOOKUP_PROMPT_CHARS = 12_000;
+const MUTATION_CORRECTION_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 async function notIngestedReply(params: {
   businessName: string;
@@ -249,6 +262,13 @@ export async function prepareAgentParams(params: {
     hasCompletedActionResult: Boolean(completedExternalLookup),
   });
 
+  const replyPolicy = completedExternalLookup
+    ? buildCompletedActionReplyPolicy({
+        envelope: completedExternalLookup.envelope,
+        handoffEnabled: businessProfile.handoffEnabled !== false,
+      })
+    : undefined;
+
   let finalSystemInstruction = systemInstruction;
   if (completedExternalLookup) {
     const serializedLookup = stringifyForPrompt(
@@ -256,9 +276,12 @@ export async function prepareAgentParams(params: {
       MAX_EXTERNAL_LOOKUP_PROMPT_CHARS,
     );
     const actionChainInstruction = allowedActionSourceIds && allowedActionSourceIds.length > 0
-      ? "This verified lookup/helper result may support one different exposed follow-up business action if the original customer request still requires that action. Do not call another lookup/helper action."
-      : "Do not call any other action for this completed-action result turn. If this result failed, explain that the request could not be completed safely and ask for the exact corrected or missing detail.";
+        ? "This verified lookup/helper result may support one different exposed follow-up business action if the original customer request still requires that action. Do not call another lookup/helper action."
+        : "Do not call any other action for this completed-action result turn.";
     finalSystemInstruction += `\n\n<completed_integration_action>\nThis action already ran after the previous chat turn. Do not call the same action again for this answer. Use this payload as evidence only when success is true and verification is "verified". If it failed, do not confirm completion, booking, submission, delivery, or saving.\n${actionChainInstruction}\nTool: ${completedExternalLookup.toolName}\nSource: ${completedExternalLookup.sourceName || "External action"}\nPayload JSON:\n${serializedLookup}\n</completed_integration_action>\n\nWhen your customer-facing answer relies on a verified action result, include "external_tool" in usedChunkTypes.`;
+    if (replyPolicy) {
+      finalSystemInstruction += `\n\n${replyPolicyPromptBlock(replyPolicy)}`;
+    }
   }
   if (mediaAssets.length > 0) {
     const catalog = mediaAssets
@@ -296,6 +319,7 @@ export async function prepareAgentParams(params: {
       activeWorkflowId,
       parentActionRunId,
       actionStepKey,
+      replyPolicy,
       handoffEnabled: businessProfile.handoffEnabled,
       policy: buildTruthfulnessPolicyForVoice(businessProfile.voice || ""),
     },
@@ -350,7 +374,8 @@ function completedActionEnvelopeForPrompt(
     verification: "failed",
     actionType: completed.envelope.actionType,
     reason: completedActionFailureCode(completed.envelope.reason),
-    data: null,
+    data: completed.envelope.data ?? null,
+    error: customerSafeCompletedActionError(completed.envelope.error),
   };
 }
 
@@ -364,6 +389,13 @@ function completedActionFailureCode(reason?: string): string {
   }
   return "action_result_failed";
 }
+
+function customerSafeCompletedActionError(error?: string): string | undefined {
+  if (!error) return undefined;
+  if (/^External API returned status \d+$/i.test(error.trim())) return undefined;
+  return error.slice(0, 500);
+}
+
 
 /**
  * Standard (non-streaming) AI loop execution.
@@ -384,7 +416,19 @@ export async function computeBusinessChatReply(params: {
   allowedActionSourceIds?: number[];
   completedExternalLookup?: CompletedExternalLookup;
 }): Promise<AiRoutingDecision> {
-  const prep = await prepareAgentParams(params);
+  const continuation = await findPendingMutationCorrectionContext(params);
+  const graphInput = continuation
+    ? {
+        ...params,
+        activeWorkflowId: continuation.activeWorkflowId,
+        parentActionRunId: continuation.parentActionRunId,
+        actionStepKey: continuation.actionStepKey,
+        allowedActionSourceIds: continuation.allowedActionSourceIds,
+        completedExternalLookup: continuation.completedExternalLookup,
+      }
+    : params;
+
+  const prep = await prepareAgentParams(graphInput);
   if (prep.errorDecision) return prep.errorDecision;
 
   let agentTurnId = params.agentTurnId;
@@ -395,8 +439,10 @@ export async function computeBusinessChatReply(params: {
       channel: params.channel,
       mode: params.completedExternalLookup ? "ACTION_RESULT" : "CUSTOMER_MESSAGE",
       customerText: params.messageText,
-      parentActionRunId: params.parentActionRunId ?? null,
-      activeWorkflowId: params.activeWorkflowId ?? null,
+      parentActionRunId:
+        params.parentActionRunId ?? continuation?.parentActionRunId ?? null,
+      activeWorkflowId:
+        params.activeWorkflowId ?? continuation?.activeWorkflowId ?? null,
     });
     agentTurnId = turn.id;
   }
@@ -415,6 +461,87 @@ export async function computeBusinessChatReply(params: {
     enqueueCustomerMemoryCaptureFromChat(params);
   }
   return decision;
+}
+
+async function findPendingMutationCorrectionContext(params: {
+  businessProfile: BusinessProfileForChat;
+  conversationId?: number;
+  completedExternalLookup?: CompletedExternalLookup;
+  allowedActionSourceIds?: number[];
+}): Promise<WorkflowContinuationContext | null> {
+  if (!params.conversationId || params.completedExternalLookup) return null;
+  if (params.allowedActionSourceIds && params.allowedActionSourceIds.length > 0) {
+    return null;
+  }
+
+  const cutoff = new Date(Date.now() - MUTATION_CORRECTION_WINDOW_MS);
+  const failedRun = await prisma.integrationActionRun.findFirst({
+    where: {
+      businessProfileId: params.businessProfile.id,
+      conversationId: params.conversationId,
+      status: "FAILED",
+      actionType: "MUTATION",
+      workflowId: { not: null },
+      parentRunId: { not: null },
+      createdAt: { gte: cutoff },
+    },
+    orderBy: [{ failedAt: "desc" }, { createdAt: "desc" }],
+    include: {
+      source: true,
+      workflow: { include: { mutationSource: true } },
+      parentRun: { include: { source: true } },
+    },
+  });
+
+  if (
+    !failedRun?.workflowId ||
+    !failedRun.parentRunId ||
+    !failedRun.workflow?.mutationSource?.isActive ||
+    failedRun.workflow.mutationSourceId !== failedRun.sourceId
+  ) {
+    return null;
+  }
+
+  const newerRetry = await prisma.integrationActionRun.findFirst({
+    where: {
+      businessProfileId: params.businessProfile.id,
+      conversationId: params.conversationId,
+      workflowId: failedRun.workflowId,
+      sourceId: failedRun.sourceId,
+      actionType: "MUTATION",
+      id: { not: failedRun.id },
+      createdAt: { gt: failedRun.createdAt },
+      status: { in: ["QUEUED", "RUNNING", "SUCCEEDED"] },
+    },
+    select: { id: true },
+  });
+  if (newerRetry) return null;
+
+  const parentEnvelope = failedRun.parentRun?.responsePayload as
+    | CompletedExternalLookup["envelope"]
+    | null
+    | undefined;
+  if (
+    !parentEnvelope ||
+    parentEnvelope.success !== true ||
+    parentEnvelope.verification !== "verified"
+  ) {
+    return null;
+  }
+
+  return {
+    activeWorkflowId: failedRun.workflowId,
+    parentActionRunId: failedRun.parentRunId,
+    actionStepKey: "mutation",
+    allowedActionSourceIds: [failedRun.sourceId],
+    completedExternalLookup: {
+      sourceName: failedRun.parentRun?.source?.name || "Previous action result",
+      toolName:
+        failedRun.parentRun?.toolName ||
+        `integration_action_${failedRun.parentRun?.sourceId || failedRun.sourceId}`,
+      envelope: parentEnvelope,
+    },
+  };
 }
 
 /**

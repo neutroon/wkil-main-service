@@ -221,15 +221,31 @@ export async function processIntegrationActionJob(
       where: { id: job.conversationId },
       data: { status: "RESOLVED" },
     });
-    await markIntegrationActionRunSucceeded({
-      id: job.actionRunId,
-      responsePayload: envelope,
-      verification: envelope.verification,
+    await markActionRunFromEnvelope({
+      actionRunId: job.actionRunId,
+      envelope,
     });
     return;
   }
 
   const content = (reply.privateContent || reply.content || "").trim();
+
+  if (reply.action === "REPLY_AUTO" && content.length === 0 && !reply.attachment) {
+    await markActionRunFromEnvelope({
+      actionRunId: job.actionRunId,
+      envelope,
+    });
+    logger.info("integration_action.job.empty_reply_skipped", {
+      conversationId: job.conversationId,
+      sourceId: job.sourceId,
+      actionRunId: job.actionRunId,
+      queuedActionRunId: reply.queuedActionRunId,
+      agentTurnStatus: reply.agentTurnStatus,
+      verification: envelope.verification,
+    });
+    return;
+  }
+
   const status = initialCustomerReplyStatus(
     reply,
     channel === "web" ? "web" : "platform",
@@ -244,10 +260,9 @@ export async function processIntegrationActionJob(
     origin: "integration_action_result",
   });
 
-  await markIntegrationActionRunSucceeded({
-    id: job.actionRunId,
-    responsePayload: envelope,
-    verification: envelope.verification,
+  await markActionRunFromEnvelope({
+    actionRunId: job.actionRunId,
+    envelope,
     resultMessageId: saved.id,
   });
 
@@ -290,6 +305,30 @@ export async function processIntegrationActionJob(
       reply,
     });
   }
+}
+
+async function markActionRunFromEnvelope(params: {
+  actionRunId?: number | null;
+  envelope: Awaited<ReturnType<typeof executeExternalQuery>>;
+  resultMessageId?: number | null;
+}) {
+  if (params.envelope.success) {
+    await markIntegrationActionRunSucceeded({
+      id: params.actionRunId,
+      responsePayload: params.envelope,
+      verification: params.envelope.verification,
+      resultMessageId: params.resultMessageId,
+    });
+    return;
+  }
+
+  await markIntegrationActionRunFailed({
+    id: params.actionRunId,
+    reason: params.envelope.reason || "action_failed",
+    responsePayload: params.envelope,
+    verification: params.envelope.verification,
+    resultMessageId: params.resultMessageId,
+  });
 }
 
 function normalizeChannel(

@@ -1,5 +1,5 @@
 import { Queue } from "bullmq";
-import { bullConnection } from "@config/redis";
+import { bullConnection, bullQueuePrefix } from "@config/redis";
 
 /**
  * Enterprise-Grade Social Media Publishing Queue.
@@ -7,6 +7,7 @@ import { bullConnection } from "@config/redis";
  */
 export const socialQueue = new Queue("social-publish", {
   connection: bullConnection,
+  prefix: bullQueuePrefix,
   defaultJobOptions: {
     attempts: 3,
     backoff: {

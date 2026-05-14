@@ -1,4 +1,5 @@
 import prisma from "@config/prisma";
+import type { ConversationMessageStatus } from "@prisma/client";
 import { AppError } from "@middlewares/errorHandler.middleware";
 import { getAccessibleProfileIds } from "@modules/auth/user/user.service";
 import { upsertCustomerFromConversation } from "@modules/business/customer/customer.service";
@@ -172,7 +173,7 @@ export async function saveMessage(
     type?: string;
     mediaId?: string | null;
     mediaMetadata?: any;
-    status?: string | null;
+    status?: ConversationMessageStatus | null;
     aiReasoning?: string | null;
     handoffCategory?: string | null;
     intent?: string | null;

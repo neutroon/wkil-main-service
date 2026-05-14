@@ -1,6 +1,7 @@
 import prisma from "@config/prisma";
 import { logger } from "@utils/logger";
 import { getOrCreateConversation, saveMessage } from "../core/conversation.service";
+import type { ConversationMessageStatus } from "@prisma/client";
 
 /**
  * ELITE TIER: Selective Mirroring (Inbox Continuity)
@@ -81,7 +82,7 @@ export const syncMessageStatus = async (
   messageId: number,
   businessProfileId: number,
   conversationId: number,
-  updates: { status?: string; externalId?: string }
+  updates: { status?: ConversationMessageStatus; externalId?: string }
 ) => {
   try {
     const updated = await prisma.conversationMessage.update({

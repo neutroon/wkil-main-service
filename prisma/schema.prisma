@@ -78,7 +78,7 @@ model BusinessProfile {
   user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   name                String
-  responseMode        String   @default("AUTO") // "AUTO", "REVIEW_ALL", "MANUAL"
+  handoffEnabled      Boolean  @default(true)
   identity            String
   targetAudience      String
   voice               String   @default("Professional")
@@ -438,7 +438,7 @@ model ConversationMessage {
   mediaId        String?      // Meta media_id
   mediaMetadata  Json?        // Stores duration, filename, mimeType, size etc.
   externalId     String?      @unique // Meta message ID (wamid or mid) for status tracking
-  status         String       @default("SENT") // "SENDING", "SENT", "DELIVERED", "READ", "PENDING_REVIEW", "EDITED_AND_SENT", "FAILED"
+  status         String       @default("SENT") // "SENDING", "SENT", "DELIVERED", "READ", "FAILED"
   aiReasoning    String?      // Storing the AI's thought process for routing
   handoffCategory String?     // e.g. "SALES", "SUPPORT", "ANGRY_CUSTOMER"
   intent          String?     // AI-detected intent (e.g. "SALES_DM", "GREET_ONLY")
@@ -446,31 +446,12 @@ model ConversationMessage {
   origin          String?     // Context tag for converged history (e.g. "facebook_comment_reply")
   createdAt       DateTime    @default(now())
 
-  aiCorrection   AiCorrection?
-
   @@index([conversationId])
   @@index([conversationId, createdAt])
   @@index([status, createdAt])
   @@index([handoffCategory])
   @@index([externalId])
 }
-
-/// Tracks corrections made by humans to AI-generated drafts
-model AiCorrection {
-  id              Int                 @id @default(autoincrement())
-  messageId       Int                 @unique
-  message         ConversationMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
-  originalAiText  String
-  humanEditedText String
-  createdAt       DateTime            @default(now())
-
-  @@index([messageId])
-}
-
-
-
-
-
 
 /// WhatsApp Business phone number linked to a user
 model WhatsAppAccount {
@@ -575,8 +556,7 @@ model FacebookPage {
   lastValidatedAt DateTime?
   lastUsedAt      DateTime?
 
-  // Per-Page Automation Overrides
-  responseMode          String   @default("AUTO") // "AUTO", "REVIEW_ALL", "MANUAL"
+  // Per-Page comment automation overrides
   commentAutoDmEnabled  Boolean  @default(false)  // Automatic private DM to commenters
   commentPublicGreeting String   @default("Thanks {{name}}! I've sent the details to your inbox.")
 

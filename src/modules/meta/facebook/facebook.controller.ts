@@ -413,7 +413,7 @@ export class FacebookController {
   async updateSettings(req: Request, res: Response) {
     const userId = (req as any).user.id;
     const { pageId } = req.params;
-    const { responseMode, commentAutoDmEnabled, commentPublicGreeting } = req.body;
+    const { commentAutoDmEnabled, commentPublicGreeting } = req.body;
 
     const page = await prisma.facebookPage.findFirst({
       where: { pageId, facebookAccount: { userId }, isActive: true },
@@ -424,13 +424,12 @@ export class FacebookController {
     const updated = await prisma.facebookPage.update({
       where: { id: page.id },
       data: {
-        responseMode: responseMode !== undefined ? responseMode : page.responseMode,
         commentAutoDmEnabled: commentAutoDmEnabled !== undefined ? commentAutoDmEnabled : page.commentAutoDmEnabled,
         commentPublicGreeting: commentPublicGreeting !== undefined ? commentPublicGreeting : page.commentPublicGreeting,
       },
     });
 
-    // Invalidate identity cache — responseMode and pageSettings are cached in the processor
+    // Invalidate identity cache — page settings are cached in the processor
     await invalidateIdentityCache("messenger", pageId).catch(() => {});
 
     return res.json({ success: true, page: updated });

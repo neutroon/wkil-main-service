@@ -52,29 +52,8 @@ function isFollowUpTriggerEligible<T extends {
   if (!trigger || trigger.role !== "model") return false;
   if (trigger.origin === "follow_up") return false;
   if (!DELIVERED_TRIGGER_STATUSES.has(trigger.status)) return false;
-  if (trigger.handoffCategory === "SYSTEM_ERROR") return false;
+  if (trigger.handoffCategory) return false;
   return true;
-}
-
-async function isAutoDeliveryEnabledForConversation(conversation: {
-  channel?: string | null;
-  pageId: string;
-  businessProfileId: number;
-  businessProfile: { responseMode?: string };
-}) {
-  if (conversation.channel === "messenger") {
-    const page = await prisma.facebookPage.findFirst({
-      where: {
-        pageId: conversation.pageId,
-        businessProfileId: conversation.businessProfileId,
-        isActive: true,
-      },
-      select: { responseMode: true },
-    });
-    return (page?.responseMode || conversation.businessProfile.responseMode) === "AUTO";
-  }
-
-  return conversation.businessProfile.responseMode === "AUTO";
 }
 
 function parseFollowUpDelays(value: unknown): FollowUpDelay[] {
@@ -379,13 +358,6 @@ export async function processFollowUpJob(payload: FollowUpJobPayload) {
   if (!isFollowUpConversationEligible(conversation)) {
     logger.info("follow_up.skipped.ineligible_conversation", {
       conversationId: payload.conversationId,
-    });
-    return;
-  }
-  if (!(await isAutoDeliveryEnabledForConversation(conversation))) {
-    logger.info("follow_up.skipped.manual_mode", {
-      conversationId: conversation.id,
-      channel: conversation.channel,
     });
     return;
   }

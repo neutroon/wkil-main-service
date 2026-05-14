@@ -332,6 +332,11 @@ const baseRoutingProperties: Record<string, Schema> = {
     description:
       "Must be 'REPLY_AUTO', 'HANDOFF_TO_HUMAN', or 'RESOLVE_CONVERSATION'",
   },
+  replyType: {
+    type: Type.STRING,
+    description:
+      "One of NORMAL_REPLY, ASK_FOR_CORRECTION, CONFIRM_ACTION_SUCCESS, SAFE_ACTION_FAILURE, HANDOFF, or RESOLVE. Must follow any <reply_policy> block.",
+  },
   handoffCategory: {
     type: Type.STRING,
     description:
@@ -394,6 +399,7 @@ export function buildAiRoutingSchema(channel?: string | null): Schema {
       },
       required: [
         "action",
+        "replyType",
         "reasoning",
         "intent",
         "publicContent",
@@ -416,6 +422,7 @@ export function buildAiRoutingSchema(channel?: string | null): Schema {
     },
     required: [
       "action",
+      "replyType",
       "reasoning",
       "content",
       "requiresGrounding",

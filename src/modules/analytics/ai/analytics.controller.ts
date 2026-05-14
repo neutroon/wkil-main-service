@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { getAiPerformanceStats, getAiCorrections } from "./analytics.service";
+import { getAiPerformanceStats } from "./analytics.service";
 
 export const getAiPerformanceController = async (req: Request, res: Response) => {
   const userId = (req as any).user.id;
@@ -15,18 +15,3 @@ export const getAiPerformanceController = async (req: Request, res: Response) =>
 
   res.status(200).json({ data: stats });
 };
-
-export const getAiCorrectionsController = async (req: Request, res: Response) => {
-  const userId = (req as any).user.id;
-  const { limit, offset } = req.query as any;
-
-  const data = await getAiCorrections(
-    userId,
-    limit || 50,
-    offset || 0
-  );
-
-  res.status(200).json({ data });
-};
-
-

@@ -227,10 +227,10 @@ export const getUnifiedDashboardStats = async (
           NOT: { channel: "facebook_comment" }
         },
         createdAt: { gte: startDate },
-        // We only care about user and sent model messages for response time
+        // We only care about user and delivered model messages for response time
         OR: [
           { role: "user" },
-          { role: "model", status: { in: ["SENT", "EDITED_AND_SENT"] } }
+          { role: "model", status: { in: ["SENT", "DELIVERED", "READ"] } }
         ]
       },
       select: {
@@ -268,8 +268,7 @@ export const getUnifiedDashboardStats = async (
           aiSamples.push(diffMinutes);
         }
         
-        // Always reset after any AI interaction (sent or draft) 
-        // to keep the benchmark clean for the next interaction
+        // Always reset after any AI interaction to keep the next benchmark clean.
         userStartTimes.delete(cid);
       }
     } else if (msg.role === "agent") {

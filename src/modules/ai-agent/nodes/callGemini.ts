@@ -130,6 +130,7 @@ export async function callGeminiNode(
     return {
       decision: {
         action: "HANDOFF_TO_HUMAN",
+        replyType: "HANDOFF",
         handoffCategory: isTimeout ? "SYSTEM_TIMEOUT" : "SYSTEM_ERROR",
         reasoning: isTimeout 
           ? `[v4.3] Gemini timed out (${GEMINI_TIMEOUT_MS}ms)`

@@ -309,7 +309,9 @@ function sectionChatRequestedActions(ctx: PromptContext): string {
   }
 
   const availabilityRule = ctx.capabilities.hasChatRequestedActions
-    ? "Use an action only when the customer's latest message explicitly needs that exact dynamic/account/order/booking/availability/price/status/create/update/cancel operation."
+    ? ctx.capabilities.hasCompletedActionResult
+      ? "A verified completed action result is available. Use it as evidence; call another exposed action only if the customer's original request still requires that different dynamic/account/order/booking/availability/price/status/create/update/cancel operation."
+      : "Use an action only when the customer's latest message explicitly needs that exact dynamic/account/order/booking/availability/price/status/create/update/cancel operation."
     : "No chat-requested action tool is available in this turn; do not try to call one.";
 
   return `<chat_requested_action_protocol>

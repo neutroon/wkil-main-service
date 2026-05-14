@@ -15,7 +15,7 @@ describe("classifyExternalToolFailureRecovery", () => {
     vi.mocked(generateContent).mockResolvedValue({
       text: JSON.stringify({
         route: "normal_reply",
-        reasoning: "The latest message is a greeting and does not need external data.",
+        reasoning: "The latest message is a greeting and does not need an Agent Action result.",
       }),
       usage: {
         promptTokens: 0,

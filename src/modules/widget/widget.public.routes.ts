@@ -96,7 +96,7 @@ widgetPublicRoutes.post(
       // ── Server-Sent Events Path ────────────────────────────────────────
       // We keep SSE for progress/final delivery, but use the same approved
       // non-streaming chat flow as Messenger/WhatsApp to avoid exposing
-      // unverified draft tokens before final guardrails.
+      // unverified partial tokens before final guardrails.
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("Connection", "keep-alive");

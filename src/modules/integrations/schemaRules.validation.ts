@@ -14,6 +14,7 @@ const FIELD_SOURCES = [
   "USER_PROVIDED",
   "AI_DERIVED",
   "CHAT_CONTEXT",
+  "ACTION_RESULT",
   "FIXED",
   "DEFAULT",
 ] as const;
@@ -24,7 +25,7 @@ const fieldTypeSchema = z
 
 const fieldSourceSchema = z
   .enum(FIELD_SOURCES)
-  .describe("Field source must be USER_PROVIDED, AI_DERIVED, CHAT_CONTEXT, FIXED, or DEFAULT.");
+  .describe("Field source must be USER_PROVIDED, AI_DERIVED, CHAT_CONTEXT, ACTION_RESULT, FIXED, or DEFAULT.");
 
 const fixedValueSchema = z.union([
   z.string(),
@@ -41,6 +42,7 @@ export const aiFieldRuleSchema: z.ZodTypeAny = z.lazy(() =>
       type: fieldTypeSchema,
       source: fieldSourceSchema.optional(),
       contextKey: z.enum(["customerPhone", "conversationId"]).optional(),
+      path: z.string().optional(),
       description: z.string().min(1).optional(),
       required: z.boolean().optional(),
       value: fixedValueSchema.optional(),
@@ -86,6 +88,14 @@ export const aiFieldRuleSchema: z.ZodTypeAny = z.lazy(() =>
           code: "custom",
           path: ["contextKey"],
           message: "contextKey is required when source is CHAT_CONTEXT",
+        });
+      }
+
+      if (rule.source === "ACTION_RESULT" && !rule.path) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["path"],
+          message: "path is required when source is ACTION_RESULT",
         });
       }
 

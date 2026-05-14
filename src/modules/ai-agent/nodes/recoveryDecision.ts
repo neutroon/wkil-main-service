@@ -6,6 +6,7 @@ type RecoveryDecisionParams = {
   reasoning: string;
   failureReason: string;
   emergencyFallback: string;
+  customerMessage?: string;
   handoffCategory?: string | null;
   allowHandoffLanguage?: boolean;
   requiresGrounding?: boolean;
@@ -27,7 +28,7 @@ export async function buildAiRecoveryDecision(
   const recoveryReply = await generateSafeRecoveryReply({
     systemInstruction: state.systemInstruction,
     channel: state.channel,
-    customerMessage: latestUserText(state),
+    customerMessage: params.customerMessage ?? latestUserText(state),
     failureReason: params.failureReason,
     safeFallback: params.emergencyFallback,
     allowHandoffLanguage:
@@ -61,6 +62,19 @@ export function buildMissingKnowledgeDecision(
   state: AgentStateType,
   reasoning: string,
 ): Promise<AgentStateType["decision"]> {
+  if (state.handoffEnabled === false) {
+    return buildAiRecoveryDecision(state, {
+      action: "REPLY_AUTO",
+      handoffCategory: null,
+      reasoning,
+      failureReason: "missing_knowledge",
+      emergencyFallback: state.policy.fallbackTemplates.unverified,
+      allowHandoffLanguage: false,
+      requiresGrounding: false,
+      missingInfo: "The requested information could not be verified safely.",
+    });
+  }
+
   return buildAiRecoveryDecision(state, {
     action: "HANDOFF_TO_HUMAN",
     handoffCategory: "MISSING_KNOWLEDGE",

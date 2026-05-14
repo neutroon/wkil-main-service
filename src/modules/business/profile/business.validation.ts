@@ -51,6 +51,7 @@ export const businessProfileSchema = z.object({
     customerDetailsInstructions: z.string().optional(),
     customerMemoryFields: z.array(customerMemoryFieldSchema).length(3).optional(),
     aiBehaviorInstructions: z.string().max(4000, "AI behavior instructions must be 4000 characters or less").optional(),
+    handoffEnabled: z.boolean().optional().default(true),
     followUpEnabled: z.boolean().optional().default(false),
     followUpMode: z.enum(["AUTO", "CUSTOM"]).optional().default("AUTO"),
     followUpDelays: z.array(followUpDelaySchema).max(5).optional().default([]),

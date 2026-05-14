@@ -1,8 +1,8 @@
 import * as Sentry from "@sentry/node";
-import { Queue, Worker, Job } from "bullmq";
-import { bullConnection } from "@config/redis";
+import { Queue, Worker, Job, QueueEvents } from "bullmq";
+import { bullConnection, bullQueuePrefix } from "@config/redis";
 import { logger } from "@utils/logger";
-import type { IntegrationActionJob } from "@modules/integrations/external/externalLookup.job";
+import type { IntegrationActionJob } from "@modules/integrations/external/agentAction.job";
 
 import {
   processMetaMessage,
@@ -18,6 +18,7 @@ import { registerAssetWithMeta } from "../../media/services/mediaLibrary.service
 // EXPRESS LANE: For Messenger, WhatsApp, and Webhooks (< 1s)
 export const metaExpressQueue = new Queue("meta-express", {
   connection: bullConnection,
+  prefix: bullQueuePrefix,
   defaultJobOptions: {
     // removeOnComplete: { count: 1000, age: 24 * 3600 }, // Keep last 1000 jobs or 24h for audit
     removeOnComplete: { count: 10 }, // Keep last 1000 jobs or 24h for audit
@@ -30,6 +31,7 @@ export const metaExpressQueue = new Queue("meta-express", {
 // PRODUCTION LANE: For Gemini Image Generation and AI Branding (20-60s)
 export const metaProductionQueue = new Queue("meta-production", {
   connection: bullConnection,
+  prefix: bullQueuePrefix,
   defaultJobOptions: {
     // removeOnComplete: { count: 500, age: 48 * 3600 }, // Keep last 500 jobs or 48h
     // removeOnFail: { count: 1000 },
@@ -37,6 +39,16 @@ export const metaProductionQueue = new Queue("meta-production", {
     removeOnFail: { count: 50 },
     attempts: 1,
   },
+});
+
+export const metaExpressQueueEvents = new QueueEvents("meta-express", {
+  connection: bullConnection,
+  prefix: bullQueuePrefix,
+});
+
+export const metaProductionQueueEvents = new QueueEvents("meta-production", {
+  connection: bullConnection,
+  prefix: bullQueuePrefix,
 });
 
 export type MetaJobType =
@@ -98,16 +110,22 @@ export async function enqueueMetaJob(
   const jobId = opts.jobId ? safeBullMqJobId(opts.jobId) : undefined;
 
   try {
-    await queue.add(
+    const queuedJob = await queue.add(
       isVisual ? "visual_task" : "message_task",
       { type: isVisual ? "visual_production" : "messaging", payload },
       { delay: delaySeconds * 1000, jobId },
     );
+    const [jobState, counts] = await Promise.all([
+      queuedJob.getState().catch(() => "unknown"),
+      queue.getJobCounts("waiting", "active", "delayed", "failed", "paused").catch(() => null),
+    ]);
     logger.info("meta.queue.enqueued", {
       type: isVisual ? "visual" : "messaging",
       platform: payload.platform,
       delaySeconds,
-      jobId,
+      jobId: queuedJob.id,
+      jobState,
+      counts,
     });
   } catch (err: any) {
     logger.error("meta.queue.add_failed", { error: err.message, payload });
@@ -175,10 +193,9 @@ export async function enqueueIntegrationAction(
           ? safeBullMqJobId(opts.jobId)
           : createBullMqJobId(
               "integration-action",
-              job.trigger,
-              job.conversationId ?? job.customerId ?? "manual",
+              job.agentTurnId ?? job.conversationId ?? job.customerId ?? "manual",
               job.sourceId,
-              Date.now(),
+              job.stepKey ?? "action",
             ),
       attempts: 2,
       backoff: { type: "exponential", delay: 10_000 },
@@ -193,6 +210,9 @@ export async function enqueueIntegrationAction(
     actionRunId: job.actionRunId,
     trigger: job.trigger,
     sourceId: job.sourceId,
+    agentTurnId: job.agentTurnId,
+    workflowId: job.workflowId,
+    stepKey: job.stepKey,
   });
 }
 
@@ -270,7 +290,7 @@ export const expressWorker = new Worker(
       const { processFollowUpJob } = await import("@modules/follow-up/followUp.service");
       await processFollowUpJob(payload);
     } else if (type === "integration_action") {
-      const { processIntegrationActionJob } = await import("@modules/integrations/external/externalLookup.job");
+      const { processIntegrationActionJob } = await import("@modules/integrations/external/agentAction.job");
       await processIntegrationActionJob(payload);
     } else if (type === "customer_memory_capture") {
       const { processCustomerMemoryCaptureJob } = await import("@modules/business/customer/customerMemoryCapture.job");
@@ -279,7 +299,7 @@ export const expressWorker = new Worker(
       await processMetaMessage(payload);
     }
   },
-  { connection: bullConnection, concurrency: 8 },
+  { connection: bullConnection, prefix: bullQueuePrefix, concurrency: 8 },
 );
 
 /**
@@ -291,26 +311,92 @@ export const productionWorker = new Worker(
   async (job: Job<MetaEngineJob>) => {
     await processVisualJob(job.data.payload);
   },
-  { connection: bullConnection, concurrency: 2 },
+  { connection: bullConnection, prefix: bullQueuePrefix, concurrency: 2 },
 );
 
 // Recovery / Bootstrap logic (Optional now that we use Redis persistence)
 // Workers are initialized but we define a start function to ensure they are "touched" and logging
+let metaQueueStarted = false;
+
 export function startMetaQueue() {
+  if (metaQueueStarted) {
+    logger.warn("meta.engine.start_skipped_already_started");
+    return;
+  }
+  metaQueueStarted = true;
+
   logger.info("meta.engine.initializing_workers...");
 
+  expressWorker.on("ready", () =>
+    logger.info("meta.engine.worker_ready.express"),
+  );
+  expressWorker.on("active", (job) =>
+    logger.info("meta.engine.job_active.express", { jobId: job.id, name: job.name }),
+  );
   expressWorker.on("error", (err) =>
     logger.error("meta.engine.worker_error.express", { error: err.message }),
+  );
+  expressWorker.on("stalled", (jobId) =>
+    logger.error("meta.engine.job_stalled.express", { jobId }),
   );
   expressWorker.on("completed", (job) =>
     logger.info("meta.engine.job_completed.express", { jobId: job.id }),
   );
+  expressWorker.on("failed", (job, err) =>
+    logger.error("meta.engine.job_failed.express", {
+      jobId: job?.id,
+      name: job?.name,
+      error: err.message,
+    }),
+  );
 
+  productionWorker.on("ready", () =>
+    logger.info("meta.engine.worker_ready.production"),
+  );
+  productionWorker.on("active", (job) =>
+    logger.info("meta.engine.job_active.production", { jobId: job.id, name: job.name }),
+  );
   productionWorker.on("error", (err) =>
     logger.error("meta.engine.worker_error.production", { error: err.message }),
   );
+  productionWorker.on("stalled", (jobId) =>
+    logger.error("meta.engine.job_stalled.production", { jobId }),
+  );
   productionWorker.on("completed", (job) =>
     logger.info("meta.engine.job_completed.production", { jobId: job.id }),
+  );
+  productionWorker.on("failed", (job, err) =>
+    logger.error("meta.engine.job_failed.production", {
+      jobId: job?.id,
+      name: job?.name,
+      error: err.message,
+    }),
+  );
+
+  metaExpressQueueEvents.on("waiting", ({ jobId }) =>
+    logger.info("meta.queue.event.waiting.express", { jobId }),
+  );
+  metaExpressQueueEvents.on("active", ({ jobId, prev }) =>
+    logger.info("meta.queue.event.active.express", { jobId, prev }),
+  );
+  metaExpressQueueEvents.on("completed", ({ jobId }) =>
+    logger.info("meta.queue.event.completed.express", { jobId }),
+  );
+  metaExpressQueueEvents.on("failed", ({ jobId, failedReason }) =>
+    logger.error("meta.queue.event.failed.express", { jobId, failedReason }),
+  );
+  metaExpressQueueEvents.on("stalled", ({ jobId }) =>
+    logger.error("meta.queue.event.stalled.express", { jobId }),
+  );
+  metaExpressQueueEvents.on("error", (err) =>
+    logger.error("meta.queue.event_error.express", { error: err.message }),
+  );
+
+  metaProductionQueueEvents.on("failed", ({ jobId, failedReason }) =>
+    logger.error("meta.queue.event.failed.production", { jobId, failedReason }),
+  );
+  metaProductionQueueEvents.on("error", (err) =>
+    logger.error("meta.queue.event_error.production", { error: err.message }),
   );
   
   // Sentry failure capturing for workers
@@ -329,7 +415,24 @@ export function startMetaQueue() {
   logger.info("meta.engine.workers_online", {
     expressConcurrency: 8,
     productionConcurrency: 2,
+    queuePrefix: bullQueuePrefix,
   });
+
+  Promise.all([
+    metaExpressQueue.isPaused(),
+    metaExpressQueue.getJobCounts("waiting", "active", "delayed", "failed", "paused"),
+    metaProductionQueue.isPaused(),
+    metaProductionQueue.getJobCounts("waiting", "active", "delayed", "failed", "paused"),
+  ])
+    .then(([expressPaused, expressCounts, productionPaused, productionCounts]) => {
+      logger.info("meta.engine.queue_state", {
+        expressPaused,
+        expressCounts,
+        productionPaused,
+        productionCounts,
+      });
+    })
+    .catch((err) => logger.error("meta.engine.queue_state_failed", { error: err.message }));
 
   // Schedule daily token health check (3 AM)
   metaExpressQueue.add(

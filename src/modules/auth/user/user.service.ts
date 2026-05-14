@@ -169,7 +169,7 @@ export const getUserById = async (
         select: {
           id: true,
           name: true,
-          responseMode: true,
+          handoffEnabled: true,
           plan: true,
           monthlyCreditsUsed: true,
           brandKitCompleted: true,

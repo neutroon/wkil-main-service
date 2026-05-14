@@ -8,6 +8,10 @@ import {
 import { upsertCustomerFromConversation } from "@modules/business/customer/customer.service";
 import { computeBusinessChatReply } from "@modules/ai-agent/chat/businessChatReply.service";
 import { initialCustomerReplyStatus } from "@modules/ai-agent/chat/deliveryPolicy";
+import {
+  notifySavedModelReplySideEffects,
+  scheduleFollowUpsForDeliveredReply,
+} from "@modules/ai-agent/chat/replySideEffects.service";
 import { AiRoutingDecision } from "@modules/ai-agent/core/aiEngine.utils";
 import {
   historyToLlmTurns,
@@ -34,15 +38,10 @@ export async function processWidgetChatMessage(params: {
   const { conversation, businessProfile, historyTurns } =
     await setupWidgetChat(params);
 
-  // 3. Early Exit if Manual Mode or AI Disabled for this thread
-  if (
-    businessProfile.responseMode === "MANUAL" ||
-    conversation.aiEnabled === false
-  ) {
+  if (conversation.aiEnabled === false) {
     logger.info("widget.chat.automation_skip", {
       conversationId: conversation.id,
-      reason:
-        conversation.aiEnabled === false ? "AI_TOGGLE_OFF" : "MANUAL_MODE",
+      reason: "AI_TOGGLE_OFF",
     });
     return {
       reply: "",
@@ -85,8 +84,7 @@ export async function processWidgetChatMessage(params: {
     return { reply: "", conversationId: conversation.id };
   }
 
-  const isAutoMode = businessProfile.responseMode === "AUTO";
-  const status = initialCustomerReplyStatus(reply, isAutoMode, "web");
+  const status = initialCustomerReplyStatus(reply, "web");
   const replyContent = (reply.content || "").trim();
 
   if (reply.action === "REPLY_AUTO" && replyContent.length === 0 && !reply.attachment) {
@@ -112,45 +110,38 @@ export async function processWidgetChatMessage(params: {
     },
   );
 
-  if (status === "PENDING_REVIEW") {
-    if (reply.handoffCategory === "SYSTEM_ERROR") {
-      // Store the internal error details for admin view
-      await prisma.conversationMessage.update({
-        where: { id: botMsg.id },
-        data: { content: `Internal Technical Failure: ${reply.reasoning}` },
-      });
-      botMsg.content = `Internal Technical Failure: ${reply.reasoning}`;
-
-      const { syncSystemError } =
-        await import("@modules/realtime/socketSync.service");
-      syncSystemError({
-        businessProfileId: install.businessProfileId,
-        conversationId: conversation.id,
-        reason: reply.reasoning,
-      });
-      return {
-        reply: "", // Silent to visitor
-        conversationId: conversation.id,
-      };
-    }
-
+  if (reply.handoffCategory === "SYSTEM_ERROR") {
+    await notifySavedModelReplySideEffects({
+      businessProfileId: install.businessProfileId,
+      conversationId: conversation.id,
+      message: botMsg,
+      reply,
+    });
     return {
-      reply: reply.content || "",
+      reply: "",
       conversationId: conversation.id,
     };
-  } else {
+  }
+
+  await notifySavedModelReplySideEffects({
+    businessProfileId: install.businessProfileId,
+    conversationId: conversation.id,
+    message: botMsg,
+    reply,
+  });
+
+  {
     logger.info("widget.chat.reply_sent", {
       widgetInstallId: install.id,
       conversationId: conversation.id,
       preview: (reply.content || "").substring(0, 80),
     });
 
-    const { scheduleConversationFollowUps } =
-      await import("@modules/follow-up/followUp.service");
-    await scheduleConversationFollowUps({
+    await scheduleFollowUpsForDeliveredReply({
       conversationId: conversation.id,
       businessProfileId: install.businessProfileId,
-      triggerMessageId: botMsg.id,
+      message: botMsg,
+      reply,
     });
 
     // Resolve attachment for web delivery if AI included one
@@ -239,7 +230,7 @@ async function setupWidgetChat(params: {
   const businessProfile = await prisma.businessProfile.findUniqueOrThrow({
     where: { id: install.businessProfileId },
     include: {
-      externalDataSources: { where: { isActive: true } },
+      agentActionSources: { where: { isActive: true } },
     },
   });
 
@@ -266,12 +257,8 @@ export async function* processWidgetChatStreaming(params: {
   const { conversation, businessProfile, historyTurns } =
     await setupWidgetChat(params);
 
-  // Mode Check
-  if (
-    businessProfile.responseMode === "MANUAL" ||
-    conversation.aiEnabled === false
-  ) {
-    yield { type: "status", data: "MANUAL_MODE" };
+  if (conversation.aiEnabled === false) {
+    yield { type: "status", data: "AI_DISABLED" };
     return;
   }
 

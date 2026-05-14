@@ -50,7 +50,6 @@ describe("reply policy", () => {
     expect(
       validateDecisionAgainstReplyPolicy({
         policy,
-        customerAskedForHumanOrEscalated: false,
         decision: {
           action: "HANDOFF_TO_HUMAN",
           replyType: "HANDOFF",
@@ -75,7 +74,6 @@ describe("reply policy", () => {
     expect(
       validateDecisionAgainstReplyPolicy({
         policy,
-        customerAskedForHumanOrEscalated: false,
         decision: {
           action: "REPLY_AUTO",
           replyType: "CONFIRM_ACTION_SUCCESS",

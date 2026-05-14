@@ -47,7 +47,8 @@ export async function runGuardrailNode(
   });
 
   // Override the decision with a safe reply
-  const nextAction = shouldRouteGuardrailToHuman(result.ruleId)
+  const canHandoff = state.handoffEnabled !== false;
+  const nextAction = canHandoff && shouldRouteGuardrailToHuman(result.ruleId)
     ? "HANDOFF_TO_HUMAN"
     : "REPLY_AUTO";
 
@@ -61,7 +62,7 @@ export async function runGuardrailNode(
       reasoning: `Guardrail Triggered: ${result.ruleId}`,
       failureReason: result.ruleId,
       emergencyFallback: result.safeReply,
-      allowHandoffLanguage: shouldRouteGuardrailToHuman(result.ruleId),
+      allowHandoffLanguage: nextAction === "HANDOFF_TO_HUMAN",
       requiresGrounding: nextAction === "HANDOFF_TO_HUMAN",
       missingInfo:
         nextAction === "HANDOFF_TO_HUMAN"

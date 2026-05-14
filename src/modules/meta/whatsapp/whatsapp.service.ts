@@ -8,6 +8,10 @@ import {
 } from "../core/conversation.service";
 import { computeBusinessChatReply } from "@modules/ai-agent/chat/businessChatReply.service";
 import { initialCustomerReplyStatus } from "@modules/ai-agent/chat/deliveryPolicy";
+import {
+  notifySavedModelReplySideEffects,
+  scheduleFollowUpsForDeliveredReply,
+} from "@modules/ai-agent/chat/replySideEffects.service";
 import { historyToLlmTurns, toPromptMessages } from "@modules/ai-agent/chat/conversationTurns";
 import { AppError } from "@middlewares/errorHandler.middleware";
 
@@ -208,7 +212,7 @@ export async function handleWhatsAppMessage(
     include: {
       businessProfile: {
         include: {
-          externalDataSources: { where: { isActive: true } },
+          agentActionSources: { where: { isActive: true } },
         },
       },
     },
@@ -259,14 +263,6 @@ export async function handleWhatsAppMessage(
       mediaMetadata,
     });
 
-    // 3. AI Mode Check (Manual Mode Exit)
-    if (businessProfile.responseMode === "MANUAL") {
-      logger.info("whatsapp.manual_mode_skip", {
-        conversationId: conversation.id,
-      });
-      return;
-    }
-
     // 4. Compute AI Response
     const historyForPrompt = toPromptMessages(historyRows);
     historyForPrompt.push({ role: "user", content: messageText });
@@ -290,10 +286,9 @@ export async function handleWhatsAppMessage(
       return;
     }
 
-    const isAutoMode = businessProfile.responseMode === "AUTO";
-    const status = initialCustomerReplyStatus(reply, isAutoMode);
+    const status = initialCustomerReplyStatus(reply);
 
-    // 5. Save AI turn (Draft or Sent)
+    // 5. Save AI turn
     const modelSaved = await saveMessage(
       conversation.id,
       "model",
@@ -304,6 +299,13 @@ export async function handleWhatsAppMessage(
         handoffCategory: reply.handoffCategory,
       },
     );
+
+    await notifySavedModelReplySideEffects({
+      businessProfileId: account.businessProfileId,
+      conversationId: conversation.id,
+      message: modelSaved,
+      reply,
+    });
 
     // 6. Send API call if AUTO
     if (
@@ -327,11 +329,11 @@ export async function handleWhatsAppMessage(
           });
         }
 
-        const { scheduleConversationFollowUps } = await import("@modules/follow-up/followUp.service");
-        await scheduleConversationFollowUps({
+        await scheduleFollowUpsForDeliveredReply({
           conversationId: conversation.id,
           businessProfileId: account.businessProfileId,
-          triggerMessageId: modelSaved.id,
+          message: modelSaved,
+          reply,
         });
       } catch (sendErr: any) {
         logger.error("whatsapp.reply_send_failed", { error: sendErr.message });
@@ -352,10 +354,20 @@ export async function handleWhatsAppMessage(
     // UI Failure Signal
     if (account.businessProfileId && conversation) {
       const errorMsg = `Internal Technical Failure: ${message}`;
-      await saveMessage(conversation.id, "model", errorMsg, {
+      const errorSaved = await saveMessage(conversation.id, "model", errorMsg, {
         status: "FAILED",
         aiReasoning: message,
         handoffCategory: "SYSTEM_ERROR",
+      });
+      await notifySavedModelReplySideEffects({
+        businessProfileId: account.businessProfileId,
+        conversationId: conversation.id,
+        message: errorSaved,
+        reply: {
+          action: "HANDOFF_TO_HUMAN",
+          handoffCategory: "SYSTEM_ERROR",
+          reasoning: message,
+        },
       });
     }
   }

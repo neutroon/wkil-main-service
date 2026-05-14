@@ -17,6 +17,43 @@ datasource db {
   extensions = [vector]
 }
 
+enum ConversationMessageStatus {
+  SENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+enum AgentTurnMode {
+  CUSTOMER_MESSAGE
+  ACTION_RESULT
+}
+
+enum AgentTurnStatus {
+  RUNNING
+  WAITING_ACTION
+  COMPLETED
+  FAILED
+}
+
+enum IntegrationActionRunStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  SKIPPED
+}
+
+enum AgentActionTrigger {
+  CHAT_REQUESTED
+}
+
+enum AgentActionType {
+  LOOKUP
+  MUTATION
+}
+
 model User {
   id                  Int       @id @default(autoincrement())
   name                String
@@ -132,7 +169,7 @@ model BusinessProfile {
   chunks          BusinessProfileChunk[]
   facebookPages   FacebookPage[]
   whatsAppAccounts WhatsAppAccount[]
-  externalDataSources ExternalDataSource[]
+  agentActionSources AgentActionSource[]
   agentActionWorkflows AgentActionWorkflow[]
   agentTurns       AgentTurn[]
   integrationActionRuns IntegrationActionRun[]
@@ -165,7 +202,7 @@ model WidgetInstall {
   @@index([businessProfileId])
 }
 
-model ExternalDataSource {
+model AgentActionSource {
   id                Int             @id @default(autoincrement())
   businessProfileId Int
   businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
@@ -176,8 +213,8 @@ model ExternalDataSource {
   method            String          @default("GET")
   headers           Json?           // Optional API keys or Bearer tokens
   queryParams       Json?           // Optional required query params expected by the API
-  trigger           String          @default("CHAT_REQUESTED") // CHAT_REQUESTED | CUSTOMER_DETAILS_SAVED | HANDOFF_CREATED | CONVERSATION_RESOLVED | FOLLOW_UP_DUE
-  actionType        String          @default("LOOKUP") // LOOKUP | MUTATION
+  trigger           AgentActionTrigger @default(CHAT_REQUESTED) // V2: chat-requested workflows only
+  actionType        AgentActionType    @default(LOOKUP) // LOOKUP | MUTATION
   executionMode     String          @default("BACKGROUND") // External actions always run through BullMQ
   routingMode       String          @default("STRICT") // STRICT = semantic pre-router, FAST = expose when active
   routerTimeoutMs   Int             @default(2500) // Max wait for STRICT semantic routing before falling back
@@ -213,9 +250,9 @@ model AgentActionWorkflow {
   name              String
   description       String?
   lookupSourceId    Int?
-  lookupSource      ExternalDataSource? @relation("WorkflowLookupSource", fields: [lookupSourceId], references: [id], onDelete: SetNull)
+  lookupSource      AgentActionSource? @relation("WorkflowLookupSource", fields: [lookupSourceId], references: [id], onDelete: SetNull)
   mutationSourceId  Int?
-  mutationSource    ExternalDataSource? @relation("WorkflowMutationSource", fields: [mutationSourceId], references: [id], onDelete: SetNull)
+  mutationSource    AgentActionSource? @relation("WorkflowMutationSource", fields: [mutationSourceId], references: [id], onDelete: SetNull)
   inputBindings     Json?
   isActive          Boolean         @default(true)
   createdAt         DateTime        @default(now())
@@ -365,8 +402,8 @@ model AgentTurn {
   conversation      Conversation        @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   inputMessageId    Int?
   channel           String
-  mode              String              // CUSTOMER_MESSAGE | ACTION_RESULT
-  status            String              @default("RUNNING") // RUNNING | WAITING_ACTION | COMPLETED | FAILED
+  mode              AgentTurnMode
+  status            AgentTurnStatus     @default(RUNNING)
   customerText      String              @db.Text
   parentActionRunId Int?
   parentActionRun   IntegrationActionRun? @relation("ParentActionRunTurns", fields: [parentActionRunId], references: [id], onDelete: SetNull)
@@ -388,7 +425,7 @@ model IntegrationActionRun {
   businessProfileId Int
   businessProfile   BusinessProfile     @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
   sourceId          Int
-  source            ExternalDataSource  @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  source            AgentActionSource   @relation(fields: [sourceId], references: [id], onDelete: Cascade)
   conversationId    Int?
   conversation      Conversation?       @relation(fields: [conversationId], references: [id], onDelete: SetNull)
   customerId        Int?
@@ -400,10 +437,10 @@ model IntegrationActionRun {
   workflowId        Int?
   workflow          AgentActionWorkflow? @relation(fields: [workflowId], references: [id], onDelete: SetNull)
   stepKey           String?
-  trigger           String
-  actionType        String?
+  trigger           AgentActionTrigger
+  actionType        AgentActionType?
   toolName          String?
-  status            String              @default("QUEUED") // QUEUED | RUNNING | SUCCEEDED | FAILED | SKIPPED
+  status            IntegrationActionRunStatus @default(QUEUED)
   jobId             String?
   requestPayload    Json?
   responsePayload   Json?
@@ -438,7 +475,7 @@ model ConversationMessage {
   mediaId        String?      // Meta media_id
   mediaMetadata  Json?        // Stores duration, filename, mimeType, size etc.
   externalId     String?      @unique // Meta message ID (wamid or mid) for status tracking
-  status         String       @default("SENT") // "SENDING", "SENT", "DELIVERED", "READ", "FAILED"
+  status         ConversationMessageStatus @default(SENT)
   aiReasoning    String?      // Storing the AI's thought process for routing
   handoffCategory String?     // e.g. "SALES", "SUPPORT", "ANGRY_CUSTOMER"
   intent          String?     // AI-detected intent (e.g. "SALES_DM", "GREET_ONLY")

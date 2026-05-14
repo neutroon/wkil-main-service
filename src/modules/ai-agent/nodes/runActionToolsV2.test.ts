@@ -31,33 +31,8 @@ vi.mock("@modules/ai-agent/chat/externalToolEligibility", () => ({
   })),
 }));
 
-vi.mock("@modules/ai-agent/chat/pendingLookupStatus", () => ({
-  generatePendingLookupStatusDecision: vi.fn(async () => ({
-    action: "REPLY_AUTO",
-    reasoning: "queued",
-    content: "I will check that and get back to you.",
-    requiresGrounding: false,
-    grounded: false,
-    usedChunkTypes: [],
-  })),
-}));
-
 vi.mock("@modules/ai-agent/core/agentTurn.service", () => ({
   updateAgentTurnStatus: vi.fn(async () => undefined),
-}));
-
-vi.mock("./recoveryDecision", () => ({
-  buildAiRecoveryDecision: vi.fn(async (_state, params) => ({
-    action: params.action,
-    handoffCategory: params.handoffCategory,
-    reasoning: params.reasoning,
-    content: "I need one more detail before I can do that.",
-    requiresGrounding: params.requiresGrounding,
-    grounded: false,
-    usedChunkTypes: [],
-    missingInfo: params.missingInfo,
-    agentTurnStatus: "COMPLETED",
-  })),
 }));
 
 const baseState = () =>
@@ -125,6 +100,7 @@ describe("runActionToolsV2Node", () => {
     expect(result.hadToolExecution).toBe(true);
     expect(result.decision).toMatchObject({
       action: "REPLY_AUTO",
+      content: "",
       queuedActionRunId: 42,
       queuedActionSourceId: 2,
       agentTurnStatus: "WAITING_ACTION",
@@ -144,10 +120,44 @@ describe("runActionToolsV2Node", () => {
     const result = await runActionToolsV2Node(baseState());
 
     expect(enqueueIntegrationAction).not.toHaveBeenCalled();
+    expect(result.decision).toBeNull();
+    expect(result.tools).toBeUndefined();
+    expect(result.functionCalls).toEqual([]);
+    expect(result.contents).toEqual([
+      ...baseState().contents,
+      {
+        role: "user",
+        parts: [
+          {
+            functionResponse: {
+              id: "call_1",
+              name: "integration_action_2",
+              response: {
+                success: false,
+                verification: "failed",
+                actionType: "integration_action_2",
+                reason: "action_policy_rejected",
+                data: {
+                  queued: false,
+                  policyReason: "unprovided_parameter:name",
+                },
+              },
+            },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("returns an empty customer message while waiting for the background action", async () => {
+    const result = await runActionToolsV2Node(baseState());
+
     expect(result.decision).toMatchObject({
       action: "REPLY_AUTO",
-      missingInfo: "unprovided_parameter:name",
-      agentTurnStatus: "COMPLETED",
+      content: "",
+      privateContent: "",
+      publicContent: "",
+      agentTurnStatus: "WAITING_ACTION",
     });
   });
 });

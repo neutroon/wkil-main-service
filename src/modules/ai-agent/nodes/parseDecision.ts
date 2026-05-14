@@ -16,9 +16,11 @@ import {
   hasExcessiveRepetition,
 } from "../core/aiEngine.utils";
 import {
+  buildAiRecoveryDecision,
   buildMissingKnowledgeDecision,
   buildSystemRecoveryDecision,
 } from "./recoveryDecision";
+import { validateDecisionAgainstReplyPolicy } from "../core/replyPolicy";
 import type { AgentStateType } from "../core/agentState";
 
 function hasUnsupportedChunkClaim(
@@ -37,6 +39,34 @@ function hasSupportedGroundingEvidence(
   if (!usedChunkTypes || usedChunkTypes.length === 0) return false;
   const available = new Set(availableChunkTypes);
   return usedChunkTypes.every((chunkType) => available.has(chunkType));
+}
+
+function customerAskedForHumanOrEscalated(state: AgentStateType): boolean {
+  const text = state.contents
+    .filter((turn) => turn.role === "user")
+    .flatMap((turn) => turn.parts)
+    .map((part) => part.text || "")
+    .join(" ")
+    .toLowerCase();
+
+  return /human|agent|representative|manager|complaint|angry|موظف|انسان|إنسان|بني آدم|حد يكلمني|كلموني|شكوى|غاضب|زعلان|مش راضي/.test(
+    text,
+  );
+}
+
+function replyPolicyCorrectionPrompt(state: AgentStateType, reason: string): string {
+  const policy = state.replyPolicy;
+  return [
+    "CRITIQUE: The previous JSON did not satisfy the active reply_policy.",
+    `Policy violation: ${reason}`,
+    policy ? `Allowed replyTypes: ${policy.allowedReplyTypes.join(", ")}.` : "",
+    policy ? `Allowed actions: ${policy.allowedActions.join(", ")}.` : "",
+    policy?.requiresCustomerCorrection
+      ? "Ask exactly one concise customer-facing question for the corrected field from correctionFields."
+      : "",
+    policy?.customerSafeError ? `Customer-safe error detail: ${policy.customerSafeError}` : "",
+    "Return exactly one JSON object that matches the response schema.",
+  ].filter(Boolean).join(" ");
 }
 
 export async function parseDecisionNode(
@@ -121,6 +151,56 @@ export async function parseDecisionNode(
         reasoning: "AI response contained excessive repetition after multiple correction attempts.",
         failureReason: "ai_loop_detected",
         handoffCategory: "AI_LOOP_DETECTED",
+      }),
+    };
+  }
+
+  const replyPolicyValidation = validateDecisionAgainstReplyPolicy({
+    decision,
+    policy: state.replyPolicy,
+    customerAskedForHumanOrEscalated: customerAskedForHumanOrEscalated(state),
+  });
+  if (!replyPolicyValidation.ok) {
+    if (state.turnCount < 3) {
+      logger.warn("ai.node.parseDecision.reply_policy_blocked", {
+        businessProfileId: state.businessProfileId,
+        turnCount: state.turnCount,
+        action: decision.action,
+        replyType: decision.replyType,
+        reason: replyPolicyValidation.reason,
+      });
+
+      return {
+        decision: null as any,
+        contents: [
+          ...state.contents,
+          {
+            role: "user",
+            parts: [{ text: replyPolicyCorrectionPrompt(state, replyPolicyValidation.reason) }],
+          },
+        ],
+      };
+    }
+
+    logger.warn("ai.node.parseDecision.reply_policy_exhausted", {
+      businessProfileId: state.businessProfileId,
+      action: decision.action,
+      replyType: decision.replyType,
+      reason: replyPolicyValidation.reason,
+    });
+
+    return {
+      decision: await buildAiRecoveryDecision(state, {
+        action: "REPLY_AUTO",
+        reasoning:
+          "AI reply violated the active reply policy after correction attempts.",
+        failureReason: "reply_policy_violation",
+        emergencyFallback: state.policy.fallbackTemplates.unverified,
+        allowHandoffLanguage: false,
+        requiresGrounding: false,
+        missingInfo:
+          state.replyPolicy?.customerSafeError ||
+          "The active reply policy could not be satisfied safely.",
       }),
     };
   }

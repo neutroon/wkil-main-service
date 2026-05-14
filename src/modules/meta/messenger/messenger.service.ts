@@ -8,6 +8,10 @@ import {
 } from "../core/conversation.service";
 import { computeBusinessChatReply } from "@modules/ai-agent/chat/businessChatReply.service";
 import { initialCustomerReplyStatus } from "@modules/ai-agent/chat/deliveryPolicy";
+import {
+  notifySavedModelReplySideEffects,
+  scheduleFollowUpsForDeliveredReply,
+} from "@modules/ai-agent/chat/replySideEffects.service";
 import { historyToLlmTurns, toPromptMessages } from "@modules/ai-agent/chat/conversationTurns";
 import { AppError } from "@middlewares/errorHandler.middleware";
 
@@ -126,7 +130,7 @@ export async function handleMessengerMessage(
     include: {
       businessProfile: {
         include: {
-          externalDataSources: { where: { isActive: true } },
+          agentActionSources: { where: { isActive: true } },
         },
       },
     },
@@ -208,13 +212,6 @@ export async function handleMessengerMessage(
       mediaMetadata,
     });
 
-    // 3. AI Mode Check (Manual Mode Exit)
-    if (businessProfile.responseMode === "MANUAL") {
-      logger.info("messenger.manual_mode_skip", { conversationId: conversation.id });
-      void sendMessengerAction(senderId, "typing_off", pageAccessToken);
-      return;
-    }
-
     // 4. Compute AI Response
     const historyRows = await getConversationHistory(conversation.id);
     const historyForPrompt = toPromptMessages(historyRows);
@@ -238,10 +235,9 @@ export async function handleMessengerMessage(
       return;
     }
 
-    const isAutoMode = businessProfile.responseMode === "AUTO";
-    const status = initialCustomerReplyStatus(reply, isAutoMode);
+    const status = initialCustomerReplyStatus(reply);
 
-    // 5. Save AI turn (Draft or Sent)
+    // 5. Save AI turn
     const modelSaved = await saveMessage(
       conversation.id,
       "model",
@@ -252,6 +248,13 @@ export async function handleMessengerMessage(
         handoffCategory: reply.handoffCategory,
       },
     );
+
+    await notifySavedModelReplySideEffects({
+      businessProfileId: page.businessProfileId,
+      conversationId: conversation.id,
+      message: modelSaved,
+      reply,
+    });
 
     // 6. Send API call if AUTO
     if (
@@ -274,11 +277,11 @@ export async function handleMessengerMessage(
           });
         }
 
-        const { scheduleConversationFollowUps } = await import("@modules/follow-up/followUp.service");
-        await scheduleConversationFollowUps({
+        await scheduleFollowUpsForDeliveredReply({
           conversationId: conversation.id,
           businessProfileId: page.businessProfileId,
-          triggerMessageId: modelSaved.id,
+          message: modelSaved,
+          reply,
         });
       } catch (sendErr: any) {
         logger.error("messenger.reply_send_failed", { error: sendErr.message });
@@ -290,14 +293,6 @@ export async function handleMessengerMessage(
     }
 
     // 7. Critical UI Notification for System Errors
-    if (reply.handoffCategory === "SYSTEM_ERROR") {
-      const { syncSystemError } = await import("@modules/realtime/socketSync.service");
-      syncSystemError({
-        businessProfileId: page.businessProfileId,
-        conversationId: conversation.id,
-        reason: reply.reasoning
-      });
-    }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error("messenger.handle_failed", {
@@ -309,17 +304,22 @@ export async function handleMessengerMessage(
     // UI Failure Signal
     if (page.businessProfileId && conversation) {
       const errorMsg = `Internal Technical Failure: ${message}`;
-      await saveMessage(conversation.id, "model", errorMsg, {
+      const errorSaved = await saveMessage(conversation.id, "model", errorMsg, {
         status: "FAILED",
         aiReasoning: message,
         handoffCategory: "SYSTEM_ERROR",
       });
-      const { syncSystemError, syncMediaStatus } = await import("@modules/realtime/socketSync.service");
-      syncSystemError({
+      await notifySavedModelReplySideEffects({
         businessProfileId: page.businessProfileId,
         conversationId: conversation.id,
-        reason: message
+        message: errorSaved,
+        reply: {
+          action: "HANDOFF_TO_HUMAN",
+          handoffCategory: "SYSTEM_ERROR",
+          reasoning: message,
+        },
       });
+      const { syncMediaStatus } = await import("@modules/realtime/socketSync.service");
       syncMediaStatus({
         businessProfileId: page.businessProfileId,
         assetId: conversation.id,

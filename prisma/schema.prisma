@@ -133,6 +133,8 @@ model BusinessProfile {
   facebookPages   FacebookPage[]
   whatsAppAccounts WhatsAppAccount[]
   externalDataSources ExternalDataSource[]
+  agentActionWorkflows AgentActionWorkflow[]
+  agentTurns       AgentTurn[]
   integrationActionRuns IntegrationActionRun[]
   widgetInstalls    WidgetInstall[]
   conversations     Conversation[]
@@ -195,10 +197,36 @@ model ExternalDataSource {
   updatedAt         DateTime        @updatedAt
 
   runs              IntegrationActionRun[]
+  lookupWorkflows   AgentActionWorkflow[] @relation("WorkflowLookupSource")
+  mutationWorkflows AgentActionWorkflow[] @relation("WorkflowMutationSource")
 
   @@index([businessProfileId])
   @@index([businessProfileId, trigger, isActive])
   @@index([routingTextHash])
+}
+
+model AgentActionWorkflow {
+  id                Int             @id @default(autoincrement())
+  businessProfileId Int
+  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+
+  name              String
+  description       String?
+  lookupSourceId    Int?
+  lookupSource      ExternalDataSource? @relation("WorkflowLookupSource", fields: [lookupSourceId], references: [id], onDelete: SetNull)
+  mutationSourceId  Int?
+  mutationSource    ExternalDataSource? @relation("WorkflowMutationSource", fields: [mutationSourceId], references: [id], onDelete: SetNull)
+  inputBindings     Json?
+  isActive          Boolean         @default(true)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  turns             AgentTurn[]
+  runs              IntegrationActionRun[]
+
+  @@index([businessProfileId, isActive])
+  @@index([lookupSourceId])
+  @@index([mutationSourceId])
 }
 
 model BusinessProfileFaq {
@@ -319,6 +347,7 @@ model Conversation {
 
   messages ConversationMessage[]
   integrationActionRuns IntegrationActionRun[]
+  agentTurns AgentTurn[]
 
   @@index([pageId, senderId])
   @@index([pageId, senderId, updatedAt])
@@ -326,6 +355,32 @@ model Conversation {
   @@index([externalId])
   @@index([postId])
   @@index([customerId])
+}
+
+model AgentTurn {
+  id                Int                 @id @default(autoincrement())
+  businessProfileId Int
+  businessProfile   BusinessProfile     @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+  conversationId    Int
+  conversation      Conversation        @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  inputMessageId    Int?
+  channel           String
+  mode              String              // CUSTOMER_MESSAGE | ACTION_RESULT
+  status            String              @default("RUNNING") // RUNNING | WAITING_ACTION | COMPLETED | FAILED
+  customerText      String              @db.Text
+  parentActionRunId Int?
+  parentActionRun   IntegrationActionRun? @relation("ParentActionRunTurns", fields: [parentActionRunId], references: [id], onDelete: SetNull)
+  activeWorkflowId  Int?
+  activeWorkflow    AgentActionWorkflow? @relation(fields: [activeWorkflowId], references: [id], onDelete: SetNull)
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  actionRuns        IntegrationActionRun[] @relation("AgentTurnActionRuns")
+
+  @@index([businessProfileId, status, createdAt])
+  @@index([conversationId, createdAt])
+  @@index([parentActionRunId])
+  @@index([activeWorkflowId])
 }
 
 model IntegrationActionRun {
@@ -337,6 +392,14 @@ model IntegrationActionRun {
   conversationId    Int?
   conversation      Conversation?       @relation(fields: [conversationId], references: [id], onDelete: SetNull)
   customerId        Int?
+  agentTurnId       Int?
+  agentTurn         AgentTurn?          @relation("AgentTurnActionRuns", fields: [agentTurnId], references: [id], onDelete: SetNull)
+  parentRunId       Int?
+  parentRun         IntegrationActionRun? @relation("IntegrationActionRunParent", fields: [parentRunId], references: [id], onDelete: SetNull)
+  childRuns         IntegrationActionRun[] @relation("IntegrationActionRunParent")
+  workflowId        Int?
+  workflow          AgentActionWorkflow? @relation(fields: [workflowId], references: [id], onDelete: SetNull)
+  stepKey           String?
   trigger           String
   actionType        String?
   toolName          String?
@@ -353,10 +416,15 @@ model IntegrationActionRun {
   failedAt          DateTime?
   createdAt         DateTime            @default(now())
   updatedAt         DateTime            @updatedAt
+  parentTurns       AgentTurn[]         @relation("ParentActionRunTurns")
 
   @@index([businessProfileId, status, createdAt])
   @@index([conversationId, createdAt])
   @@index([sourceId, createdAt])
+  @@index([agentTurnId])
+  @@index([parentRunId])
+  @@index([workflowId])
+  @@index([stepKey])
   @@index([jobId])
 }
 

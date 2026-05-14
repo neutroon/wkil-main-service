@@ -1,8 +1,7 @@
 import { Router } from "express";
 import { authenticateToken } from "@modules/auth/core/auth.middleware";
 import { 
-  getAiPerformanceController, 
-  getAiCorrectionsController 
+  getAiPerformanceController,
 } from "./analytics.controller";
 import { validate } from "@middlewares/validate.middleware";
 import { aiAnalyticsQuerySchema } from "./aiAnalytics.validation";
@@ -14,13 +13,6 @@ aiAnalyticsRoutes.get(
   authenticateToken,
   validate(aiAnalyticsQuerySchema),
   getAiPerformanceController
-);
-
-aiAnalyticsRoutes.get(
-  "/corrections",
-  authenticateToken,
-  validate(aiAnalyticsQuerySchema),
-  getAiCorrectionsController
 );
 
 export default aiAnalyticsRoutes;

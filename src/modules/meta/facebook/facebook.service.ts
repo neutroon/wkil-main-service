@@ -75,8 +75,7 @@ export interface FacebookPage {
       url: string;
     };
   };
-  // Automation settings from our DB
-  responseMode?: string;
+  // Comment automation settings from our DB
   commentAutoDmEnabled?: boolean;
   commentPublicGreeting?: string;
   isActive?: boolean;
@@ -283,7 +282,7 @@ export const getUserPages = async (
   const { data } = await metaClient.get(url);
   const graphPages: FacebookPage[] = data.data || [];
 
-  // If we have a userId, merge database settings (automation mode, etc.)
+  // If we have a userId, merge database settings.
   if (userId && graphPages.length > 0) {
     const storedPages = await prisma.facebookPage.findMany({
       where: {
@@ -292,7 +291,6 @@ export const getUserPages = async (
       },
       select: {
         pageId: true,
-        responseMode: true,
         commentAutoDmEnabled: true,
         commentPublicGreeting: true,
         isActive: true,
@@ -321,7 +319,6 @@ export const getUserPages = async (
         isActive: true,
         isTokenValid: settings?.isTokenValid ?? true,
         webhookStatus: settings?.webhookStatus ?? "PENDING",
-        responseMode: settings?.responseMode,
         commentAutoDmEnabled: settings?.commentAutoDmEnabled,
         commentPublicGreeting: settings?.commentPublicGreeting,
       };
@@ -429,7 +426,6 @@ export const getPageDetails = async (
   const storedPage = await prisma.facebookPage.findFirst({
     where: { pageId },
     select: {
-      responseMode: true,
       commentAutoDmEnabled: true,
       commentPublicGreeting: true,
     },
@@ -438,7 +434,6 @@ export const getPageDetails = async (
   if (storedPage) {
     return {
       ...graphPage,
-      responseMode: storedPage.responseMode,
       commentAutoDmEnabled: storedPage.commentAutoDmEnabled,
       commentPublicGreeting: storedPage.commentPublicGreeting,
     };

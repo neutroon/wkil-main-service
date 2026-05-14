@@ -3,7 +3,7 @@ import { Prisma } from "@prisma/client";
 import prisma from "@config/prisma";
 import { assertQuotaAvailable, recordAiUsage } from "@modules/billing/billing.service";
 import { embedTexts } from "@modules/ai-agent/gemini";
-import { EXTERNAL_DATA_SOURCE_LIMITS } from "./externalDataSource.constants";
+import { AGENT_ACTION_SOURCE_LIMITS } from "./agentActionSource.constants";
 import { logger } from "@utils/logger";
 import { env } from "@config/env";
 
@@ -94,7 +94,7 @@ async function getRoutingIndexState(
       "routingTextHash",
       "routingIndexedAt",
       "routingEmbedding" IS NOT NULL AS "hasRoutingEmbedding"
-    FROM public."ExternalDataSource"
+    FROM public."AgentActionSource"
     WHERE "id" = ${sourceId}
     LIMIT 1
   `;
@@ -130,7 +130,7 @@ export async function ensureExternalActionSemanticIndex(
 
   const vector = vectorLiteral(embedding);
   await prisma.$executeRaw`
-    UPDATE public."ExternalDataSource"
+    UPDATE public."AgentActionSource"
     SET
       "routingEmbedding" = ${vector}::vector,
       "routingTextHash" = ${hash},
@@ -178,7 +178,7 @@ export async function clearExternalActionSemanticIndex(
   businessProfileId: number,
 ): Promise<void> {
   await prisma.$executeRaw`
-    UPDATE public."ExternalDataSource"
+    UPDATE public."AgentActionSource"
     SET
       "routingEmbedding" = NULL,
       "routingTextHash" = NULL,
@@ -188,7 +188,7 @@ export async function clearExternalActionSemanticIndex(
   `;
 }
 
-export async function findSemanticallyEligibleExternalDataSources<
+export async function findSemanticallyEligibleAgentActionSources<
   T extends ExternalActionSemanticSource,
 >(params: {
   businessProfileId: number;
@@ -209,11 +209,11 @@ export async function findSemanticallyEligibleExternalDataSources<
   const maxTools =
     params.maxTools ??
     env.EXTERNAL_ACTION_MAX_SEMANTIC_TOOLS ??
-    EXTERNAL_DATA_SOURCE_LIMITS.maxSemanticTools;
+    AGENT_ACTION_SOURCE_LIMITS.maxSemanticTools;
   const minSimilarity =
     params.minSimilarity ??
     env.EXTERNAL_ACTION_MIN_SEMANTIC_SIMILARITY ??
-    EXTERNAL_DATA_SOURCE_LIMITS.minSemanticSimilarity;
+    AGENT_ACTION_SOURCE_LIMITS.minSemanticSimilarity;
   const sourceById = new Map(activeSources.map((source) => [source.id, source]));
   const sourceIds = activeSources.map((source) => source.id);
   const vector = vectorLiteral(params.queryEmbedding);
@@ -222,7 +222,7 @@ export async function findSemanticallyEligibleExternalDataSources<
     SELECT
       "id",
       1 - ("routingEmbedding" <=> ${vector}::vector) AS similarity
-    FROM public."ExternalDataSource"
+    FROM public."AgentActionSource"
     WHERE "businessProfileId" = ${params.businessProfileId}
       AND "trigger" = 'CHAT_REQUESTED'
       AND "isActive" = true

@@ -323,4 +323,7 @@ export interface AiRoutingDecision {
   usedChunkTypes?: string[];
   missingInfo?: string | null;
   attachment?: { assetName: string; caption?: string | null } | null;
+  queuedActionRunId?: number;
+  queuedActionSourceId?: number;
+  agentTurnStatus?: "WAITING_ACTION" | "COMPLETED" | "FAILED";
 }

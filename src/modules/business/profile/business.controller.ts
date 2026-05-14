@@ -51,6 +51,7 @@ interface BusinessProfileBody {
   customerDetailsInstructions?: string;
   customerMemoryFields?: CustomerMemoryFieldInput[];
   aiBehaviorInstructions?: string;
+  handoffEnabled?: boolean;
   followUpEnabled?: boolean;
   followUpMode?: "AUTO" | "CUSTOM";
   followUpDelays?: { amount: number; unit: "MINUTES" | "HOURS" | "DAYS" }[];
@@ -118,6 +119,7 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
     customerDetailsInstructions,
     customerMemoryFields,
     aiBehaviorInstructions,
+    handoffEnabled,
     followUpEnabled,
     followUpMode,
     followUpDelays,
@@ -152,6 +154,7 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
       customerDetailsInstructions,
       customerMemoryFields: normalizeCustomerMemoryFields(customerMemoryFields),
       aiBehaviorInstructions,
+      handoffEnabled,
       followUpEnabled,
       followUpMode,
       followUpDelays,
@@ -266,6 +269,7 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
     customerDetailsInstructions,
     customerMemoryFields,
     aiBehaviorInstructions,
+    handoffEnabled,
     followUpEnabled,
     followUpMode,
     followUpDelays,
@@ -310,6 +314,7 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
           ? normalizeCustomerMemoryFields(customerMemoryFields)
           : undefined,
       aiBehaviorInstructions,
+      handoffEnabled,
       followUpEnabled,
       followUpMode,
       followUpDelays,
@@ -449,7 +454,7 @@ export const previewBusinessProfileChat = async (req: Request, res: Response) =>
   const businessProfile = await prisma.businessProfile.findFirst({
     where: { id: profileId, userId },
     include: {
-      externalDataSources: { where: { isActive: true } },
+      agentActionSources: { where: { isActive: true } },
     },
   });
 
@@ -471,7 +476,6 @@ export const previewBusinessProfileChat = async (req: Request, res: Response) =>
         messageText: message,
         historyTurns,
         channel: "web",
-        responseMode: "AUTO",
       });
 
       let attachment = null;
@@ -522,7 +526,6 @@ export const previewBusinessProfileChat = async (req: Request, res: Response) =>
     messageText: message,
     historyTurns,
     channel: "web",
-    responseMode: "AUTO",
   });
 
   let attachment = null;

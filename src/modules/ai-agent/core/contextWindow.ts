@@ -6,7 +6,8 @@
  *
  * Strategy: Walk backwards through history (most recent first),
  * accumulating turns until the token budget is exhausted. Always
- * keep at least the last 2 turns to maintain coherence.
+ * keep at least the last 2 turns to maintain coherence, and preserve
+ * Gemini's function-call adjacency rules.
  */
 import type { GeminiContent } from "./agentState";
 
@@ -32,9 +33,62 @@ function estimateTurnTokens(turn: GeminiContent): number {
   }, 0);
 }
 
+function hasFunctionCall(turn: GeminiContent): boolean {
+  return turn.parts.some((part) => Boolean(part.functionCall));
+}
+
+function hasFunctionResponse(turn: GeminiContent): boolean {
+  return turn.parts.some((part) => Boolean(part.functionResponse));
+}
+
+function addMandatoryIndex(
+  indexes: Set<number>,
+  queue: number[],
+  index: number,
+  historyLength: number,
+) {
+  if (index < 0 || index >= historyLength || indexes.has(index)) return;
+  indexes.add(index);
+  queue.push(index);
+}
+
+function collectMandatoryTurnIndexes(history: GeminiContent[]): Set<number> {
+  const indexes = new Set<number>();
+  const queue: number[] = [];
+
+  for (
+    let i = Math.max(0, history.length - MIN_TURNS_TO_KEEP);
+    i < history.length;
+    i++
+  ) {
+    addMandatoryIndex(indexes, queue, i, history.length);
+  }
+
+  while (queue.length > 0) {
+    const index = queue.pop()!;
+    const turn = history[index];
+
+    if (hasFunctionResponse(turn)) {
+      // A function response must remain attached to its model function call,
+      // and that model function call must remain attached to the preceding
+      // user/function-response turn accepted by Gemini.
+      addMandatoryIndex(indexes, queue, index - 1, history.length);
+      addMandatoryIndex(indexes, queue, index - 2, history.length);
+      continue;
+    }
+
+    if (hasFunctionCall(turn)) {
+      addMandatoryIndex(indexes, queue, index - 1, history.length);
+    }
+  }
+
+  return indexes;
+}
+
 /**
  * Trims history to fit within the token budget.
- * Always preserves the most recent MIN_TURNS_TO_KEEP turns.
+ * Always preserves the most recent MIN_TURNS_TO_KEEP turns and any adjacent
+ * turns required to keep function-call/function-response history valid.
  *
  * @param history     Full conversation history
  * @param systemTokens  Token count of the system instruction (to deduct from budget)
@@ -49,18 +103,18 @@ export function windowContents(
   const budget = MAX_HISTORY_TOKENS - systemTokens;
   const windowed: GeminiContent[] = [];
   let remaining = budget;
+  const mandatoryIndexes = collectMandatoryTurnIndexes(history);
+  const earliestMandatory = Math.min(...mandatoryIndexes);
 
   // Walk backwards: most recent turns have highest priority
   for (let i = history.length - 1; i >= 0; i--) {
     const turnCost = estimateTurnTokens(history[i]);
-
-    // Always keep the last MIN_TURNS_TO_KEEP turns regardless of budget
-    const isMandatory = i >= history.length - MIN_TURNS_TO_KEEP;
+    const isMandatory = mandatoryIndexes.has(i);
 
     if (isMandatory || remaining - turnCost >= 0) {
       remaining -= turnCost;
       windowed.unshift(history[i]);
-    } else {
+    } else if (i < earliestMandatory) {
       // Budget exhausted — stop here
       break;
     }

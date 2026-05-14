@@ -1,12 +1,12 @@
 import {
   assertExternalArgsAllowedByPolicy,
   filterExternalArgsBySchema,
-} from "@modules/integrations/external/externalData.service";
-import { findSemanticallyEligibleExternalDataSources } from "@modules/integrations/external/externalActionSemanticIndex.service";
+} from "@modules/integrations/external/agentActionExecutor.service";
+import { findSemanticallyEligibleAgentActionSources } from "@modules/integrations/external/agentActionSemanticIndex.service";
 import { logger } from "@utils/logger";
 import type { BusinessProfileForChat } from "./businessChatReply.service";
 
-type ExternalDataSource = BusinessProfileForChat["externalDataSources"][number];
+type AgentActionSource = BusinessProfileForChat["agentActionSources"][number];
 type ExternalActionValidationSource = {
   id: number;
   businessProfileId?: number | null;
@@ -33,19 +33,108 @@ function isAiWritableFieldRule(value: unknown): boolean {
   return source === "USER_PROVIDED" || source === "AI_DERIVED";
 }
 
-function collectRequiredAiWritableFields(schema: unknown): string[] {
+function collectRequiredAiWritableFields(
+  schema: unknown,
+  prefix = "",
+): string[] {
   if (!isRecord(schema)) return [];
 
-  return Object.entries(schema)
-    .filter(([, rule]) => {
-      if (!isRecord(rule) || !isAiWritableFieldRule(rule)) return false;
-      return rule.required === true;
-    })
-    .map(([key]) => key);
+  const fields: string[] = [];
+  for (const [key, rule] of Object.entries(schema)) {
+    if (!isRecord(rule) || !isAiWritableFieldRule(rule)) continue;
+    const path = prefix ? `${prefix}.${key}` : key;
+    if (rule.required === true) {
+      fields.push(path);
+    }
+
+    if (
+      String(rule.type || "").toUpperCase() === "OBJECT" &&
+      isRecord(rule.properties)
+    ) {
+      fields.push(...collectRequiredAiWritableFields(rule.properties, path));
+    }
+  }
+
+  return fields;
 }
 
 function isMissingParamValue(value: unknown): boolean {
   return value === undefined || value === null || value === "";
+}
+
+function normalizeActionRoutingText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[\u064b-\u065f\u0670]/g, "")
+    .replace(/[إأآ]/g, "ا")
+    .replace(/ى/g, "ي")
+    .replace(/ة/g, "ه")
+    .replace(/[^\p{L}\p{N}\s]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getByPath(source: unknown, path: string): unknown {
+  if (!path) return source;
+  return path.split(".").reduce<unknown>((current, part) => {
+    if (!isRecord(current)) return undefined;
+    return current[part];
+  }, source);
+}
+
+const NON_ACTION_OPENING_PHRASES = new Set([
+  "السلام عليكم",
+  "السلام عليكم ورحمه الله وبركاته",
+  "وعليكم السلام",
+  "اهلا",
+  "اهلا وسهلا",
+  "اهلا بيكم",
+  "مرحبا",
+  "هلا",
+  "هاي",
+  "صباح الخير",
+  "مساء الخير",
+  "حد هنا",
+  "في حد هنا",
+  "هل يوجد احد",
+  "hello",
+  "hi",
+  "hey",
+  "good morning",
+  "good evening",
+]);
+
+const NON_ACTION_OPENING_TOKENS = new Set([
+  "السلام",
+  "عليكم",
+  "ورحمه",
+  "الله",
+  "وبركاته",
+  "وعليكم",
+  "اهلا",
+  "وسهلا",
+  "مرحبا",
+  "هلا",
+  "هاي",
+  "صباح",
+  "مساء",
+  "الخير",
+  "hello",
+  "hi",
+  "hey",
+]);
+
+function isClearlyNonActionOpening(message: string): boolean {
+  const normalized = normalizeActionRoutingText(message);
+  if (!normalized) return true;
+  if (NON_ACTION_OPENING_PHRASES.has(normalized)) return true;
+
+  const tokens = normalized.split(" ").filter(Boolean);
+  return (
+    tokens.length > 0 &&
+    tokens.length <= 6 &&
+    tokens.every((token) => NON_ACTION_OPENING_TOKENS.has(token))
+  );
 }
 
 export async function validateChatRequestedExternalAction(params: {
@@ -74,7 +163,7 @@ export async function validateChatRequestedExternalAction(params: {
   );
   const missingRequired = collectRequiredAiWritableFields(
     source.expectedParamsSchema,
-  ).filter((field) => isMissingParamValue(filteredArgs[field]));
+  ).filter((field) => isMissingParamValue(getByPath(filteredArgs, field)));
 
   if (missingRequired.length > 0) {
     return {
@@ -106,8 +195,8 @@ export async function validateChatRequestedExternalAction(params: {
   };
 }
 
-export async function filterEligibleExternalDataSources(
-  sources: ExternalDataSource[],
+export async function filterEligibleAgentActionSources(
+  sources: AgentActionSource[],
   latestUserMessage: string,
   options?: {
     businessProfileId?: number;
@@ -115,8 +204,15 @@ export async function filterEligibleExternalDataSources(
     maxTools?: number;
     minSimilarity?: number;
   },
-): Promise<ExternalDataSource[]> {
+): Promise<AgentActionSource[]> {
   if (!latestUserMessage.trim()) return [];
+  if (isClearlyNonActionOpening(latestUserMessage)) {
+    logger.info("integration_action.semantic_router.skipped", {
+      reason: "non_action_opening",
+      businessProfileId: options?.businessProfileId,
+    });
+    return [];
+  }
   if (!options?.businessProfileId || !options.queryEmbedding?.length) {
     logger.info("integration_action.semantic_router.skipped", {
       reason: "missing_query_embedding",
@@ -125,7 +221,7 @@ export async function filterEligibleExternalDataSources(
     return [];
   }
 
-  return findSemanticallyEligibleExternalDataSources({
+  return findSemanticallyEligibleAgentActionSources({
     businessProfileId: options.businessProfileId,
     sources,
     queryEmbedding: options.queryEmbedding,

@@ -205,6 +205,14 @@ describe("toCanonicalVerificationRead", () => {
         { latestUserText: "رقمي +20 100 111 2222" },
       ),
     ).toEqual({ ok: true });
+
+    expect(
+      assertExternalArgsAllowedByPolicy(
+        schema,
+        { propertyName: "201202840018" },
+        { latestUserText: "هشام منصور", customerPhone: "201202840018" },
+      ),
+    ).toEqual({ ok: true });
   });
 });
 

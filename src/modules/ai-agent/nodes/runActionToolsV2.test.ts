@@ -123,6 +123,13 @@ describe("runActionToolsV2Node", () => {
     expect(result.decision).toBeNull();
     expect(result.tools).toBeUndefined();
     expect(result.functionCalls).toEqual([]);
+    expect(result.replyPolicy).toMatchObject({
+      allowedActions: ["REPLY_AUTO"],
+      allowedReplyTypes: ["ASK_FOR_CORRECTION"],
+      requiresCustomerCorrection: true,
+      correctionFields: [{ field: "name", reason: "unprovided_parameter:name" }],
+    });
+    expect(result.systemInstruction).toContain("<reply_policy>");
     expect(result.contents).toEqual([
       ...baseState().contents,
       {

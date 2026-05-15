@@ -319,6 +319,7 @@ export function assertExternalArgsAllowedByPolicy(
     for (const value of flattenScalarValues(args[field])) {
       const normalized = value.toLowerCase().trim();
       if (normalized.length < 2) continue;
+      if (valueAppearsInChatContext(normalized, context)) continue;
       if (!valueAppearsInUserText(normalized, userText)) {
         return {
           ok: false,
@@ -330,6 +331,22 @@ export function assertExternalArgsAllowedByPolicy(
   }
 
   return { ok: true };
+}
+
+function valueAppearsInChatContext(value: string, context: ExternalToolContext): boolean {
+  const contextValues = [context.customerPhone, context.conversationId].flatMap(
+    flattenScalarValues,
+  );
+  return contextValues.some((item) => {
+    const normalized = item.toLowerCase().trim();
+    if (!normalized) return false;
+    if (normalized.includes(value)) return true;
+    const compactValue = compactForMatching(value);
+    return (
+      compactValue.length >= 2 &&
+      compactForMatching(normalized).includes(compactValue)
+    );
+  });
 }
 
 function valueAppearsInUserText(value: string, userText: string): boolean {

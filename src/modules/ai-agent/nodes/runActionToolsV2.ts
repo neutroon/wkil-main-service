@@ -14,6 +14,10 @@ import {
 import { validateChatRequestedExternalAction } from "@modules/ai-agent/chat/externalToolEligibility";
 import { updateAgentTurnStatus } from "@modules/ai-agent/core/agentTurn.service";
 import type { AiRoutingDecision } from "@modules/ai-agent/core/aiEngine.utils";
+import {
+  replyPolicyPromptBlock,
+  type ReplyPolicy,
+} from "@modules/ai-agent/core/replyPolicy";
 
 export async function runActionToolsV2Node(
   state: AgentStateType,
@@ -67,6 +71,7 @@ export async function runActionToolsV2Node(
   });
 
   if (!validation.shouldQueue) {
+    const replyPolicy = buildRejectedToolReplyPolicy(validation.reasoning);
     logger.warn("ai.v2.tool.policy_rejected", {
       businessProfileId: state.businessProfileId,
       conversationId: state.conversationId,
@@ -88,6 +93,8 @@ export async function runActionToolsV2Node(
       }),
       functionCalls: [],
       tools: undefined,
+      replyPolicy,
+      systemInstruction: `${state.systemInstruction}\n\n${replyPolicyPromptBlock(replyPolicy)}`,
       // This was rejected by deterministic policy before any external request ran.
       // Feed the function response back to Gemini so it can ask one clarification,
       // but do not run the post-tool guardrail/recovery layer on top of it.
@@ -172,6 +179,29 @@ export async function runActionToolsV2Node(
       queuedActionSourceId: sourceId,
       agentTurnStatus: "WAITING_ACTION",
     },
+  };
+}
+
+function buildRejectedToolReplyPolicy(reason: string): ReplyPolicy {
+  const field = reason.match(/unprovided_parameter:([A-Za-z0-9_.-]+)/)?.[1];
+  return {
+    active: true,
+    reason: "tool_policy_rejected",
+    allowedActions: ["REPLY_AUTO"],
+    allowedReplyTypes: ["ASK_FOR_CORRECTION"],
+    canConfirmActionSuccess: false,
+    canHandoff: false,
+    requiresCustomerCorrection: true,
+    failureClass: "POLICY_REJECTED",
+    customerSafeError: field
+      ? `Missing required field: ${field}`
+      : "A required action parameter was not provided by an allowed source.",
+    correctionFields: [
+      {
+        field: field || "required_details",
+        reason,
+      },
+    ],
   };
 }
 

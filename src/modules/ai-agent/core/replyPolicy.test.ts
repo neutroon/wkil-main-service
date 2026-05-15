@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildCompletedActionReplyPolicy,
+  replyPolicyPromptBlock,
   validateDecisionAgainstReplyPolicy,
 } from "./replyPolicy";
 
@@ -57,6 +58,22 @@ describe("reply policy", () => {
         },
       }),
     ).toMatchObject({ ok: false });
+  });
+
+  it("tells the model to follow the provider correction detail without contradicting it", () => {
+    const policy = buildCompletedActionReplyPolicy({
+      handoffEnabled: true,
+      envelope: {
+        success: false,
+        verification: "failed",
+        reason: "action_validation_failed",
+        error: "Invalid phone number. Please include country code.",
+      },
+    });
+
+    expect(replyPolicyPromptBlock(policy!)).toContain(
+      "Use customerSafeError and correctionFields as the source of truth",
+    );
   });
 
   it("allows verified mutations to confirm success", () => {

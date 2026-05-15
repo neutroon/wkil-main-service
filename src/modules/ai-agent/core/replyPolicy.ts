@@ -102,7 +102,7 @@ ${JSON.stringify(policy, null, 2)}
 Rules:
 1. Set replyType to one of allowedReplyTypes.
 2. Set action to one of allowedActions.
-3. If requiresCustomerCorrection is true, ask exactly one concise question for the corrected field.
+3. If requiresCustomerCorrection is true, ask exactly one concise question for the corrected field. Use customerSafeError and correctionFields as the source of truth, and do not ask for a different format than the error describes.
 4. If canConfirmActionSuccess is false, do not confirm that the external action succeeded.
 5. If canHandoff is false, do not transfer to a human unless the latest customer message explicitly asks for a human or shows anger.
 </reply_policy>`;

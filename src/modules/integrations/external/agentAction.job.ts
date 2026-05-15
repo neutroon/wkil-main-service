@@ -110,6 +110,22 @@ export async function processIntegrationActionJob(
     return;
   }
 
+  const staleCustomerMessage = await findNewerCustomerMessageAfterActionStart(job);
+  if (staleCustomerMessage) {
+    await markIntegrationActionRunSkipped({
+      id: job.actionRunId,
+      reason: "stale_customer_message",
+    });
+    logger.info("integration_action.job.stale_before_execution_skipped", {
+      businessProfileId: job.businessProfileId,
+      conversationId: job.conversationId,
+      actionRunId: job.actionRunId,
+      newerMessageId: staleCustomerMessage.id,
+      sourceId: job.sourceId,
+    });
+    return;
+  }
+
   const actionValidation = await validateChatRequestedExternalAction({
     source,
     latestUserMessage: job.latestUserText || "",
@@ -171,6 +187,24 @@ export async function processIntegrationActionJob(
       reason: error?.message || "integration_action_failed",
     });
     throw error;
+  }
+
+  const staleAfterExecution = await findNewerCustomerMessageAfterActionStart(job);
+  if (staleAfterExecution) {
+    await markActionRunFromEnvelope({
+      actionRunId: job.actionRunId,
+      envelope,
+    });
+    logger.info("integration_action.job.stale_result_reply_suppressed", {
+      businessProfileId: job.businessProfileId,
+      conversationId: job.conversationId,
+      actionRunId: job.actionRunId,
+      newerMessageId: staleAfterExecution.id,
+      sourceId: job.sourceId,
+      verification: envelope.verification,
+      success: envelope.success,
+    });
+    return;
   }
 
   const historyRows = await getConversationHistory(job.conversationId);
@@ -344,6 +378,50 @@ function latestUserMessage(
   historyTurns: { role: "user" | "model"; text: string }[],
 ): string | undefined {
   return [...historyTurns].reverse().find((turn) => turn.role === "user")?.text;
+}
+
+async function findNewerCustomerMessageAfterActionStart(
+  job: IntegrationActionJob,
+): Promise<{ id: number; createdAt: Date } | null> {
+  if (!job.conversationId || !job.actionRunId) return null;
+
+  const run = await prisma.integrationActionRun.findUnique({
+    where: { id: job.actionRunId },
+    select: {
+      queuedAt: true,
+      createdAt: true,
+      agentTurn: {
+        select: {
+          inputMessageId: true,
+        },
+      },
+    },
+  });
+
+  if (!run) return null;
+
+  if (run.agentTurn?.inputMessageId) {
+    return prisma.conversationMessage.findFirst({
+      where: {
+        conversationId: job.conversationId,
+        role: "user",
+        id: { gt: run.agentTurn.inputMessageId },
+      },
+      orderBy: { id: "asc" },
+      select: { id: true, createdAt: true },
+    });
+  }
+
+  const referenceDate = run.queuedAt ?? run.createdAt;
+  return prisma.conversationMessage.findFirst({
+    where: {
+      conversationId: job.conversationId,
+      role: "user",
+      createdAt: { gt: referenceDate },
+    },
+    orderBy: { createdAt: "asc" },
+    select: { id: true, createdAt: true },
+  });
 }
 
 async function deliverExternalLookupReply(params: {

@@ -22,8 +22,61 @@ import { windowContents, estimateSystemTokens } from "../core/contextWindow";
 import { recordAiUsage } from "@modules/billing/billing.service";
 import { logger } from "@utils/logger";
 import type { AgentStateType } from "../core/agentState";
+import { buildAiRecoveryDecision } from "./recoveryDecision";
 
 const GEMINI_TIMEOUT_MS = 60_000;
+const BLOCKED_FINISH_REASONS = new Set(["SAFETY", "RECITATION"]);
+
+export function normalizeGeminiFinishReason(reason?: string | null): string | null {
+  return typeof reason === "string" && reason.trim()
+    ? reason.trim().toUpperCase()
+    : null;
+}
+
+export function shouldRejectGeminiOutput(params: {
+  finishReason?: string | null;
+  fullText: string;
+  functionCallCount: number;
+}): { reject: boolean; reason?: string } {
+  const finishReason = normalizeGeminiFinishReason(params.finishReason);
+  if (!finishReason) return { reject: false };
+  if (BLOCKED_FINISH_REASONS.has(finishReason)) {
+    return { reject: true, reason: finishReason };
+  }
+
+  const looksLikePartialStructuredReply =
+    params.functionCallCount === 0 &&
+    params.fullText.trim().startsWith("{") &&
+    !params.fullText.trim().endsWith("}");
+
+  if (finishReason === "MAX_TOKENS" && looksLikePartialStructuredReply) {
+    return { reject: true, reason: "MAX_TOKENS" };
+  }
+
+  return { reject: false };
+}
+
+function buildUpdatedStats(
+  state: AgentStateType,
+  responseResult: any,
+  usedModel: string,
+): typeof state.sessionStats {
+  const meta = responseResult?.usageMetadata;
+  const hasGrounding = !!(responseResult?.candidate as any)?.groundingMetadata?.searchEntryPoint;
+
+  return {
+    ...state.sessionStats,
+    modelName: usedModel,
+    promptTokens:
+      state.sessionStats.promptTokens +
+      (meta?.promptTokenCount ?? meta?.promptTokens ?? 0),
+    completionTokens:
+      state.sessionStats.completionTokens +
+      (meta?.candidatesTokenCount ?? meta?.completionTokens ?? 0),
+    groundingCalls:
+      state.sessionStats.groundingCalls + (hasGrounding ? 1 : 0),
+  };
+}
 
 export async function callGeminiNode(
   state: AgentStateType,
@@ -63,10 +116,16 @@ export async function callGeminiNode(
         let accumulatedParts: any[] = [];
         let usageMetadata: any = null;
         let groundingMetadata: any = null;
+        let finishReason: string | null = null;
 
         for await (const chunk of r) {
+          const candidate = chunk.candidates?.[0];
+          if (candidate?.finishReason) {
+            finishReason = String(candidate.finishReason);
+          }
+
           // 1. Process Parts (Text & Function Calls)
-          const parts = chunk.candidates?.[0]?.content?.parts || [];
+          const parts = candidate?.content?.parts || [];
           for (const part of parts) {
             if (part.text) {
               fullText += part.text;
@@ -83,6 +142,36 @@ export async function callGeminiNode(
         }
 
         // ── Post-Stream Validation ───────────────────────────────────
+        const functionCalls = accumulatedParts
+          .filter((p: any) => p.functionCall)
+          .map((p: any) => p.functionCall);
+        const outputRejection = shouldRejectGeminiOutput({
+          finishReason,
+          fullText,
+          functionCallCount: functionCalls.length,
+        });
+        if (outputRejection.reject) {
+          logger.warn("ai.node.callGemini.provider_output_rejected", {
+            finishReason: outputRejection.reason,
+            businessProfileId: state.businessProfileId,
+            channel: state.channel,
+            textLength: fullText.length,
+            functionCallCount: functionCalls.length,
+          });
+
+          return {
+            fullText: "",
+            usageMetadata,
+            parts: [],
+            candidate: {
+              content: { parts: [] },
+              groundingMetadata,
+            },
+            functionCalls: [],
+            providerRejectedReason: outputRejection.reason,
+          };
+        }
+
         if (accumulatedParts.length === 0) {
           throw new Error("EMPTY_RESPONSE");
         }
@@ -96,9 +185,7 @@ export async function callGeminiNode(
             content: { parts: accumulatedParts },
             groundingMetadata,
           },
-          functionCalls: accumulatedParts
-            .filter((p: any) => p.functionCall)
-            .map((p: any) => p.functionCall),
+          functionCalls,
         };
       },
       "AgentGraph.callGemini",
@@ -145,6 +232,22 @@ export async function callGeminiNode(
     clearTimeout(timeout);
   }
 
+  const updatedStats = buildUpdatedStats(state, responseResult, usedModel);
+  if (responseResult.providerRejectedReason) {
+    return {
+      decision: await buildAiRecoveryDecision(state, {
+        action: "REPLY_AUTO",
+        reasoning: `Gemini output was rejected before parsing because the provider finished with ${responseResult.providerRejectedReason}.`,
+        failureReason: `gemini_output_${String(responseResult.providerRejectedReason).toLowerCase()}`,
+        emergencyFallback: state.policy.fallbackTemplates.unverified,
+        allowHandoffLanguage: false,
+        requiresGrounding: false,
+        missingInfo: null,
+      }),
+      sessionStats: updatedStats,
+    };
+  }
+
   // ── Parse Gemini response structure ────────────────────────────────────────
   const functionCalls = (responseResult.functionCalls || []).map((fc: any) => ({
     id:   fc.id || `${fc.name}_${Date.now()}`,
@@ -153,21 +256,6 @@ export async function callGeminiNode(
   }));
 
   // ── Accumulate token usage (across multi-turn loops) ────────────────────
-  const meta = responseResult?.usageMetadata;
-  const hasGrounding = !!(responseResult.candidate as any)?.groundingMetadata?.searchEntryPoint;
-  const updatedStats: typeof state.sessionStats = {
-    ...state.sessionStats,
-    modelName: usedModel,
-    promptTokens:
-      state.sessionStats.promptTokens +
-      (meta?.promptTokenCount ?? meta?.promptTokens ?? 0),
-    completionTokens:
-      state.sessionStats.completionTokens +
-      (meta?.candidatesTokenCount ?? meta?.completionTokens ?? 0),
-    groundingCalls:
-      state.sessionStats.groundingCalls + (hasGrounding ? 1 : 0),
-  };
-
   logger.info("ai.node.callGemini.success", {
     model: usedModel,
     turnCount: state.turnCount + 1,

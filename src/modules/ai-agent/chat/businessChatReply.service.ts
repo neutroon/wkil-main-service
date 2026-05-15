@@ -479,13 +479,16 @@ async function findPendingMutationCorrectionContext(params: {
     where: {
       businessProfileId: params.businessProfile.id,
       conversationId: params.conversationId,
-      status: "FAILED",
+      OR: [
+        { status: "FAILED" },
+        { status: "SKIPPED", failureReason: "stale_customer_message" },
+      ],
       actionType: "MUTATION",
       workflowId: { not: null },
       parentRunId: { not: null },
       createdAt: { gte: cutoff },
     },
-    orderBy: [{ failedAt: "desc" }, { createdAt: "desc" }],
+    orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
     include: {
       source: true,
       workflow: { include: { mutationSource: true } },

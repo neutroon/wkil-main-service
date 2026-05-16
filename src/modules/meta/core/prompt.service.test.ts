@@ -31,8 +31,29 @@ describe("buildSystemPrompt", () => {
     expect(prompt).not.toContain("If sending a file");
     expect(prompt).toContain("<direct_chat_style>");
     expect(prompt).toContain("Write a concise direct-chat reply from the allowed evidence.");
+    expect(prompt).toContain("rewrite messy retrieved text into a clear, readable customer reply");
     expect(prompt).not.toContain("Channel: Web chat");
     expect(prompt).not.toContain("Customer-facing field: content");
+  });
+
+  it("normalizes messy retrieved context for prompt readability without changing facts", () => {
+    const prompt = buildSystemPrompt({
+      businessProfile: baseProfile,
+      context: [
+        {
+          chunkType: "custom_section",
+          content:
+            "اللايف   كوتشينج\r\n\r\n\r\nالدراسة   أونلاين   ومدتها   6 شهور\nالرابط: https://asu.eertqaa.com",
+        },
+      ],
+      channel: "whatsapp",
+    });
+
+    expect(prompt).toContain("اللايف كوتشينج");
+    expect(prompt).toContain("الدراسة أونلاين ومدتها 6 شهور");
+    expect(prompt).toContain("https://asu.eertqaa.com");
+    expect(prompt).not.toContain("اللايف   كوتشينج");
+    expect(prompt).not.toContain("\r");
   });
 
   it("keeps customer memory out of chat actions and enforces real action parameters", () => {

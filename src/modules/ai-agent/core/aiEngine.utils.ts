@@ -136,10 +136,6 @@ export function evaluateGuardrailsForReply(
 }
 
 /**
- * PRODUCTION-GRADE: Resilient JSON parser for LLM outputs.
- * Handles truncated strings by closing quotes/brackets and falling back to regex extraction.
- */
-/**
  * PRODUCTION-GRADE: Sanitizes LLM output to prevent 'ghost loops' and 'stuttering'.
  * Removes common invisible unicode characters and heals word-level repetitions.
  */
@@ -175,103 +171,164 @@ export function sanitizeAiText(text: string): string {
   return sanitized;
 }
 
-export function repairAndParseAiResponse(text: string): AiRoutingDecision {
-  logger.debug("ai.engine.raw_response_trace", { text });
-  let cleaned = text.trim();
-  let decision: any = null;
+function extractJsonObjectCandidate(text: string): string {
+  const trimmed = text.trim();
+  const firstBrace = trimmed.indexOf("{");
+  if (firstBrace < 0) {
+    throw new Error("AI_RESPONSE_JSON_OBJECT_NOT_FOUND");
+  }
 
-  // 1. Basic JSON Parse
-  try {
-    decision = JSON.parse(cleaned);
-  } catch (e) {
-    // 2. Attempt Repair (Mid-stream truncation)
-    let repaired = cleaned;
-    const doubleQuoteCount = (repaired.match(/"/g) || []).length;
-    if (doubleQuoteCount % 2 !== 0) repaired += '"';
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
 
-    const stack: string[] = [];
-    for (const char of repaired) {
-      if (char === "{") stack.push("}");
-      if (char === "[") stack.push("]");
-      if (char === "}" || char === "]") {
-        if (stack[stack.length - 1] === char) stack.pop();
-      }
+  for (let i = firstBrace; i < trimmed.length; i++) {
+    const char = trimmed[i];
+
+    if (escaped) {
+      escaped = false;
+      continue;
     }
-    while (stack.length > 0) repaired += stack.pop();
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
 
-    try {
-      decision = JSON.parse(repaired);
-    } catch (e2) {
-      // 3. Regex Fallback (Final stand)
-      const action = cleaned.match(/"action"\s*:\s*"([^"]+)"/)?.[1];
-      const reasoning = cleaned.match(/"reasoning"\s*:\s*"([^"]+)"/)?.[1] || "";
-      const content = cleaned.match(/"content"\s*:\s*"([^"]+)"/)?.[1] || "";
-      const publicContent =
-        cleaned.match(/"publicContent"\s*:\s*"([^"]+)"/)?.[1] || "";
-      const privateContent =
-        cleaned.match(/"privateContent"\s*:\s*"([^"]+)"/)?.[1] || "";
-      const intent = cleaned.match(/"intent"\s*:\s*"([^"]+)"/)?.[1];
-      const requiresGroundingRaw = cleaned.match(
-        /"requiresGrounding"\s*:\s*(true|false)/,
-      )?.[1];
-      const groundedRaw = cleaned.match(/"grounded"\s*:\s*(true|false)/)?.[1];
-      const missingInfo =
-        cleaned.match(/"missingInfo"\s*:\s*"([^"]+)"/)?.[1] || null;
-
-      let attachment = null;
-      const attachmentRaw = cleaned.match(/"attachment"\s*:\s*({[^}]+})/)?.[1];
-      if (attachmentRaw) {
-        try {
-          attachment = JSON.parse(attachmentRaw);
-        } catch (e) {}
+    if (char === "{") depth++;
+    if (char === "}") {
+      depth--;
+      if (depth === 0) {
+        return trimmed.slice(firstBrace, i + 1).trim();
       }
-
-      decision = {
-        action: action || "REPLY_AUTO",
-        replyType: "NORMAL_REPLY",
-        intent: intent || "NONE",
-        reasoning,
-        content,
-        publicContent,
-        privateContent,
-        requiresGrounding: requiresGroundingRaw
-          ? requiresGroundingRaw === "true"
-          : true,
-        grounded: groundedRaw ? groundedRaw === "true" : true,
-        usedChunkTypes: [],
-        missingInfo,
-        attachment,
-      };
     }
   }
 
-  // 4. Normalization & Sanitization
+  throw new Error("AI_RESPONSE_JSON_OBJECT_INCOMPLETE");
+}
+
+const VALID_ACTIONS = new Set([
+  "REPLY_AUTO",
+  "HANDOFF_TO_HUMAN",
+  "RESOLVE_CONVERSATION",
+]);
+
+const VALID_REPLY_TYPES = new Set([
+  "NORMAL_REPLY",
+  "ASK_FOR_CORRECTION",
+  "CONFIRM_ACTION_SUCCESS",
+  "SAFE_ACTION_FAILURE",
+  "HANDOFF",
+  "RESOLVE",
+]);
+
+const VALID_INTENTS = new Set(["SALES_DM", "GREET_ONLY", "IGNORE", "NONE"]);
+
+function assertStringField(
+  value: Record<string, unknown>,
+  field: string,
+): string {
+  const fieldValue = value[field];
+  if (typeof fieldValue !== "string") {
+    throw new Error(`AI_RESPONSE_SCHEMA_INVALID:${field}`);
+  }
+  return fieldValue;
+}
+
+function assertBooleanField(
+  value: Record<string, unknown>,
+  field: string,
+): boolean {
+  const fieldValue = value[field];
+  if (typeof fieldValue !== "boolean") {
+    throw new Error(`AI_RESPONSE_SCHEMA_INVALID:${field}`);
+  }
+  return fieldValue;
+}
+
+function normalizeNullableString(value: unknown): string | null {
+  return typeof value === "string" ? sanitizeAiText(value) : null;
+}
+
+function normalizeAttachment(value: unknown): AiRoutingDecision["attachment"] {
+  if (value === undefined || value === null) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("AI_RESPONSE_SCHEMA_INVALID:attachment");
+  }
+
+  const attachment = value as Record<string, unknown>;
+  if (typeof attachment.assetName !== "string" || !attachment.assetName.trim()) {
+    throw new Error("AI_RESPONSE_SCHEMA_INVALID:attachment.assetName");
+  }
+  if (
+    attachment.caption !== undefined &&
+    attachment.caption !== null &&
+    typeof attachment.caption !== "string"
+  ) {
+    throw new Error("AI_RESPONSE_SCHEMA_INVALID:attachment.caption");
+  }
+
+  return {
+    assetName: attachment.assetName,
+    caption:
+      typeof attachment.caption === "string" ? attachment.caption : null,
+  };
+}
+
+function normalizeParsedDecision(value: unknown): AiRoutingDecision {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("AI_RESPONSE_SCHEMA_INVALID:root");
+  }
+
+  const decision = value as Record<string, unknown>;
+  const action = assertStringField(decision, "action");
+  if (!VALID_ACTIONS.has(action)) {
+    throw new Error("AI_RESPONSE_SCHEMA_INVALID:action");
+  }
+
+  const replyType = assertStringField(decision, "replyType");
+  if (!VALID_REPLY_TYPES.has(replyType)) {
+    throw new Error("AI_RESPONSE_SCHEMA_INVALID:replyType");
+  }
+
+  const intent =
+    typeof decision.intent === "string" && VALID_INTENTS.has(decision.intent)
+      ? decision.intent
+      : "NONE";
+
+  const usedChunkTypes = decision.usedChunkTypes;
+  if (!Array.isArray(usedChunkTypes)) {
+    throw new Error("AI_RESPONSE_SCHEMA_INVALID:usedChunkTypes");
+  }
+
   const finalDecision: AiRoutingDecision = {
-    action: decision.action || "REPLY_AUTO",
-    replyType: decision.replyType || "NORMAL_REPLY",
-    intent: decision.intent || "NONE",
-    reasoning: decision.reasoning || "",
-    content: sanitizeAiText(decision.content || ""),
-    publicContent: sanitizeAiText(decision.publicContent || ""),
-    privateContent: sanitizeAiText(decision.privateContent || ""),
-    requiresGrounding: decision.requiresGrounding === true,
-    grounded: decision.grounded !== false,
-    usedChunkTypes: Array.isArray(decision.usedChunkTypes)
-      ? decision.usedChunkTypes.filter((item: unknown) => typeof item === "string")
-      : [],
-    missingInfo:
-      typeof decision.missingInfo === "string"
-        ? sanitizeAiText(decision.missingInfo)
-        : null,
-    attachment: decision.attachment,
+    action: action as AiRoutingDecision["action"],
+    replyType: replyType as AiRoutingDecision["replyType"],
+    intent: intent as AiRoutingDecision["intent"],
+    reasoning: sanitizeAiText(assertStringField(decision, "reasoning")),
+    content: sanitizeAiText(
+      typeof decision.content === "string" ? decision.content : "",
+    ),
+    publicContent: sanitizeAiText(
+      typeof decision.publicContent === "string" ? decision.publicContent : "",
+    ),
+    privateContent: sanitizeAiText(
+      typeof decision.privateContent === "string" ? decision.privateContent : "",
+    ),
+    requiresGrounding: assertBooleanField(decision, "requiresGrounding"),
+    grounded: assertBooleanField(decision, "grounded"),
+    usedChunkTypes: usedChunkTypes.filter(
+      (item): item is string => typeof item === "string",
+    ),
+    missingInfo: normalizeNullableString(decision.missingInfo),
+    handoffCategory: normalizeNullableString(decision.handoffCategory),
+    attachment: normalizeAttachment(decision.attachment),
   };
 
-  // 5. SALES_DM Anomaly Detector (Monitoring Only)
-  // The prompt mandates the AI MUST fill privateContent for SALES_DM.
-  // If it arrives empty here, log a warning for monitoring — do NOT inject content.
-  // Reason: any auto-injected text risks wrong language, wrong tone, or semantic nonsense
-  // (e.g. mirroring "I sent you a DM!" as the DM itself). The delivery gate in
-  // metaProcessor (mainContent.length > 0) will cleanly drop the empty private slot.
   if (finalDecision.intent === "SALES_DM" && !finalDecision.privateContent) {
     logger.warn("ai.engine.sales_dm_missing_private_content", {
       reasoning: finalDecision.reasoning,
@@ -280,6 +337,21 @@ export function repairAndParseAiResponse(text: string): AiRoutingDecision {
   }
 
   return finalDecision;
+}
+
+export function repairAndParseAiResponse(text: string): AiRoutingDecision {
+  logger.debug("ai.engine.raw_response_trace", { text });
+  const cleaned = extractJsonObjectCandidate(text);
+
+  try {
+    return normalizeParsedDecision(JSON.parse(cleaned));
+  } catch (error: any) {
+    logger.warn("ai.engine.structured_response_rejected", {
+      error: error?.message || String(error),
+      preview: cleaned.slice(0, 240),
+    });
+    throw error;
+  }
 }
 
 export function hasExcessiveRepetition(text: string): boolean {

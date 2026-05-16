@@ -7,12 +7,23 @@ type BusinessProfileWithFaqs = Prisma.BusinessProfileGetPayload<{
 const MAX_CHUNK_CHARS = 1200;
 const CHUNK_OVERLAP_CHARS = 150;
 
+function normalizeKnowledgeText(text: string): string {
+  return String(text ?? "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/\u00a0/g, " ")
+    .split("\n")
+    .map((line) => line.replace(/[ \t]{2,}/g, " ").trim())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function splitLongText(
   text: string,
   maxChars = MAX_CHUNK_CHARS,
   overlapChars = CHUNK_OVERLAP_CHARS,
 ): string[] {
-  const normalized = text.replace(/\r\n/g, "\n").trim();
+  const normalized = normalizeKnowledgeText(text);
   if (!normalized) return [];
   if (normalized.length <= maxChars) return [normalized];
 

@@ -301,6 +301,8 @@ ${numbered([
 function sectionChannelBehavior(ctx: PromptContext): string {
   return `<${ctx.channelProfile.styleTag}>
 ${ctx.channelProfile.replyStyleRules.map((rule) => `- ${rule}`).join("\n")}
+- When using <business_context>, rewrite messy retrieved text into a clear, readable customer reply instead of pasting raw chunks.
+- You may improve spacing, punctuation, and line breaks, but preserve exact factual values such as names, prices, dates, durations, phone numbers, URLs, and certificate titles.
 - Use structured plain text only. No markdown tables, code blocks, headings with #, decorative separators, hashtags, or tag clouds.
 - Use emojis sparingly and only when they fit the configured voice.
 </${ctx.channelProfile.styleTag}>`;
@@ -388,9 +390,20 @@ No specific background information was found. Do not invent business facts. ${
 
   return `<business_context>
 ${ctx.context
-  .map((c) => `[${escapeXml(c.chunkType).toUpperCase()}]: ${escapeXml(c.content)}`)
+  .map((c) => `[${escapeXml(c.chunkType).toUpperCase()}]: ${escapeXml(normalizeContextForPrompt(c.content))}`)
   .join("\n\n")}
 </business_context>`;
+}
+
+function normalizeContextForPrompt(content: string): string {
+  return String(content ?? "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/\u00a0/g, " ")
+    .split("\n")
+    .map((line) => line.replace(/[ \t]{2,}/g, " ").trim())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function sectionOutputContract(ctx: PromptContext): string {

@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { parseDecisionNode } from "./parseDecision";
+import { repairStructuredDecisionOutput } from "./structuredOutputRepair";
 
 vi.mock("@utils/logger", () => ({
   logger: {
@@ -8,6 +9,10 @@ vi.mock("@utils/logger", () => ({
     warn: vi.fn(),
     error: vi.fn(),
   },
+}));
+
+vi.mock("./structuredOutputRepair", () => ({
+  repairStructuredDecisionOutput: vi.fn(),
 }));
 
 const baseState = (overrides: Record<string, unknown> = {}) =>
@@ -49,6 +54,10 @@ const baseState = (overrides: Record<string, unknown> = {}) =>
   }) as any;
 
 describe("parseDecisionNode failed action safety", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("blocks unsafe confirmation or handoff after a correctable failed action", async () => {
     const result = await parseDecisionNode(
       baseState({
@@ -80,5 +89,64 @@ describe("parseDecisionNode failed action safety", () => {
         }),
       ]),
     );
+  });
+
+  it("uses one structured-output repair attempt before customer recovery", async () => {
+    vi.mocked(repairStructuredDecisionOutput).mockResolvedValueOnce({
+      decision: {
+        action: "REPLY_AUTO",
+        replyType: "NORMAL_REPLY",
+        reasoning: "Recovered schema-valid routing decision.",
+        content: "أهلاً بحضرتك، أقدر أساعدك؟",
+        requiresGrounding: false,
+        grounded: false,
+        usedChunkTypes: [],
+        missingInfo: null,
+        attachment: null,
+      },
+      sessionStats: {
+        promptTokens: 100,
+        completionTokens: 20,
+        groundingCalls: 0,
+        lastBilledPromptTokens: 0,
+        lastBilledCompletionTokens: 0,
+        lastBilledGrounding: 0,
+        modelName: "gemini-3-flash-preview",
+      },
+    });
+
+    const result = await parseDecisionNode(
+      baseState({
+        contents: [
+          { role: "user", parts: [{ text: "اهلا" }] },
+          {
+            role: "model",
+            parts: [
+              {
+                text: JSON.stringify({
+                  action: "REPLY_AUTO",
+                  reasoning: "Missing replyType should fail strict parsing.",
+                  content: "أهلاً بحضرتك، أقدر أساعدك؟",
+                  requiresGrounding: false,
+                  grounded: false,
+                  usedChunkTypes: [],
+                }),
+              },
+            ],
+          },
+        ],
+      }),
+    );
+
+    expect(repairStructuredDecisionOutput).toHaveBeenCalledTimes(1);
+    expect(result.decision).toMatchObject({
+      action: "REPLY_AUTO",
+      replyType: "NORMAL_REPLY",
+      content: "أهلاً بحضرتك، أقدر أساعدك؟",
+    });
+    expect(result.sessionStats).toMatchObject({
+      promptTokens: 100,
+      completionTokens: 20,
+    });
   });
 });

@@ -53,4 +53,26 @@ describe("chunkBusinessProfile", () => {
     expect(scrapedChunks.length).toBeGreaterThan(1);
     expect(scrapedChunks[0].content).toContain("[SCRAPED_CONTENT 1]");
   });
+
+  it("normalizes spacing in stored knowledge chunks while preserving values", () => {
+    const profile = {
+      ...baseProfile,
+      knowledgeSections: [
+        {
+          title: "Programs",
+          content:
+            "اللايف   كوتشينج\r\n\r\n\r\nالدراسة   أونلاين   ومدتها   6 شهور\nالرابط: https://asu.eertqaa.com",
+        },
+      ],
+    };
+
+    const chunks = chunkBusinessProfile(profile);
+    const knowledge = chunks.find((chunk) => chunk.chunkType === "custom_section");
+
+    expect(knowledge?.content).toContain("اللايف كوتشينج");
+    expect(knowledge?.content).toContain("الدراسة أونلاين ومدتها 6 شهور");
+    expect(knowledge?.content).toContain("https://asu.eertqaa.com");
+    expect(knowledge?.content).not.toContain("اللايف   كوتشينج");
+    expect(knowledge?.content).not.toContain("\r");
+  });
 });

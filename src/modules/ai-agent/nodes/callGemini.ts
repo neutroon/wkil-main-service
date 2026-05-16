@@ -24,10 +24,12 @@ import { logger } from "@utils/logger";
 import type { AgentStateType } from "../core/agentState";
 import { buildAiRecoveryDecision } from "./recoveryDecision";
 
-const GEMINI_TIMEOUT_MS = 60_000;
+const GEMINI_TIMEOUT_MS = 120_000;
 const BLOCKED_FINISH_REASONS = new Set(["SAFETY", "RECITATION"]);
 
-export function normalizeGeminiFinishReason(reason?: string | null): string | null {
+export function normalizeGeminiFinishReason(
+  reason?: string | null,
+): string | null {
   return typeof reason === "string" && reason.trim()
     ? reason.trim().toUpperCase()
     : null;
@@ -62,7 +64,8 @@ function buildUpdatedStats(
   usedModel: string,
 ): typeof state.sessionStats {
   const meta = responseResult?.usageMetadata;
-  const hasGrounding = !!(responseResult?.candidate as any)?.groundingMetadata?.searchEntryPoint;
+  const hasGrounding = !!(responseResult?.candidate as any)?.groundingMetadata
+    ?.searchEntryPoint;
 
   return {
     ...state.sessionStats,
@@ -73,8 +76,7 @@ function buildUpdatedStats(
     completionTokens:
       state.sessionStats.completionTokens +
       (meta?.candidatesTokenCount ?? meta?.completionTokens ?? 0),
-    groundingCalls:
-      state.sessionStats.groundingCalls + (hasGrounding ? 1 : 0),
+    groundingCalls: state.sessionStats.groundingCalls + (hasGrounding ? 1 : 0),
   };
 }
 
@@ -202,8 +204,9 @@ export async function callGeminiNode(
       abortController.signal.aborted ||
       error?.name === "AbortError";
     const isEmpty = error.message === "EMPTY_RESPONSE";
-    const isTransientProviderFailure = isTimeout || isRetryableGeminiError(error);
-    
+    const isTransientProviderFailure =
+      isTimeout || isRetryableGeminiError(error);
+
     logger.error("ai.node.callGemini.failed", {
       isTimeout,
       isEmpty,
@@ -219,9 +222,9 @@ export async function callGeminiNode(
         action: "HANDOFF_TO_HUMAN",
         replyType: "HANDOFF",
         handoffCategory: isTimeout ? "SYSTEM_TIMEOUT" : "SYSTEM_ERROR",
-        reasoning: isTimeout 
+        reasoning: isTimeout
           ? `[v4.3] Gemini timed out (${GEMINI_TIMEOUT_MS}ms)`
-          : isEmpty 
+          : isEmpty
             ? "[v4.3] Gemini returned no candidates (potential safety block across all models)."
             : `[v4.3] Gemini unrecoverable failure: ${error.message}`,
         content: "",
@@ -250,7 +253,7 @@ export async function callGeminiNode(
 
   // ── Parse Gemini response structure ────────────────────────────────────────
   const functionCalls = (responseResult.functionCalls || []).map((fc: any) => ({
-    id:   fc.id || `${fc.name}_${Date.now()}`,
+    id: fc.id || `${fc.name}_${Date.now()}`,
     name: fc.name,
     args: fc.args,
   }));
@@ -298,7 +301,7 @@ export async function callGeminiNode(
     } catch (err: any) {
       logger.error("ai.node.callGemini.billing_failed", {
         error: err.message,
-        businessProfileId: state.businessProfileId
+        businessProfileId: state.businessProfileId,
       });
       // We don't update lastBilled counters here, so the next turn (or recordUsage node) will retry.
     }
@@ -319,7 +322,3 @@ export async function callGeminiNode(
     sessionStats: updatedStats,
   };
 }
-
-
-
-

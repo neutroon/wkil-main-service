@@ -2,12 +2,11 @@
  * Node: parseDecision
  *
  * Parses the raw text from Gemini's latest response into a typed
- * AiRoutingDecision. Calls the existing battle-tested pure functions:
+ * AiRoutingDecision. It keeps parsing strict, then uses one bounded
+ * structured-output repair attempt before falling back to safe recovery.
+ * Calls the existing pure functions:
  * - repairAndParseAiResponse()
  * - sanitizeAiText()
- *
- * These pure functions are NOT replaced — they are kept as-is and simply
- * called from this thin wrapper node.
  */
 import { logger } from "@utils/logger";
 import {
@@ -22,6 +21,7 @@ import {
 } from "./recoveryDecision";
 import { validateDecisionAgainstReplyPolicy } from "../core/replyPolicy";
 import type { AgentStateType } from "../core/agentState";
+import { repairStructuredDecisionOutput } from "./structuredOutputRepair";
 
 function hasUnsupportedChunkClaim(
   usedChunkTypes: string[] | undefined,
@@ -69,7 +69,7 @@ export async function parseDecisionNode(
     .map((p) => p.text!)
     .join("")
     .trim();
-  
+
   logger.debug("ai.node.parseDecision.text_received", {
     length: responseText.length,
     preview: responseText.substring(0, 50) + "..."
@@ -88,8 +88,16 @@ export async function parseDecisionNode(
     };
   }
 
-  // ── Parse using the existing resilient 3-stage parser ────────────────────
+  // ── Parse strictly, then run one bounded structured-output repair if needed.
   let decision;
+  let repairedSessionStats: AgentStateType["sessionStats"] | undefined;
+  const withRepairedStats = (
+    updates: Partial<AgentStateType>,
+  ): Partial<AgentStateType> =>
+    repairedSessionStats
+      ? { ...updates, sessionStats: repairedSessionStats }
+      : updates;
+
   try {
     decision = repairAndParseAiResponse(responseText);
   } catch (parseError: any) {
@@ -97,12 +105,28 @@ export async function parseDecisionNode(
       error: parseError.message,
       businessProfileId: state.businessProfileId,
     });
-    return {
-      decision: await buildSystemRecoveryDecision(state, {
-        reasoning: "AI response parsing failed (potential mid-stream truncation).",
-        failureReason: "ai_response_parse_failed",
-      }),
-    };
+
+    const repaired = await repairStructuredDecisionOutput({
+      state,
+      invalidOutput: responseText,
+      parseError,
+    });
+    if (repaired) {
+      decision = repaired.decision;
+      repairedSessionStats = repaired.sessionStats;
+      state = {
+        ...state,
+        sessionStats: repaired.sessionStats,
+      };
+    } else {
+      return {
+        decision: await buildSystemRecoveryDecision(state, {
+          reasoning:
+            "AI response parsing failed and structured self-repair could not recover a valid routing decision.",
+          failureReason: "ai_response_parse_failed",
+        }),
+      };
+    }
   }
 
   // ── Detect hallucination loops in the final content ───────────────────────
@@ -115,7 +139,7 @@ export async function parseDecisionNode(
         turnCount: state.turnCount,
       });
 
-      return {
+      return withRepairedStats({
         // Request a retry by setting decision to null
         decision: null as any,
         // Inject the correction prompt as a new user turn explicitly
@@ -126,20 +150,20 @@ export async function parseDecisionNode(
             parts: [{ text: "CRITIQUE: You repeated yourself in the last turn. Please provide a fresh, non-repetitive response and ensure you are not stuck in a loop." }]
           }
         ]
-      };
+      });
     }
 
     // Exhausted retries -> Handoff
     logger.warn("ai.node.parseDecision.repetition_exhausted", {
       businessProfileId: state.businessProfileId,
     });
-    return {
+    return withRepairedStats({
       decision: await buildSystemRecoveryDecision(state, {
         reasoning: "AI response contained excessive repetition after multiple correction attempts.",
         failureReason: "ai_loop_detected",
         handoffCategory: "AI_LOOP_DETECTED",
       }),
-    };
+    });
   }
 
   const replyPolicyValidation = validateDecisionAgainstReplyPolicy({
@@ -156,7 +180,7 @@ export async function parseDecisionNode(
         reason: replyPolicyValidation.reason,
       });
 
-      return {
+      return withRepairedStats({
         decision: null as any,
         contents: [
           ...state.contents,
@@ -165,7 +189,7 @@ export async function parseDecisionNode(
             parts: [{ text: replyPolicyCorrectionPrompt(state, replyPolicyValidation.reason) }],
           },
         ],
-      };
+      });
     }
 
     logger.warn("ai.node.parseDecision.reply_policy_exhausted", {
@@ -175,7 +199,7 @@ export async function parseDecisionNode(
       reason: replyPolicyValidation.reason,
     });
 
-    return {
+    return withRepairedStats({
       decision: await buildAiRecoveryDecision(state, {
         action: "REPLY_AUTO",
         reasoning:
@@ -188,7 +212,7 @@ export async function parseDecisionNode(
           state.replyPolicy?.customerSafeError ||
           "The active reply policy could not be satisfied safely.",
       }),
-    };
+    });
   }
 
   const isDirectChannel =
@@ -206,12 +230,12 @@ export async function parseDecisionNode(
       action: decision.action,
     });
 
-    return {
+    return withRepairedStats({
       decision: await buildSystemRecoveryDecision(state, {
         reasoning: "AI response omitted required direct-message content.",
         failureReason: "missing_direct_message_content",
       }),
-    };
+    });
   }
 
   if (
@@ -226,12 +250,12 @@ export async function parseDecisionNode(
       availableChunkTypes: state.availableChunkTypes,
     });
 
-    return {
+    return withRepairedStats({
       decision: await buildMissingKnowledgeDecision(
         state,
         "AI cited unavailable business context chunk types.",
       ),
-    };
+    });
   }
 
   if (
@@ -247,12 +271,12 @@ export async function parseDecisionNode(
       usedChunkTypes: decision.usedChunkTypes,
     });
 
-    return {
+    return withRepairedStats({
       decision: await buildMissingKnowledgeDecision(
         state,
         `Specific evidence was not retrieved for a grounded answer. Context quality: ${state.contextQuality ?? "unknown"}`,
       ),
-    };
+    });
   }
 
   if (
@@ -268,12 +292,12 @@ export async function parseDecisionNode(
       usedChunkTypes: decision.usedChunkTypes,
     });
 
-    return {
+    return withRepairedStats({
       decision: await buildMissingKnowledgeDecision(
         state,
         `AI reported missing evidence: ${decision.missingInfo || "No evidence chunks cited."}`,
       ),
-    };
+    });
   }
 
   logger.info("ai.node.parseDecision.success", {
@@ -285,7 +309,7 @@ export async function parseDecisionNode(
     businessProfileId: state.businessProfileId,
   });
 
-  return { decision };
+  return withRepairedStats({ decision });
 }
 
 

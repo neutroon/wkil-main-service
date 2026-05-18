@@ -303,6 +303,10 @@ function sectionChannelBehavior(ctx: PromptContext): string {
 ${ctx.channelProfile.replyStyleRules.map((rule) => `- ${rule}`).join("\n")}
 - When using <business_context>, rewrite messy retrieved text into a clear, readable customer reply instead of pasting raw chunks.
 - You may improve spacing, punctuation, and line breaks, but preserve exact factual values such as names, prices, dates, durations, phone numbers, URLs, and certificate titles.
+- If the reply is longer than two short sentences, split it into short paragraphs or simple bullet lines.
+- Put each major detail on a new line; do not pack multiple course facts, schedules, certificates, or requirements into one continuous paragraph.
+- When listing program content, certificates, documents, schedules, or steps, use one item per line.
+- Avoid inline lists joined with hyphens inside a paragraph; use readable line breaks instead.
 - Use structured plain text only. No markdown tables, code blocks, headings with #, decorative separators, hashtags, or tag clouds.
 - Use emojis sparingly and only when they fit the configured voice.
 </${ctx.channelProfile.styleTag}>`;
@@ -320,7 +324,7 @@ function sectionCoreRules(ctx: PromptContext): string {
       : "When unsure, ask one focused clarification or say you cannot confirm from the available evidence; do not mention staff follow-up or human transfer.",
     "Use RESOLVE_CONVERSATION only when the customer clearly says thanks, goodbye, or that the issue is complete.",
     "Keep reasoning as one short internal sentence in the same language as the conversation.",
-    "Keep the customer-facing content concise; avoid long explanations unless the customer explicitly asks for full details.",
+    "Keep the customer-facing content concise and visually readable; avoid long explanations unless the customer explicitly asks for full details.",
     "Never expose technical/internal words to the customer.",
     "Keep grounded, requiresGrounding, usedChunkTypes, and missingInfo consistent with the evidence used.",
   ];

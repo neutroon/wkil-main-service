@@ -24,7 +24,7 @@ import { logger } from "@utils/logger";
 import type { AgentStateType } from "../core/agentState";
 import { buildAiRecoveryDecision } from "./recoveryDecision";
 
-const GEMINI_TIMEOUT_MS = 120_000;
+const GEMINI_TIMEOUT_MS = 360_000;
 const BLOCKED_FINISH_REASONS = new Set(["SAFETY", "RECITATION"]);
 
 export function normalizeGeminiFinishReason(

@@ -1,8 +1,19 @@
-import { describe, expect, it, beforeAll } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+
+vi.mock("@utils/logger", () => ({
+  logger: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}));
+
 import {
   DEFAULT_AI_TRUTHFULNESS_POLICY,
   evaluateGuardrailsForReply,
   repairAndParseAiResponse,
+  sanitizeAiText,
 } from "./aiEngine.utils";
 
 beforeAll(() => {
@@ -81,6 +92,12 @@ describe("AI truthfulness guardrails", () => {
 });
 
 describe("AI response parsing", () => {
+  it("preserves intentional line breaks in customer-facing content", () => {
+    expect(
+      sanitizeAiText("عنوان:\r\n  - بند أول  \n\n\n - بند   ثاني"),
+    ).toBe("عنوان:\n- بند أول\n\n- بند ثاني");
+  });
+
   it("repairs accidental leading junk before a valid JSON object", () => {
     const decision = repairAndParseAiResponse(
       `H${JSON.stringify({

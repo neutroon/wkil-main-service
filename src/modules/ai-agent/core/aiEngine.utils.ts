@@ -145,7 +145,12 @@ export function sanitizeAiText(text: string): string {
   // 1. Remove invisible junk (variation selectors, zero-width spaces, etc.)
   let sanitized = text
     .replace(/[\uFE00-\uFE0F\u200B-\u200D\u2060\uFEFF]/g, "")
-    .replace(/\s+/g, " ")
+    .replace(/\r\n?/g, "\n")
+    .replace(/\u00a0/g, " ")
+    .split("\n")
+    .map((line) => line.replace(/[ \t]{2,}/g, " ").trim())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
 
   // 2. HEAL: Word-level Repetition (Stuttering)

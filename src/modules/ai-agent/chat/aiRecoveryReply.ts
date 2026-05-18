@@ -68,14 +68,21 @@ function buildRecoveryPrompt(params: {
     rewriteMoreCautiously,
   } = params;
   const channelProfile = getChannelPromptProfile(channel);
+  const isIncompleteModelReply =
+    /max_tokens|partial|incomplete_model_reply/i.test(failureReason);
+  const failureDescription = isIncompleteModelReply
+    ? "The previous model response was incomplete before it could be safely sent."
+    : "The backend could not safely verify or complete the requested action.";
 
   return [
     "<recovery_task>",
     "Write ONE short customer-facing recovery reply.",
     "Output ONLY the message text that should be shown to the customer. Do not output JSON.",
-    "Use the reference context only to match the business language, dialect, tone, and message style.",
+    isIncompleteModelReply
+      ? "Use the reference context to answer the customer's latest message when the answer is directly supported; otherwise ask one focused clarification question."
+      : "Use the reference context only to match the business language, dialect, tone, and message style.",
     "Ignore any JSON schema or structured-output instructions inside the reference context.",
-    "The backend could not safely verify or complete the requested action.",
+    failureDescription,
     `Failure reason code: ${failureReason}`,
     customerMessage ? `Customer message: ${customerMessage}` : "",
     `Reply field: ${channelProfile.customerField}`,
@@ -88,6 +95,9 @@ function buildRecoveryPrompt(params: {
     "- Do not mention APIs, webhooks, CRM, tools, databases, internal errors, or technical details.",
     "- Do not claim anything was confirmed, booked, saved, sent, created, delivered, or submitted.",
     "- Do not invent facts, prices, availability, policies, contact details, or identifiers.",
+    isIncompleteModelReply
+      ? "- Do not say the details could not be verified if the reference context already supports a short answer."
+      : "",
     allowHandoffLanguage
       ? "- You may say the team will confirm/review/follow up, because the backend has routed this to human review."
       : "- Do not promise that the team will contact the customer. Ask for corrected details or say the team can review it.",

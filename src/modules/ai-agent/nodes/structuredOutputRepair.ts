@@ -13,6 +13,7 @@ import type { AgentStateType, SessionStats } from "../core/agentState";
 
 const STRUCTURED_REPAIR_TIMEOUT_MS = 20_000;
 const MAX_INVALID_OUTPUT_CHARS = 6_000;
+const STRUCTURED_REPAIR_MAX_OUTPUT_TOKENS = 3072;
 
 export type StructuredOutputRepairResult = {
   decision: AiRoutingDecision;
@@ -133,7 +134,7 @@ export async function repairStructuredDecisionOutput(params: {
             abortSignal: abortController.signal,
             httpOptions: { timeout: STRUCTURED_REPAIR_TIMEOUT_MS },
             temperature: 0,
-            maxOutputTokens: 2048,
+            maxOutputTokens: STRUCTURED_REPAIR_MAX_OUTPUT_TOKENS,
             safetySettings: MESSENGER_SAFETY_SETTINGS,
             responseMimeType: "application/json",
             responseSchema: buildAiRoutingSchema(state.channel),

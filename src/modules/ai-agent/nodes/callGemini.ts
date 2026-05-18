@@ -23,8 +23,10 @@ import { recordAiUsage } from "@modules/billing/billing.service";
 import { logger } from "@utils/logger";
 import type { AgentStateType } from "../core/agentState";
 import { buildAiRecoveryDecision } from "./recoveryDecision";
+import { repairStructuredDecisionOutput } from "./structuredOutputRepair";
 
 const GEMINI_TIMEOUT_MS = 360_000;
+const GEMINI_MAX_OUTPUT_TOKENS = 4096;
 const BLOCKED_FINISH_REASONS = new Set(["SAFETY", "RECITATION"]);
 
 export function normalizeGeminiFinishReason(
@@ -105,7 +107,7 @@ export async function callGeminiNode(
             httpOptions: { timeout: GEMINI_TIMEOUT_MS },
             systemInstruction: state.systemInstruction,
             temperature: 0.4,
-            maxOutputTokens: 2048,
+            maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS,
             safetySettings: MESSENGER_SAFETY_SETTINGS,
             tools: state.tools as any,
             responseMimeType: "application/json",
@@ -162,7 +164,7 @@ export async function callGeminiNode(
           });
 
           return {
-            fullText: "",
+            fullText,
             usageMetadata,
             parts: [],
             candidate: {
@@ -237,11 +239,34 @@ export async function callGeminiNode(
 
   const updatedStats = buildUpdatedStats(state, responseResult, usedModel);
   if (responseResult.providerRejectedReason) {
+    const invalidOutput =
+      typeof responseResult.fullText === "string"
+        ? responseResult.fullText.trim()
+        : "";
+
+    if (
+      responseResult.providerRejectedReason === "MAX_TOKENS" &&
+      invalidOutput.startsWith("{")
+    ) {
+      const repaired = await repairStructuredDecisionOutput({
+        state: { ...state, sessionStats: updatedStats },
+        invalidOutput,
+        parseError: new Error("Gemini returned partial JSON before MAX_TOKENS."),
+      });
+
+      if (repaired) {
+        return repaired;
+      }
+    }
+
     return {
       decision: await buildAiRecoveryDecision(state, {
         action: "REPLY_AUTO",
         reasoning: `Gemini output was rejected before parsing because the provider finished with ${responseResult.providerRejectedReason}.`,
-        failureReason: `gemini_output_${String(responseResult.providerRejectedReason).toLowerCase()}`,
+        failureReason:
+          responseResult.providerRejectedReason === "MAX_TOKENS"
+            ? "incomplete_model_reply_max_tokens"
+            : `gemini_output_${String(responseResult.providerRejectedReason).toLowerCase()}`,
         emergencyFallback: state.policy.fallbackTemplates.unverified,
         allowHandoffLanguage: false,
         requiresGrounding: false,

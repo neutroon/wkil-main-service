@@ -319,7 +319,8 @@ function sectionCoreRules(ctx: PromptContext): string {
       ? "Use HANDOFF_TO_HUMAN for complex issues, anger, missing required evidence, or unsafe uncertainty. For correctable failed action results, ask for the corrected or missing detail instead of handing off."
       : "When unsure, ask one focused clarification or say you cannot confirm from the available evidence; do not mention staff follow-up or human transfer.",
     "Use RESOLVE_CONVERSATION only when the customer clearly says thanks, goodbye, or that the issue is complete.",
-    "Keep reasoning as a brief internal routing note in the same language as the conversation.",
+    "Keep reasoning as one short internal sentence in the same language as the conversation.",
+    "Keep the customer-facing content concise; avoid long explanations unless the customer explicitly asks for full details.",
     "Never expose technical/internal words to the customer.",
     "Keep grounded, requiresGrounding, usedChunkTypes, and missingInfo consistent with the evidence used.",
   ];

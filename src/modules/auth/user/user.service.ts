@@ -321,39 +321,64 @@ export const permanentlyDeleteUser = async (id: number) => {
   });
 };
 
-// New hierarchical role management functions
+// Manager assignment functions
 
 export const assignUserToManager = async (
   managerId: number,
   userId: number,
   assignedBy: number,
 ) => {
-  // Verify manager has appropriate role
+  // A manager assignment is strictly manager -> normal user.
   const manager = await prisma.user.findFirst({
     where: { id: managerId, isActive: true },
     select: { role: true },
   });
 
-  if (!manager || !["super_admin", "admin", "manager"].includes(manager.role)) {
-    throw new AppError("Invalid manager role", 400);
+  if (!manager || manager.role !== "manager") {
+    throw new AppError("Assigned manager must have the manager role", 400);
   }
 
-  // Verify user exists and is active
   const user = await prisma.user.findFirst({
     where: { id: userId, isActive: true },
+    select: { role: true },
   });
 
   if (!user) {
     throw new AppError("User not found or inactive", 404);
   }
 
-  // Check if assignment already exists
+  if (user.role !== "user") {
+    throw new AppError("Only normal users can be assigned to managers", 400);
+  }
+
   const existingAssignment = await prisma.userManagement.findFirst({
-    where: { managerId, userId, isActive: true },
+    where: { managerId, userId },
   });
 
-  if (existingAssignment) {
+  if (existingAssignment?.isActive) {
     throw new AppError("User is already assigned to this manager", 409);
+  }
+
+  if (existingAssignment) {
+    return prisma.userManagement.update({
+      where: { id: existingAssignment.id },
+      data: {
+        isActive: true,
+        assignedBy,
+        assignedAt: new Date(),
+      },
+      include: {
+        manager: {
+          select: { id: true, name: true, email: true, role: true },
+        },
+        user: {
+          select: { id: true, name: true, email: true, role: true },
+        },
+        assigner: {
+          select: { id: true, name: true, email: true, role: true },
+        },
+      },
+    });
   }
 
   return prisma.userManagement.create({
@@ -381,6 +406,8 @@ export const getManagedUsers = async (managerId: number) => {
     where: {
       managerId,
       isActive: true,
+      manager: { role: "manager" },
+      user: { role: "user" },
     },
     include: {
       user: {
@@ -412,34 +439,6 @@ export const getManagedUsers = async (managerId: number) => {
   });
 };
 
-export const getManagerHierarchy = async (userId: number) => {
-  return prisma.userManagement.findMany({
-    where: {
-      userId,
-      isActive: true,
-    },
-    include: {
-      manager: {
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          role: true,
-        },
-      },
-      assigner: {
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          role: true,
-        },
-      },
-    },
-    orderBy: { assignedAt: "desc" },
-  });
-};
-
 export const canManageUser = async (
   managerId: number,
   targetUserId: number,
@@ -464,6 +463,7 @@ export const canManageUser = async (
         managerId,
         userId: targetUserId,
         isActive: true,
+        user: { role: "user" },
       },
     });
 
@@ -604,7 +604,11 @@ export const getManagerDashboard = async (managerId: number) => {
 
 export const getAllUserAssignments = async () => {
   return prisma.userManagement.findMany({
-    where: { isActive: true },
+    where: {
+      isActive: true,
+      manager: { role: "manager" },
+      user: { role: "user" },
+    },
     include: {
       manager: {
         select: { id: true, name: true, email: true, role: true },
@@ -658,7 +662,12 @@ export const getAccessibleProfileIds = async (
   // Managers see their own AND their managed users' profiles
   if (user.role === "manager") {
     const managedUsers = await prisma.userManagement.findMany({
-      where: { managerId: userId, isActive: true },
+      where: {
+        managerId: userId,
+        isActive: true,
+        manager: { role: "manager" },
+        user: { role: "user" },
+      },
       select: { userId: true },
     });
 

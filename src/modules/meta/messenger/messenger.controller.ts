@@ -188,9 +188,12 @@ export class MessengerController {
 
             if (Array.isArray(attachments) && attachments.length > 0) {
               const att = attachments[0];
-              msgType = att.type;
-              mediaId = att.payload?.sticker_id || att.payload?.url?.split("?")[0].split("/").pop(); 
-              mediaMetadata = { url: att.payload?.url, title: att.title };
+              const stickerId = att.payload?.sticker_id;
+              msgType = stickerId ? "sticker" : att.type;
+              mediaId = stickerId ? String(stickerId) : messageMid;
+              mediaMetadata = stickerId
+                ? { stickerId: String(stickerId), isSticker: true, title: att.title }
+                : { url: att.payload?.url, title: att.title };
               if (msgType === "audio" && att.payload?.is_voice) msgType = "voice";
             }
 

@@ -216,7 +216,7 @@ function toLangChainMessages(contents: AgentContent[], systemInstruction?: strin
 
   for (const turn of contents) {
     if (turn.role === "user") {
-      messages.push(new HumanMessage(turn.content || ""));
+      messages.push(new HumanMessage(userContentForLangChain(turn)));
       continue;
     }
 
@@ -244,6 +244,27 @@ function toLangChainMessages(contents: AgentContent[], systemInstruction?: strin
   }
 
   return messages;
+}
+
+function userContentForLangChain(turn: AgentContent): any {
+  if (!turn.inlineData) return turn.content || "";
+
+  const parts: any[] = [];
+  if (turn.content) parts.push({ type: "text", text: turn.content });
+
+  if (turn.inlineData.mimeType.startsWith("image/")) {
+    parts.push({
+      type: "image_url",
+      image_url: `data:${turn.inlineData.mimeType};base64,${turn.inlineData.data}`,
+    });
+  } else {
+    parts.push({
+      type: "text",
+      text: `[Unsupported inline media: ${turn.inlineData.mimeType}]`,
+    });
+  }
+
+  return { content: parts };
 }
 
 function contentToText(content: unknown): string {
@@ -415,6 +436,47 @@ export async function invokeText(params: {
       return llm.invoke(messages, { signal: abortSignal } as any);
     },
     params.context || "AgentGraph.invokeText",
+    params.timeoutMs,
+  );
+
+  return {
+    text: contentToText(message.content),
+    usage: readUsage(message),
+    modelName: model,
+    finishReason: readFinishReason(message),
+  };
+}
+
+export async function invokeMediaUnderstanding(params: {
+  prompt: string;
+  mimeType: string;
+  base64Data: string;
+  temperature?: number;
+  maxOutputTokens?: number;
+  timeoutMs?: number;
+}): Promise<TextInvokeResult> {
+  const contents: AgentContent[] = [
+    {
+      role: "user",
+      content: params.prompt,
+      inlineData: {
+        mimeType: params.mimeType,
+        data: params.base64Data,
+      },
+    },
+  ];
+  const messages = toLangChainMessages(contents);
+
+  const { result: message, model } = await executeWithModelFallback<any>(
+    (currentModel, abortSignal) => {
+      const llm = createChatModel({
+        model: currentModel,
+        temperature: params.temperature ?? 0.1,
+        maxOutputTokens: params.maxOutputTokens ?? 512,
+      });
+      return llm.invoke(messages, { signal: abortSignal } as any);
+    },
+    "AgentGraph.mediaUnderstanding",
     params.timeoutMs,
   );
 

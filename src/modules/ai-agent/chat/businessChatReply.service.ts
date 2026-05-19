@@ -27,6 +27,10 @@ import {
 import prisma from "@config/prisma";
 import { logger } from "@utils/logger";
 import { effectiveCustomerRequestText } from "./completedActionRequest";
+import {
+  customerMessageForModel,
+  type InboundMediaInfo,
+} from "./messageSignals";
 export type { AiRoutingDecision };
 
 export type BusinessProfileForChat = Prisma.BusinessProfileGetPayload<{
@@ -118,7 +122,7 @@ export async function prepareAgentParams(params: {
   historyTurns: { role: "user" | "model"; text: string }[];
   channel: "messenger" | "whatsapp" | "web" | "facebook_comment";
   customerPhone?: string;
-  mediaInfo?: { id: string; type: string; url?: string };
+  mediaInfo?: InboundMediaInfo;
   postContext?: { content: string; media?: string };
   conversationId?: number;
   agentTurnId?: number;
@@ -157,9 +161,13 @@ export async function prepareAgentParams(params: {
     };
   }
 
+  const customerModelMessage = customerMessageForModel({
+    messageText,
+    mediaInfo: params.mediaInfo,
+  });
   const effectiveMessageText = completedExternalLookup
     ? effectiveCustomerRequestText(messageText)
-    : messageText;
+    : customerModelMessage;
 
   const retrieval = await retrieveRelevantChunksWithEmbedding(
     businessProfile.id,
@@ -290,7 +298,7 @@ export async function prepareAgentParams(params: {
     graphParams: {
       systemInstruction: finalSystemInstruction,
       historyTurns,
-      customerMessage: messageText,
+      customerMessage: customerModelMessage,
       tools: finalTools.length > 0 ? finalTools : undefined,
       businessProfileId: businessProfile.id,
       businessName: businessProfile.name,
@@ -301,7 +309,6 @@ export async function prepareAgentParams(params: {
       contextQuality,
       availableChunkTypes,
       externalSourceFailureBehaviors,
-      mediaInfo: params.mediaInfo,
       conversationId,
       agentTurnId,
       activeWorkflowId,
@@ -394,7 +401,7 @@ export async function computeBusinessChatReply(params: {
   historyTurns: { role: "user" | "model"; text: string }[];
   channel: "messenger" | "whatsapp" | "web" | "facebook_comment";
   customerPhone?: string;
-  mediaInfo?: { id: string; type: string; url?: string };
+  mediaInfo?: InboundMediaInfo;
   postContext?: { content: string; media?: string };
   conversationId?: number;
   agentTurnId?: number;

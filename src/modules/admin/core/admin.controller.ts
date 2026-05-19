@@ -55,28 +55,57 @@ export const updateBillingSettings = async (req: Request, res: Response) => {
 // Manual Billing Reset
 export const resetBusinessUsage = async (req: Request, res: Response) => {
   const { id } = req.params as any;
-  const businessProfileId = id;
+  const businessProfileId = Number(id);
 
-  await prisma.businessProfile.update({
+  const businessProfile = await prisma.businessProfile.findUnique({
     where: { id: businessProfileId },
-    data: { monthlyTokensUsed: 0 },
+    select: { userId: true },
   });
 
-  clearQuotaCache(businessProfileId);
-  res.status(200).json({ message: "Monthly tokens reset to 0 successfully" });
+  if (!businessProfile) {
+    res.status(404).json({ message: "Business profile not found" });
+    return;
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.businessProfile.update({
+      where: { id: businessProfileId },
+      data: { monthlyTokensUsed: 0, monthlyCreditsUsed: 0 },
+    });
+
+    const remainingUsage = await tx.businessProfile.aggregate({
+      where: { userId: businessProfile.userId },
+      _sum: {
+        monthlyTokensUsed: true,
+        monthlyCreditsUsed: true,
+      },
+    });
+
+    await tx.user.update({
+      where: { id: businessProfile.userId },
+      data: {
+        monthlyTokensUsed: remainingUsage._sum.monthlyTokensUsed || 0,
+        monthlyCreditsUsed: remainingUsage._sum.monthlyCreditsUsed || 0,
+      },
+    });
+  });
+
+  clearQuotaCache(businessProfile.userId);
+  res.status(200).json({ message: "Monthly usage reset to 0 successfully" });
 };
 
 export const updateBusinessUsage = async (req: Request, res: Response) => {
   const { id } = req.params as any;
   const { tokensUsed } = req.body;
-  const businessProfileId = id;
+  const businessProfileId = Number(id);
 
-  await prisma.businessProfile.update({
+  const businessProfile = await prisma.businessProfile.update({
     where: { id: businessProfileId },
     data: { monthlyTokensUsed: tokensUsed },
+    select: { userId: true },
   });
 
-  clearQuotaCache(businessProfileId);
+  clearQuotaCache(businessProfile.userId);
   res
     .status(200)
     .json({ message: `Monthly tokens updated to ${tokensUsed}` });

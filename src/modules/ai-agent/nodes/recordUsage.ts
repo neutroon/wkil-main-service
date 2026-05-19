@@ -8,6 +8,7 @@
  * decision is returned to the caller (businessChatReply.service.ts).
  */
 import { logger } from "@utils/logger";
+import { enqueueAiUsageRecord } from "@modules/billing/billing.queue";
 import { recordAiUsage } from "@modules/billing/billing.service";
 import type { AgentStateType } from "@modules/ai-agent/core/agentState";
 
@@ -31,7 +32,7 @@ export async function recordUsageNode(
     );
 
     if (deltaPrompt > 0 || deltaCompletion > 0 || deltaGrounding > 0) {
-      await recordAiUsage({
+      const usagePayload = {
         userId,
         businessProfileId,
         modelName: sessionStats.modelName,
@@ -39,10 +40,29 @@ export async function recordUsageNode(
         completionTokens: deltaCompletion,
         groundingCalls: deltaGrounding,
         operation: `chat_${channel || "direct"}`,
-      });
+      };
+
+      try {
+        await enqueueAiUsageRecord(usagePayload, {
+          jobId: [
+            "ai-usage-terminal",
+            state.agentTurnId || "turn",
+            sessionStats.modelName,
+            deltaPrompt,
+            deltaCompletion,
+            deltaGrounding,
+          ].join("-"),
+        });
+      } catch (enqueueError: any) {
+        logger.error("ai.node.recordUsage.enqueue_failed", {
+          error: enqueueError.message,
+          businessProfileId,
+        });
+        await recordAiUsage(usagePayload);
+      }
     }
 
-    logger.info("ai.node.recordUsage.success", {
+    logger.info("ai.node.recordUsage.queued", {
       businessProfileId,
       model: sessionStats.modelName,
       promptTokens: sessionStats.promptTokens,

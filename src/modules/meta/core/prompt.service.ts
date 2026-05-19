@@ -411,11 +411,24 @@ function normalizeContextForPrompt(content: string): string {
     .trim();
 }
 
+function allowedChunkTypesForOutput(ctx: PromptContext): string {
+  const types = Array.from(
+    new Set([
+      ...ctx.context.map((chunk) => chunk.chunkType),
+      ctx.capabilities.hasCompletedActionResult ? "external_tool" : "",
+    ].filter(Boolean)),
+  );
+
+  return types.length > 0 ? types.join(", ") : "none";
+}
+
 function sectionOutputContract(ctx: PromptContext): string {
+  const allowedChunkTypes = allowedChunkTypesForOutput(ctx);
   if (ctx.channel === "facebook_comment") {
     return `<output_contract>
 Return exactly one JSON object; no markdown code blocks.
 Fields: action, replyType, reasoning (brief routing note, not hidden model reasoning), publicContent, privateContent, intent, requiresGrounding, grounded, usedChunkTypes, missingInfo, optional attachment.
+usedChunkTypes must contain only canonical chunkType values available in this run: ${allowedChunkTypes}. Do not use inner content labels like KNOWLEDGE; for [CUSTOM_SECTION] blocks, cite custom_section.
 If a <reply_policy> block exists, replyType and action must satisfy it.
 </output_contract>`;
   }
@@ -423,6 +436,7 @@ If a <reply_policy> block exists, replyType and action must satisfy it.
   return `<output_contract>
 Return exactly one JSON object; no markdown code blocks.
 Fields: action, replyType, reasoning (brief routing note, not hidden model reasoning), content, requiresGrounding, grounded, usedChunkTypes, missingInfo, optional attachment.
+usedChunkTypes must contain only canonical chunkType values available in this run: ${allowedChunkTypes}. Do not use inner content labels like KNOWLEDGE; for [CUSTOM_SECTION] blocks, cite custom_section.
 If a <reply_policy> block exists, replyType and action must satisfy it.
 </output_contract>`;
 }

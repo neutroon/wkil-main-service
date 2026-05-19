@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import {
   registerAdmin,
   createManager,
+  createPlatformUser,
   getBillingSettings,
   updateBillingSettings,
   resetBusinessUsage,
@@ -14,7 +15,6 @@ import {
   reactivateUserController,
   permanentlyDeleteUserController,
   getUserByIdController,
-  registerUser,
 } from "../../auth/user/user.controller";
 import {
   assignUserToManagerController,
@@ -72,7 +72,7 @@ adminRoutes.post(
   "/create-user",
   adminLimiter,
   validate(registerUserSchema),
-  registerUser,
+  createPlatformUser,
 );
 
 // User management with admin rate limiting

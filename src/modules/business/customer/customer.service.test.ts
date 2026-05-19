@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getCustomerForUser,
+  listCustomers,
   updateCustomerForUser,
   updateCustomerFromSavedDetails,
   upsertCustomerFromConversation,
@@ -16,9 +17,11 @@ vi.mock("@config/prisma", () => ({
       updateMany: vi.fn(),
     },
     customer: {
+      count: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
       findUnique: vi.fn(),
+      findMany: vi.fn(),
       findFirst: vi.fn(),
       delete: vi.fn(),
     },
@@ -251,6 +254,38 @@ describe("customer service", () => {
     expect(mockedPrisma.customer.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 99, businessProfileId: { in: [1] } },
+      }),
+    );
+  });
+
+  it("filters customers to records with saved phone numbers", async () => {
+    mockedPrisma.customer.count.mockResolvedValue(0 as never);
+    mockedPrisma.customer.findMany.mockResolvedValue([] as never);
+
+    await listCustomers({
+      userId: 5,
+      hasPhone: true,
+      limit: 50,
+    });
+
+    expect(mockedPrisma.customer.count).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        AND: [
+          {
+            AND: [
+              { phone: { not: null } },
+              { phone: { not: "" } },
+            ],
+          },
+        ],
+      }),
+    });
+    expect(mockedPrisma.customer.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          businessProfileId: { in: [1] },
+          AND: expect.any(Array),
+        }),
       }),
     );
   });

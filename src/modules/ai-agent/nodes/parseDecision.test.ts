@@ -137,4 +137,33 @@ describe("parseDecisionNode failed action safety", () => {
       completionTokens: 20,
     });
   });
+
+  it("normalizes KNOWLEDGE chunk claims to custom_section evidence", async () => {
+    const result = await parseDecisionNode(
+      baseState({
+        availableChunkTypes: ["identity", "custom_section", "faq"],
+        contents: [
+          { role: "user", content: "ازاي اسجل؟" },
+          {
+            role: "model",
+            content: JSON.stringify({
+              action: "REPLY_AUTO",
+              replyType: "NORMAL_REPLY",
+              reasoning: "الرد مبني على طرق التقديم المتاحة.",
+              content: "تقدر تسيب اسمك ورقمك واسم البرنامج هنا.",
+              requiresGrounding: true,
+              grounded: true,
+              usedChunkTypes: ["KNOWLEDGE"],
+              missingInfo: null,
+            }),
+          },
+        ],
+      }),
+    );
+
+    expect(result.decision).toMatchObject({
+      action: "REPLY_AUTO",
+      usedChunkTypes: ["custom_section"],
+    });
+  });
 });

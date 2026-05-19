@@ -8,13 +8,14 @@ import {
 
 export async function listCustomersController(req: Request, res: Response) {
   const userId = (req as any).user.id;
+  const hasPhoneQuery = req.query.hasPhone as unknown;
   const result = await listCustomers({
     userId,
     businessProfileId: req.query.businessProfileId
       ? Number(req.query.businessProfileId)
       : undefined,
     q: req.query.q as string | undefined,
-    hasPhone: req.query.hasPhone === "true",
+    hasPhone: hasPhoneQuery === true || hasPhoneQuery === "true",
     status: req.query.status as string | undefined,
     channel: req.query.channel as string | undefined,
     page: req.query.page ? Number(req.query.page) : undefined,

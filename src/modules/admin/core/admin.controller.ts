@@ -40,6 +40,25 @@ const createManager = async (req: Request, res: Response) => {
   });
 };
 
+const createPlatformUser = async (req: Request, res: Response) => {
+  const { name, email, password, role = "user" } = req.body;
+  const user = await createUser(name, email, password, role);
+
+  res.status(201).json({
+    message: "User created successfully",
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      isEmailVerified: user.isEmailVerified,
+      lastVerificationSentAt: user.lastVerificationSentAt,
+      isBusinessProfileCreated: user.isBusinessProfileCreated,
+      createdAt: user.createdAt,
+    },
+  });
+};
+
 // Settings management
 export const getBillingSettings = async (req: Request, res: Response) => {
   const multiplier = await getBillingMultiplier();
@@ -134,7 +153,7 @@ export const updateBusinessUsage = async (req: Request, res: Response) => {
     .json({ message: `Monthly tokens updated to ${tokensUsed}` });
 };
 
-export { registerAdmin, createManager };
+export { registerAdmin, createManager, createPlatformUser };
 
 
 

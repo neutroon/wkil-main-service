@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import {
+  createUser,
   getManagedUsers,
   getManagerDashboard,
   getManagerHierarchy,
@@ -12,6 +13,25 @@ import {
   getUserAnalytics,
 } from "../../auth/user/user.service";
 import { AppError } from "@middlewares/errorHandler.middleware";
+
+export const createManagedUser = async (req: Request, res: Response) => {
+  const { name, email, password } = req.body;
+  const creator = (req as any).user;
+
+  const user = await createUser(name, email, password, "user");
+  const assignment =
+    creator.role === "manager"
+      ? await assignUserToManager(creator.id, user.id, creator.id)
+      : null;
+
+  res.status(201).json({
+    message: assignment
+      ? "User created and assigned successfully"
+      : "User created successfully",
+    user,
+    assignment,
+  });
+};
 
 // Get manager's dashboard with overview of managed users
 export const getManagerDashboardController = async (

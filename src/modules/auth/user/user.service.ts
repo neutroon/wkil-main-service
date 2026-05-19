@@ -194,6 +194,8 @@ export const getAllUsers = async (includeInactive: boolean = false) => {
       plan: true,
       monthlyQuota: true,
       monthlyTokensUsed: true,
+      monthlyCreditQuota: true,
+      monthlyCreditsUsed: true,
       isActive: true,
       isEmailVerified: true,
       lastVerificationSentAt: true,
@@ -201,6 +203,16 @@ export const getAllUsers = async (includeInactive: boolean = false) => {
       deletedAt: true,
       createdAt: true,
       updatedAt: true,
+      businessProfiles: {
+        select: {
+          id: true,
+          name: true,
+          plan: true,
+          monthlyCreditsUsed: true,
+          monthlyCreditQuota: true,
+          createdAt: true,
+        },
+      },
     },
     orderBy: { createdAt: "desc" },
   });
@@ -213,6 +225,7 @@ export const updateUserRole = async (
   email: string,
   plan?: string,
   monthlyQuota?: number,
+  monthlyCreditQuota?: number,
 ) => {
   return await prisma.$transaction(async (tx) => {
     // 1. Update User basic info
@@ -224,6 +237,7 @@ export const updateUserRole = async (
         // email: email, // Disabled for production identity stability
         plan,
         monthlyQuota,
+        monthlyCreditQuota,
       },
       select: {
         id: true,
@@ -236,6 +250,8 @@ export const updateUserRole = async (
         isEmailVerified: true,
         lastVerificationSentAt: true,
         monthlyQuota: true,
+        monthlyCreditQuota: true,
+        monthlyCreditsUsed: true,
         isBusinessProfileCreated: true,
         updatedAt: true,
         businessProfiles: {

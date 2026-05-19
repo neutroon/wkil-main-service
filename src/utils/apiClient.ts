@@ -4,6 +4,20 @@ import { mapFacebookGraphError } from "@modules/meta/facebook/facebookGraphError
 import { AppError } from "@middlewares/errorHandler.middleware";
 import { logger } from "./logger";
 
+function requestUrl(config: any) {
+  const url = config?.url;
+  if (!url || config?.redactMetaObjectId !== true) return url;
+
+  return String(url).replace(
+    /(graph\.facebook\.com\/v\d+(?:\.\d+)?\/)[^/?#]+/i,
+    "$1[GraphObject]",
+  );
+}
+
+function shouldSuppressMetaErrorLog(config: any) {
+  return config?.suppressMetaErrorLog === true;
+}
+
 /**
  * ─── Meta Delivery Client ────────────────────────────────────────────────────
  * A highly resilient Axios client strictly for Facebook Graph API interactions.
@@ -40,7 +54,7 @@ axiosRetry(metaClient, {
       attempt: retryCount,
       errorCode: mapped.code,
       isRateLimit,
-      url: requestConfig.url,
+      url: requestUrl(requestConfig),
     });
   }
 });
@@ -54,13 +68,18 @@ metaClient.interceptors.response.use(
 
     const mapped = mapFacebookGraphError(error);
     
-    logger.error("meta.api.request_failed_V25_VERIFIED", {
+    const logMeta = {
       message: mapped.message,
       code: mapped.code,
       status: mapped.status,
       subcode: mapped.subcode,
-      url: error.config?.url,
-    });
+      url: requestUrl(error.config),
+    };
+    if (shouldSuppressMetaErrorLog(error.config)) {
+      logger.warn("meta.api.optional_request_failed", logMeta);
+    } else {
+      logger.error("meta.api.request_failed_V25_VERIFIED", logMeta);
+    }
     
     const codePart = mapped.code !== undefined && mapped.code !== 0 ? ` (code: ${mapped.code})` : "";
     return Promise.reject(new AppError(`${mapped.message}${codePart}`, 502));

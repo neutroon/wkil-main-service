@@ -23,6 +23,45 @@ import { validateDecisionAgainstReplyPolicy } from "../core/replyPolicy";
 import type { AgentStateType } from "../core/agentState";
 import { repairStructuredDecisionOutput } from "./structuredOutputRepair";
 
+function normalizeChunkTypeClaim(
+  chunkType: string,
+  availableChunkTypes: string[],
+): string {
+  const trimmed = String(chunkType || "").trim();
+  const normalized = trimmed
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+  const availableByLower = new Map(
+    availableChunkTypes.map((available) => [available.toLowerCase(), available]),
+  );
+  const aliases: Record<string, string> = {
+    knowledge: "custom_section",
+    custom: "custom_section",
+    custom_section: "custom_section",
+    raw: "raw_content",
+    raw_content: "raw_content",
+    external_tool: "external_tool",
+  };
+  const alias = aliases[normalized];
+
+  if (alias && availableChunkTypes.includes(alias)) return alias;
+  return availableByLower.get(normalized) || trimmed;
+}
+
+function normalizeUsedChunkTypes(
+  usedChunkTypes: string[] | undefined,
+  availableChunkTypes: string[],
+): string[] {
+  if (!Array.isArray(usedChunkTypes)) return [];
+  return Array.from(
+    new Set(
+      usedChunkTypes
+        .map((chunkType) => normalizeChunkTypeClaim(chunkType, availableChunkTypes))
+        .filter(Boolean),
+    ),
+  );
+}
+
 function hasUnsupportedChunkClaim(
   usedChunkTypes: string[] | undefined,
   availableChunkTypes: string[],
@@ -124,6 +163,11 @@ export async function parseDecisionNode(
       };
     }
   }
+
+  decision.usedChunkTypes = normalizeUsedChunkTypes(
+    decision.usedChunkTypes,
+    state.availableChunkTypes,
+  );
 
   // ── Detect hallucination loops in the final content ───────────────────────
   const contentToCheck = (decision.content || "") + (decision.reasoning || "");

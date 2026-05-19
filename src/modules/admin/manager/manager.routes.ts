@@ -7,7 +7,6 @@ import {
   getManagedUserAnalytics,
   deactivateManagedUser,
   reactivateManagedUser,
-  getMyManagers,
   assignUserToManagerController,
   getAllUserAssignmentsController,
   removeUserAssignmentController,
@@ -48,7 +47,6 @@ managerRoutes.get(
   validate(analyticsQuerySchema),
   getMyManagedUsers,
 );
-managerRoutes.get("/my-managers", managerLimiter, getMyManagers);
 
 // Specific user management (with access control)
 managerRoutes.get(

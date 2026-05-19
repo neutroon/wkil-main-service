@@ -61,11 +61,12 @@ function shouldCaptureIssue(level: LogLevel, message: string, meta?: LogMeta) {
 class Logger {
   private formatMessage(level: LogLevel, message: string, meta?: LogMeta) {
     const timestamp = new Date().toISOString();
+    const sanitizedMeta = sanitizeMeta(meta) as Record<string, unknown> | undefined;
     return JSON.stringify({
       ts: timestamp,
       level,
       msg: message,
-      ...meta,
+      ...sanitizedMeta,
     });
   }
 

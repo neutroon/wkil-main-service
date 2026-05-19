@@ -518,8 +518,8 @@ model WhatsAppAccount {
 
 model UserManagement {
   id         Int      @id @default(autoincrement())
-  managerId  Int // The manager/admin
-  userId     Int // The user being managed
+  managerId  Int // The manager
+  userId     Int // The normal user being managed
   assignedAt DateTime @default(now())
   assignedBy Int // Who assigned this relationship
   isActive   Boolean  @default(true)

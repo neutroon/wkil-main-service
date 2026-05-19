@@ -423,7 +423,8 @@ export const requireManagerAccess = async (
 ) => {
   try {
     const user = req.user;
-    const { userId } = req.params;
+    const rawUserId = req.params.userId ?? req.params.id;
+    const targetUserId = Number(rawUserId);
 
     if (!user) {
       return res.status(401).json({
@@ -440,7 +441,9 @@ export const requireManagerAccess = async (
     // Managers can only manage assigned users
     if (user.role === "manager") {
       const { canManageUser } = await import("../user/user.service");
-      const canManage = await canManageUser(user.id, parseInt(userId));
+      const canManage = Number.isFinite(targetUserId)
+        ? await canManageUser(user.id, targetUserId)
+        : false;
 
       if (!canManage) {
         throw new AppError(
@@ -454,10 +457,7 @@ export const requireManagerAccess = async (
 
     next();
   } catch (error) {
-    res.status(500).json({
-      error: "Authorization check failed",
-      code: "AUTH_CHECK_FAILED",
-    });
+    next(error);
   }
 };
 

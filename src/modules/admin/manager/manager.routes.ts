@@ -1,5 +1,6 @@
 import { Router } from "express";
 import {
+  createManagedUser,
   getManagerDashboardController,
   getMyManagedUsers,
   getManagedUserById,
@@ -14,6 +15,7 @@ import {
 import {
   authenticateToken,
   requireAdmin,
+  requireManagerOrAdmin,
   requireManagerAccess,
 } from "@modules/auth/core/auth.middleware";
 import { validate } from "@middlewares/validate.middleware";
@@ -24,19 +26,18 @@ import {
 } from "../manager/manager.validation";
 import { registerSchema } from "../../auth/core/auth.validation";
 import { managerLimiter } from "@middlewares/rateLimit.middleware";
-import { registerUser } from "../../auth/user/user.controller";
 
 const managerRoutes = Router();
 
 // All manager routes require authentication
-managerRoutes.use(authenticateToken);
+managerRoutes.use(authenticateToken, requireManagerOrAdmin);
 
 // user creation (admin/super_admin/manager only)
 managerRoutes.post(
   "/create-user",
   managerLimiter,
   validate(registerSchema),
-  registerUser,
+  createManagedUser,
 );
 
 // Manager dashboard and overview

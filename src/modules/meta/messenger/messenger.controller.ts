@@ -18,6 +18,12 @@ import { getRoutableFacebookPageRoute } from "../core/webhookCache.service";
 
 const isDev = env.NODE_ENV !== "production";
 
+function metaIdentityLogValue(value: unknown) {
+  if (value === null || value === undefined) return undefined;
+  const text = String(value);
+  return isDev ? text : `...${text.slice(-6)}`;
+}
+
 export class MessengerController {
   /**
    * GET /v1/messenger/webhook
@@ -181,6 +187,20 @@ export class MessengerController {
             const actualCustomerId = isFromBusiness ? event.recipient?.id : senderId;
 
             if (!actualCustomerId) continue;
+
+            logger.debug("messenger.webhook.identity", {
+              pageId: metaIdentityLogValue(pageId),
+              senderId: metaIdentityLogValue(senderId),
+              recipientId: metaIdentityLogValue(event.recipient?.id),
+              actualCustomerId: metaIdentityLogValue(actualCustomerId),
+              businessProfileId: route.businessProfileId,
+              isEcho: isFromBusiness,
+              messageMid: metaIdentityLogValue(messageMid),
+              hasText: Boolean(messageText),
+              attachmentTypes: Array.isArray(attachments)
+                ? attachments.map((attachment: any) => attachment?.type).filter(Boolean)
+                : [],
+            });
 
             let msgType = "text";
             let mediaId: string | undefined;

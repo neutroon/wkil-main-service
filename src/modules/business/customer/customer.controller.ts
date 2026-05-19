@@ -14,6 +14,7 @@ export async function listCustomersController(req: Request, res: Response) {
       ? Number(req.query.businessProfileId)
       : undefined,
     q: req.query.q as string | undefined,
+    hasPhone: req.query.hasPhone === "true",
     status: req.query.status as string | undefined,
     channel: req.query.channel as string | undefined,
     page: req.query.page ? Number(req.query.page) : undefined,

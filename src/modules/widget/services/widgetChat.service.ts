@@ -19,23 +19,33 @@ import {
 } from "@modules/ai-agent/chat/conversationTurns";
 import type { WidgetInstall } from "@prisma/client";
 import { AppError } from "@middlewares/errorHandler.middleware";
+import { generateR2Key, uploadToR2 } from "@modules/media/services/r2Storage.service";
+import { invokeMediaUnderstanding } from "@modules/ai-agent/core/modelRuntime";
 
 function pageIdForWidget(installId: number): string {
   return `widget:${installId}`;
 }
+
+type WidgetInboundMedia = {
+  buffer: Buffer;
+  originalName: string;
+  mimeType: string;
+  size: number;
+};
 
 export async function processWidgetChatMessage(params: {
   install: WidgetInstall;
   visitorId: string;
   message: string;
   conversationId?: number;
+  media?: WidgetInboundMedia;
 }): Promise<{
   reply: string;
   conversationId: number;
   attachment?: { url: string; type: string; caption?: string | null } | null;
 }> {
   const { install, message } = params;
-  const { conversation, businessProfile, historyTurns } =
+  const { conversation, businessProfile, historyTurns, userMessage } =
     await setupWidgetChat(params);
 
   if (conversation.aiEnabled === false) {
@@ -57,6 +67,14 @@ export async function processWidgetChatMessage(params: {
       historyTurns,
       channel: "web",
       conversationId: conversation.id,
+      mediaInfo: userMessage.mediaId
+        ? {
+            id: userMessage.mediaId,
+            type: userMessage.type,
+            url: (userMessage.mediaMetadata as any)?.url,
+            metadata: userMessage.mediaMetadata,
+          }
+        : undefined,
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -193,8 +211,9 @@ async function setupWidgetChat(params: {
   visitorId: string;
   message: string;
   conversationId?: number;
+  media?: WidgetInboundMedia;
 }) {
-  const { install, visitorId, message, conversationId } = params;
+  const { install, visitorId, message, conversationId, media } = params;
   const pageId = pageIdForWidget(install.id);
 
   let conversation;
@@ -235,11 +254,99 @@ async function setupWidgetChat(params: {
   });
 
   const historyRows = await getConversationHistory(conversation.id);
-  await saveMessage(conversation.id, "user", message);
+  const mediaPayload = media
+    ? await prepareWidgetMediaPayload({
+        businessProfileId: install.businessProfileId,
+        media,
+      })
+    : null;
+  const userMessage = await saveMessage(conversation.id, "user", message, {
+    type: mediaPayload?.type,
+    mediaId: mediaPayload?.mediaId,
+    mediaMetadata: mediaPayload?.mediaMetadata,
+  });
 
-  const historyForPrompt = toPromptMessages(historyRows);
-  historyForPrompt.push({ role: "user", content: message });
+  const historyForPrompt = toPromptMessages([
+    ...historyRows,
+    {
+      role: "user",
+      content: message,
+      type: userMessage.type,
+      mediaId: userMessage.mediaId,
+      mediaMetadata: userMessage.mediaMetadata,
+    },
+  ]);
   const historyTurns = historyToLlmTurns(historyForPrompt);
 
-  return { conversation, businessProfile, historyTurns };
+  return { conversation, businessProfile, historyTurns, userMessage };
+}
+
+async function prepareWidgetMediaPayload(params: {
+  businessProfileId: number;
+  media: WidgetInboundMedia;
+}) {
+  const type = mediaTypeFromMime(params.media.mimeType);
+  const key = generateR2Key(params.businessProfileId, params.media.originalName);
+  const url = await uploadToR2(key, params.media.buffer, params.media.mimeType);
+  const analysis = await understandWidgetMedia(params.media);
+
+  return {
+    type,
+    mediaId: key,
+    mediaMetadata: {
+      url,
+      r2Key: key,
+      filename: params.media.originalName,
+      mimeType: params.media.mimeType,
+      size: params.media.size,
+      analysis,
+    },
+  };
+}
+
+function mediaTypeFromMime(mimeType: string): string {
+  if (mimeType.startsWith("image/")) return "image";
+  if (mimeType.startsWith("video/")) return "video";
+  if (mimeType.startsWith("audio/")) return "audio";
+  return "document";
+}
+
+async function understandWidgetMedia(
+  media: WidgetInboundMedia,
+): Promise<Record<string, unknown>> {
+  if (!media.mimeType.startsWith("image/")) {
+    return {
+      status: "unsupported",
+      mimeType: media.mimeType,
+      errorCode: "unsupported_media_type",
+    };
+  }
+
+  try {
+    const result = await invokeMediaUnderstanding({
+      prompt: [
+        "Describe this customer-sent image for a customer support agent.",
+        "Use one or two concise sentences.",
+        "If the image contains readable text, include the important text.",
+        "Do not invent prices, policies, availability, or contact details.",
+      ].join("\n"),
+      mimeType: media.mimeType,
+      base64Data: media.buffer.toString("base64"),
+      maxOutputTokens: 512,
+      timeoutMs: 45_000,
+    });
+    return {
+      status: "completed",
+      text: result.text.trim(),
+      mimeType: media.mimeType,
+      modelName: result.modelName,
+      finishReason: result.finishReason,
+    };
+  } catch (error: unknown) {
+    return {
+      status: "failed",
+      mimeType: media.mimeType,
+      errorCode: error instanceof Error ? error.message : String(error),
+    };
+  }
 }

@@ -174,6 +174,36 @@ describe("prepareAgentParams", () => {
     expect(filterEligibleAgentActionSources).not.toHaveBeenCalled();
   });
 
+  it("uses media understanding text as the model and retrieval query", async () => {
+    const result = await prepareAgentParams({
+      businessProfile: {
+        ...businessProfile,
+        agentActionSources: [],
+      },
+      messageText: "",
+      mediaInfo: {
+        id: "wamid.image.1",
+        type: "image",
+        metadata: {
+          mimeType: "image/jpeg",
+          analysis: {
+            status: "completed",
+            text: "The customer sent a certificate photo.",
+          },
+        },
+      },
+      historyTurns: [],
+      channel: "whatsapp",
+    });
+
+    expect(retrieveRelevantChunksWithEmbedding).toHaveBeenCalledWith(
+      1,
+      expect.stringContaining("certificate photo"),
+      5,
+    );
+    expect(result.graphParams?.customerMessage).toContain("certificate photo");
+  });
+
   it("does not expose non-chat action schemas", async () => {
     const futureEventAction = {
       ...priceSource,

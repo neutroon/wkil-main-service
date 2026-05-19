@@ -174,7 +174,10 @@ export async function handleMessengerMessage(
     });
 
     if (existing) {
-       customerNameSet = existing.customerName ?? undefined;
+       customerNameSet =
+         existing.customerName?.trim().toLowerCase() === "guest customer"
+           ? undefined
+           : existing.customerName ?? undefined;
        customerAvatarSet = existing.customerAvatar ?? undefined;
     }
 

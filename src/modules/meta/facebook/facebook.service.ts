@@ -17,11 +17,61 @@ import { createBullMqJobId, metaExpressQueue } from "../core/meta.queue";
 import crypto from "crypto";
 
 const FB_API = env.FB_API_URL;
+const PROFILE_NEGATIVE_CACHE_TTL_SECONDS =
+  env.NODE_ENV === "production" ? 60 * 60 * 6 : 60;
+const PROFILE_FIELD_SET_CACHE_TTL_SECONDS = 60 * 60 * 24 * 30;
+const PROFILE_FIELD_SETS = [
+  { label: "messenger_profile", fields: "first_name,last_name,profile_pic" },
+  { label: "business_asset_profile", fields: "id,name,picture" },
+] as const;
+
+type ProfileFieldSet = (typeof PROFILE_FIELD_SETS)[number];
 
 function graphCodeFromProfileError(error: any): string {
   if (error?.code) return String(error.code);
   const match = String(error?.message || "").match(/\(code:\s*([^)]+)\)/i);
   return match?.[1]?.trim() || "unknown";
+}
+
+function graphSubcodeFromProfileError(error: any): string | undefined {
+  if (error?.subcode) return String(error.subcode);
+  const match = String(error?.message || "").match(/subcode:\s*([^)]+)/i);
+  return match?.[1]?.trim();
+}
+
+function isProfileUnavailableError(error: any) {
+  const code = graphCodeFromProfileError(error);
+  const subcode = graphSubcodeFromProfileError(error);
+  return code === "100" && (!subcode || subcode === "33");
+}
+
+function orderProfileFieldSets(preferredLabel?: string | null): ProfileFieldSet[] {
+  const preferred = PROFILE_FIELD_SETS.find(
+    (fieldSet) => fieldSet.label === preferredLabel,
+  );
+  if (!preferred) return [...PROFILE_FIELD_SETS];
+
+  return [
+    preferred,
+    ...PROFILE_FIELD_SETS.filter((fieldSet) => fieldSet.label !== preferred.label),
+  ];
+}
+
+function normalizeFacebookProfile(data: any) {
+  const firstName = data.first_name || "";
+  const lastName = data.last_name || "";
+  const fullName = (data.name || `${firstName} ${lastName}`).trim();
+  const pictureUrl =
+    data.profile_pic ||
+    data.picture?.data?.url ||
+    data.picture?.url ||
+    null;
+
+  return {
+    ...data,
+    name: fullName || "Guest Customer",
+    pictureUrl,
+  };
 }
 
 function captureProfileFetchWarning(params: {
@@ -30,6 +80,7 @@ function captureProfileFetchWarning(params: {
   error: any;
 }) {
   const code = graphCodeFromProfileError(params.error);
+  if (isProfileUnavailableError(params.error)) return;
   Sentry.captureMessage("facebook.profile.fetch_failed", {
     level: "warning",
     fingerprint: ["facebook.profile.fetch_failed", `code:${code}`],
@@ -735,31 +786,74 @@ export const getFacebookUserProfile = async (
 ) => {
   try {
     const cleanPsid = psid.trim();
+    const negativeCacheKey = `facebook:profile:unavailable:${pageId}:${cleanPsid}`;
+    const cachedUnavailable = await cache.get<{ unavailable: true }>(negativeCacheKey);
+    if (cachedUnavailable) {
+      logger.debug("facebook.profile.fetch_skipped_unavailable_cache", {
+        pageId,
+        psid: cleanPsid,
+      });
+      return null;
+    }
+
     const token = accessToken || (await getPageAccessToken(pageId));
 
-    // Messenger User Profile API supports the PSID with Page access token and
-    // the Messenger profile fields. Avoid generic Graph profile fields here:
-    // they can trigger code 100 for otherwise valid PSIDs.
-    const fields = "first_name,last_name,profile_pic";
-    const url = `${FB_API}/${cleanPsid}?fields=${fields}&access_token=${token}`;
+    const url = `${FB_API}/${cleanPsid}`;
+    const fieldSetCacheKey = `facebook:profile:field_set:${pageId}`;
+    const cachedFieldSet = await cache.get<{ label: ProfileFieldSet["label"] }>(
+      fieldSetCacheKey,
+    );
+    const profileFieldSets = orderProfileFieldSets(cachedFieldSet?.label);
 
-    logger.debug("facebook.profile.fetching", { pageId, psid: cleanPsid });
+    let lastError: any;
+    for (const fieldSet of profileFieldSets) {
+      try {
+        logger.debug("facebook.profile.fetching", {
+          pageId,
+          psid: cleanPsid,
+          fieldSet: fieldSet.label,
+        });
 
-    const { data } = await metaClient.get(url);
+        const { data } = await metaClient.get(url, {
+          params: {
+            fields: fieldSet.fields,
+            access_token: token,
+          },
+          suppressMetaErrorLog: true,
+          redactMetaObjectId: true,
+        } as any);
 
-    // Normalize name and picture for our database
-    const firstName = data.first_name || "";
-    const lastName = data.last_name || "";
-    const fullName = `${firstName} ${lastName}`.trim();
-    const pictureUrl = data.profile_pic;
+        await cache.set(
+          fieldSetCacheKey,
+          { label: fieldSet.label },
+          PROFILE_FIELD_SET_CACHE_TTL_SECONDS,
+        );
 
-    return {
-      ...data,
-      name: fullName || "Guest Customer",
-      pictureUrl: pictureUrl || null,
-    };
+        return normalizeFacebookProfile(data);
+      } catch (error: any) {
+        lastError = error;
+        if (fieldSet.label !== profileFieldSets[profileFieldSets.length - 1].label) {
+          logger.debug("facebook.profile.fetch_retrying_alternate_fields", {
+            pageId,
+            psid: cleanPsid,
+            failedFieldSet: fieldSet.label,
+            code: error.code,
+            subcode: error.subcode,
+          });
+        }
+      }
+    }
+
+    throw lastError;
   } catch (error: any) {
     const cleanPsid = psid.trim();
+    if (isProfileUnavailableError(error)) {
+      await cache.set(
+        `facebook:profile:unavailable:${pageId}:${cleanPsid}`,
+        { unavailable: true },
+        PROFILE_NEGATIVE_CACHE_TTL_SECONDS,
+      );
+    }
     logger.warn("facebook.profile.fetch_failed", {
       pageId,
       error: error.message,

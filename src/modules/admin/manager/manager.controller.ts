@@ -3,7 +3,6 @@ import {
   createUser,
   getManagedUsers,
   getManagerDashboard,
-  getManagerHierarchy,
   assignUserToManager,
   removeUserAssignment,
   getAllUserAssignments,
@@ -124,13 +123,6 @@ export const reactivateManagedUser = async (req: Request, res: Response) => {
     message: "User reactivated successfully",
     user,
   });
-};
-
-// Get user's management hierarchy (who manages them)
-export const getMyManagers = async (req: Request, res: Response) => {
-  const userId = (req as any).user.id;
-  const hierarchy = await getManagerHierarchy(userId);
-  res.status(200).json({ data: hierarchy });
 };
 
 // Admin-only: Assign user to manager

@@ -186,7 +186,7 @@ export async function processWidgetChatMessage(params: {
 }
 
 /**
- * Common setup logic for both streaming and non-streaming widget chat paths.
+ * Common setup logic for widget chat.
  */
 async function setupWidgetChat(params: {
   install: WidgetInstall;
@@ -242,41 +242,4 @@ async function setupWidgetChat(params: {
   const historyTurns = historyToLlmTurns(historyForPrompt);
 
   return { conversation, businessProfile, historyTurns };
-}
-
-/**
- * processWidgetChatStreaming — Generator for web widget SSE.
- */
-export async function* processWidgetChatStreaming(params: {
-  install: WidgetInstall;
-  visitorId: string;
-  message: string;
-  conversationId?: number;
-}) {
-  const { install, message } = params;
-  const { conversation, businessProfile, historyTurns } =
-    await setupWidgetChat(params);
-
-  if (conversation.aiEnabled === false) {
-    yield { type: "status", data: "AI_DISABLED" };
-    return;
-  }
-
-  const { computeBusinessChatStreaming } =
-    await import("../../ai-agent/chat/businessChatReply.service");
-
-  // Yield the conversation ID so the client can save it
-  yield { type: "conversation_id", data: conversation.id };
-
-  const stream = computeBusinessChatStreaming({
-    businessProfile,
-    messageText: params.message,
-    historyTurns,
-    channel: "web",
-    conversationId: conversation.id,
-  });
-
-  for await (const event of stream) {
-    yield event;
-  }
 }

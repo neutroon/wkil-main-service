@@ -46,7 +46,7 @@ const baseState = () =>
     actionStepKey: "mutation",
     customerPhone: "+201234567890",
     channel: "messenger",
-    functionCalls: [
+    toolCalls: [
       {
         id: "call_1",
         name: "integration_action_2",
@@ -54,10 +54,10 @@ const baseState = () =>
       },
     ],
     contents: [
-      { role: "user", parts: [{ text: "عاوز احجز" }] },
+      { role: "user", content: "عاوز احجز" },
       {
         role: "model",
-        parts: [{ functionCall: { name: "integration_action_2", args: {} } }],
+        toolCalls: [{ name: "integration_action_2", args: {} }],
       },
     ],
   }) as any;
@@ -122,7 +122,7 @@ describe("runActionToolsV2Node", () => {
     expect(enqueueIntegrationAction).not.toHaveBeenCalled();
     expect(result.decision).toBeNull();
     expect(result.tools).toBeUndefined();
-    expect(result.functionCalls).toEqual([]);
+    expect(result.toolCalls).toEqual([]);
     expect(result.replyPolicy).toMatchObject({
       allowedActions: ["REPLY_AUTO"],
       allowedReplyTypes: ["ASK_FOR_CORRECTION"],
@@ -133,25 +133,21 @@ describe("runActionToolsV2Node", () => {
     expect(result.contents).toEqual([
       ...baseState().contents,
       {
-        role: "user",
-        parts: [
-          {
-            functionResponse: {
-              id: "call_1",
-              name: "integration_action_2",
-              response: {
-                success: false,
-                verification: "failed",
-                actionType: "integration_action_2",
-                reason: "action_policy_rejected",
-                data: {
-                  queued: false,
-                  policyReason: "unprovided_parameter:name",
-                },
-              },
-            },
+        role: "tool",
+        content:
+          '{"success":false,"verification":"failed","actionType":"integration_action_2","reason":"action_policy_rejected","data":{"queued":false,"policyReason":"unprovided_parameter:name"}}',
+        toolCallId: "call_1",
+        toolName: "integration_action_2",
+        toolResult: {
+          success: false,
+          verification: "failed",
+          actionType: "integration_action_2",
+          reason: "action_policy_rejected",
+          data: {
+            queued: false,
+            policyReason: "unprovided_parameter:name",
           },
-        ],
+        },
       },
     ]);
   });

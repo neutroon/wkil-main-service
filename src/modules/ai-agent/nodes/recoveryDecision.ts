@@ -15,10 +15,7 @@ type RecoveryDecisionParams = {
 
 export function latestUserText(state: AgentStateType): string {
   const latest = [...state.contents].reverse().find((turn) => turn.role === "user");
-  return (latest?.parts ?? [])
-    .filter((part) => typeof part.text === "string")
-    .map((part) => part.text)
-    .join(" ");
+  return latest?.content || "";
 }
 
 export async function buildAiRecoveryDecision(

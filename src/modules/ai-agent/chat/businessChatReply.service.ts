@@ -1,8 +1,7 @@
 import type { Prisma } from "@prisma/client";
-import type { Tool } from "@google/genai";
 import { retrieveRelevantChunksWithEmbedding } from "../rag/rag.service";
 import { buildSystemPrompt } from "../../meta/core/prompt.service";
-import { buildIntegrationActionTools } from "@modules/ai-agent/gemini";
+import { buildAgentActionTools } from "@modules/ai-agent/core/agentActionTools";
 import { runAgentGraphV2 } from "@modules/ai-agent/core/agentGraphV2";
 import type { AiRoutingDecision } from "@modules/ai-agent/core/aiEngine.utils";
 import {
@@ -223,24 +222,13 @@ export async function prepareAgentParams(params: {
           }),
         )
       : [];
-  const externalTools = buildIntegrationActionTools(eligibleExternalSources);
+  const finalTools = buildAgentActionTools(eligibleExternalSources);
   const externalSourceFailureBehaviors = Object.fromEntries(
     eligibleExternalSources.map((source) => [
       source.id,
       source.failureBehavior || "AUTO",
     ]),
   );
-
-  const toolBlocks: Tool[] = [];
-  if (externalTools.length > 0) toolBlocks.push(...externalTools);
-
-  const mergedDeclarations = toolBlocks.flatMap(
-    (t) => t.functionDeclarations ?? [],
-  );
-  const finalTools: Tool[] | undefined =
-    mergedDeclarations.length > 0
-      ? [{ functionDeclarations: mergedDeclarations }]
-      : undefined;
 
   const systemInstruction = buildSystemPrompt({
     businessProfile: {
@@ -257,7 +245,7 @@ export async function prepareAgentParams(params: {
     customerPhone,
     postContext: params.postContext,
     handoffEnabled: businessProfile.handoffEnabled,
-    hasChatRequestedActions: externalTools.length > 0,
+    hasChatRequestedActions: finalTools.length > 0,
     hasMediaAssets: mediaAssets.length > 0,
     hasCompletedActionResult: Boolean(completedExternalLookup),
   });
@@ -295,7 +283,7 @@ export async function prepareAgentParams(params: {
     channel,
     customerDetailsToolExposed: false,
     eligibleExternalSourceIds: eligibleExternalSources.map((source) => source.id),
-    toolNames: mergedDeclarations.map((declaration) => declaration.name),
+    toolNames: finalTools.map((tool) => tool.name),
   });
 
   return {
@@ -303,7 +291,7 @@ export async function prepareAgentParams(params: {
       systemInstruction: finalSystemInstruction,
       historyTurns,
       customerMessage: messageText,
-      tools: finalTools,
+      tools: finalTools.length > 0 ? finalTools : undefined,
       businessProfileId: businessProfile.id,
       businessName: businessProfile.name,
       businessVoice: businessProfile.voice || undefined,
@@ -545,54 +533,6 @@ async function findPendingMutationCorrectionContext(params: {
       envelope: parentEnvelope,
     },
   };
-}
-
-/**
- * Streaming AI loop execution.
- */
-export async function* computeBusinessChatStreaming(params: {
-  businessProfile: BusinessProfileForChat;
-  messageText: string;
-  historyTurns: { role: "user" | "model"; text: string }[];
-  channel: "web"; // Currently only web supports streaming
-  customerPhone?: string;
-  conversationId?: number;
-}) {
-  let agentTurnId = Date.now();
-  let persistedTurnId: number | null = null;
-  if (params.conversationId) {
-    const turn = await createAgentTurn({
-      businessProfileId: params.businessProfile.id,
-      conversationId: params.conversationId,
-      channel: params.channel,
-      mode: "CUSTOMER_MESSAGE",
-      customerText: params.messageText,
-    });
-    agentTurnId = turn.id;
-    persistedTurnId = turn.id;
-  }
-
-  const prep = await prepareAgentParams({ ...params, agentTurnId });
-  if (prep.errorDecision) {
-    yield { type: "error", data: prep.errorDecision };
-    if (persistedTurnId) await updateAgentTurnStatus(persistedTurnId, "FAILED");
-    return;
-  }
-
-  enqueueCustomerMemoryCaptureFromChat(params);
-  const { streamAgentGraph } = await import("../core/streamAgent");
-  for await (const event of streamAgentGraph({
-    ...prep.graphParams!,
-    agentTurnId,
-  })) {
-    if (event.type === "final_decision" && persistedTurnId) {
-      await updateAgentTurnStatus(
-        persistedTurnId,
-        event.data?.agentTurnStatus || "COMPLETED",
-      );
-    }
-    yield event;
-  }
 }
 
 function enqueueCustomerMemoryCaptureFromChat(params: {

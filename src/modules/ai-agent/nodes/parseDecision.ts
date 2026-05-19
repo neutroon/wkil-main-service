@@ -1,7 +1,7 @@
 /**
  * Node: parseDecision
  *
- * Parses the raw text from Gemini's latest response into a typed
+ * Parses the raw text from the latest model response into a typed
  * AiRoutingDecision. It keeps parsing strict, then uses one bounded
  * structured-output repair attempt before falling back to safe recovery.
  * Calls the existing pure functions:
@@ -64,11 +64,7 @@ export async function parseDecisionNode(
     .reverse()
     .find((c) => c.role === "model");
 
-  const responseText = (lastModelTurn?.parts ?? [])
-    .filter((p) => p.text)
-    .map((p) => p.text!)
-    .join("")
-    .trim();
+  const responseText = (lastModelTurn?.content || "").trim();
 
   logger.debug("ai.node.parseDecision.text_received", {
     length: responseText.length,
@@ -147,7 +143,7 @@ export async function parseDecisionNode(
           ...state.contents,
           {
             role: "user",
-            parts: [{ text: "CRITIQUE: You repeated yourself in the last turn. Please provide a fresh, non-repetitive response and ensure you are not stuck in a loop." }]
+            content: "CRITIQUE: You repeated yourself in the last turn. Please provide a fresh, non-repetitive response and ensure you are not stuck in a loop.",
           }
         ]
       });
@@ -186,7 +182,7 @@ export async function parseDecisionNode(
           ...state.contents,
           {
             role: "user",
-            parts: [{ text: replyPolicyCorrectionPrompt(state, replyPolicyValidation.reason) }],
+            content: replyPolicyCorrectionPrompt(state, replyPolicyValidation.reason),
           },
         ],
       });

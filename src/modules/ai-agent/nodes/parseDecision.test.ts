@@ -30,24 +30,20 @@ const baseState = (overrides: Record<string, unknown> = {}) =>
       },
     },
     contents: [
-      { role: "user", parts: [{ text: "book the course" }] },
+      { role: "user", content: "book the course" },
       {
         role: "model",
-        parts: [
-          {
-            text: JSON.stringify({
-              action: "HANDOFF_TO_HUMAN",
-              replyType: "HANDOFF",
-              reasoning: "The CRM failed, so route to staff.",
-              content: "A specialist will contact you.",
-              requiresGrounding: false,
-              grounded: false,
-              usedChunkTypes: [],
-              handoffCategory: "SALES_OPPORTUNITY",
-              missingInfo: null,
-            }),
-          },
-        ],
+        content: JSON.stringify({
+          action: "HANDOFF_TO_HUMAN",
+          replyType: "HANDOFF",
+          reasoning: "The CRM failed, so route to staff.",
+          content: "A specialist will contact you.",
+          requiresGrounding: false,
+          grounded: false,
+          usedChunkTypes: [],
+          handoffCategory: "SALES_OPPORTUNITY",
+          missingInfo: null,
+        }),
       },
     ],
     ...overrides,
@@ -81,11 +77,7 @@ describe("parseDecisionNode failed action safety", () => {
       expect.arrayContaining([
         expect.objectContaining({
           role: "user",
-          parts: [
-            expect.objectContaining({
-              text: expect.stringContaining("Ask exactly one concise"),
-            }),
-          ],
+          content: expect.stringContaining("Ask exactly one concise"),
         }),
       ]),
     );
@@ -118,21 +110,17 @@ describe("parseDecisionNode failed action safety", () => {
     const result = await parseDecisionNode(
       baseState({
         contents: [
-          { role: "user", parts: [{ text: "اهلا" }] },
+          { role: "user", content: "اهلا" },
           {
             role: "model",
-            parts: [
-              {
-                text: JSON.stringify({
-                  action: "REPLY_AUTO",
-                  reasoning: "Missing replyType should fail strict parsing.",
-                  content: "أهلاً بحضرتك، أقدر أساعدك؟",
-                  requiresGrounding: false,
-                  grounded: false,
-                  usedChunkTypes: [],
-                }),
-              },
-            ],
+            content: JSON.stringify({
+              action: "REPLY_AUTO",
+              reasoning: "Missing replyType should fail strict parsing.",
+              content: "أهلاً بحضرتك، أقدر أساعدك؟",
+              requiresGrounding: false,
+              grounded: false,
+              usedChunkTypes: [],
+            }),
           },
         ],
       }),

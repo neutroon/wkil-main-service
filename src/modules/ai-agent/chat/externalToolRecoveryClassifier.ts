@@ -1,5 +1,5 @@
-import { generateContent } from "@modules/ai-agent/gemini";
 import { logger } from "@utils/logger";
+import { invokeExternalToolRecoveryRoute } from "@modules/ai-agent/core/modelRuntime";
 
 const RECOVERY_CLASSIFIER_TIMEOUT_MS = 2_000;
 
@@ -22,43 +22,16 @@ function buildRecoveryClassifierPrompt(params: {
   ].join("\n");
 }
 
-function parseRoute(text: string): ExternalToolRecoveryRoute | null {
-  const cleaned = text
-    .replace(/^```(?:json)?/i, "")
-    .replace(/```$/i, "")
-    .trim();
-
-  try {
-    const parsed = JSON.parse(cleaned);
-    return parsed?.route === "normal_reply" || parsed?.route === "handoff"
-      ? parsed.route
-      : null;
-  } catch {
-    return null;
-  }
-}
-
 export async function classifyExternalToolFailureRecovery(params: {
   customerMessage: string;
   failureReason: string;
 }): Promise<ExternalToolRecoveryRoute> {
   try {
-    const result = await Promise.race([
-      generateContent(buildRecoveryClassifierPrompt(params), undefined, false, undefined, 0),
-      new Promise<never>((_, reject) =>
-        setTimeout(
-          () => reject(new Error("EXTERNAL_TOOL_RECOVERY_CLASSIFIER_TIMEOUT")),
-          RECOVERY_CLASSIFIER_TIMEOUT_MS,
-        ),
-      ),
-    ]);
-
-    const route = parseRoute(result.text || "");
-    if (route) return route;
-
-    logger.warn("ai.external_tool_recovery_classifier.invalid_output", {
-      preview: (result.text || "").slice(0, 120),
+    const result = await invokeExternalToolRecoveryRoute({
+      prompt: buildRecoveryClassifierPrompt(params),
+      timeoutMs: RECOVERY_CLASSIFIER_TIMEOUT_MS,
     });
+    return result.route;
   } catch (error: any) {
     logger.warn("ai.external_tool_recovery_classifier.failed", {
       error: error?.message || String(error),

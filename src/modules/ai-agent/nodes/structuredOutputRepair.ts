@@ -1,15 +1,10 @@
 import { logger } from "@utils/logger";
 import {
-  buildAiRoutingSchema,
-  executeWithFallback,
-  genAI,
-  MESSENGER_SAFETY_SETTINGS,
-} from "../gemini";
-import {
   repairAndParseAiResponse,
   type AiRoutingDecision,
 } from "../core/aiEngine.utils";
 import type { AgentStateType, SessionStats } from "../core/agentState";
+import { addUsageToSessionStats, invokeDecision } from "../core/modelRuntime";
 
 const STRUCTURED_REPAIR_TIMEOUT_MS = 20_000;
 const MAX_INVALID_OUTPUT_CHARS = 6_000;
@@ -19,34 +14,6 @@ export type StructuredOutputRepairResult = {
   decision: AiRoutingDecision;
   sessionStats: SessionStats;
 };
-
-function responseText(response: any): string {
-  if (typeof response?.text === "string") return response.text;
-  const parts = response?.candidates?.[0]?.content?.parts;
-  if (!Array.isArray(parts)) return "";
-  return parts
-    .map((part: any) => (typeof part?.text === "string" ? part.text : ""))
-    .join("");
-}
-
-function buildStatsWithRepairUsage(
-  state: AgentStateType,
-  response: any,
-  model: string,
-): SessionStats {
-  const usage = response?.usageMetadata;
-  return {
-    ...state.sessionStats,
-    modelName: model,
-    promptTokens:
-      state.sessionStats.promptTokens +
-      (usage?.promptTokenCount ?? usage?.promptTokens ?? 0),
-    completionTokens:
-      state.sessionStats.completionTokens +
-      (usage?.candidatesTokenCount ?? usage?.completionTokens ?? 0),
-    groundingCalls: state.sessionStats.groundingCalls,
-  };
-}
 
 function buildReplyPolicyContext(state: AgentStateType): string {
   if (!state.replyPolicy?.active) return "";
@@ -117,49 +84,34 @@ export async function repairStructuredDecisionOutput(params: {
   parseError: unknown;
 }): Promise<StructuredOutputRepairResult | null> {
   const { state, invalidOutput, parseError } = params;
-  const abortController = new AbortController();
-  const timeout = setTimeout(
-    () => abortController.abort("STRUCTURED_REPAIR_TIMEOUT"),
-    STRUCTURED_REPAIR_TIMEOUT_MS,
-  );
 
   try {
     const prompt = buildRepairPrompt({ state, invalidOutput, parseError });
-    const { result: response, model } = await executeWithFallback<any>(
-      (currentModel) =>
-        genAI.models.generateContent({
-          model: currentModel,
-          contents: [{ role: "user", parts: [{ text: prompt }] }],
-          config: {
-            abortSignal: abortController.signal,
-            httpOptions: { timeout: STRUCTURED_REPAIR_TIMEOUT_MS },
-            temperature: 0,
-            maxOutputTokens: STRUCTURED_REPAIR_MAX_OUTPUT_TOKENS,
-            safetySettings: MESSENGER_SAFETY_SETTINGS,
-            responseMimeType: "application/json",
-            responseSchema: buildAiRoutingSchema(state.channel),
-          },
-        }),
-      "AgentGraph.structuredOutputRepair",
-      undefined,
-      undefined,
-      abortController.signal,
-    );
+    const repaired = await invokeDecision({
+      systemInstruction: "",
+      contents: [{ role: "user", content: prompt }],
+      temperature: 0,
+      timeoutMs: STRUCTURED_REPAIR_TIMEOUT_MS,
+    });
 
-    const repairedText = responseText(response).trim();
+    const repairedText = repaired.rawText.trim();
     const decision = repairAndParseAiResponse(repairedText);
 
     logger.info("ai.node.structured_output_repair.success", {
       businessProfileId: state.businessProfileId,
       channel: state.channel,
-      model,
+      model: repaired.modelName,
       originalLength: invalidOutput.length,
       repairedLength: repairedText.length,
     });
 
     return {
       decision,
-      sessionStats: buildStatsWithRepairUsage(state, response, model),
+      sessionStats: addUsageToSessionStats(
+        state.sessionStats,
+        repaired.usage,
+        repaired.modelName,
+      ),
     };
   } catch (error: any) {
     logger.warn("ai.node.structured_output_repair.failed", {
@@ -168,7 +120,5 @@ export async function repairStructuredDecisionOutput(params: {
       error: error?.message || String(error),
     });
     return null;
-  } finally {
-    clearTimeout(timeout);
   }
 }

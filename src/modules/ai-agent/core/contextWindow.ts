@@ -2,14 +2,14 @@
  * Context Window Manager
  *
  * Prevents token-limit crashes by trimming conversation history to fit
- * within Gemini's context window before each graph invocation.
+ * within the model context window before each graph invocation.
  *
  * Strategy: Walk backwards through history (most recent first),
  * accumulating turns until the token budget is exhausted. Always
  * keep at least the last 2 turns to maintain coherence, and preserve
- * Gemini's function-call adjacency rules.
+ * tool-call adjacency rules.
  */
-import type { GeminiContent } from "./agentState";
+import type { AgentContent } from "./agentState";
 
 // Reserve 2048 tokens for the model's completion output.
 // Reserve another 1000 for the system instruction.
@@ -25,20 +25,20 @@ function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-function estimateTurnTokens(turn: GeminiContent): number {
-  return turn.parts.reduce((sum, part) => {
-    if (part.text) return sum + estimateTokens(part.text);
-    if (part.inlineData) return sum + 500; // Rough cost for inline media
-    return sum + 50; // Function calls / responses
-  }, 0);
+function estimateTurnTokens(turn: AgentContent): number {
+  let total = estimateTokens(turn.content || "");
+  if (turn.inlineData) total += 500; // Rough cost for inline media
+  if (turn.toolCalls?.length) total += 50 * turn.toolCalls.length;
+  if (turn.toolResult) total += estimateTokens(JSON.stringify(turn.toolResult));
+  return total;
 }
 
-function hasFunctionCall(turn: GeminiContent): boolean {
-  return turn.parts.some((part) => Boolean(part.functionCall));
+function hasToolCall(turn: AgentContent): boolean {
+  return Boolean(turn.toolCalls?.length);
 }
 
-function hasFunctionResponse(turn: GeminiContent): boolean {
-  return turn.parts.some((part) => Boolean(part.functionResponse));
+function hasToolResponse(turn: AgentContent): boolean {
+  return turn.role === "tool";
 }
 
 function addMandatoryIndex(
@@ -52,7 +52,7 @@ function addMandatoryIndex(
   queue.push(index);
 }
 
-function collectMandatoryTurnIndexes(history: GeminiContent[]): Set<number> {
+function collectMandatoryTurnIndexes(history: AgentContent[]): Set<number> {
   const indexes = new Set<number>();
   const queue: number[] = [];
 
@@ -68,16 +68,16 @@ function collectMandatoryTurnIndexes(history: GeminiContent[]): Set<number> {
     const index = queue.pop()!;
     const turn = history[index];
 
-    if (hasFunctionResponse(turn)) {
-      // A function response must remain attached to its model function call,
-      // and that model function call must remain attached to the preceding
-      // user/function-response turn accepted by Gemini.
+    if (hasToolResponse(turn)) {
+      // A tool response must remain attached to its model tool call,
+      // and that model tool call must remain attached to the preceding
+      // user/tool-response turn accepted by the provider.
       addMandatoryIndex(indexes, queue, index - 1, history.length);
       addMandatoryIndex(indexes, queue, index - 2, history.length);
       continue;
     }
 
-    if (hasFunctionCall(turn)) {
+    if (hasToolCall(turn)) {
       addMandatoryIndex(indexes, queue, index - 1, history.length);
     }
   }
@@ -95,13 +95,13 @@ function collectMandatoryTurnIndexes(history: GeminiContent[]): Set<number> {
  * @returns Windowed history that fits within the token budget
  */
 export function windowContents(
-  history: GeminiContent[],
+  history: AgentContent[],
   systemTokens = 0,
-): GeminiContent[] {
+): AgentContent[] {
   if (history.length <= MIN_TURNS_TO_KEEP) return history;
 
   const budget = MAX_HISTORY_TOKENS - systemTokens;
-  const windowed: GeminiContent[] = [];
+  const windowed: AgentContent[] = [];
   let remaining = budget;
   const mandatoryIndexes = collectMandatoryTurnIndexes(history);
   const earliestMandatory = Math.min(...mandatoryIndexes);

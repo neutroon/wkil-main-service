@@ -1,10 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { generateContent } from "@modules/ai-agent/gemini";
+import { invokeText } from "@modules/ai-agent/core/modelRuntime";
 import { generateSafeRecoveryReply } from "./aiRecoveryReply";
 
-vi.mock("@modules/ai-agent/gemini", () => ({
-  generateContent: vi.fn(),
+vi.mock("@modules/ai-agent/core/modelRuntime", () => ({
+  invokeText: vi.fn(),
 }));
+
+function textResult(text: string) {
+  return {
+    text,
+    usage: { promptTokens: 0, completionTokens: 0, groundingCalls: 0 },
+    modelName: "test",
+    finishReason: "STOP",
+  };
+}
 
 describe("generateSafeRecoveryReply", () => {
   beforeEach(() => {
@@ -12,16 +21,9 @@ describe("generateSafeRecoveryReply", () => {
   });
 
   it("uses safe AI recovery text when it passes validation", async () => {
-    vi.mocked(generateContent).mockResolvedValue({
-      text: "I can’t verify that detail right now. Please send the exact order ID and I’ll check again.",
-      usage: {
-        promptTokens: 0,
-        completionTokens: 0,
-        totalTokens: 0,
-        groundingCalls: 0,
-        model: "test",
-      },
-    });
+    vi.mocked(invokeText).mockResolvedValue(
+      textResult("I can’t verify that detail right now. Please send the exact order ID and I’ll check again."),
+    );
 
     await expect(
       generateSafeRecoveryReply({
@@ -35,27 +37,11 @@ describe("generateSafeRecoveryReply", () => {
   });
 
   it("retries cautiously when AI recovery claims success", async () => {
-    vi.mocked(generateContent)
-      .mockResolvedValueOnce({
-        text: "Done, your order has been confirmed and saved.",
-        usage: {
-          promptTokens: 0,
-          completionTokens: 0,
-          totalTokens: 0,
-          groundingCalls: 0,
-          model: "test",
-        },
-      })
-      .mockResolvedValueOnce({
-        text: "I can’t verify that right now. Please send the exact details so I can check safely.",
-        usage: {
-          promptTokens: 0,
-          completionTokens: 0,
-          totalTokens: 0,
-          groundingCalls: 0,
-          model: "test",
-        },
-      });
+    vi.mocked(invokeText)
+      .mockResolvedValueOnce(textResult("Done, your order has been confirmed and saved."))
+      .mockResolvedValueOnce(
+        textResult("I can’t verify that right now. Please send the exact details so I can check safely."),
+      );
 
     await expect(
       generateSafeRecoveryReply({
@@ -67,23 +53,16 @@ describe("generateSafeRecoveryReply", () => {
       "I can’t verify that right now. Please send the exact details so I can check safely.",
     );
 
-    expect(generateContent).toHaveBeenCalledTimes(2);
+    expect(invokeText).toHaveBeenCalledTimes(2);
   });
 
   it("extracts content when the model accidentally returns JSON", async () => {
-    vi.mocked(generateContent).mockResolvedValue({
-      text: JSON.stringify({
+    vi.mocked(invokeText).mockResolvedValue(
+      textResult(JSON.stringify({
         action: "REPLY_AUTO",
         content: "مش قادر أتحقق من المعلومة دي حالياً. فريقنا هيأكد لك التفاصيل.",
-      }),
-      usage: {
-        promptTokens: 0,
-        completionTokens: 0,
-        totalTokens: 0,
-        groundingCalls: 0,
-        model: "test",
-      },
-    });
+      })),
+    );
 
     await expect(
       generateSafeRecoveryReply({
@@ -96,16 +75,9 @@ describe("generateSafeRecoveryReply", () => {
   });
 
   it("rejects handoff promises when no handoff route is active", async () => {
-    vi.mocked(generateContent).mockResolvedValue({
-      text: "فريقنا هيتواصل معاك في أسرع وقت.",
-      usage: {
-        promptTokens: 0,
-        completionTokens: 0,
-        totalTokens: 0,
-        groundingCalls: 0,
-        model: "test",
-      },
-    });
+    vi.mocked(invokeText).mockResolvedValue(
+      textResult("فريقنا هيتواصل معاك في أسرع وقت."),
+    );
 
     await expect(
       generateSafeRecoveryReply({
@@ -117,16 +89,9 @@ describe("generateSafeRecoveryReply", () => {
   });
 
   it("allows Arabic team confirmation wording when handoff route is active", async () => {
-    vi.mocked(generateContent).mockResolvedValue({
-      text: "أنا بخير، شكراً لسؤالك! فريقنا هيتواصل معاك حالاً عشان يتابع معاك.",
-      usage: {
-        promptTokens: 0,
-        completionTokens: 0,
-        totalTokens: 0,
-        groundingCalls: 0,
-        model: "test",
-      },
-    });
+    vi.mocked(invokeText).mockResolvedValue(
+      textResult("أنا بخير، شكراً لسؤالك! فريقنا هيتواصل معاك حالاً عشان يتابع معاك."),
+    );
 
     await expect(
       generateSafeRecoveryReply({
@@ -142,16 +107,9 @@ describe("generateSafeRecoveryReply", () => {
   });
 
   it("keeps AI recovery text from real Arabic handoff traces", async () => {
-    vi.mocked(generateContent).mockResolvedValue({
-      text: "أهلاً بيك! فريقنا هيراجع رسالتك وهيتواصل معاك في أسرع وقت.",
-      usage: {
-        promptTokens: 0,
-        completionTokens: 0,
-        totalTokens: 0,
-        groundingCalls: 0,
-        model: "test",
-      },
-    });
+    vi.mocked(invokeText).mockResolvedValue(
+      textResult("أهلاً بيك! فريقنا هيراجع رسالتك وهيتواصل معاك في أسرع وقت."),
+    );
 
     await expect(
       generateSafeRecoveryReply({
@@ -165,16 +123,9 @@ describe("generateSafeRecoveryReply", () => {
   });
 
   it("uses the static emergency fallback only after two unsafe AI recovery attempts", async () => {
-    vi.mocked(generateContent).mockResolvedValue({
-      text: "Done, your request has been confirmed and saved.",
-      usage: {
-        promptTokens: 0,
-        completionTokens: 0,
-        totalTokens: 0,
-        groundingCalls: 0,
-        model: "test",
-      },
-    });
+    vi.mocked(invokeText).mockResolvedValue(
+      textResult("Done, your request has been confirmed and saved."),
+    );
 
     await expect(
       generateSafeRecoveryReply({
@@ -185,6 +136,6 @@ describe("generateSafeRecoveryReply", () => {
       }),
     ).resolves.toBe("Fallback");
 
-    expect(generateContent).toHaveBeenCalledTimes(2);
+    expect(invokeText).toHaveBeenCalledTimes(2);
   });
 });

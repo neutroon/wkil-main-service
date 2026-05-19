@@ -1,9 +1,9 @@
-import { generateContent } from "@modules/ai-agent/gemini";
 import { logger } from "@utils/logger";
 import {
   formatChannelStyleRules,
   getChannelPromptProfile,
 } from "@modules/meta/core/prompt.service";
+import { invokeText } from "@modules/ai-agent/core/modelRuntime";
 
 const RECOVERY_TIMEOUT_MS = 4_000;
 const MAX_RECOVERY_CHARS = 420;
@@ -121,12 +121,12 @@ function buildRecoveryPrompt(params: {
 }
 
 async function askRecoveryModel(prompt: string): Promise<string> {
-  const result = await Promise.race([
-    generateContent(prompt, undefined, false, undefined, 0.2),
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("AI_RECOVERY_TIMEOUT")), RECOVERY_TIMEOUT_MS),
-    ),
-  ]);
+  const result = await invokeText({
+    prompt,
+    temperature: 0.2,
+    timeoutMs: RECOVERY_TIMEOUT_MS,
+    context: "AgentGraph.recoveryReply",
+  });
 
   return stripJsonOrMarkdown(result.text || "");
 }

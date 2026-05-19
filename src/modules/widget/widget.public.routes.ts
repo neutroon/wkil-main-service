@@ -86,50 +86,10 @@ widgetPublicRoutes.post(
       throw new AppError("Widget context missing", 500);
     }
 
-    const { visitorId, message, conversationId, stream } = req.body;
+    const { visitorId, message, conversationId } = req.body;
     const normalizedMessage = normalizeWidgetText(message);
     if (!normalizedMessage) {
       throw new AppError("message is required", 400);
-    }
-
-    if (stream) {
-      // ── Server-Sent Events Path ────────────────────────────────────────
-      // We keep SSE for progress/final delivery, but use the same approved
-      // non-streaming chat flow as Messenger/WhatsApp to avoid exposing
-      // unverified partial tokens before final guardrails.
-      res.setHeader("Content-Type", "text/event-stream");
-      res.setHeader("Cache-Control", "no-cache");
-      res.setHeader("Connection", "keep-alive");
-
-      try {
-        res.write(`data: ${JSON.stringify({ status: "processing" })}\n\n`);
-        const result = await processWidgetChatMessage({
-          install,
-          visitorId: visitorId.trim(),
-          message: normalizedMessage,
-          conversationId,
-        });
-
-        res.write(
-          `data: ${JSON.stringify({
-            final: {
-              reply: result.reply,
-              action: "REPLY_AUTO",
-              attachment: result.attachment ?? null,
-              conversationId: result.conversationId,
-            },
-          })}\n\n`,
-        );
-      } catch (err) {
-        res.write(
-          `data: ${JSON.stringify({
-            error: err instanceof Error ? err.message : "Unable to complete chat response.",
-          })}\n\n`,
-        );
-      }
-
-      res.write("data: [DONE]\n\n");
-      return res.end();
     }
 
     // ── Standard JSON Path ───────────────────────────────────────────

@@ -1,6 +1,6 @@
 import { StateGraph, START, END } from "@langchain/langgraph";
 import { AgentState, makeEmptyEvidence } from "./agentState";
-import { callGeminiNode } from "../nodes/callGemini";
+import { callModelNode } from "../nodes/callModel";
 import { runActionToolsV2Node } from "../nodes/runActionToolsV2";
 import { parseDecisionNode } from "../nodes/parseDecision";
 import { runGuardrailNode } from "../nodes/runGuardrail";
@@ -10,32 +10,32 @@ import { DEFAULT_AI_TRUTHFULNESS_POLICY } from "./aiEngine.utils";
 import { assertQuotaAvailable } from "@modules/billing/billing.service";
 import { logger } from "@utils/logger";
 import prisma from "@config/prisma";
-import type { Tool } from "@google/genai";
+import type { AgentContent, AgentToolDefinition } from "./agentState";
 import type { AiRoutingDecision, AiTruthfulnessPolicy } from "./aiEngine.utils";
 import type { ReplyPolicy } from "./replyPolicy";
 
 const workflowV2 = new StateGraph(AgentState)
-  .addNode("callGemini", callGeminiNode)
+  .addNode("callModel", callModelNode)
   .addNode("runActionTool", runActionToolsV2Node)
   .addNode("parseDecision", parseDecisionNode)
   .addNode("runGuardrail", runGuardrailNode)
   .addNode("recordUsage", recordUsageNode);
 
-workflowV2.addEdge(START, "callGemini");
+workflowV2.addEdge(START, "callModel");
 
-workflowV2.addConditionalEdges("callGemini", (state) => {
+workflowV2.addConditionalEdges("callModel", (state) => {
   if (state.decision !== null) return "recordUsage";
-  if (state.functionCalls.length > 0) return "runActionTool";
+  if (state.toolCalls.length > 0) return "runActionTool";
   return "parseDecision";
 });
 
 workflowV2.addConditionalEdges("runActionTool", (state) => {
   if (state.decision !== null) return "recordUsage";
-  return "callGemini";
+  return "callModel";
 });
 
 workflowV2.addConditionalEdges("parseDecision", (state) => {
-  if (state.decision === null) return "callGemini";
+  if (state.decision === null) return "callModel";
   if (state.hadToolExecution) return "runGuardrail";
   return "recordUsage";
 });
@@ -50,7 +50,7 @@ export interface AgentGraphV2Params {
   systemInstruction: string;
   historyTurns: { role: "user" | "model"; text?: string; parts?: any[] }[];
   customerMessage: string;
-  tools?: Tool[];
+  tools?: AgentToolDefinition[];
   businessProfileId: number;
   businessName?: string;
   businessVoice?: string;
@@ -109,9 +109,9 @@ async function _runGraphV2(params: AgentGraphV2Params): Promise<AiRoutingDecisio
     },
   };
 
-  const historyContents = params.historyTurns.map((turn) => ({
+  const historyContents: AgentContent[] = params.historyTurns.map((turn) => ({
     role: turn.role,
-    parts: turn.parts ? turn.parts : [{ text: turn.text ?? "" }],
+    content: turn.text ?? textFromLegacyParts(turn.parts),
   }));
 
   try {
@@ -146,9 +146,9 @@ async function _runGraphV2(params: AgentGraphV2Params): Promise<AiRoutingDecisio
       replyPolicy: params.replyPolicy,
       contents: [
         ...historyContents,
-        { role: "user" as const, parts: [{ text: params.customerMessage || "" }] },
+        { role: "user" as const, content: params.customerMessage || "" },
       ] as any,
-      functionCalls: [] as any,
+      toolCalls: [] as any,
       turnCount: 0 as any,
       hadToolExecution: false as any,
       evidence: makeEmptyEvidence() as any,
@@ -176,4 +176,11 @@ async function _runGraphV2(params: AgentGraphV2Params): Promise<AiRoutingDecisio
     throw new Error("Graph V2 completed without a decision");
   }
   return finalState.decision;
+}
+
+function textFromLegacyParts(parts?: any[]): string {
+  if (!Array.isArray(parts)) return "";
+  return parts
+    .map((part) => (typeof part?.text === "string" ? part.text : ""))
+    .join("");
 }

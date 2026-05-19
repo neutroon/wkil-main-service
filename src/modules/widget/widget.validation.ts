@@ -19,6 +19,19 @@ export const widgetChatSchema = z.object({
   }),
 });
 
+export const widgetMediaChatSchema = z.object({
+  body: z.object({
+    visitorId: z.string()
+      .min(8, "visitorId must be at least 8 characters")
+      .max(VISITOR_ID_MAX, `visitorId exceeds maximum length of ${VISITOR_ID_MAX}`),
+    message: z.string()
+      .max(MESSAGE_MAX, `message exceeds maximum length of ${MESSAGE_MAX}`)
+      .optional()
+      .default(""),
+    conversationId: z.coerce.number().nullable().optional(),
+  }),
+});
+
 /**
  * Public Widget History Schema
  * GET /v1/public/widget/chat/history

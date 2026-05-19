@@ -19,6 +19,7 @@ import {
   buildAiRoutingSchema,
 } from "../gemini";
 import { windowContents, estimateSystemTokens } from "../core/contextWindow";
+import { enqueueAiUsageRecord } from "@modules/billing/billing.queue";
 import { recordAiUsage } from "@modules/billing/billing.service";
 import { logger } from "@utils/logger";
 import type { AgentStateType } from "../core/agentState";
@@ -308,15 +309,27 @@ export async function callGeminiNode(
   );
 
   if (deltaPrompt > 0 || deltaCompletion > 0 || deltaGrounding > 0) {
+    const usagePayload = {
+      userId: state.userId,
+      businessProfileId: state.businessProfileId,
+      modelName: usedModel,
+      promptTokens: deltaPrompt,
+      completionTokens: deltaCompletion,
+      groundingCalls: deltaGrounding,
+      operation: `chat_${state.channel || "direct"}`,
+    };
+
     try {
-      await recordAiUsage({
-        userId: state.userId,
-        businessProfileId: state.businessProfileId,
-        modelName: usedModel,
-        promptTokens: deltaPrompt,
-        completionTokens: deltaCompletion,
-        groundingCalls: deltaGrounding,
-        operation: `chat_${state.channel || "direct"}`,
+      await enqueueAiUsageRecord(usagePayload, {
+        jobId: [
+          "ai-usage",
+          state.agentTurnId || "turn",
+          state.turnCount + 1,
+          usedModel,
+          deltaPrompt,
+          deltaCompletion,
+          deltaGrounding,
+        ].join("-"),
       });
 
       // Synchronize state: mark these tokens as billed
@@ -324,11 +337,22 @@ export async function callGeminiNode(
       updatedStats.lastBilledCompletionTokens = updatedStats.completionTokens;
       updatedStats.lastBilledGrounding = updatedStats.groundingCalls;
     } catch (err: any) {
-      logger.error("ai.node.callGemini.billing_failed", {
+      logger.error("ai.node.callGemini.billing_enqueue_failed", {
         error: err.message,
         businessProfileId: state.businessProfileId,
       });
-      // We don't update lastBilled counters here, so the next turn (or recordUsage node) will retry.
+      try {
+        await recordAiUsage(usagePayload);
+        updatedStats.lastBilledPromptTokens = updatedStats.promptTokens;
+        updatedStats.lastBilledCompletionTokens = updatedStats.completionTokens;
+        updatedStats.lastBilledGrounding = updatedStats.groundingCalls;
+      } catch (fallbackErr: any) {
+        logger.error("ai.node.callGemini.billing_failed", {
+          error: fallbackErr.message,
+          businessProfileId: state.businessProfileId,
+        });
+        // We don't update lastBilled counters here, so the next turn (or recordUsage node) will retry.
+      }
     }
   }
 

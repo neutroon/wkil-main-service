@@ -99,10 +99,33 @@ export const updateBusinessUsage = async (req: Request, res: Response) => {
   const { tokensUsed } = req.body;
   const businessProfileId = Number(id);
 
-  const businessProfile = await prisma.businessProfile.update({
+  const businessProfile = await prisma.businessProfile.findUnique({
     where: { id: businessProfileId },
-    data: { monthlyTokensUsed: tokensUsed },
     select: { userId: true },
+  });
+
+  if (!businessProfile) {
+    res.status(404).json({ message: "Business profile not found" });
+    return;
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.businessProfile.update({
+      where: { id: businessProfileId },
+      data: { monthlyTokensUsed: tokensUsed },
+    });
+
+    const remainingUsage = await tx.businessProfile.aggregate({
+      where: { userId: businessProfile.userId },
+      _sum: { monthlyTokensUsed: true },
+    });
+
+    await tx.user.update({
+      where: { id: businessProfile.userId },
+      data: {
+        monthlyTokensUsed: remainingUsage._sum.monthlyTokensUsed || 0,
+      },
+    });
   });
 
   clearQuotaCache(businessProfile.userId);

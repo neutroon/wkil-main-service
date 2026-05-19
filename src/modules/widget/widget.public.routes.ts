@@ -1,4 +1,5 @@
 import { Router, Response } from "express";
+import multer from "multer";
 import prisma from "@config/prisma";
 import { processWidgetChatMessage } from "./services/widgetChat.service";
 import { listConversationMessages } from "@modules/meta/core/conversation.service";
@@ -7,11 +8,16 @@ import { widgetInstallAndCors } from "@modules/widget/widgetInstall.middleware";
 import { validate } from "@middlewares/validate.middleware";
 import {
   widgetChatSchema,
+  widgetMediaChatSchema,
   widgetHistorySchema,
 } from "./widget.validation";
 import { AppError } from "@middlewares/errorHandler.middleware";
 
 const widgetPublicRoutes = Router();
+const widgetMediaUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024 },
+});
 
 function normalizeWidgetText(input: string): string {
   return input
@@ -24,6 +30,7 @@ function normalizeWidgetText(input: string): string {
 }
 
 widgetPublicRoutes.options("/chat", widgetInstallAndCors);
+widgetPublicRoutes.options("/chat/media", widgetInstallAndCors);
 widgetPublicRoutes.options("/config", widgetInstallAndCors);
 
 /**
@@ -98,6 +105,44 @@ widgetPublicRoutes.post(
       visitorId: visitorId.trim(),
       message: normalizedMessage,
       conversationId,
+    });
+
+    return res.json({
+      reply: result.reply,
+      conversationId: result.conversationId,
+      attachment: result.attachment ?? null,
+    });
+  },
+);
+
+widgetPublicRoutes.post(
+  "/chat/media",
+  widgetInstallAndCors,
+  widgetMediaUpload.single("file"),
+  validate(widgetMediaChatSchema),
+  async (req: WidgetRequest, res: Response) => {
+    const install = req.widgetInstall;
+    if (!install) {
+      throw new AppError("Widget context missing", 500);
+    }
+    if (!req.file) {
+      throw new AppError("file is required", 400);
+    }
+
+    const { visitorId, message = "", conversationId } = req.body;
+    const normalizedMessage = normalizeWidgetText(String(message || ""));
+
+    const result = await processWidgetChatMessage({
+      install,
+      visitorId: visitorId.trim(),
+      message: normalizedMessage,
+      conversationId,
+      media: {
+        buffer: req.file.buffer,
+        originalName: req.file.originalname,
+        mimeType: req.file.mimetype,
+        size: req.file.size,
+      },
     });
 
     return res.json({

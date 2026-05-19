@@ -19,6 +19,8 @@ import {
   getFacebookUserProfile,
   likeComment,
 } from "../facebook/facebook.service";
+import { classifyInboundMessageSignal } from "@modules/ai-agent/chat/messageSignals";
+import { understandInboundMedia } from "./inboundMediaUnderstanding.service";
 
 export type MetaPlatform = "messenger" | "whatsapp" | "visual_production" | "visual_refine" | "media_sync" | "facebook" | "instagram" | "linkedin";
 
@@ -572,6 +574,45 @@ export async function processMetaMessage(job: MetaMessageJob) {
       return;
     }
 
+    const inboundSignal = classifyInboundMessageSignal({
+      type,
+      messageText,
+      mediaId,
+      mediaMetadata,
+    });
+    if (!inboundSignal.shouldTriggerAi) {
+      logger.info("meta.processor.skipping_ai", {
+        reason: inboundSignal.reason,
+        conversationId: conversation.id,
+        type,
+      });
+      return;
+    }
+
+    let enrichedMediaMetadata = mediaMetadata;
+    if (
+      mediaId &&
+      (platform === "messenger" || platform === "whatsapp")
+    ) {
+      const analysis = await understandInboundMedia({
+        platform,
+        accessToken,
+        mediaId,
+        type,
+        mediaMetadata,
+      });
+      if (analysis) {
+        enrichedMediaMetadata = {
+          ...(mediaMetadata || {}),
+          analysis,
+        };
+        await prisma.conversationMessage.update({
+          where: { id: userSaved.id },
+          data: { mediaMetadata: enrichedMediaMetadata },
+        });
+      }
+    }
+
     // 5. AI Reply Generation
     logger.info("meta.processor.computing_reply", { conversationId: conversation.id });
     const historyRows = await getConversationHistory(conversation.id, userSaved.createdAt, job.postId);
@@ -605,7 +646,12 @@ export async function processMetaMessage(job: MetaMessageJob) {
       historyTurns,
       channel: isComment ? "facebook_comment" : (platform as any),
       customerPhone: platform === "whatsapp" ? senderId : undefined,
-      mediaInfo: mediaId ? { id: mediaId, type: type || "image", url: mediaMetadata?.url } : undefined,
+      mediaInfo: mediaId ? {
+        id: mediaId,
+        type: type || "image",
+        url: enrichedMediaMetadata?.url,
+        metadata: enrichedMediaMetadata,
+      } : undefined,
       postContext,
       conversationId: conversation.id,
       agentTurnId: agentTurn.id,

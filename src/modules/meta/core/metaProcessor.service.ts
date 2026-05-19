@@ -576,29 +576,36 @@ export async function processMetaMessage(job: MetaMessageJob) {
 
     // 5. AI Reply Generation
     logger.info("meta.processor.computing_reply", { conversationId: conversation.id });
-    const historyRows = await getConversationHistory(conversation.id, userSaved.createdAt, job.postId);
+    const historyPromise = getConversationHistory(conversation.id, userSaved.createdAt, job.postId);
+    const postContextPromise = isComment && job.postId
+      ? import("../facebook/facebook.service").then(async ({ getPostContext, getCommentText }) => {
+          const [pContext, parContext] = await Promise.all([
+            getPostContext(job.postId!, accessToken),
+            job.parentId ? getCommentText(job.parentId, accessToken) : Promise.resolve(null),
+          ]);
+          return pContext
+            ? { content: pContext.content, media: pContext.media, parentContext: parContext || undefined }
+            : undefined;
+        })
+      : Promise.resolve(undefined);
+    const socketSyncPromise = import("@modules/realtime/socketSync.service");
+    const agentTurnPromise = import("@modules/ai-agent/core/agentTurn.service").then(({ createAgentTurn }) =>
+      createAgentTurn({
+        businessProfileId,
+        conversationId: conversation.id,
+        inputMessageId: userSaved.id,
+        channel: isComment ? "facebook_comment" : platform,
+        mode: "CUSTOMER_MESSAGE",
+        customerText: messageText || "",
+      }),
+    );
+    const [historyRows, postContext, { syncTypingStatus }, agentTurn] = await Promise.all([
+      historyPromise,
+      postContextPromise,
+      socketSyncPromise,
+      agentTurnPromise,
+    ]);
     const historyTurns = historyToLlmTurns(toPromptMessages(historyRows));
-
-    let postContext: any;
-    if (isComment && job.postId) {
-      const { getPostContext, getCommentText } = await import("../facebook/facebook.service");
-      const [pContext, parContext] = await Promise.all([
-        getPostContext(job.postId, accessToken),
-        job.parentId ? getCommentText(job.parentId, accessToken) : Promise.resolve(null)
-      ]);
-      if (pContext) postContext = { content: pContext.content, media: pContext.media, parentContext: parContext || undefined };
-    }
-
-    const { syncTypingStatus } = await import("@modules/realtime/socketSync.service");
-    const { createAgentTurn } = await import("@modules/ai-agent/core/agentTurn.service");
-    const agentTurn = await createAgentTurn({
-      businessProfileId,
-      conversationId: conversation.id,
-      inputMessageId: userSaved.id,
-      channel: isComment ? "facebook_comment" : platform,
-      mode: "CUSTOMER_MESSAGE",
-      customerText: messageText || "",
-    });
     syncTypingStatus({ businessProfileId, conversationId: conversation.id, isTyping: true });
 
     const reply = await computeBusinessChatReply({
@@ -684,11 +691,16 @@ export async function processMetaMessage(job: MetaMessageJob) {
         mediaMetadata: aiMediaAsset ? { url: aiMediaAsset.publicUrl, name: aiMediaAsset.name } : undefined
       });
       logger.info("meta.processor.model_saved", { messageId: modelSaved.id, status: privateStatus, hasMedia: !!aiMediaAsset });
-      await notifySavedModelReplySideEffects({
+      notifySavedModelReplySideEffects({
         businessProfileId,
         conversationId: conversation.id,
         message: modelSaved,
         reply,
+      }).catch((error: any) => {
+        logger.error("meta.processor.model_side_effects_failed", {
+          conversationId: conversation.id,
+          error: error?.message || String(error),
+        });
       });
     }
 
@@ -790,11 +802,16 @@ export async function processMetaMessage(job: MetaMessageJob) {
             }
             logger.info("meta.processor.messenger_reply_success", { messageId: res?.message_id });
             if (res?.message_id) await syncMessageStatus(modelSaved.id, businessProfileId, conversation.id, { status: "SENT", externalId: res.message_id });
-            await scheduleFollowUpsForDeliveredReply({
+            scheduleFollowUpsForDeliveredReply({
               conversationId: conversation.id,
               businessProfileId,
               message: modelSaved,
               reply,
+            }).catch((error: any) => {
+              logger.error("meta.processor.follow_up_schedule_failed", {
+                conversationId: conversation.id,
+                error: error?.message || String(error),
+              });
             });
           } catch (err: any) {
             logger.error("meta.processor.messenger_reply_failed", { error: err.message });
@@ -818,11 +835,16 @@ export async function processMetaMessage(job: MetaMessageJob) {
           const wamid = res?.messages?.[0]?.id;
           logger.info("meta.processor.whatsapp_reply_success", { wamid });
           if (wamid) await prisma.conversationMessage.update({ where: { id: modelSaved.id }, data: { status: "SENT", externalId: wamid } });
-          await scheduleFollowUpsForDeliveredReply({
+          scheduleFollowUpsForDeliveredReply({
             conversationId: conversation.id,
             businessProfileId,
             message: modelSaved,
             reply,
+          }).catch((error: any) => {
+            logger.error("meta.processor.follow_up_schedule_failed", {
+              conversationId: conversation.id,
+              error: error?.message || String(error),
+            });
           });
         } catch (err: any) {
           logger.error("meta.processor.whatsapp_reply_failed", { error: err.message });

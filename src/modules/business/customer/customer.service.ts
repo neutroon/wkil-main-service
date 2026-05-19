@@ -420,6 +420,7 @@ export async function listCustomers(params: {
   userId: number;
   businessProfileId?: number;
   q?: string;
+  hasPhone?: boolean;
   status?: string;
   channel?: string;
   page?: number;
@@ -447,6 +448,15 @@ export async function listCustomers(params: {
         { displayName: { contains: q, mode: "insensitive" } },
         { phone: { contains: q, mode: "insensitive" } },
         { email: { contains: q, mode: "insensitive" } },
+      ],
+    });
+  }
+
+  if (params.hasPhone) {
+    andFilters.push({
+      AND: [
+        { phone: { not: null } },
+        { phone: { not: "" } },
       ],
     });
   }

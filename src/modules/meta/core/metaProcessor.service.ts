@@ -547,8 +547,10 @@ export async function processMetaMessage(job: MetaMessageJob) {
        throw new UnrecoverableError("Could not resolve conversation for Meta message.");
     }
 
-    // 5. Trigger Background Enrichment (Messenger only)
-    if (platform === "messenger" && !job.customerName) {
+    // 5. Trigger Background Enrichment for Messenger DM PSIDs only.
+    // Facebook comment author IDs are not Messenger PSIDs, and calling the
+    // Messenger profile endpoint for them returns Graph code 100.
+    if (platform === "messenger" && !isComment && !job.customerName) {
       enrichContactInBackground(conversation.id, senderId, identifier, accessToken).catch(() => {});
     }
 

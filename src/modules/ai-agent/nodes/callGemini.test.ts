@@ -33,6 +33,10 @@ vi.mock("@modules/billing/billing.service", () => ({
   recordAiUsage: vi.fn(),
 }));
 
+vi.mock("@modules/billing/billing.queue", () => ({
+  enqueueAiUsageRecord: vi.fn(),
+}));
+
 vi.mock("@utils/logger", () => ({
   logger: {
     debug: vi.fn(),

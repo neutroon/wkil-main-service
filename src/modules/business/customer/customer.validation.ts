@@ -4,6 +4,7 @@ export const listCustomersSchema = z.object({
   query: z.object({
     businessProfileId: z.coerce.number().optional(),
     q: z.string().optional(),
+    hasPhone: z.coerce.boolean().optional(),
     status: z.string().optional(),
     channel: z.string().optional(),
     page: z.coerce.number().int().positive().optional(),

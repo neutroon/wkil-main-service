@@ -35,6 +35,7 @@ export const updateUserSchema = z.object({
     role: z.enum(["user", "manager", "admin"]).optional(),
     plan: z.string().optional(),
     monthlyQuota: z.coerce.number().optional(),
+    monthlyCreditQuota: z.coerce.number().optional(),
   }),
 });
 

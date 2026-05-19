@@ -1288,12 +1288,12 @@ export const getAdminAnalytics = async (days: number = 30) => {
         },
         orderBy: { date: "desc" },
       }),
-      prisma.businessProfile.aggregate({
-        _sum: { monthlyTokensUsed: true },
-      }),
-    ]);
+        prisma.businessProfile.aggregate({
+          _sum: { monthlyCreditsUsed: true },
+        }),
+      ]);
 
-    const totalCreditsUsed = creditsAgg._sum.monthlyTokensUsed || 0;
+      const totalCreditsUsed = creditsAgg._sum.monthlyCreditsUsed || 0;
     const totalRevenue = totalCreditsUsed * 0.001;
 
     return {

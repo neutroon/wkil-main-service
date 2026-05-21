@@ -1,4 +1,5 @@
 import bcrypt from "bcrypt";
+import { Prisma } from "@prisma/client";
 import prisma from "@config/prisma";
 import {
   generateAccessToken,
@@ -432,6 +433,19 @@ export const getManagedUsers = async (managerId: number) => {
             orderBy: { date: "desc" },
             take: 30,
           },
+          businessProfiles: {
+            orderBy: { createdAt: "desc" },
+            select: {
+              id: true,
+              name: true,
+              plan: true,
+              monthlyTokensUsed: true,
+              monthlyCreditsUsed: true,
+              monthlyCreditQuota: true,
+              brandKitCompleted: true,
+              createdAt: true,
+            },
+          },
         },
       },
     },
@@ -543,14 +557,33 @@ export const getManagerDashboard = async (managerId: number) => {
   });
 
   const bpIds = businessProfiles.map((bp) => bp.id);
-  const aiUsage = await prisma.aiUsageStat.groupBy({
-    by: ["businessProfileId"],
-    where: { businessProfileId: { in: bpIds } },
-    _sum: {
-      totalTokens: true,
-      systemCost: true,
-    },
-  });
+  const [aiUsage, aiMessageRows] = await Promise.all([
+    prisma.aiUsageStat.groupBy({
+      by: ["businessProfileId"],
+      where: { businessProfileId: { in: bpIds } },
+      _sum: {
+        totalTokens: true,
+        systemCost: true,
+      },
+    }),
+    userIds.length > 0
+      ? prisma.$queryRaw<
+          Array<{ userId: number; status: string; count: number }>
+        >(Prisma.sql`
+          SELECT
+            bp."userId" AS "userId",
+            cm."status"::text AS "status",
+            COUNT(*)::int AS "count"
+          FROM "ConversationMessage" cm
+          INNER JOIN "Conversation" c ON c."id" = cm."conversationId"
+          INNER JOIN "BusinessProfile" bp ON bp."id" = c."businessProfileId"
+          WHERE cm."role" = 'model'
+            AND cm."status"::text IN ('SENT', 'DELIVERED', 'READ', 'FAILED')
+            AND bp."userId" IN (${Prisma.join(userIds)})
+          GROUP BY bp."userId", cm."status"::text
+        `)
+      : Promise.resolve([]),
+  ]);
 
   const billingMultiplier = await getBillingMultiplier();
 
@@ -575,12 +608,37 @@ export const getManagerDashboard = async (managerId: number) => {
     userAiStats[bp.userId].profit += profit;
   });
 
+  const userAiMessageStats: Record<number, { sent: number; failed: number }> =
+    {};
+  aiMessageRows.forEach((row) => {
+    if (!userAiMessageStats[row.userId]) {
+      userAiMessageStats[row.userId] = { sent: 0, failed: 0 };
+    }
+
+    if (row.status === "FAILED") {
+      userAiMessageStats[row.userId].failed += Number(row.count);
+    } else {
+      userAiMessageStats[row.userId].sent += Number(row.count);
+    }
+  });
+
+  const aiMessagesSent = Object.values(userAiMessageStats).reduce(
+    (sum, stats) => sum + stats.sent,
+    0,
+  );
+  const aiMessagesFailed = Object.values(userAiMessageStats).reduce(
+    (sum, stats) => sum + stats.failed,
+    0,
+  );
+
   return {
     totalManagedUsers,
     activeUsers,
     inactiveUsers: totalManagedUsers - activeUsers,
     totalFacebookAccounts,
     totalPages,
+    aiMessagesSent,
+    aiMessagesFailed,
     recentActivities,
     userPerformance: managedUsers.map((u) => ({
       userId: u.user.id,
@@ -596,6 +654,8 @@ export const getManagerDashboard = async (managerId: number) => {
         (sum, acc) => sum + acc._count.activities,
         0,
       ),
+      aiMessagesSent: userAiMessageStats[u.user.id]?.sent || 0,
+      aiMessagesFailed: userAiMessageStats[u.user.id]?.failed || 0,
       recentAnalytics: u.user.analytics.slice(0, 7), // Last 7 days
       aiStats: userAiStats[u.user.id] || { tokens: 0, cost: 0 },
     })),

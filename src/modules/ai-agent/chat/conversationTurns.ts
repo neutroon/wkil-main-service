@@ -1,3 +1,5 @@
+import { customerMessageForModel } from "./messageSignals";
+
 /** Prior turns for the LLM (token budget). */
 export const MAX_HISTORY_CHARS = 12_000;
 
@@ -6,13 +8,34 @@ interface Message {
   content: string;
 }
 
+type ConversationTurnRow = {
+  role: string;
+  content: string;
+  type?: string | null;
+  mediaId?: string | null;
+  mediaMetadata?: unknown;
+};
+
 /** Prisma stores `role` as String; narrow to prompt roles we persist. */
 export function toPromptMessages(
-  rows: { role: string; content: string }[],
+  rows: ConversationTurnRow[],
 ): Message[] {
   return rows.map((m) => ({
     role: (m.role === "model" || m.role === "agent") ? "model" : "user",
-    content: m.content,
+    content:
+      m.role === "model" || m.role === "agent"
+        ? m.content
+        : customerMessageForModel({
+            messageText: m.content,
+            mediaInfo:
+              m.mediaId || m.mediaMetadata
+                ? {
+                    id: m.mediaId,
+                    type: m.type,
+                    metadata: m.mediaMetadata,
+                  }
+                : undefined,
+          }),
   }));
 }
 

@@ -1,10 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { generateContent } from "@modules/ai-agent/gemini";
+import { invokeExternalToolRecoveryRoute } from "@modules/ai-agent/core/modelRuntime";
 import { classifyExternalToolFailureRecovery } from "./externalToolRecoveryClassifier";
 
-vi.mock("@modules/ai-agent/gemini", () => ({
-  generateContent: vi.fn(),
+vi.mock("@modules/ai-agent/core/modelRuntime", () => ({
+  invokeExternalToolRecoveryRoute: vi.fn(),
 }));
+
+function routeResult(route: "normal_reply" | "handoff", reasoning: string) {
+  return {
+    route,
+    reasoning,
+    usage: { promptTokens: 0, completionTokens: 0, groundingCalls: 0 },
+    modelName: "test",
+    finishReason: "STOP",
+  };
+}
 
 describe("classifyExternalToolFailureRecovery", () => {
   beforeEach(() => {
@@ -12,19 +22,12 @@ describe("classifyExternalToolFailureRecovery", () => {
   });
 
   it("returns normal_reply when the classifier marks the failed tool as non-essential", async () => {
-    vi.mocked(generateContent).mockResolvedValue({
-      text: JSON.stringify({
-        route: "normal_reply",
-        reasoning: "The latest message is a greeting and does not need an Agent Action result.",
-      }),
-      usage: {
-        promptTokens: 0,
-        completionTokens: 0,
-        totalTokens: 0,
-        groundingCalls: 0,
-        model: "test",
-      },
-    });
+    vi.mocked(invokeExternalToolRecoveryRoute).mockResolvedValue(
+      routeResult(
+        "normal_reply",
+        "The latest message is a greeting and does not need an Agent Action result.",
+      ),
+    );
 
     await expect(
       classifyExternalToolFailureRecovery({
@@ -35,19 +38,9 @@ describe("classifyExternalToolFailureRecovery", () => {
   });
 
   it("returns handoff when the classifier says the failed action was required", async () => {
-    vi.mocked(generateContent).mockResolvedValue({
-      text: JSON.stringify({
-        route: "handoff",
-        reasoning: "The user requested current price verification.",
-      }),
-      usage: {
-        promptTokens: 0,
-        completionTokens: 0,
-        totalTokens: 0,
-        groundingCalls: 0,
-        model: "test",
-      },
-    });
+    vi.mocked(invokeExternalToolRecoveryRoute).mockResolvedValue(
+      routeResult("handoff", "The user requested current price verification."),
+    );
 
     await expect(
       classifyExternalToolFailureRecovery({
@@ -58,16 +51,9 @@ describe("classifyExternalToolFailureRecovery", () => {
   });
 
   it("defaults to handoff when classifier output is invalid", async () => {
-    vi.mocked(generateContent).mockResolvedValue({
-      text: "not-json",
-      usage: {
-        promptTokens: 0,
-        completionTokens: 0,
-        totalTokens: 0,
-        groundingCalls: 0,
-        model: "test",
-      },
-    });
+    vi.mocked(invokeExternalToolRecoveryRoute).mockRejectedValue(
+      new Error("invalid classifier output"),
+    );
 
     await expect(
       classifyExternalToolFailureRecovery({

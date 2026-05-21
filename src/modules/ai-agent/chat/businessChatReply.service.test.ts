@@ -122,20 +122,12 @@ describe("prepareAgentParams", () => {
       channel: "web",
     });
 
-    expect(result.graphParams?.tools).toEqual([
-      {
-        functionDeclarations: [
-          expect.objectContaining({
-            name: "integration_action_2",
-            description: expect.stringContaining("queues the check in the background"),
-            parameters: expect.objectContaining({
-              type: "OBJECT",
-              properties: {},
-            }),
-          }),
-        ],
-      },
-    ]);
+    expect(result.graphParams?.tools).toHaveLength(1);
+    expect(result.graphParams?.tools?.[0]).toMatchObject({
+      name: "integration_action_2",
+      description: expect.stringContaining("queues the check in the background"),
+    });
+    expect(result.graphParams?.tools?.[0].schema.safeParse({}).success).toBe(true);
     expect(buildSystemPrompt).toHaveBeenCalledWith(
       expect.objectContaining({
         channel: "web",
@@ -180,6 +172,36 @@ describe("prepareAgentParams", () => {
 
     expect(result.graphParams?.tools).toBeUndefined();
     expect(filterEligibleAgentActionSources).not.toHaveBeenCalled();
+  });
+
+  it("uses media understanding text as the model and retrieval query", async () => {
+    const result = await prepareAgentParams({
+      businessProfile: {
+        ...businessProfile,
+        agentActionSources: [],
+      },
+      messageText: "",
+      mediaInfo: {
+        id: "wamid.image.1",
+        type: "image",
+        metadata: {
+          mimeType: "image/jpeg",
+          analysis: {
+            status: "completed",
+            text: "The customer sent a certificate photo.",
+          },
+        },
+      },
+      historyTurns: [],
+      channel: "whatsapp",
+    });
+
+    expect(retrieveRelevantChunksWithEmbedding).toHaveBeenCalledWith(
+      1,
+      expect.stringContaining("certificate photo"),
+      5,
+    );
+    expect(result.graphParams?.customerMessage).toContain("certificate photo");
   });
 
   it("does not expose non-chat action schemas", async () => {
@@ -247,16 +269,11 @@ describe("prepareAgentParams", () => {
       5,
     );
     expect(filterEligibleAgentActionSources).not.toHaveBeenCalled();
-    expect(result.graphParams?.tools).toEqual([
-      {
-        functionDeclarations: [
-          expect.objectContaining({
-            name: "integration_action_7",
-            description: expect.stringContaining("queues the action in the background"),
-          }),
-        ],
-      },
-    ]);
+    expect(result.graphParams?.tools).toHaveLength(1);
+    expect(result.graphParams?.tools?.[0]).toMatchObject({
+      name: "integration_action_7",
+      description: expect.stringContaining("queues the action in the background"),
+    });
     expect(buildSystemPrompt).toHaveBeenCalledWith(
       expect.objectContaining({
         hasChatRequestedActions: true,
@@ -428,11 +445,7 @@ describe("prepareAgentParams", () => {
         parentActionRunId: 77,
         actionStepKey: "mutation",
         tools: [
-          {
-            functionDeclarations: [
-              expect.objectContaining({ name: "integration_action_7" }),
-            ],
-          },
+          expect.objectContaining({ name: "integration_action_7" }),
         ],
       }),
     );

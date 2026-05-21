@@ -1,8 +1,7 @@
 import type { Prisma } from "@prisma/client";
-import type { Tool } from "@google/genai";
 import { retrieveRelevantChunksWithEmbedding } from "../rag/rag.service";
 import { buildSystemPrompt } from "../../meta/core/prompt.service";
-import { buildIntegrationActionTools } from "@modules/ai-agent/gemini";
+import { buildAgentActionTools } from "@modules/ai-agent/core/agentActionTools";
 import { runAgentGraphV2 } from "@modules/ai-agent/core/agentGraphV2";
 import type { AiRoutingDecision } from "@modules/ai-agent/core/aiEngine.utils";
 import {
@@ -28,6 +27,10 @@ import {
 import prisma from "@config/prisma";
 import { logger } from "@utils/logger";
 import { effectiveCustomerRequestText } from "./completedActionRequest";
+import {
+  customerMessageForModel,
+  type InboundMediaInfo,
+} from "./messageSignals";
 export type { AiRoutingDecision };
 
 export type BusinessProfileForChat = Prisma.BusinessProfileGetPayload<{
@@ -119,7 +122,7 @@ export async function prepareAgentParams(params: {
   historyTurns: { role: "user" | "model"; text: string }[];
   channel: "messenger" | "whatsapp" | "web" | "facebook_comment";
   customerPhone?: string;
-  mediaInfo?: { id: string; type: string; url?: string };
+  mediaInfo?: InboundMediaInfo;
   postContext?: { content: string; media?: string };
   conversationId?: number;
   agentTurnId?: number;
@@ -158,9 +161,13 @@ export async function prepareAgentParams(params: {
     };
   }
 
+  const customerModelMessage = customerMessageForModel({
+    messageText,
+    mediaInfo: params.mediaInfo,
+  });
   const effectiveMessageText = completedExternalLookup
     ? effectiveCustomerRequestText(messageText)
-    : messageText;
+    : customerModelMessage;
 
   const retrieval = await retrieveRelevantChunksWithEmbedding(
     businessProfile.id,
@@ -223,24 +230,13 @@ export async function prepareAgentParams(params: {
           }),
         )
       : [];
-  const externalTools = buildIntegrationActionTools(eligibleExternalSources);
+  const finalTools = buildAgentActionTools(eligibleExternalSources);
   const externalSourceFailureBehaviors = Object.fromEntries(
     eligibleExternalSources.map((source) => [
       source.id,
       source.failureBehavior || "AUTO",
     ]),
   );
-
-  const toolBlocks: Tool[] = [];
-  if (externalTools.length > 0) toolBlocks.push(...externalTools);
-
-  const mergedDeclarations = toolBlocks.flatMap(
-    (t) => t.functionDeclarations ?? [],
-  );
-  const finalTools: Tool[] | undefined =
-    mergedDeclarations.length > 0
-      ? [{ functionDeclarations: mergedDeclarations }]
-      : undefined;
 
   const systemInstruction = buildSystemPrompt({
     businessProfile: {
@@ -257,7 +253,7 @@ export async function prepareAgentParams(params: {
     customerPhone,
     postContext: params.postContext,
     handoffEnabled: businessProfile.handoffEnabled,
-    hasChatRequestedActions: externalTools.length > 0,
+    hasChatRequestedActions: finalTools.length > 0,
     hasMediaAssets: mediaAssets.length > 0,
     hasCompletedActionResult: Boolean(completedExternalLookup),
   });
@@ -295,15 +291,15 @@ export async function prepareAgentParams(params: {
     channel,
     customerDetailsToolExposed: false,
     eligibleExternalSourceIds: eligibleExternalSources.map((source) => source.id),
-    toolNames: mergedDeclarations.map((declaration) => declaration.name),
+    toolNames: finalTools.map((tool) => tool.name),
   });
 
   return {
     graphParams: {
       systemInstruction: finalSystemInstruction,
       historyTurns,
-      customerMessage: messageText,
-      tools: finalTools,
+      customerMessage: customerModelMessage,
+      tools: finalTools.length > 0 ? finalTools : undefined,
       businessProfileId: businessProfile.id,
       businessName: businessProfile.name,
       businessVoice: businessProfile.voice || undefined,
@@ -313,7 +309,6 @@ export async function prepareAgentParams(params: {
       contextQuality,
       availableChunkTypes,
       externalSourceFailureBehaviors,
-      mediaInfo: params.mediaInfo,
       conversationId,
       agentTurnId,
       activeWorkflowId,
@@ -406,7 +401,7 @@ export async function computeBusinessChatReply(params: {
   historyTurns: { role: "user" | "model"; text: string }[];
   channel: "messenger" | "whatsapp" | "web" | "facebook_comment";
   customerPhone?: string;
-  mediaInfo?: { id: string; type: string; url?: string };
+  mediaInfo?: InboundMediaInfo;
   postContext?: { content: string; media?: string };
   conversationId?: number;
   agentTurnId?: number;
@@ -545,54 +540,6 @@ async function findPendingMutationCorrectionContext(params: {
       envelope: parentEnvelope,
     },
   };
-}
-
-/**
- * Streaming AI loop execution.
- */
-export async function* computeBusinessChatStreaming(params: {
-  businessProfile: BusinessProfileForChat;
-  messageText: string;
-  historyTurns: { role: "user" | "model"; text: string }[];
-  channel: "web"; // Currently only web supports streaming
-  customerPhone?: string;
-  conversationId?: number;
-}) {
-  let agentTurnId = Date.now();
-  let persistedTurnId: number | null = null;
-  if (params.conversationId) {
-    const turn = await createAgentTurn({
-      businessProfileId: params.businessProfile.id,
-      conversationId: params.conversationId,
-      channel: params.channel,
-      mode: "CUSTOMER_MESSAGE",
-      customerText: params.messageText,
-    });
-    agentTurnId = turn.id;
-    persistedTurnId = turn.id;
-  }
-
-  const prep = await prepareAgentParams({ ...params, agentTurnId });
-  if (prep.errorDecision) {
-    yield { type: "error", data: prep.errorDecision };
-    if (persistedTurnId) await updateAgentTurnStatus(persistedTurnId, "FAILED");
-    return;
-  }
-
-  enqueueCustomerMemoryCaptureFromChat(params);
-  const { streamAgentGraph } = await import("../core/streamAgent");
-  for await (const event of streamAgentGraph({
-    ...prep.graphParams!,
-    agentTurnId,
-  })) {
-    if (event.type === "final_decision" && persistedTurnId) {
-      await updateAgentTurnStatus(
-        persistedTurnId,
-        event.data?.agentTurnStatus || "COMPLETED",
-      );
-    }
-    yield event;
-  }
 }
 
 function enqueueCustomerMemoryCaptureFromChat(params: {

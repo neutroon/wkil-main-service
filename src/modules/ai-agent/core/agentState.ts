@@ -14,12 +14,11 @@
  * No node ever mutates state in place.
  */
 import { Annotation } from "@langchain/langgraph";
-import type { Tool } from "@google/genai";
+import type { z } from "zod";
 import type {
   AiRoutingDecision,
   AiTruthfulnessPolicy,
   AiEvidenceState,
-  DEFAULT_AI_TRUTHFULNESS_POLICY,
 } from "./aiEngine.utils";
 import type { ReplyPolicy } from "./replyPolicy";
 
@@ -28,22 +27,26 @@ export type { AiRoutingDecision, AiTruthfulnessPolicy, AiEvidenceState };
 
 // ── Internal types used only by the graph ─────────────────────────────────────
 
-export interface GeminiContent {
-  role: "user" | "model";
-  parts: GeminiPart[];
-}
-
-export interface GeminiPart {
-  text?: string;
+export interface AgentContent {
+  role: "user" | "model" | "tool";
+  content?: string;
   inlineData?: { data: string; mimeType: string };
-  functionCall?: { name: string; args: unknown };
-  functionResponse?: { id?: string; name: string; response: unknown };
+  toolCalls?: ToolCall[];
+  toolCallId?: string;
+  toolName?: string;
+  toolResult?: unknown;
 }
 
-export interface FunctionCall {
+export interface ToolCall {
   id?: string;
   name: string;
   args: unknown;
+}
+
+export interface AgentToolDefinition {
+  name: string;
+  description: string;
+  schema: z.ZodTypeAny;
 }
 
 export interface SessionStats {
@@ -82,7 +85,7 @@ function makeDefaultStats(): SessionStats {
 export const AgentState = Annotation.Root({
   // ─── Read-only inputs (set at graph entry, never modified by nodes) ───────
   systemInstruction: Annotation<string>(),
-  tools:             Annotation<Tool[] | undefined>(),
+  tools:             Annotation<AgentToolDefinition[] | undefined>(),
   businessProfileId: Annotation<number>(),
   businessName:      Annotation<string | undefined>(),
   businessVoice:     Annotation<string | undefined>(),
@@ -117,14 +120,14 @@ export const AgentState = Annotation.Root({
   // ─── Mutable: conversation turns (append-only via reducer) ───────────────
   // Each node that adds a turn pushes to this array.
   // The reducer merges arrays — no node can accidentally overwrite history.
-  contents: Annotation<GeminiContent[]>({
+  contents: Annotation<AgentContent[]>({
     value: (_, update) => update,
     default: () => [],
   }),
 
   // ─── Mutable: tool execution state ───────────────────────────────────────
-  // Overwrite semantics: each callGemini turn sets this fresh.
-  functionCalls: Annotation<FunctionCall[]>({
+  // Overwrite semantics: each callModel turn sets this fresh.
+  toolCalls: Annotation<ToolCall[]>({
     value:   (_, update) => update,
     default: () => [],
   }),

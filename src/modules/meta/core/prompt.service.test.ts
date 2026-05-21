@@ -56,6 +56,38 @@ describe("buildSystemPrompt", () => {
     expect(prompt).not.toContain("\r");
   });
 
+  it("tells the model to use only canonical chunk type values", () => {
+    const prompt = buildSystemPrompt({
+      businessProfile: baseProfile,
+      context: [
+        { chunkType: "identity", content: "Business: pagesPilot" },
+        { chunkType: "custom_section", content: "[KNOWLEDGE]: طرق التقديم" },
+        { chunkType: "faq", content: "Q: التسجيل" },
+      ],
+      channel: "messenger",
+    });
+
+    expect(prompt).toContain(
+      "usedChunkTypes must contain only canonical chunkType values available in this run: identity, custom_section, faq.",
+    );
+    expect(prompt).toContain(
+      "Do not use inner content labels like KNOWLEDGE; for [CUSTOM_SECTION] blocks, cite custom_section.",
+    );
+  });
+
+  it("includes external_tool as a canonical chunk type when completed action evidence exists", () => {
+    const prompt = buildSystemPrompt({
+      businessProfile: baseProfile,
+      context: [{ chunkType: "identity", content: "Business: pagesPilot" }],
+      channel: "whatsapp",
+      hasCompletedActionResult: true,
+    });
+
+    expect(prompt).toContain(
+      "canonical chunkType values available in this run: identity, external_tool.",
+    );
+  });
+
   it("keeps customer memory out of chat actions and enforces real action parameters", () => {
     const prompt = buildSystemPrompt({
       businessProfile: baseProfile,

@@ -221,6 +221,39 @@ describe("POST /chat (public widget)", () => {
       "https://shop.example",
     );
   });
+
+  it("keeps final-only SSE compatibility when stream is requested", async () => {
+    vi.mocked(prisma.widgetInstall.findFirst).mockResolvedValue({
+      ...baseInstall,
+      allowedOrigins: ["https://shop.example"],
+    });
+    vi.mocked(processWidgetChatMessage).mockResolvedValue({
+      reply: "Hello from SSE widget",
+      conversationId: 101,
+      attachment: null,
+    });
+
+    const res = await doRequest(server, {
+      method: "POST",
+      path: "/chat",
+      headers: {
+        "x-widget-site-key": "wpk_test_xxxxxxxx",
+        origin: "https://shop.example",
+      },
+      body: JSON.stringify({
+        visitorId: "12345678-abcd-ef00-0000-000000000001",
+        message: "Hi there",
+        stream: true,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toMatch(/text\/event-stream/);
+    expect(res.body).toContain("data: ");
+    expect(res.body).toContain("\"reply\":\"Hello from SSE widget\"");
+    expect(res.body).toContain("\"conversationId\":101");
+    expect(res.body).toContain("data: [DONE]");
+  });
 });
 
 describe("OPTIONS /chat (CORS preflight)", () => {

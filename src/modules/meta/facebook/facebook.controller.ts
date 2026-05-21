@@ -391,7 +391,9 @@ export class FacebookController {
       orderBy: { updatedAt: "desc" },
     });
     if (!page) throw new AppError("Page not found", 404);
-    if (!page.businessProfileId) throw new AppError("Page is not linked", 400);
+    if (!page.businessProfileId) {
+      return res.json({ success: true, page });
+    }
 
     const updated = await prisma.facebookPage.update({
       where: { id: page.id },

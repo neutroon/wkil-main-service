@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../gemini", () => ({
-  buildAiRoutingSchema: vi.fn(() => ({ type: "OBJECT" })),
-  executeWithFallback: vi.fn(),
-  genAI: {
-    models: {
-      generateContent: vi.fn(),
-    },
-  },
-  MESSENGER_SAFETY_SETTINGS: [],
+vi.mock("../core/modelRuntime", () => ({
+  invokeDecision: vi.fn(),
+  addUsageToSessionStats: (stats: any, usage: any, modelName: string) => ({
+    ...stats,
+    modelName,
+    promptTokens: stats.promptTokens + usage.promptTokens,
+    completionTokens: stats.completionTokens + usage.completionTokens,
+    groundingCalls: stats.groundingCalls + usage.groundingCalls,
+  }),
 }));
 
 vi.mock("@utils/logger", () => ({
@@ -20,7 +20,7 @@ vi.mock("@utils/logger", () => ({
   },
 }));
 
-import { executeWithFallback } from "../gemini";
+import { invokeDecision } from "../core/modelRuntime";
 import { repairStructuredDecisionOutput } from "./structuredOutputRepair";
 
 const baseState = {
@@ -44,25 +44,36 @@ describe("repairStructuredDecisionOutput", () => {
   });
 
   it("repairs invalid structured output and carries token usage forward", async () => {
-    vi.mocked(executeWithFallback).mockResolvedValueOnce({
-      model: "gemini-3-flash-preview",
-      result: {
-        text: JSON.stringify({
-          action: "REPLY_AUTO",
-          replyType: "NORMAL_REPLY",
-          reasoning: "Repaired JSON contract.",
-          content: "أهلاً بحضرتك.",
-          requiresGrounding: false,
-          grounded: false,
-          usedChunkTypes: [],
-          missingInfo: null,
-          attachment: null,
-        }),
-        usageMetadata: {
-          promptTokenCount: 100,
-          candidatesTokenCount: 25,
-        },
+    vi.mocked(invokeDecision).mockResolvedValueOnce({
+      modelName: "gemini-3-flash-preview",
+      rawText: JSON.stringify({
+        action: "REPLY_AUTO",
+        replyType: "NORMAL_REPLY",
+        reasoning: "Repaired JSON contract.",
+        content: "أهلاً بحضرتك.",
+        requiresGrounding: false,
+        grounded: false,
+        usedChunkTypes: [],
+        missingInfo: null,
+        attachment: null,
+      }),
+      decision: {
+        action: "REPLY_AUTO",
+        replyType: "NORMAL_REPLY",
+        reasoning: "Repaired JSON contract.",
+        content: "أهلاً بحضرتك.",
+        requiresGrounding: false,
+        grounded: false,
+        usedChunkTypes: [],
+        missingInfo: null,
+        attachment: null,
       },
+      usage: {
+        promptTokens: 100,
+        completionTokens: 25,
+        groundingCalls: 0,
+      },
+      finishReason: "STOP",
     } as any);
 
     const result = await repairStructuredDecisionOutput({
@@ -84,16 +95,9 @@ describe("repairStructuredDecisionOutput", () => {
   });
 
   it("fails closed when the repair model still returns invalid JSON", async () => {
-    vi.mocked(executeWithFallback).mockResolvedValueOnce({
-      model: "gemini-3-flash-preview",
-      result: {
-        text: '{"action":"REPLY_AUTO"',
-        usageMetadata: {
-          promptTokenCount: 100,
-          candidatesTokenCount: 25,
-        },
-      },
-    } as any);
+    vi.mocked(invokeDecision).mockRejectedValueOnce(
+      new Error("AI_RESPONSE_JSON_OBJECT_INCOMPLETE"),
+    );
 
     await expect(
       repairStructuredDecisionOutput({

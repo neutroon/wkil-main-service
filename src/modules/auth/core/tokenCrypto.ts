@@ -1,4 +1,3 @@
-import { env } from "@config/env";
 import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
 import { AppError } from "@middlewares/errorHandler.middleware";
 
@@ -7,7 +6,7 @@ const ALGO = "aes-256-gcm";
 
 /** 32-byte key: 64 hex chars or base64-encoded 32 bytes */
 export function getFacebookTokenEncryptionKey(): Buffer | null {
-  const raw = env.FB_TOKEN_ENCRYPTION_KEY?.trim();
+  const raw = process.env.FB_TOKEN_ENCRYPTION_KEY?.trim();
   if (!raw) return null;
   if (/^[0-9a-fA-F]{64}$/.test(raw)) {
     return Buffer.from(raw, "hex");

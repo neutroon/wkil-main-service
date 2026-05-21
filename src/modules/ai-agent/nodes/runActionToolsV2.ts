@@ -1,4 +1,4 @@
-import type { AgentStateType, GeminiContent } from "@modules/ai-agent/core/agentState";
+import type { AgentContent, AgentStateType } from "@modules/ai-agent/core/agentState";
 import { logger } from "@utils/logger";
 import {
   createBullMqJobId,
@@ -22,14 +22,14 @@ import {
 export async function runActionToolsV2Node(
   state: AgentStateType,
 ): Promise<Partial<AgentStateType>> {
-  const call = state.functionCalls[0];
+  const call = state.toolCalls[0];
   if (!call) return {};
 
-  if (state.functionCalls.length > 1) {
+  if (state.toolCalls.length > 1) {
     logger.warn("ai.v2.tool.multiple_calls_ignored", {
       businessProfileId: state.businessProfileId,
       agentTurnId: state.agentTurnId,
-      toolNames: state.functionCalls.map((item) => item.name),
+      toolNames: state.toolCalls.map((item) => item.name),
     });
   }
 
@@ -91,12 +91,12 @@ export async function runActionToolsV2Node(
           policyReason: validation.reasoning,
         },
       }),
-      functionCalls: [],
+      toolCalls: [],
       tools: undefined,
       replyPolicy,
       systemInstruction: `${state.systemInstruction}\n\n${replyPolicyPromptBlock(replyPolicy)}`,
       // This was rejected by deterministic policy before any external request ran.
-      // Feed the function response back to Gemini so it can ask one clarification,
+      // Feed the tool response back to the model so it can ask one clarification,
       // but do not run the post-tool guardrail/recovery layer on top of it.
       hadToolExecution: false,
       decision: null,
@@ -217,47 +217,33 @@ function normalizeArgs(args: unknown): Record<string, any> {
   return args as Record<string, any>;
 }
 
-function latestUserMessage(contents: GeminiContent[]): string {
+function latestUserMessage(contents: AgentContent[]): string {
   return (
-    [...contents]
-      .reverse()
-      .find((turn) => turn.role === "user")
-      ?.parts.map((part) => part.text || "")
-      .join("\n")
-      .trim() || ""
+    ([...contents].reverse().find((turn) => turn.role === "user")?.content || "")
+      .trim()
   );
 }
 
-function textHistory(contents: GeminiContent[]): string {
+function textHistory(contents: AgentContent[]): string {
   return contents
-    .map((turn) =>
-      turn.parts
-        .map((part) => part.text || "")
-        .filter(Boolean)
-        .join("\n"),
-    )
+    .map((turn) => turn.content || "")
     .filter(Boolean)
     .join("\n");
 }
 
 function appendFunctionResponse(
   state: AgentStateType,
-  call: NonNullable<AgentStateType["functionCalls"][number]>,
+  call: NonNullable<AgentStateType["toolCalls"][number]>,
   response: Record<string, unknown>,
-): GeminiContent[] {
+): AgentContent[] {
   return [
     ...state.contents,
     {
-      role: "user" as const,
-      parts: [
-        {
-          functionResponse: {
-            ...(call.id ? { id: call.id } : {}),
-            name: call.name,
-            response,
-          },
-        },
-      ],
+      role: "tool" as const,
+      content: JSON.stringify(response),
+      toolCallId: call.id,
+      toolName: call.name,
+      toolResult: response,
     },
   ];
 }

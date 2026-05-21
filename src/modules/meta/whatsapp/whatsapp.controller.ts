@@ -184,6 +184,8 @@ export class WhatsAppController {
                 externalId: wamid,
                 customerName,
                 type,
+                mediaId,
+                mediaMetadata,
                 isFromBusiness,
               } as any,
             });

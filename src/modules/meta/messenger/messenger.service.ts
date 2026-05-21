@@ -13,6 +13,7 @@ import {
   scheduleFollowUpsForDeliveredReply,
 } from "@modules/ai-agent/chat/replySideEffects.service";
 import { historyToLlmTurns, toPromptMessages } from "@modules/ai-agent/chat/conversationTurns";
+import { classifyInboundMessageSignal } from "@modules/ai-agent/chat/messageSignals";
 import { AppError } from "@middlewares/errorHandler.middleware";
 
 
@@ -215,6 +216,22 @@ export async function handleMessengerMessage(
       mediaMetadata,
     });
 
+    const inboundSignal = classifyInboundMessageSignal({
+      type,
+      messageText,
+      mediaId,
+      mediaMetadata,
+    });
+    if (!inboundSignal.shouldTriggerAi) {
+      logger.info("messenger.passive_inbound_saved_without_ai", {
+        conversationId: conversation.id,
+        reason: inboundSignal.reason,
+        type,
+      });
+      void sendMessengerAction(senderId, "typing_off", pageAccessToken);
+      return;
+    }
+
     // 4. Compute AI Response
     const historyRows = await getConversationHistory(conversation.id);
     const historyForPrompt = toPromptMessages(historyRows);
@@ -225,7 +242,11 @@ export async function handleMessengerMessage(
       messageText,
       historyTurns,
       channel: "messenger",
-      mediaInfo: mediaId ? { id: mediaId, type: type || "image" } : undefined,
+      mediaInfo: mediaId ? {
+        id: mediaId,
+        type: type || "image",
+        metadata: mediaMetadata,
+      } : undefined,
       conversationId: conversation.id,
     });
 

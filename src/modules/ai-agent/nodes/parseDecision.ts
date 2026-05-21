@@ -1,7 +1,7 @@
 /**
  * Node: parseDecision
  *
- * Parses the raw text from Gemini's latest response into a typed
+ * Parses the raw text from the latest model response into a typed
  * AiRoutingDecision. It keeps parsing strict, then uses one bounded
  * structured-output repair attempt before falling back to safe recovery.
  * Calls the existing pure functions:
@@ -22,6 +22,45 @@ import {
 import { validateDecisionAgainstReplyPolicy } from "../core/replyPolicy";
 import type { AgentStateType } from "../core/agentState";
 import { repairStructuredDecisionOutput } from "./structuredOutputRepair";
+
+function normalizeChunkTypeClaim(
+  chunkType: string,
+  availableChunkTypes: string[],
+): string {
+  const trimmed = String(chunkType || "").trim();
+  const normalized = trimmed
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+  const availableByLower = new Map(
+    availableChunkTypes.map((available) => [available.toLowerCase(), available]),
+  );
+  const aliases: Record<string, string> = {
+    knowledge: "custom_section",
+    custom: "custom_section",
+    custom_section: "custom_section",
+    raw: "raw_content",
+    raw_content: "raw_content",
+    external_tool: "external_tool",
+  };
+  const alias = aliases[normalized];
+
+  if (alias && availableChunkTypes.includes(alias)) return alias;
+  return availableByLower.get(normalized) || trimmed;
+}
+
+function normalizeUsedChunkTypes(
+  usedChunkTypes: string[] | undefined,
+  availableChunkTypes: string[],
+): string[] {
+  if (!Array.isArray(usedChunkTypes)) return [];
+  return Array.from(
+    new Set(
+      usedChunkTypes
+        .map((chunkType) => normalizeChunkTypeClaim(chunkType, availableChunkTypes))
+        .filter(Boolean),
+    ),
+  );
+}
 
 function hasUnsupportedChunkClaim(
   usedChunkTypes: string[] | undefined,
@@ -64,11 +103,7 @@ export async function parseDecisionNode(
     .reverse()
     .find((c) => c.role === "model");
 
-  const responseText = (lastModelTurn?.parts ?? [])
-    .filter((p) => p.text)
-    .map((p) => p.text!)
-    .join("")
-    .trim();
+  const responseText = (lastModelTurn?.content || "").trim();
 
   logger.debug("ai.node.parseDecision.text_received", {
     length: responseText.length,
@@ -129,6 +164,11 @@ export async function parseDecisionNode(
     }
   }
 
+  decision.usedChunkTypes = normalizeUsedChunkTypes(
+    decision.usedChunkTypes,
+    state.availableChunkTypes,
+  );
+
   // ── Detect hallucination loops in the final content ───────────────────────
   const contentToCheck = (decision.content || "") + (decision.reasoning || "");
   if (hasExcessiveRepetition(contentToCheck)) {
@@ -147,7 +187,7 @@ export async function parseDecisionNode(
           ...state.contents,
           {
             role: "user",
-            parts: [{ text: "CRITIQUE: You repeated yourself in the last turn. Please provide a fresh, non-repetitive response and ensure you are not stuck in a loop." }]
+            content: "CRITIQUE: You repeated yourself in the last turn. Please provide a fresh, non-repetitive response and ensure you are not stuck in a loop.",
           }
         ]
       });
@@ -186,7 +226,7 @@ export async function parseDecisionNode(
           ...state.contents,
           {
             role: "user",
-            parts: [{ text: replyPolicyCorrectionPrompt(state, replyPolicyValidation.reason) }],
+            content: replyPolicyCorrectionPrompt(state, replyPolicyValidation.reason),
           },
         ],
       });

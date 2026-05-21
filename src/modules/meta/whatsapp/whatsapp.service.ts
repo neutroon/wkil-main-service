@@ -13,6 +13,7 @@ import {
   scheduleFollowUpsForDeliveredReply,
 } from "@modules/ai-agent/chat/replySideEffects.service";
 import { historyToLlmTurns, toPromptMessages } from "@modules/ai-agent/chat/conversationTurns";
+import { classifyInboundMessageSignal } from "@modules/ai-agent/chat/messageSignals";
 import { AppError } from "@middlewares/errorHandler.middleware";
 
 
@@ -263,6 +264,21 @@ export async function handleWhatsAppMessage(
       mediaMetadata,
     });
 
+    const inboundSignal = classifyInboundMessageSignal({
+      type,
+      messageText,
+      mediaId,
+      mediaMetadata,
+    });
+    if (!inboundSignal.shouldTriggerAi) {
+      logger.info("whatsapp.passive_inbound_saved_without_ai", {
+        conversationId: conversation.id,
+        reason: inboundSignal.reason,
+        type,
+      });
+      return;
+    }
+
     // 4. Compute AI Response
     const historyForPrompt = toPromptMessages(historyRows);
     historyForPrompt.push({ role: "user", content: messageText });
@@ -274,7 +290,11 @@ export async function handleWhatsAppMessage(
       historyTurns,
       channel: "whatsapp",
       customerPhone: from,
-      mediaInfo: mediaId ? { id: mediaId, type: type || "image" } : undefined,
+      mediaInfo: mediaId ? {
+        id: mediaId,
+        type: type || "image",
+        metadata: mediaMetadata,
+      } : undefined,
       conversationId: conversation.id,
     });
 

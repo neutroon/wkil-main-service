@@ -1,4 +1,3 @@
-import { Tool } from "@google/genai";
 import { logger } from "@utils/logger";
 type VerificationStatus = "verified" | "unverified" | "failed";
 

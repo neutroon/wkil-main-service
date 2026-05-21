@@ -6,6 +6,7 @@ import { z } from "zod";
 export const facebookLoginSchema = z.object({
   query: z.object({
     redirect_uri: z.string().url("redirect_uri must be a valid URL"),
+    state: z.string().min(8).max(256).optional(),
   }),
 });
 
@@ -16,6 +17,19 @@ export const facebookCallbackSchema = z.object({
   body: z.object({
     code: z.string().min(1, "code is required"),
     redirect_uri: z.string().url("redirect_uri must be a valid URL"),
+  }),
+});
+
+/**
+ * Facebook JS SDK callback schema.
+ */
+export const facebookSdkCallbackSchema = z.object({
+  body: z.object({
+    accessToken: z.string().min(1, "accessToken is required"),
+    userId: z.string().optional(),
+    expiresIn: z.coerce.number().int().positive().optional(),
+    grantedScopes: z.string().optional(),
+    signedRequest: z.string().optional(),
   }),
 });
 

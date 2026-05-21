@@ -101,6 +101,7 @@ function captureProfileFetchWarning(params: {
 
 export interface FacebookAuthUrlParams {
   redirect_uri: string;
+  state?: string;
 }
 
 export interface FacebookTokenParams {
@@ -197,6 +198,8 @@ export async function validateTokenHealth(accessToken: string): Promise<{
   isValid: boolean;
   expiresAt?: Date;
   scopes?: string[];
+  appId?: string;
+  userId?: string;
   error?: string;
 }> {
   try {
@@ -211,10 +214,14 @@ export async function validateTokenHealth(accessToken: string): Promise<{
     const { data } = response.data;
     return {
       isValid: data.is_valid,
-      expiresAt: data.data_access_expires_at
+      expiresAt: data.expires_at
+        ? new Date(data.expires_at * 1000)
+        : data.data_access_expires_at
         ? new Date(data.data_access_expires_at * 1000)
         : undefined,
       scopes: data.scopes,
+      appId: data.app_id,
+      userId: data.user_id,
     };
   } catch (error: any) {
     logger.error("meta.validate_token_failed", { error: error.message });
@@ -285,7 +292,16 @@ export const generateAuthUrl = (params: FacebookAuthUrlParams): string => {
     "business_management", // Required by Meta for pages inside a Business Manager
   ];
 
-  return `https://www.facebook.com/v25.0/dialog/oauth?client_id=${env.FB_APP_ID}&redirect_uri=${params.redirect_uri}&scope=${scope.join(",")}&response_type=code`;
+  const url = new URL("https://www.facebook.com/v25.0/dialog/oauth");
+  url.searchParams.set("client_id", env.FB_APP_ID);
+  url.searchParams.set("redirect_uri", params.redirect_uri);
+  url.searchParams.set("scope", scope.join(","));
+  url.searchParams.set("response_type", "code");
+  if (params.state) {
+    url.searchParams.set("state", params.state);
+  }
+
+  return url.toString();
 };
 
 export const exchangeCodeForToken = async (params: FacebookTokenParams) => {
@@ -305,6 +321,59 @@ export const exchangeCodeForToken = async (params: FacebookTokenParams) => {
     params: requestParams,
   });
   return data;
+};
+
+export const exchangeShortLivedTokenForLongLived = async (
+  accessToken: string,
+): Promise<FacebookTokenData> => {
+  if (!FB_API || !env.FB_APP_ID || !env.FB_APP_SECRET) {
+    throw new AppError("Missing Facebook configuration", 500);
+  }
+
+  const { data } = await metaClient.get(`${FB_API}/oauth/access_token`, {
+    params: {
+      grant_type: "fb_exchange_token",
+      client_id: env.FB_APP_ID,
+      client_secret: env.FB_APP_SECRET,
+      fb_exchange_token: accessToken,
+    },
+  });
+
+  if (!data?.access_token) {
+    throw new AppError("Facebook SDK token exchange failed", 502);
+  }
+
+  return data;
+};
+
+export const prepareSdkFacebookToken = async (params: {
+  accessToken: string;
+  userId?: string;
+  expiresIn?: number;
+  grantedScopes?: string;
+}): Promise<FacebookTokenData> => {
+  const health = await validateTokenHealth(params.accessToken);
+  if (!health.isValid) {
+    throw new AppError("Facebook login token is invalid or expired", 401);
+  }
+  if (health.appId && health.appId !== env.FB_APP_ID) {
+    throw new AppError("Facebook login token was issued for another app", 403);
+  }
+  if (params.userId && health.userId && params.userId !== health.userId) {
+    throw new AppError("Facebook login user mismatch", 403);
+  }
+
+  const longLived = await exchangeShortLivedTokenForLongLived(params.accessToken);
+  return {
+    access_token: longLived.access_token,
+    token_type: longLived.token_type || "bearer",
+    expires_in: longLived.expires_in || params.expiresIn,
+    refresh_token: longLived.refresh_token,
+    scope:
+      longLived.scope ||
+      health.scopes?.join(",") ||
+      params.grantedScopes,
+  };
 };
 // -------------------------------------------------------------------------------
 // Get user pages using access token

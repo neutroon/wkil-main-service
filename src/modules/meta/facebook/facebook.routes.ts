@@ -4,6 +4,7 @@ import { validate } from "@middlewares/validate.middleware";
 import { 
   facebookLoginSchema, 
   facebookCallbackSchema, 
+  facebookSdkCallbackSchema,
   facebookPagesSchema,
   facebookPostSchema,
   facebookScheduleSchema,
@@ -24,6 +25,7 @@ const facebookRoutes = Router();
 // ─── Authentication ───────────────────────────────────────────────────────────
 facebookRoutes.get("/login", validate(facebookLoginSchema), (req, res) => facebookController.login(req, res));
 facebookRoutes.post("/login/callback", authenticateToken, validate(facebookCallbackSchema), (req, res) => facebookController.callback(req, res));
+facebookRoutes.post("/login/sdk", authenticateToken, validate(facebookSdkCallbackSchema), (req, res) => facebookController.sdkCallback(req, res));
 facebookRoutes.get("/validate-token", authenticateToken, (req, res) => facebookController.validateToken(req, res));
 
 // ─── Accounts & Analytics ─────────────────────────────────────────────────────

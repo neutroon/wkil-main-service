@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import {
   generateAuthUrl,
   exchangeCodeForToken,
+  prepareSdkFacebookToken,
   createPost,
   schedulePost,
   getPagePosts,
@@ -34,8 +35,8 @@ export class FacebookController {
    * GET /v1/facebook/login
    */
   async login(req: Request, res: Response) {
-    const { redirect_uri } = req.query as any;
-    const authUrl = generateAuthUrl({ redirect_uri });
+    const { redirect_uri, state } = req.query as any;
+    const authUrl = generateAuthUrl({ redirect_uri, state });
     return res.json({ authUrl });
   }
 
@@ -69,6 +70,51 @@ export class FacebookController {
     return res.json({ 
       success: true, 
       facebookAccount: sanitizedAccount
+    });
+  }
+
+  /**
+   * POST /v1/facebook/login/sdk
+   */
+  async sdkCallback(req: Request, res: Response) {
+    const { accessToken, userId, expiresIn, grantedScopes } = req.body;
+    const ownerUserId = (req as any).user.id;
+
+    const tokenData = await prepareSdkFacebookToken({
+      accessToken,
+      userId,
+      expiresIn,
+      grantedScopes,
+    });
+
+    const userInfoResponse = await fetch(
+      `https://graph.facebook.com/me?access_token=${tokenData.access_token}&fields=id,name,email,picture`,
+    );
+    const userInfo = await userInfoResponse.json();
+
+    if (!userInfo?.id) {
+      throw new AppError("Unable to read Facebook user profile", 502);
+    }
+
+    const deviceInfo = {
+      userAgent: req.get("User-Agent") || "",
+      platform: req.get("sec-ch-ua-platform") || "Unknown",
+      browser: req.get("sec-ch-ua") || "Unknown",
+      device: req.get("sec-ch-ua-mobile") === "?1" ? "Mobile" : "Desktop",
+    };
+
+    const facebookAccount = await saveFacebookToken(
+      ownerUserId,
+      tokenData,
+      userInfo,
+      deviceInfo,
+    );
+    const { accessToken: _accessToken, refreshToken: _refreshToken, ...sanitizedAccount } =
+      facebookAccount as any;
+
+    return res.json({
+      success: true,
+      facebookAccount: sanitizedAccount,
     });
   }
 

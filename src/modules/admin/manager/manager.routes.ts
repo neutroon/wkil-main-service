@@ -7,6 +7,8 @@ import {
   getManagedUserAnalytics,
   deactivateManagedUser,
   reactivateManagedUser,
+  getManagedBusinessProfile,
+  updateManagedBusinessProfile,
   assignUserToManagerController,
   getAllUserAssignmentsController,
   removeUserAssignmentController,
@@ -24,6 +26,7 @@ import {
   idParamSchema,
 } from "../manager/manager.validation";
 import { registerSchema } from "../../auth/core/auth.validation";
+import { updateBusinessProfileSchema } from "../../business/profile/business.validation";
 import { managerLimiter } from "@middlewares/rateLimit.middleware";
 
 const managerRoutes = Router();
@@ -77,6 +80,19 @@ managerRoutes.patch(
   validate(idParamSchema),
   requireManagerAccess,
   reactivateManagedUser,
+);
+
+managerRoutes.get(
+  "/business-profiles/:id",
+  managerLimiter,
+  validate(idParamSchema),
+  getManagedBusinessProfile,
+);
+managerRoutes.put(
+  "/business-profiles/:id",
+  managerLimiter,
+  validate(updateBusinessProfileSchema),
+  updateManagedBusinessProfile,
 );
 
 // Admin-only: User assignment management

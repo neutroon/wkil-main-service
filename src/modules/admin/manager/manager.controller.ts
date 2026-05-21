@@ -11,6 +11,10 @@ import {
   reactivateUser,
   getUserAnalytics,
 } from "../../auth/user/user.service";
+import {
+  getBusinessProfileForManagedUser,
+  updateBusinessProfileForManagedUser,
+} from "@modules/business/profile/businessAccess.service";
 import { AppError } from "@middlewares/errorHandler.middleware";
 
 export const createManagedUser = async (req: Request, res: Response) => {
@@ -122,6 +126,40 @@ export const reactivateManagedUser = async (req: Request, res: Response) => {
   res.status(200).json({
     message: "User reactivated successfully",
     user,
+  });
+};
+
+export const getManagedBusinessProfile = async (
+  req: Request,
+  res: Response,
+) => {
+  const { id } = req.params;
+  const managerId = (req as any).user.id;
+
+  const businessProfile = await getBusinessProfileForManagedUser(
+    managerId,
+    Number(id),
+  );
+
+  res.status(200).json({ data: businessProfile });
+};
+
+export const updateManagedBusinessProfile = async (
+  req: Request,
+  res: Response,
+) => {
+  const { id } = req.params;
+  const managerId = (req as any).user.id;
+
+  const businessProfile = await updateBusinessProfileForManagedUser(
+    managerId,
+    Number(id),
+    req.body,
+  );
+
+  res.status(200).json({
+    message: "Business profile updated successfully",
+    data: businessProfile,
   });
 };
 

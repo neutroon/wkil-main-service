@@ -6,6 +6,10 @@ import {
   getBillingMultiplier,
   updateBillingMultiplier,
 } from "@modules/settings/settings.service";
+import {
+  getBusinessProfileForAdmin,
+  updateBusinessProfileForAdmin,
+} from "@modules/business/profile/businessAccess.service";
 import { Request, Response } from "express";
 
 
@@ -151,6 +155,29 @@ export const updateBusinessUsage = async (req: Request, res: Response) => {
   res
     .status(200)
     .json({ message: `Monthly tokens updated to ${tokensUsed}` });
+};
+
+export const getAdminBusinessProfile = async (req: Request, res: Response) => {
+  const businessProfileId = Number(req.params.id);
+  const businessProfile = await getBusinessProfileForAdmin(businessProfileId);
+
+  res.status(200).json({ data: businessProfile });
+};
+
+export const updateAdminBusinessProfile = async (
+  req: Request,
+  res: Response,
+) => {
+  const businessProfileId = Number(req.params.id);
+  const businessProfile = await updateBusinessProfileForAdmin(
+    businessProfileId,
+    req.body,
+  );
+
+  res.status(200).json({
+    message: "Business profile updated successfully",
+    data: businessProfile,
+  });
 };
 
 export { registerAdmin, createManager, createPlatformUser };

@@ -18,9 +18,19 @@ vi.mock("./services/widgetChat.service", () => ({
   processWidgetChatMessage: vi.fn(),
 }));
 
+vi.mock("@utils/logger", () => ({
+  logger: {
+    error: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    debug: vi.fn(),
+  },
+}));
+
 import widgetPublicRoutes from "./widget.public.routes";
 import prisma from "@config/prisma";
 import { processWidgetChatMessage } from "@modules/widget/services/widgetChat.service";
+import { logger } from "@utils/logger";
 
 function makeApp(): Application {
   const app = express();
@@ -249,10 +259,49 @@ describe("POST /chat (public widget)", () => {
 
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toMatch(/text\/event-stream/);
+    expect(res.headers["cache-control"]).toContain("no-transform");
+    expect(res.headers["x-accel-buffering"]).toBe("no");
     expect(res.body).toContain("data: ");
     expect(res.body).toContain("\"reply\":\"Hello from SSE widget\"");
     expect(res.body).toContain("\"conversationId\":101");
     expect(res.body).toContain("data: [DONE]");
+  });
+
+  it("sanitizes public SSE errors while logging internal details", async () => {
+    vi.mocked(prisma.widgetInstall.findFirst).mockResolvedValue({
+      ...baseInstall,
+      allowedOrigins: ["https://shop.example"],
+    });
+    vi.mocked(processWidgetChatMessage).mockRejectedValue(
+      new Error("database password leaked"),
+    );
+
+    const res = await doRequest(server, {
+      method: "POST",
+      path: "/chat",
+      headers: {
+        "x-widget-site-key": "wpk_test_xxxxxxxx",
+        origin: "https://shop.example",
+      },
+      body: JSON.stringify({
+        visitorId: "12345678-abcd-ef00-0000-000000000001",
+        message: "Hi there",
+        stream: true,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toContain("\"error\":\"Unable to complete chat response.\"");
+    expect(res.body).not.toContain("database password leaked");
+    expect(res.body).toContain("data: [DONE]");
+    expect(logger.error).toHaveBeenCalledWith(
+      "widget.chat.stream_failed",
+      expect.objectContaining({
+        widgetInstallId: 1,
+        businessProfileId: 20,
+        error: "database password leaked",
+      }),
+    );
   });
 });
 

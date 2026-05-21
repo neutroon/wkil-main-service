@@ -6,6 +6,7 @@ import { listConversationMessages } from "@modules/meta/core/conversation.servic
 import type { WidgetRequest } from "@modules/widget/widgetInstall.middleware";
 import { widgetInstallAndCors } from "@modules/widget/widgetInstall.middleware";
 import { validate } from "@middlewares/validate.middleware";
+import { logger } from "@utils/logger";
 import {
   widgetChatSchema,
   widgetMediaChatSchema,
@@ -27,6 +28,17 @@ function normalizeWidgetText(input: string): string {
     .replace(/\s*\n\s*/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function writeSseData(res: Response, payload: unknown): void {
+  if (res.destroyed || res.writableEnded) return;
+  res.write(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
+function writeSseDone(res: Response): void {
+  if (res.destroyed || res.writableEnded) return;
+  res.write("data: [DONE]\n\n");
+  res.end();
 }
 
 widgetPublicRoutes.options("/chat", widgetInstallAndCors);
@@ -109,36 +121,45 @@ widgetPublicRoutes.post(
 
     if (stream === true) {
       res.setHeader("Content-Type", "text/event-stream");
-      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
       res.setHeader("Connection", "keep-alive");
+      res.setHeader("X-Accel-Buffering", "no");
       res.flushHeaders?.();
 
+      let clientClosed = false;
+      req.on("close", () => {
+        clientClosed = true;
+      });
+
       try {
-        res.write(`data: ${JSON.stringify({ status: "processing" })}\n\n`);
+        writeSseData(res, { status: "processing" });
         const result = await runChat();
-        res.write(
-          `data: ${JSON.stringify({
+        if (!clientClosed) {
+          writeSseData(res, {
             final: {
               reply: result.reply,
               action: "REPLY_AUTO",
               attachment: result.attachment ?? null,
               conversationId: result.conversationId,
             },
-          })}\n\n`,
-        );
+          });
+        }
       } catch (error) {
-        res.write(
-          `data: ${JSON.stringify({
-            error:
-              error instanceof Error
-                ? error.message
-                : "Unable to complete chat response.",
-          })}\n\n`,
-        );
+        logger.error("widget.chat.stream_failed", {
+          widgetInstallId: install.id,
+          businessProfileId: install.businessProfileId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        if (!clientClosed) {
+          writeSseData(res, {
+            error: "Unable to complete chat response.",
+          });
+        }
       }
 
-      res.write("data: [DONE]\n\n");
-      res.end();
+      if (!clientClosed) {
+        writeSseDone(res);
+      }
       return;
     }
 

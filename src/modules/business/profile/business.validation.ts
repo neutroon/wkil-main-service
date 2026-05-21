@@ -56,6 +56,8 @@ export const businessProfileSchema = z.object({
     followUpMode: z.enum(["AUTO", "CUSTOM"]).optional().default("AUTO"),
     followUpDelays: z.array(followUpDelaySchema).max(5).optional().default([]),
     followUpInstructions: z.string().max(2000, "Follow-up instructions must be 2000 characters or less").optional(),
+    scrapedWebsiteUrl: z.string().url("Invalid website URL format").optional().or(z.literal("")),
+    scrapedMarkdown: z.string().optional(),
   }),
 });
 

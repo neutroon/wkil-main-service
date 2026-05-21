@@ -307,7 +307,9 @@ widgetRoutes.post(
       throw new AppError("Conversation not found", 404);
     }
 
-    const saved = await saveMessage(id, "model", text.trim());
+    const saved = await saveMessage(id, "agent", text.trim(), {
+      status: "SENT",
+    });
     
     // Update conversation timestamp
     await prisma.conversation.update({

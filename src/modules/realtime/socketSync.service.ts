@@ -28,6 +28,7 @@ export const syncSocketFromMessage = async (message: any) => {
 
       // 2. Notify the specific Conversation Room (Inbox)
       emitToConversation(conversationId, "new_message", {
+        conversationId,
         message,
       });
 

@@ -53,7 +53,11 @@ OnboardingRouter.post(
     // 5. send the final result to the client
     return res.json({
       success: true,
-      data: businessProfile,
+      data: {
+        ...businessProfile,
+        scrapedWebsiteUrl: url,
+        scrapedMarkdown: finalCombinedMarkdown,
+      },
     });
   }
 );

@@ -56,6 +56,8 @@ interface BusinessProfileBody {
   followUpMode?: "AUTO" | "CUSTOM";
   followUpDelays?: { amount: number; unit: "MINUTES" | "HOURS" | "DAYS" }[];
   followUpInstructions?: string;
+  scrapedWebsiteUrl?: string;
+  scrapedMarkdown?: string;
 }
 
 interface CustomerMemoryFieldInput {
@@ -124,6 +126,8 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
     followUpMode,
     followUpDelays,
     followUpInstructions,
+    scrapedWebsiteUrl,
+    scrapedMarkdown,
     brandLogoUrl,
     brandPrimaryColor,
     brandSecondaryColor,
@@ -159,6 +163,8 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
       followUpMode,
       followUpDelays,
       followUpInstructions,
+      scrapedWebsiteUrl,
+      scrapedMarkdown,
       brandLogoUrl,
       brandPrimaryColor,
       brandSecondaryColor,
@@ -274,6 +280,8 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
     followUpMode,
     followUpDelays,
     followUpInstructions,
+    scrapedWebsiteUrl,
+    scrapedMarkdown,
     brandLogoUrl,
     brandPrimaryColor,
     brandSecondaryColor,
@@ -319,6 +327,8 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
       followUpMode,
       followUpDelays,
       followUpInstructions,
+      scrapedWebsiteUrl,
+      scrapedMarkdown,
       brandLogoUrl,
       brandPrimaryColor,
       brandSecondaryColor,

@@ -7,6 +7,8 @@ import {
   updateBillingSettings,
   resetBusinessUsage,
   updateBusinessUsage,
+  getAdminBusinessProfile,
+  updateAdminBusinessProfile,
 } from "./admin.controller";
 import {
   getUsers,
@@ -39,6 +41,7 @@ import {
   userListQuerySchema 
 } from "../../auth/user/user.validation";
 import { facebookAnalyticsSchema } from "../../meta/facebook/facebook.validation";
+import { updateBusinessProfileSchema } from "../../business/profile/business.validation";
 import { authLimiter, adminLimiter } from "@middlewares/rateLimit.middleware";
 import { getLeads } from "../../business/lead/lead.controller";
 import {
@@ -100,6 +103,20 @@ adminRoutes.post("/settings/billing", adminLimiter, validate(updateBillingSettin
 // Business Profile Billing Management
 adminRoutes.post("/billing/profiles/:id/reset", adminLimiter, validate(adminBusinessIdParamSchema), resetBusinessUsage);
 adminRoutes.patch("/billing/profiles/:id/usage", adminLimiter, validate(updateBusinessUsageSchema), updateBusinessUsage);
+
+// Business Profile Support Management
+adminRoutes.get(
+  "/business-profiles/:id",
+  adminLimiter,
+  validate(adminBusinessIdParamSchema),
+  getAdminBusinessProfile,
+);
+adminRoutes.put(
+  "/business-profiles/:id",
+  adminLimiter,
+  validate(updateBusinessProfileSchema),
+  updateAdminBusinessProfile,
+);
 
 // Lead management
 adminRoutes.get("/leads", adminLimiter, getLeads);

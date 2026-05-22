@@ -19,6 +19,7 @@ import { validate } from "@middlewares/validate.middleware";
 import { 
   loginSchema, 
   registerSchema, 
+  socialAuthSchema,
   forgotPasswordSchema, 
   resetPasswordSchema,
   verifyEmailSchema
@@ -39,6 +40,20 @@ authRoutes.post(
   authLimiter, 
   validate(loginSchema), 
   loginUserController
+);
+
+authRoutes.post(
+  "/social/google",
+  authLimiter,
+  validate(socialAuthSchema),
+  authController.googleSocialAuth
+);
+
+authRoutes.post(
+  "/social/facebook",
+  authLimiter,
+  validate(socialAuthSchema),
+  authController.facebookSocialAuth
 );
 
 // Identity Lifecycle Routes (Production Grade)

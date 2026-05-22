@@ -28,11 +28,14 @@ const envSchema = z.object({
   JWT_REFRESH_SECRET: z.string().min(8),
   VERIFICATION_TOKEN_SECRET: z.string().min(8),
   PASSWORD_RESET_TOKEN_SECRET: z.string().min(8),
+  GOOGLE_AUTH_CLIENT_ID: z.string().min(1).optional(),
   
   // ── Meta / Facebook ────────────────────────────────────────────────────────
   FB_API_URL: z.string().url().default("https://graph.facebook.com/v25.0"),
   FB_APP_ID: z.string().min(1),
   FB_APP_SECRET: z.string().min(1),
+  FB_AUTH_APP_ID: z.string().min(1).optional(),
+  FB_AUTH_APP_SECRET: z.string().min(1).optional(),
   FB_SYSTEM_USER_ACCESS_TOKEN: z.string().min(1),
   MESSENGER_VERIFY_TOKEN: z.string().min(1),
   WHATSAPP_VERIFY_TOKEN: z.string().min(1),

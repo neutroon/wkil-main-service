@@ -21,6 +21,12 @@ export const loginSchema = z.object({
   }),
 });
 
+export const socialAuthSchema = z.object({
+  body: z.object({
+    token: z.string().min(1, "Social auth token is required"),
+  }),
+});
+
 /**
  * Forgot Password Schema
  */

@@ -81,6 +81,7 @@ model User {
 
   // Existing relations
   facebookAccounts  FacebookAccount[]
+  socialIdentities  SocialIdentity[]
   analytics         UserAnalytics[]
   whatsAppAccounts  WhatsAppAccount[]
 
@@ -107,6 +108,23 @@ model User {
   refreshTokenExpiresAt    DateTime?
   previousRefreshTokenHash String?   @unique
   rotatedAt               DateTime?
+}
+
+model SocialIdentity {
+  id             Int      @id @default(autoincrement())
+  userId         Int
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider       String
+  providerUserId String
+  email          String
+  name           String?
+  avatarUrl      String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([provider, providerUserId])
+  @@index([userId])
+  @@index([email])
 }
 
 model BusinessProfile {

@@ -1,9 +1,15 @@
 import bcrypt from "bcrypt";
+import { Response } from "express";
 import prisma from "@config/prisma";
 import { hashToken, generateRandomToken } from "@modules/auth/core/tokenCrypto";
 import { sendVerificationEmail, sendPasswordResetEmail } from "@modules/mail/mail.service";
 import { logger } from "@utils/logger";
 import { AppError } from "@middlewares/errorHandler.middleware";
+import {
+  generateAccessToken,
+  generateRefreshToken,
+  setAuthCookies,
+} from "@modules/auth/core/auth.middleware";
 
 /**
  * Production-grade Identity Lifecycle Service
@@ -123,6 +129,46 @@ export const resetPassword = async (token: string, newPassword: string) => {
       email: true,
     },
   });
+};
+
+type SessionUser = {
+  id: number;
+  name: string;
+  email: string;
+  role: string;
+};
+
+export const issueAuthSession = async (res: Response, user: SessionUser) => {
+  const accessToken = generateAccessToken({
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+  });
+
+  const refreshToken = generateRefreshToken({
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+  });
+
+  const salt = await bcrypt.genSalt(10);
+  const hash = await bcrypt.hash(refreshToken, salt);
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      refreshTokenHash: hash,
+      previousRefreshTokenHash: null,
+      refreshTokenExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      rotatedAt: new Date(),
+    },
+  });
+
+  setAuthCookies(res, accessToken, refreshToken);
+
+  return { accessToken, refreshToken };
 };
 
 /**

@@ -125,6 +125,8 @@ export async function prepareAgentParams(params: {
   mediaInfo?: InboundMediaInfo;
   postContext?: { content: string; media?: string };
   conversationId?: number;
+  conversationRunId?: string;
+  latestUserMessageId?: number;
   agentTurnId?: number;
   activeWorkflowId?: number | null;
   parentActionRunId?: number | null;
@@ -310,6 +312,8 @@ export async function prepareAgentParams(params: {
       availableChunkTypes,
       externalSourceFailureBehaviors,
       conversationId,
+      conversationRunId: params.conversationRunId,
+      latestUserMessageId: params.latestUserMessageId,
       agentTurnId,
       activeWorkflowId,
       parentActionRunId,
@@ -404,6 +408,8 @@ export async function computeBusinessChatReply(params: {
   mediaInfo?: InboundMediaInfo;
   postContext?: { content: string; media?: string };
   conversationId?: number;
+  conversationRunId?: string;
+  latestUserMessageId?: number;
   agentTurnId?: number;
   activeWorkflowId?: number | null;
   parentActionRunId?: number | null;

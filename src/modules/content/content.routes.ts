@@ -1,6 +1,11 @@
 import { Router, Request, Response } from "express";
 import { generatePostContent } from "./content.service";
 import { generatePostExecution } from "./contentPlan.service";
+import {
+  generateContentAuditStream,
+  getContentBrief,
+  saveContentBrief,
+} from "./contentBrief.service";
 import { authenticateToken } from "@modules/auth/core/auth.middleware";
 import { contentLimiter } from "@middlewares/rateLimit.middleware";
 import prisma from "@config/prisma";
@@ -9,6 +14,9 @@ import { validate } from "@middlewares/validate.middleware";
 import {
   generatePostSchema,
   generateStrategySchema,
+  contentAuditSchema,
+  saveContentBriefSchema,
+  contentBriefIdParamSchema,
   approvePostSchema,
   contentIdParamSchema,
   planPostIdParamSchema,
@@ -16,6 +24,78 @@ import {
 import { AppError } from "@middlewares/errorHandler.middleware";
 
 const contentRoutes = Router();
+
+// Generate signal-led content audit and draft brief
+contentRoutes.post(
+  "/brief/audit",
+  contentLimiter,
+  authenticateToken,
+  validate(contentAuditSchema),
+  async (req: Request, res: Response) => {
+    const userId = (req as any).user.id as number;
+    const body = req.body;
+
+    let targetProfileId = parseInt(String(body.businessProfileId), 10);
+    if (!targetProfileId || isNaN(targetProfileId)) {
+      const defaultProfile = await prisma.businessProfile.findFirst({
+        where: { userId },
+      });
+      if (!defaultProfile) {
+        throw new AppError(
+          "No business profile found. Please create one first.",
+          404,
+        );
+      }
+      targetProfileId = defaultProfile.id;
+    }
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+
+    const generator = generateContentAuditStream({
+      ...body,
+      businessProfileId: targetProfileId,
+      userId,
+    });
+
+    try {
+      for await (const update of generator) {
+        res.write(`data: ${JSON.stringify(update)}\n\n`);
+      }
+      res.end();
+    } catch (err: any) {
+      res.write(
+        `data: ${JSON.stringify({ type: "error", message: err.message })}\n\n`,
+      );
+      res.end();
+    }
+  },
+);
+
+// Save or confirm a content brief
+contentRoutes.post(
+  "/brief",
+  authenticateToken,
+  validate(saveContentBriefSchema),
+  async (req: Request, res: Response) => {
+    const userId = (req as any).user.id as number;
+    const brief = await saveContentBrief(userId, req.body);
+    res.status(201).json(brief);
+  },
+);
+
+// Fetch a confirmed content brief
+contentRoutes.get(
+  "/brief/:id",
+  authenticateToken,
+  validate(contentBriefIdParamSchema),
+  async (req: Request, res: Response) => {
+    const userId = (req as any).user.id as number;
+    const brief = await getContentBrief(userId, Number(req.params.id));
+    res.json(brief);
+  },
+);
 
 // Generate post content (protected route with validation and rate limiting)
 contentRoutes.post(
@@ -79,7 +159,7 @@ contentRoutes.post(
   authenticateToken,
   validate(generateStrategySchema),
   async (req: Request, res: Response) => {
-    const { businessProfileId, startDate, endDate, goals, currentTrends } =
+    const { businessProfileId, contentBriefId, startDate, endDate, goals, currentTrends } =
       req.body;
     const userId = (req as any).user.id;
 
@@ -107,6 +187,7 @@ contentRoutes.post(
     ).generateContentStrategyStream({
       businessProfileId: targetProfileId,
       userId,
+      contentBriefId,
       startDate,
       endDate,
       goals,
@@ -214,6 +295,7 @@ contentRoutes.get(
         include: {
           posts: { orderBy: { scheduledAt: "asc" } },
           businessProfile: { select: { name: true } },
+          contentBrief: { select: { id: true, goal: true, funnelFocus: true } },
         },
         orderBy: { createdAt: "desc" },
         take,
@@ -243,6 +325,7 @@ contentRoutes.get(
       where: { id: parseInt(id, 10), userId },
       include: {
         posts: { orderBy: { scheduledAt: "asc" } },
+        contentBrief: true,
         businessProfile: {
           select: {
             id: true,

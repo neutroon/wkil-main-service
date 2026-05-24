@@ -13,6 +13,7 @@ import prisma from "@config/prisma";
 import type { AgentContent, AgentToolDefinition } from "./agentState";
 import type { AiRoutingDecision, AiTruthfulnessPolicy } from "./aiEngine.utils";
 import type { ReplyPolicy } from "./replyPolicy";
+import { isStaleConversationRunError } from "../chat/conversationRunGuard";
 
 const workflowV2 = new StateGraph(AgentState)
   .addNode("callModel", callModelNode)
@@ -63,6 +64,8 @@ export interface AgentGraphV2Params {
   policy?: Partial<AiTruthfulnessPolicy>;
   handoffEnabled?: boolean;
   conversationId?: number;
+  conversationRunId?: string;
+  latestUserMessageId?: number;
   activeWorkflowId?: number | null;
   parentActionRunId?: number | null;
   actionStepKey?: string | null;
@@ -75,6 +78,8 @@ export async function runAgentGraphV2(
   try {
     return await _runGraphV2(params);
   } catch (graphError: any) {
+    if (isStaleConversationRunError(graphError)) throw graphError;
+
     logger.error("ai.graph_v2.critical_failure", {
       error: graphError.message,
       businessProfileId: params.businessProfileId,
@@ -140,6 +145,8 @@ async function _runGraphV2(params: AgentGraphV2Params): Promise<AiRoutingDecisio
       handoffEnabled: params.handoffEnabled ?? true,
       conversationId: params.conversationId,
       agentTurnId: params.agentTurnId,
+      conversationRunId: params.conversationRunId,
+      latestUserMessageId: params.latestUserMessageId,
       activeWorkflowId: params.activeWorkflowId ?? undefined,
       parentActionRunId: params.parentActionRunId ?? undefined,
       actionStepKey: params.actionStepKey ?? undefined,

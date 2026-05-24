@@ -44,6 +44,35 @@ interface DashboardStatsResponse {
   }[];
 }
 
+type SetupProgressStepKey = "profile" | "channels" | "inbox" | "enable";
+type SetupProgressEvent = "INBOX_OPENED" | "AGENT_CONFIGURED";
+
+interface SetupProgressStep {
+  key: SetupProgressStepKey;
+  complete: boolean;
+  available: boolean;
+  href: string;
+  completedAt: Date | null;
+}
+
+interface SetupProgress {
+  complete: boolean;
+  currentStep: SetupProgressStepKey | "done";
+  steps: Record<SetupProgressStepKey, SetupProgressStep>;
+  connectedChannels: {
+    facebook: boolean;
+    whatsapp: boolean;
+    web: boolean;
+  };
+  signals: {
+    businessProfileId: number | null;
+    inboxOpenedAt: Date | null;
+    agentConfiguredAt: Date | null;
+    hasConversation: boolean;
+    agentReady: boolean;
+  };
+}
+
 export interface UnifiedDashboardResponse extends DashboardStatsResponse {
   aiAutomationRate: number;
   aiAccuracyScore: number;
@@ -54,6 +83,7 @@ export interface UnifiedDashboardResponse extends DashboardStatsResponse {
     whatsapp: boolean;
     web: boolean;
   };
+  setupProgress: SetupProgress;
 }
 
 const DEFAULT_ACTIVITY_LIMIT = 15;
@@ -202,6 +232,182 @@ export const getDashboardStats = async (
   };
 };
 
+export const getSetupProgress = async (
+  userId: number
+): Promise<SetupProgress> => {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      isBusinessProfileCreated: true,
+      setupInboxOpenedAt: true,
+      setupAgentConfiguredAt: true,
+    },
+  });
+
+  const profiles = await prisma.businessProfile.findMany({
+    where: { userId },
+    select: { id: true, createdAt: true },
+    orderBy: { createdAt: "asc" },
+  });
+  const profileIds = profiles.map((profile) => profile.id);
+  const primaryProfile = profiles[0] ?? null;
+  const profileComplete =
+    Boolean(user?.isBusinessProfileCreated) || profileIds.length > 0;
+
+  const [
+    facebookPage,
+    whatsAppAccount,
+    widgetInstall,
+    anyConversation,
+    readConversation,
+    activeAiConversation,
+    autoDmPage,
+  ] = profileIds.length
+    ? await Promise.all([
+        prisma.facebookPage.findFirst({
+          where: {
+            businessProfileId: { in: profileIds },
+            isActive: true,
+            facebookAccount: { isActive: true },
+          },
+          select: { id: true },
+        }),
+        prisma.whatsAppAccount.findFirst({
+          where: {
+            businessProfileId: { in: profileIds },
+            isActive: true,
+          },
+          select: { id: true },
+        }),
+        prisma.widgetInstall.findFirst({
+          where: {
+            businessProfileId: { in: profileIds },
+            isActive: true,
+          },
+          select: { id: true },
+        }),
+        prisma.conversation.findFirst({
+          where: { businessProfileId: { in: profileIds } },
+          select: { id: true },
+        }),
+        prisma.conversation.findFirst({
+          where: {
+            businessProfileId: { in: profileIds },
+            readAt: { not: null },
+          },
+          select: { id: true },
+        }),
+        prisma.conversation.findFirst({
+          where: {
+            businessProfileId: { in: profileIds },
+            aiEnabled: true,
+          },
+          select: { id: true },
+        }),
+        prisma.facebookPage.findFirst({
+          where: {
+            businessProfileId: { in: profileIds },
+            isActive: true,
+            commentAutoDmEnabled: true,
+          },
+          select: { id: true },
+        }),
+      ])
+    : [null, null, null, null, null, null, null];
+
+  const connectedChannels = {
+    facebook: Boolean(facebookPage),
+    whatsapp: Boolean(whatsAppAccount),
+    web: Boolean(widgetInstall),
+  };
+  const channelsComplete =
+    connectedChannels.facebook ||
+    connectedChannels.whatsapp ||
+    connectedChannels.web;
+  const inboxComplete =
+    Boolean(user?.setupInboxOpenedAt) || Boolean(readConversation) || Boolean(anyConversation);
+  const agentReady =
+    channelsComplete ||
+    Boolean(activeAiConversation) ||
+    Boolean(autoDmPage) ||
+    Boolean(user?.setupAgentConfiguredAt);
+  const enableComplete = inboxComplete && agentReady;
+
+  const steps: SetupProgress["steps"] = {
+    profile: {
+      key: "profile",
+      complete: profileComplete,
+      available: true,
+      href: profileComplete ? "/user/agent-setup" : "/user/onboarding",
+      completedAt: profileComplete ? primaryProfile?.createdAt ?? null : null,
+    },
+    channels: {
+      key: "channels",
+      complete: channelsComplete,
+      available: profileComplete,
+      href: "/user/channels",
+      completedAt: channelsComplete ? null : null,
+    },
+    inbox: {
+      key: "inbox",
+      complete: inboxComplete,
+      available: channelsComplete,
+      href: "/user/inbox",
+      completedAt: user?.setupInboxOpenedAt ?? null,
+    },
+    enable: {
+      key: "enable",
+      complete: enableComplete,
+      available: inboxComplete,
+      href: Boolean(activeAiConversation) ? "/user/inbox" : "/user/channels",
+      completedAt: enableComplete ? user?.setupAgentConfiguredAt ?? null : null,
+    },
+  };
+  const currentStep =
+    (Object.values(steps).find((step) => step.available && !step.complete)
+      ?.key as SetupProgressStepKey | undefined) ??
+    (Object.values(steps).find((step) => !step.complete)
+      ?.key as SetupProgressStepKey | undefined) ??
+    "done";
+
+  return {
+    complete: currentStep === "done",
+    currentStep,
+    steps,
+    connectedChannels,
+    signals: {
+      businessProfileId: primaryProfile?.id ?? null,
+      inboxOpenedAt: user?.setupInboxOpenedAt ?? null,
+      agentConfiguredAt: user?.setupAgentConfiguredAt ?? null,
+      hasConversation: Boolean(anyConversation),
+      agentReady,
+    },
+  };
+};
+
+export const recordSetupProgressEvent = async (
+  userId: number,
+  event: SetupProgressEvent
+): Promise<SetupProgress> => {
+  const timestamp = new Date();
+
+  if (event === "INBOX_OPENED") {
+    await prisma.user.updateMany({
+      where: { id: userId, setupInboxOpenedAt: null },
+      data: { setupInboxOpenedAt: timestamp },
+    });
+  }
+
+  if (event === "AGENT_CONFIGURED") {
+    await prisma.user.updateMany({
+      where: { id: userId, setupAgentConfiguredAt: null },
+      data: { setupAgentConfiguredAt: timestamp },
+    });
+  }
+
+  return getSetupProgress(userId);
+};
+
 export const getUnifiedDashboardStats = async (
   userId: number,
   role: string,
@@ -210,7 +416,7 @@ export const getUnifiedDashboardStats = async (
   const startDate = new Date();
   startDate.setDate(startDate.getDate() - (days || 30));
 
-  const [socialStats, aiStats, conversations, messages] = await Promise.all([
+  const [socialStats, aiStats, conversations, messages, setupProgress] = await Promise.all([
     getDashboardStats(userId, days),
     getAiPerformanceStats(userId.toString(), role, days),
     prisma.conversation.findMany({
@@ -240,7 +446,8 @@ export const getUnifiedDashboardStats = async (
         createdAt: true
       },
       orderBy: { createdAt: "asc" }
-    })
+    }),
+    getSetupProgress(userId),
   ]);
 
   // Lead Velocity = Count of new conversations in the period
@@ -283,10 +490,6 @@ export const getUnifiedDashboardStats = async (
     : 0;
   // --- End AI Response Time Analysis ---
 
-  // Simple channel health check
-  const accounts = await prisma.facebookAccount.findFirst({ where: { userId, isActive: true } });
-  const waAccounts = await prisma.whatsAppAccount.findFirst({ where: { userId, isActive: true } });
-
   return {
     ...socialStats,
     aiAutomationRate: aiStats.automationRate,
@@ -294,10 +497,11 @@ export const getUnifiedDashboardStats = async (
     leadVelocity,
     avgResponseTime: parseFloat(aiAvg.toFixed(2)),
     channelHealth: {
-      facebook: !!accounts,
-      whatsapp: !!waAccounts,
-      web: true // Assuming web is always enabled if they have an account
-    }
+      facebook: setupProgress.connectedChannels.facebook,
+      whatsapp: setupProgress.connectedChannels.whatsapp,
+      web: setupProgress.connectedChannels.web,
+    },
+    setupProgress,
   };
 };
 

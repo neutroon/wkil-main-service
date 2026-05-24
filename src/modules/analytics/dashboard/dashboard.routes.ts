@@ -4,9 +4,13 @@ import {
   getDashboardActivityController,
   getDashboardStatsController,
   getUnifiedDashboardStatsController,
+  recordSetupProgressEventController,
 } from "./dashboard.controller";
 import { validate } from "@middlewares/validate.middleware";
-import { dashboardQuerySchema } from "./dashboard.validation";
+import {
+  dashboardQuerySchema,
+  setupProgressEventSchema,
+} from "./dashboard.validation";
 
 const dashboardRoutes = Router();
 
@@ -29,6 +33,13 @@ dashboardRoutes.get(
   authenticateToken, 
   validate(dashboardQuerySchema),
   getUnifiedDashboardStatsController
+);
+
+dashboardRoutes.post(
+  "/setup-progress",
+  authenticateToken,
+  validate(setupProgressEventSchema),
+  recordSetupProgressEventController
 );
 
 export default dashboardRoutes;

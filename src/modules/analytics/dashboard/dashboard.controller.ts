@@ -3,6 +3,7 @@ import {
   getDashboardActivity,
   getDashboardStats,
   getUnifiedDashboardStats,
+  recordSetupProgressEvent,
 } from "./dashboard.service";
 
 export const getDashboardActivityController = async (
@@ -39,4 +40,14 @@ export const getUnifiedDashboardStatsController = async (
   res.status(200).json({ data: stats });
 };
 
+export const recordSetupProgressEventController = async (
+  req: Request,
+  res: Response
+) => {
+  const userId = (req as any).user.id;
+  const { event } = req.body as { event: "INBOX_OPENED" | "AGENT_CONFIGURED" };
+
+  const setupProgress = await recordSetupProgressEvent(userId, event);
+  res.status(200).json({ data: setupProgress });
+};
 

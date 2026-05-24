@@ -683,6 +683,7 @@ ${JSON.stringify(
     productsServices: params.profile.productsServices,
     expectedUserIntents: params.profile.expectedUserIntents,
     corePolicies: params.profile.corePolicies,
+    aiBehaviorInstructions: params.profile.aiBehaviorInstructions,
     faqs: params.profile.faqs?.map((f: any) => ({
       question: f.question,
       answer: f.answer,
@@ -725,6 +726,11 @@ ${JSON.stringify(competitorSummaries, null, 2)}
 Evidence refs available:
 ${JSON.stringify(params.firstParty.evidenceRefs.slice(0, 80), null, 2)}
 
+Voice and tone rules:
+- Write findings, gap questions, and draftBrief fields in the business profile voice/language/dialect and tone.
+- The profile voice/tone are the source of truth. draftBrief.tonePreferences may add a campaign-specific note, but it must stay compatible with the profile voice/tone and must not change the language/dialect.
+- Do not invent proof, claims, prices, guarantees, policies, statistics, or locations.
+
 Return ONLY strict JSON:
 {
   "confidenceScore": 0,
@@ -756,7 +762,7 @@ Return ONLY strict JSON:
     "proofPoints": ["Trust proof that exists or should be requested"],
     "cta": "Recommended call to action",
     "funnelFocus": "awareness|education|trust|conversion|retention|mixed",
-    "tonePreferences": "Writing direction based on audience language",
+    "tonePreferences": "Secondary campaign tone note that stays compatible with the business profile voice/tone",
     "forbiddenTopics": [],
     "competitorInsights": {
       "positioningGaps": ["Gap we can own"],

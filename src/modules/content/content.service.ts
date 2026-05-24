@@ -124,7 +124,7 @@ function buildPostPrompt(req: ContentGenerationRequest): string {
     lengthGuidelines[(length || "medium") as keyof typeof lengthGuidelines] ||
     lengthGuidelines.medium;
 
-  return `You are an expert social media manager. Generate a highly engaging Facebook post about "${topic}".
+  return `You are a senior social media strategist, conversion-focused content writer, and Facebook-native copywriter. Generate a high-performing Facebook post about "${topic}".
 
 ${
   businessProfile
@@ -146,6 +146,16 @@ ${keywords && keywords.length > 0 ? `2. Keywords to include naturally: ${keyword
 ${context ? `3. Additional Context: ${context}` : ""}
 4. Output format: Must be raw, strictly valid JSON without markdown wrapping.
 </post_requirements>
+
+<copywriting_standards>
+- Start with a specific hook tied to the target audience's pain point, desire, timely opportunity, or curiosity gap.
+- Write like a real social media specialist: clear angle, useful insight, brand-fit wording, and a natural call-to-action.
+- Make the post platform-native for Facebook: conversational, scannable, and engaging without sounding like an ad unless the context asks for sales copy.
+- Use concrete benefits and business-specific details from the persona/context. Do not invent prices, guarantees, statistics, locations, or claims that were not provided.
+- Keep emojis tasteful and relevant. Avoid generic AI phrases, filler, repeated slogans, and overused hashtags.
+- Hashtags must be relevant, concise, and in the same language/dialect style as the post unless the persona requires otherwise.
+- The suggested image should be a brand-aware visual concept that supports the post angle and would stop the target audience while scrolling.
+</copywriting_standards>
 
 <json_structure>
 {

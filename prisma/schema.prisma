@@ -92,6 +92,8 @@ model User {
   businessProfiles         BusinessProfile[]
   widgetInstalls           WidgetInstall[]
   contentPlans             ContentPlan[]
+  contentAudits            ContentAudit[]
+  contentBriefs            ContentBrief[]
   aiUsageStats             AiUsageStat[]
   aiCallLogs               AiCallLog[]
   billingFailureLogs       BillingFailureLog[]
@@ -200,6 +202,9 @@ model BusinessProfile {
   aiCallLogs        AiCallLog[]
   billingFailureLogs BillingFailureLog[]
   contentPlans      ContentPlan[]
+  contentAudits     ContentAudit[]
+  contentBriefs     ContentBrief[]
+  competitorSources CompetitorSource[]
   knowledgeSections BusinessProfileKnowledgeSection[]
   mediaAssets       BusinessProfileMedia[]
 }
@@ -754,16 +759,103 @@ model SystemSetting {
   updatedAt DateTime @updatedAt
 }
 
+model ContentAudit {
+  id                         Int      @id @default(autoincrement())
+  businessProfileId          Int
+  businessProfile            BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+  userId                     Int
+  user                       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status                     String   @default("running") // running, completed, failed
+  signalWindowDays           Int      @default(90)
+  competitorDiscoveryScope   String   @default("PROVIDED_ONLY") // PROVIDED_ONLY, PROVIDED_AND_AI_SEARCH, AI_DISCOVERY
+  competitorAnalysisModes    String[]
+  campaignGoal               String?
+  startDate                  DateTime?
+  endDate                    DateTime?
+  findings                   Json?
+  gapQuestions               Json?
+  draftBrief                 Json?
+  evidenceRefs               Json?
+  confidenceScore            Float?
+  errorMessage               String?  @db.Text
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
+
+  competitorSources          CompetitorSource[]
+  contentBriefs              ContentBrief[]
+
+  @@index([businessProfileId, createdAt])
+  @@index([userId, createdAt])
+  @@index([status])
+}
+
+model ContentBrief {
+  id                Int      @id @default(autoincrement())
+  businessProfileId Int
+  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+  userId            Int
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sourceAuditId     Int?
+  sourceAudit       ContentAudit? @relation(fields: [sourceAuditId], references: [id], onDelete: SetNull)
+  status            String   @default("confirmed") // draft, confirmed, archived
+  goal              String?
+  audienceSegments  Json?
+  painPoints        Json?
+  objections        Json?
+  buyingTriggers    Json?
+  offers            Json?
+  proofPoints       Json?
+  cta               String?
+  funnelFocus       String?
+  tonePreferences   String?
+  forbiddenTopics   Json?
+  competitorInsights Json?
+  ownerAnswers      Json?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  contentPlans      ContentPlan[]
+
+  @@index([businessProfileId, createdAt])
+  @@index([userId, createdAt])
+  @@index([sourceAuditId])
+}
+
+model CompetitorSource {
+  id                Int      @id @default(autoincrement())
+  businessProfileId Int
+  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+  contentAuditId    Int?
+  contentAudit      ContentAudit? @relation(fields: [contentAuditId], references: [id], onDelete: Cascade)
+  name              String?
+  url               String?
+  sourceType        String   @default("website") // website, social_sample, public_social, search
+  mode              String
+  status            String   @default("pending") // pending, completed, failed, skipped
+  summary           Json?
+  evidenceRefs      Json?
+  errorMessage      String?  @db.Text
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([businessProfileId, createdAt])
+  @@index([contentAuditId])
+  @@index([status])
+}
+
 model ContentPlan {
   id                Int      @id @default(autoincrement())
   businessProfileId Int
   businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
   userId            Int
   user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  contentBriefId    Int?
+  contentBrief      ContentBrief? @relation(fields: [contentBriefId], references: [id], onDelete: SetNull)
   startDate         DateTime
   endDate           DateTime
   goals             String?  // JSON or string (e.g., "Awareness, Lead Gen")
   currentTrends     String?  // Custom context for this specific month/campaign
+  briefSnapshot     Json?
   status            String   @default("draft") // draft, approved, active, completed
   isGrounded        Boolean  @default(false)
   researchSummary   String?  @db.Text
@@ -781,6 +873,13 @@ model ContentPlanPost {
   pillar            String   // The content pillar (e.g. "Behind the scenes")
   topic             String
   format            String   // "image_post", "carousel", "reel", "story"
+  funnelStage       String?
+  contentGoal       String?
+  targetPainPoint   String?
+  objectionHandled  String?
+  cta               String?
+  rationale         String?  @db.Text
+  evidenceRefs      Json?
   caption           String?  @db.Text
   imagePrompt       String?  @db.Text
   imageUrl          String?

@@ -476,6 +476,12 @@ export class FacebookController {
         commentPublicGreeting: commentPublicGreeting !== undefined ? commentPublicGreeting : page.commentPublicGreeting,
       },
     });
+    if (commentAutoDmEnabled !== undefined) {
+      await prisma.user.updateMany({
+        where: { id: userId, setupAgentConfiguredAt: null },
+        data: { setupAgentConfiguredAt: new Date() },
+      });
+    }
 
     // Invalidate identity cache — page settings are cached in the processor
     await invalidateIdentityCache("messenger", pageId).catch(() => {});

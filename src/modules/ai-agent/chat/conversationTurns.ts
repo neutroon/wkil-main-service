@@ -3,7 +3,7 @@ import { customerMessageForModel } from "./messageSignals";
 /** Prior turns for the LLM (token budget). */
 export const MAX_HISTORY_CHARS = 12_000;
 
-interface Message {
+export interface PromptMessage {
   role: "user" | "model";
   content: string;
 }
@@ -19,7 +19,7 @@ type ConversationTurnRow = {
 /** Prisma stores `role` as String; narrow to prompt roles we persist. */
 export function toPromptMessages(
   rows: ConversationTurnRow[],
-): Message[] {
+): PromptMessage[] {
   return rows.map((m) => ({
     role: (m.role === "model" || m.role === "agent") ? "model" : "user",
     content:
@@ -39,17 +39,13 @@ export function toPromptMessages(
   }));
 }
 
-/**
- * Exclude the last user message — it is passed as `customerMessage` to the model.
- */
-export function historyToLlmTurns(
-  historyIncludingLatestUser: Message[],
+export function promptMessagesToLlmTurns(
+  messages: PromptMessage[],
 ): { role: "user" | "model"; text: string }[] {
-  const prior = historyIncludingLatestUser.slice(0, -1);
   const turns: { role: "user" | "model"; text: string }[] = [];
   let used = 0;
-  for (let i = prior.length - 1; i >= 0; i--) {
-    const m = prior[i]!;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]!;
     const piece = m.content;
     if (used + piece.length > MAX_HISTORY_CHARS) break;
     turns.unshift({ role: m.role, text: piece });
@@ -58,3 +54,11 @@ export function historyToLlmTurns(
   return turns;
 }
 
+/**
+ * Exclude the last user message — it is passed as `customerMessage` to the model.
+ */
+export function historyToLlmTurns(
+  historyIncludingLatestUser: PromptMessage[],
+): { role: "user" | "model"; text: string }[] {
+  return promptMessagesToLlmTurns(historyIncludingLatestUser.slice(0, -1));
+}

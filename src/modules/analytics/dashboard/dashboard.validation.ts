@@ -11,3 +11,9 @@ export const dashboardQuerySchema = z.object({
     limit: z.string().regex(/^\d+$/).transform(Number).optional(),
   }),
 });
+
+export const setupProgressEventSchema = z.object({
+  body: z.object({
+    event: z.enum(["INBOX_OPENED", "AGENT_CONFIGURED"]),
+  }),
+});

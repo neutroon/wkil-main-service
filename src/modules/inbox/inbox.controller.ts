@@ -152,6 +152,10 @@ export class ConversationsController {
       where: { id: conversationId },
       data: { aiEnabled: enabled },
     });
+    await prisma.user.updateMany({
+      where: { id: userId, setupAgentConfiguredAt: null },
+      data: { setupAgentConfiguredAt: new Date() },
+    });
 
     logger.info("meta.conversation.ai_toggle", {
       conversationId,

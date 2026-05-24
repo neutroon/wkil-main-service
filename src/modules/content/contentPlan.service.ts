@@ -32,6 +32,35 @@ function normalizeOptionalText(value: string | string[] | undefined): string | u
   return value;
 }
 
+function buildVoiceToneGuard(
+  profile: {
+    voice?: string | null;
+    tone?: string | null;
+    aiBehaviorInstructions?: string | null;
+    corePolicies?: string | null;
+  },
+  brief?: { tonePreferences?: string | null } | null,
+) {
+  const voice = profile.voice || "the business profile voice";
+  const tone = profile.tone || "the business profile tone";
+
+  return `
+--- BUSINESS VOICE AND TONE RULES ---
+- Primary language/dialect: ${voice}
+- Business tone: ${tone}
+${profile.aiBehaviorInstructions ? `- Additional writing instructions: ${profile.aiBehaviorInstructions}` : ""}
+${profile.corePolicies ? `- Factual boundaries and policies: ${profile.corePolicies}` : ""}
+${brief?.tonePreferences ? `- Campaign tone note (secondary): ${brief.tonePreferences}` : ""}
+Rules:
+1. The business profile voice and tone are the source of truth for all generated content.
+2. Campaign tone notes, goals, research, trends, and user context may refine the angle, but must not override the profile voice, language, dialect, or tone.
+3. Keep captions, topics, slide text, scripts, CTAs, hashtags, and review summaries in this voice and language unless the profile explicitly allows otherwise.
+4. Do not invent claims, prices, guarantees, policies, statistics, or locations.
+5. Avoid generic AI-style marketing phrasing; write like a real brand operator.
+-------------------------------------
+  `.trim();
+}
+
 function buildBriefContext(brief: any) {
   if (!brief) return "";
 
@@ -46,7 +75,7 @@ function buildBriefContext(brief: any) {
 - Proof Points: ${formatJsonForPrompt(brief.proofPoints)}
 - CTA: ${brief.cta || "Not specified"}
 - Funnel Focus: ${brief.funnelFocus || "mixed"}
-- Tone Preferences: ${brief.tonePreferences || "Use the business profile voice and tone"}
+- Campaign Tone Preferences (secondary only; must stay compatible with business profile voice/tone): ${brief.tonePreferences || "Use the business profile voice and tone"}
 - Forbidden Topics: ${formatJsonForPrompt(brief.forbiddenTopics)}
 - Competitor Insights: ${formatJsonForPrompt(brief.competitorInsights)}
 ------------------------------------------
@@ -112,6 +141,7 @@ export async function* generateContentStrategyStream(briefing: BriefingInput) {
     contentBriefId: briefing.contentBriefId,
   });
   const briefContext = buildBriefContext(contentBrief);
+  const voiceToneGuard = buildVoiceToneGuard(profile, contentBrief);
 
   // 1. Common Persona Details
   const persona = `
@@ -126,6 +156,7 @@ ${profile.faqs.length > 0 ? `- Frequently Asked Questions: ${profile.faqs.map((f
 ${briefing.goals ? `- Primary Campaign Goals: ${briefing.goals}` : ""}
 ${briefing.currentTrends ? `- Specific Topic/Trends to Focus On: ${briefing.currentTrends}` : ""}
 ${briefContext}
+${voiceToneGuard}
   `.trim();
 
   // 1b. RAG Enhancement: Retrieve relevant chunks based on goals/trends
@@ -234,13 +265,13 @@ ${researchSummary}
 
 Instructions:
 1. Based on the persona, internal knowledge, campaign goals, and market research, plan a content calendar with specialist-level judgment.
-2. If a confirmed content brief is present, use it as the strategic source of truth over shallow owner wording.
+2. If a confirmed content brief is present, use it as the strategic source of truth for campaign angles, but never let it override the business profile voice/tone rules.
 3. Choose content pillars that cover a healthy mix of education, authority, trust proof, community engagement, offer/lead generation, and timely trend relevance.
 4. Each topic must be a sharp creative brief, not a vague label. It should include the angle, audience benefit, or emotional trigger.
 5. Every post must include a reason to exist: funnelStage, contentGoal, targetPainPoint, CTA, rationale, and evidenceRefs when available.
 6. Match the format to the communication job: carousel for step-by-step education, image_post for strong single ideas, reel/story for quick hooks and timely moments.
 7. Avoid repetitive angles and generic posts that could fit any business.
-8. [CRITICAL] All user-facing strings in the JSON (topic, etc.) MUST be in the language specified in the "Voice" field.
+8. [CRITICAL] All user-facing strings in the JSON (topic, etc.) MUST follow the business profile voice, language/dialect, and tone rules above.
 
 Output strictly as a JSON array of objects.
 
@@ -344,6 +375,7 @@ export async function generateContentStrategy(briefing: BriefingInput) {
     contentBriefId: briefing.contentBriefId,
   });
   const briefContext = buildBriefContext(contentBrief);
+  const voiceToneGuard = buildVoiceToneGuard(profile, contentBrief);
 
   // 1. Common Persona Details
   const persona = `
@@ -358,6 +390,7 @@ ${profile.faqs.length > 0 ? `- Frequently Asked Questions: ${profile.faqs.map((f
 ${briefing.goals ? `- Primary Campaign Goals: ${briefing.goals}` : ""}
 ${briefing.currentTrends ? `- Specific Topic/Trends to Focus On: ${briefing.currentTrends}` : ""}
 ${briefContext}
+${voiceToneGuard}
   `.trim();
 
   // 1b. RAG Enhancement
@@ -446,7 +479,7 @@ ${researchSummary}
 
 Instructions:
 1. Based on the research and business persona above, calculate the optimal frequency and distribute posts evenly.
-2. If a confirmed content brief is present, use it as the strategic source of truth over shallow owner wording.
+2. If a confirmed content brief is present, use it as the strategic source of truth for campaign angles, but never let it override the business profile voice/tone rules.
 3. For each post, determine: 'platform' (facebook, instagram, linkedin), 'pillar', 'topic', and 'format' (image_post, carousel, reel, story).
 4. Choose content pillars that cover a healthy mix of education, authority, trust proof, community engagement, offer/lead generation, and timely trend relevance.
 5. Each topic must be a sharp creative brief, not a vague label. It should include the angle, audience benefit, or emotional trigger.
@@ -454,7 +487,7 @@ Instructions:
 7. Match the format to the communication job: carousel for step-by-step education, image_post for strong single ideas, reel/story for quick hooks and timely moments.
 8. Ensure the topics directly leverage the trends and holidays found during research where relevant.
 9. Avoid repetitive angles and generic posts that could fit any business.
-10. [CRITICAL] All user-facing strings in the output JSON (especially 'topic') MUST be in the language specified in the "Voice" field.
+10. [CRITICAL] All user-facing strings in the output JSON (especially 'topic') MUST follow the business profile voice, language/dialect, and tone rules above.
 11. Output strictly as a JSON array of objects. No markdown.
 
 Schema:
@@ -580,6 +613,10 @@ export async function generatePostExecution(postId: number, userId: number) {
   try {
     const profile = post.contentPlan.businessProfile;
     const briefContext = buildBriefContext(post.contentPlan.contentBrief);
+    const voiceToneGuard = buildVoiceToneGuard(
+      profile,
+      post.contentPlan.contentBrief,
+    );
 
     // 2b. Build targeted prompt depending on the format
   const persona = `
@@ -644,6 +681,7 @@ You are executing one publish-ready piece as a senior content writer and social 
 Context:
 ${persona}
 ${briefContext}
+${voiceToneGuard}
 ${postKnowledge}
 Campaign Goals: ${post.contentPlan.goals || "Provide value and engagement"}
 Strategic Purpose:
@@ -664,14 +702,14 @@ Follow this exact JSON structure:
 ${schemaInstruct}
 
 [CRITICAL INSTRUCTIONS]:
-1. Language/Dialect: You MUST write ALL content (caption, slide text, scripts, etc.) strictly in the language specified in the "Voice" field above: ${profile.voice}.
+1. Language/Dialect: You MUST write ALL content (caption, slide text, scripts, CTAs, hashtags, etc.) strictly in the business profile voice/language/dialect above: ${profile.voice}.
 2. Platform-Native Writing: Make the copy feel written by a real social media specialist for ${post.platform}. Use a strong opening hook, scannable value, and a natural CTA.
 3. Audience Fit: Speak directly to the target audience's needs, motivations, objections, and desired outcome. Avoid generic advice that could fit any brand.
 4. Copywriting Framework: Use AIDA, PAS, before/after/bridge, storytelling, or educational sequencing when it fits the topic. Do not mention the framework.
 5. Fact-Checking: Use the provided "BUSINESS KNOWLEDGE" and persona details to include specific information about products, services, policies, or FAQs. Do not invent prices, guarantees, claims, locations, or statistics.
 6. Visual Narrative: Your "imagePrompt" values are for a high-end Art Director. Be descriptive, technical, and artistic. Avoid words like "photorealistic" - instead, describe the lighting, lens, and texture.
 7. Hashtags: Include a concise set of relevant hashtags in the caption, aligned with the language/dialect and audience.
-8. Identity: Ensure the content perfectly matches the Brand Name, Voice, and Tone.
+8. Identity: Ensure the content matches the Brand Name, Voice, Tone, additional writing instructions, and factual boundaries.
 9. Output: Do NOT include any surrounding markdown. Just the raw JSON.`;
 
   console.log(

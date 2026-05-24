@@ -124,6 +124,9 @@ contentRoutes.post(
           targetAudience: true,
           voice: true,
           tone: true,
+          productsServices: true,
+          corePolicies: true,
+          aiBehaviorInstructions: true,
         },
       });
     } else {
@@ -135,6 +138,9 @@ contentRoutes.post(
           targetAudience: true,
           voice: true,
           tone: true,
+          productsServices: true,
+          corePolicies: true,
+          aiBehaviorInstructions: true,
         },
       });
     }

@@ -16,6 +16,10 @@ import {
  * Handles email verification and secure account recovery.
  */
 
+const PASSWORD_RESET_RESPONSE = {
+  message: "If an account exists with that email, a reset link has been sent.",
+};
+
 /**
  * Verifies a user's email address using a provided token.
  */
@@ -70,13 +74,16 @@ export const verifyEmail = async (token: string) => {
  * Note: Returns success regardless of user existence to prevent account enumeration.
  */
 export const forgotPassword = async (email: string) => {
+  const normalizedEmail = email.trim().toLowerCase();
   const user = await prisma.user.findUnique({
-    where: { email, isActive: true },
+    where: { email: normalizedEmail, isActive: true },
   });
 
   if (!user) {
-    logger.warn("Password reset attempted for non-existent or inactive email", { email });
-    return { message: "If an account exists with that email, a reset link has been sent." };
+    logger.warn("Password reset attempted for non-existent or inactive email", {
+      email: normalizedEmail,
+    });
+    return PASSWORD_RESET_RESPONSE;
   }
 
   const resetToken = generateRandomToken();
@@ -91,10 +98,18 @@ export const forgotPassword = async (email: string) => {
     },
   });
 
-  // Dispatch email
-  await sendPasswordResetEmail(user.email, user.name, resetToken);
+  try {
+    await sendPasswordResetEmail(user.email, user.name, resetToken);
+  } catch (error) {
+    // Keep the public response enumeration-safe. The mailer logs provider details.
+    logger.warn("Password reset email dispatch failed after token was issued", {
+      userId: user.id,
+      email: user.email,
+      reason: error instanceof Error ? error.message : String(error),
+    });
+  }
 
-  return { message: "If an account exists with that email, a reset link has been sent." };
+  return PASSWORD_RESET_RESPONSE;
 };
 
 /**

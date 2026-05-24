@@ -2,7 +2,6 @@ import prisma from "@config/prisma";
 import { logger } from "@utils/logger";
 import {
   getOrCreateConversation,
-  getConversationHistory,
   saveMessage,
 } from "@modules/meta/core/conversation.service";
 import { upsertCustomerFromConversation } from "@modules/business/customer/customer.service";
@@ -13,10 +12,12 @@ import {
   scheduleFollowUpsForDeliveredReply,
 } from "@modules/ai-agent/chat/replySideEffects.service";
 import { AiRoutingDecision } from "@modules/ai-agent/core/aiEngine.utils";
+import { buildUnansweredUserTurnContext } from "@modules/ai-agent/chat/conversationTurnContext";
 import {
-  historyToLlmTurns,
-  toPromptMessages,
-} from "@modules/ai-agent/chat/conversationTurns";
+  assertLatestConversationAiRun,
+  isStaleConversationRunError,
+  startConversationAiRun,
+} from "@modules/ai-agent/chat/conversationRunGuard";
 import type { WidgetInstall } from "@prisma/client";
 import { AppError } from "@middlewares/errorHandler.middleware";
 import { generateR2Key, uploadToR2 } from "@modules/media/services/r2Storage.service";
@@ -45,7 +46,7 @@ export async function processWidgetChatMessage(params: {
   attachment?: { url: string; type: string; caption?: string | null } | null;
 }> {
   const { install, message } = params;
-  const { conversation, businessProfile, historyTurns, userMessage } =
+  const { conversation, businessProfile, userMessage } =
     await setupWidgetChat(params);
 
   if (conversation.aiEnabled === false) {
@@ -59,24 +60,35 @@ export async function processWidgetChatMessage(params: {
     };
   }
 
+  const run = await startConversationAiRun({
+    conversationId: conversation.id,
+    latestUserMessageId: userMessage.id,
+  });
+  const turnContext = await buildUnansweredUserTurnContext({
+    conversationId: conversation.id,
+    latestUserMessageId: userMessage.id,
+  });
+
   let reply: AiRoutingDecision;
   try {
     reply = await computeBusinessChatReply({
       businessProfile,
-      messageText: message,
-      historyTurns,
+      messageText: turnContext.messageText || message,
+      historyTurns: turnContext.historyTurns,
       channel: "web",
       conversationId: conversation.id,
-      mediaInfo: userMessage.mediaId
-        ? {
-            id: userMessage.mediaId,
-            type: userMessage.type,
-            url: (userMessage.mediaMetadata as any)?.url,
-            metadata: userMessage.mediaMetadata,
-          }
-        : undefined,
+      conversationRunId: run.runId,
+      latestUserMessageId: userMessage.id,
     });
+    await assertLatestConversationAiRun(run, "after_widget_reply_compute");
   } catch (err: unknown) {
+    if (isStaleConversationRunError(err)) {
+      return {
+        reply: "",
+        conversationId: conversation.id,
+      };
+    }
+
     const msg = err instanceof Error ? err.message : String(err);
     logger.error("widget.chat.ai_failed", {
       widgetInstallId: install.id,
@@ -115,6 +127,18 @@ export async function processWidgetChatMessage(params: {
       reply: "",
       conversationId: conversation.id,
     };
+  }
+
+  try {
+    await assertLatestConversationAiRun(run, "before_widget_reply_save");
+  } catch (err: unknown) {
+    if (isStaleConversationRunError(err)) {
+      return {
+        reply: "",
+        conversationId: conversation.id,
+      };
+    }
+    throw err;
   }
 
   const botMsg = await saveMessage(
@@ -253,7 +277,6 @@ async function setupWidgetChat(params: {
     },
   });
 
-  const historyRows = await getConversationHistory(conversation.id);
   const mediaPayload = media
     ? await prepareWidgetMediaPayload({
         businessProfileId: install.businessProfileId,
@@ -266,19 +289,7 @@ async function setupWidgetChat(params: {
     mediaMetadata: mediaPayload?.mediaMetadata,
   });
 
-  const historyForPrompt = toPromptMessages([
-    ...historyRows,
-    {
-      role: "user",
-      content: message,
-      type: userMessage.type,
-      mediaId: userMessage.mediaId,
-      mediaMetadata: userMessage.mediaMetadata,
-    },
-  ]);
-  const historyTurns = historyToLlmTurns(historyForPrompt);
-
-  return { conversation, businessProfile, historyTurns, userMessage };
+  return { conversation, businessProfile, userMessage };
 }
 
 async function prepareWidgetMediaPayload(params: {

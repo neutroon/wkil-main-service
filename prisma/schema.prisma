@@ -87,6 +87,8 @@ model User {
 
   // Business profile creation
   isBusinessProfileCreated Boolean           @default(false)
+  setupInboxOpenedAt       DateTime?
+  setupAgentConfiguredAt   DateTime?
   businessProfiles         BusinessProfile[]
   widgetInstalls           WidgetInstall[]
   contentPlans             ContentPlan[]

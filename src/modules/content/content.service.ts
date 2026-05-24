@@ -15,6 +15,9 @@ export interface ContentGenerationRequest {
     targetAudience: string;
     voice: string;
     tone: string;
+    productsServices?: string[];
+    corePolicies?: string | null;
+    aiBehaviorInstructions?: string | null;
   } | null;
 }
 
@@ -134,9 +137,12 @@ ${
 - Target Audience: ${businessProfile.targetAudience}
 - Voice (REQUIRED LANGUAGE): ${businessProfile.voice}
 - Tone: ${businessProfile.tone}
+${businessProfile.productsServices?.length ? `- Products/Services: ${businessProfile.productsServices.join(", ")}` : ""}
+${businessProfile.aiBehaviorInstructions ? `- Additional Writing Instructions: ${businessProfile.aiBehaviorInstructions}` : ""}
+${businessProfile.corePolicies ? `- Factual Boundaries and Policies: ${businessProfile.corePolicies}` : ""}
 </persona>
 
-CRITICAL: All generated content (post text and hashtags) MUST be written strictly in the language and dialect specified in the "Voice" field above (e.g., if Voice is Egyptian Arabic, you MUST write in Egyptian Arabic). Do not use English unless the Voice field explicitly allows it.`
+CRITICAL: The business profile voice and tone are the source of truth. All generated content (post text and hashtags) MUST be written strictly in the language and dialect specified in the "Voice" field above (e.g., if Voice is Egyptian Arabic, you MUST write in Egyptian Arabic). The tone MUST match the "Tone" field. Additional context may refine the topic and details, but must not override the profile voice, language, dialect, tone, or factual boundaries. Do not use English unless the Voice field explicitly allows it.`
     : `<tone>\nUse a friendly, professional tone optimized for high social media engagement.\n</tone>`
 }
 

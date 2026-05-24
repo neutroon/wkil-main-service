@@ -5,12 +5,10 @@ import { decryptFacebookSecret } from "@modules/auth/core/tokenCrypto";
 import { cache } from "@utils/cache";
 import {
   getOrCreateConversation,
-  getConversationHistory,
   saveMessage,
 } from "../core/conversation.service";
 import { computeBusinessChatReply } from "@modules/ai-agent/chat/businessChatReply.service";
 import { initialCustomerReplyStatus } from "@modules/ai-agent/chat/deliveryPolicy";
-import { historyToLlmTurns, toPromptMessages } from "@modules/ai-agent/chat/conversationTurns";
 import {
   notifySavedModelReplySideEffects,
   scheduleFollowUpsForDeliveredReply,
@@ -21,6 +19,13 @@ import {
 } from "../facebook/facebook.service";
 import { classifyInboundMessageSignal } from "@modules/ai-agent/chat/messageSignals";
 import { understandInboundMedia } from "./inboundMediaUnderstanding.service";
+import { buildUnansweredUserTurnContext } from "@modules/ai-agent/chat/conversationTurnContext";
+import {
+  assertLatestConversationAiRun,
+  isStaleConversationRunError,
+  startConversationAiRun,
+  type ConversationAiRun,
+} from "@modules/ai-agent/chat/conversationRunGuard";
 
 export type MetaPlatform = "messenger" | "whatsapp" | "visual_production" | "visual_refine" | "media_sync" | "facebook" | "instagram" | "linkedin";
 
@@ -414,6 +419,7 @@ async function enrichContactInBackground(
  */
 export async function processMetaMessage(job: MetaMessageJob) {
   const { platform, identifier, senderId, messageText, externalId, type, mediaId, mediaMetadata } = job;
+  let activeRun: ConversationAiRun | undefined;
 
   try {
     // --- BACKGROUND EVENTS BRANCH ---
@@ -591,6 +597,11 @@ export async function processMetaMessage(job: MetaMessageJob) {
       return;
     }
 
+    activeRun = await startConversationAiRun({
+      conversationId: conversation.id,
+      latestUserMessageId: userSaved.id,
+    });
+
     let enrichedMediaMetadata = mediaMetadata;
     if (
       mediaId &&
@@ -617,7 +628,11 @@ export async function processMetaMessage(job: MetaMessageJob) {
 
     // 5. AI Reply Generation
     logger.info("meta.processor.computing_reply", { conversationId: conversation.id });
-    const historyPromise = getConversationHistory(conversation.id, userSaved.createdAt, job.postId);
+    const turnContextPromise = buildUnansweredUserTurnContext({
+      conversationId: conversation.id,
+      latestUserMessageId: userSaved.id,
+      postId: job.postId,
+    });
     const postContextPromise = isComment && job.postId
       ? import("../facebook/facebook.service").then(async ({ getPostContext, getCommentText }) => {
           const [pContext, parContext] = await Promise.all([
@@ -630,43 +645,43 @@ export async function processMetaMessage(job: MetaMessageJob) {
         })
       : Promise.resolve(undefined);
     const socketSyncPromise = import("@modules/realtime/socketSync.service");
-    const agentTurnPromise = import("@modules/ai-agent/core/agentTurn.service").then(({ createAgentTurn }) =>
-      createAgentTurn({
-        businessProfileId,
-        conversationId: conversation.id,
-        inputMessageId: userSaved.id,
-        channel: isComment ? "facebook_comment" : platform,
-        mode: "CUSTOMER_MESSAGE",
-        customerText: messageText || "",
-      }),
-    );
-    const [historyRows, postContext, { syncTypingStatus }, agentTurn] = await Promise.all([
-      historyPromise,
+    const agentTurnModulePromise = import("@modules/ai-agent/core/agentTurn.service");
+    const [turnContext, postContext, { syncTypingStatus }, { createAgentTurn }] = await Promise.all([
+      turnContextPromise,
       postContextPromise,
       socketSyncPromise,
-      agentTurnPromise,
+      agentTurnModulePromise,
     ]);
-    const historyTurns = historyToLlmTurns(toPromptMessages(historyRows));
+    const effectiveTurnText = turnContext.messageText || messageText || "";
+    const agentTurn = await createAgentTurn({
+      businessProfileId,
+      conversationId: conversation.id,
+      inputMessageId: userSaved.id,
+      channel: isComment ? "facebook_comment" : platform,
+      mode: "CUSTOMER_MESSAGE",
+      customerText: effectiveTurnText,
+    });
     syncTypingStatus({ businessProfileId, conversationId: conversation.id, isTyping: true });
 
-    const reply = await computeBusinessChatReply({
-      businessProfile,
-      messageText: messageText || "",
-      historyTurns,
-      channel: isComment ? "facebook_comment" : (platform as any),
-      customerPhone: platform === "whatsapp" ? senderId : undefined,
-      mediaInfo: mediaId ? {
-        id: mediaId,
-        type: type || "image",
-        url: enrichedMediaMetadata?.url,
-        metadata: enrichedMediaMetadata,
-      } : undefined,
-      postContext,
-      conversationId: conversation.id,
-      agentTurnId: agentTurn.id,
-    });
+    let reply;
+    try {
+      reply = await computeBusinessChatReply({
+        businessProfile,
+        messageText: effectiveTurnText,
+        historyTurns: turnContext.historyTurns,
+        channel: isComment ? "facebook_comment" : (platform as any),
+        customerPhone: platform === "whatsapp" ? senderId : undefined,
+        postContext,
+        conversationId: conversation.id,
+        conversationRunId: activeRun.runId,
+        latestUserMessageId: userSaved.id,
+        agentTurnId: agentTurn.id,
+      });
+      await assertLatestConversationAiRun(activeRun, "after_meta_reply_compute");
+    } finally {
+      syncTypingStatus({ businessProfileId, conversationId: conversation.id, isTyping: false });
+    }
 
-    syncTypingStatus({ businessProfileId, conversationId: conversation.id, isTyping: false });
     logger.info("meta.processor.reply_computed", { 
       action: reply.action, 
       intent: reply.intent, 
@@ -725,6 +740,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
     // B. Save Model Message
     let modelSaved: any;
     if (mainContent.length > 0 || aiMediaAsset || reply.action === "HANDOFF_TO_HUMAN") {
+      await assertLatestConversationAiRun(activeRun, "before_meta_model_save");
       modelSaved = await saveMessage(conversation.id, "model", mainContent, {
         status: privateStatus,
         aiReasoning: reply.reasoning,
@@ -905,6 +921,16 @@ export async function processMetaMessage(job: MetaMessageJob) {
       });
     }
   } catch (err: any) {
+    if (isStaleConversationRunError(err)) {
+      logger.info("meta.processor.superseded_run_stopped", {
+        platform,
+        identifier,
+        conversationId: activeRun?.conversationId,
+        runId: activeRun?.runId,
+        stage: err.stage,
+      });
+      return;
+    }
     if (err instanceof UnrecoverableError) throw err;
     logger.error("meta.processor.failure", { platform, identifier, error: err.message, stack: err.stack });
     throw err;

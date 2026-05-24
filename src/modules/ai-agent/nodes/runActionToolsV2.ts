@@ -18,6 +18,7 @@ import {
   replyPolicyPromptBlock,
   type ReplyPolicy,
 } from "@modules/ai-agent/core/replyPolicy";
+import { assertLatestConversationAiRun } from "@modules/ai-agent/chat/conversationRunGuard";
 
 export async function runActionToolsV2Node(
   state: AgentStateType,
@@ -47,6 +48,17 @@ export async function runActionToolsV2Node(
       ),
     };
   }
+  await assertLatestConversationAiRun(
+    state.conversationRunId && state.latestUserMessageId
+      ? {
+          conversationId: state.conversationId,
+          runId: state.conversationRunId,
+          latestUserMessageId: state.latestUserMessageId,
+          startedAt: "",
+        }
+      : undefined,
+    "before_tool_queue",
+  );
 
   const source = await getAgentActionSourceStatusMetadata(
     state.businessProfileId,

@@ -7,6 +7,36 @@ import { env } from "@config/env";
 const FRONTEND_URL = env.FRONTEND_URL;
 const MAIL_FROM = env.MAIL_FROM;
 
+type MailerError = Error & {
+  code?: string;
+  command?: string;
+  responseCode?: number;
+  response?: string;
+  errno?: string;
+  address?: string;
+  port?: number;
+  syscall?: string;
+  hostname?: string;
+};
+
+const mailErrorMeta = (error: unknown) => {
+  const mailError = error as MailerError;
+
+  return {
+    name: mailError?.name,
+    message: mailError?.message,
+    code: mailError?.code,
+    command: mailError?.command,
+    responseCode: mailError?.responseCode,
+    response: mailError?.response,
+    errno: mailError?.errno,
+    address: mailError?.address,
+    port: mailError?.port,
+    syscall: mailError?.syscall,
+    hostname: mailError?.hostname,
+  };
+};
+
 /**
  * Production-grade Mailing Service
  * Handles the delivery of security handshakes and system notifications.
@@ -43,7 +73,14 @@ export const sendVerificationEmail = async (email: string, name: string, token: 
     });
     logger.info("Verification email sent successfully", { email });
   } catch (error) {
-    throw new AppError("Could not send verification email", 502);
+    logger.error("Verification email delivery failed", {
+      email,
+      smtpHost: env.SMTP_HOST,
+      smtpPort: env.SMTP_PORT,
+      smtpSecure: env.SMTP_SECURE,
+      error: mailErrorMeta(error),
+    });
+    throw new AppError("Could not send verification email", 502, true, "MAIL_DELIVERY_FAILED");
   }
 };
 
@@ -78,7 +115,14 @@ export const sendPasswordResetEmail = async (email: string, name: string, token:
     });
     logger.info("Password reset email sent successfully", { email });
   } catch (error) {
-    throw new AppError("Could not send password reset email", 502);
+    logger.error("Password reset email delivery failed", {
+      email,
+      smtpHost: env.SMTP_HOST,
+      smtpPort: env.SMTP_PORT,
+      smtpSecure: env.SMTP_SECURE,
+      error: mailErrorMeta(error),
+    });
+    throw new AppError("Could not send password reset email", 502, true, "MAIL_DELIVERY_FAILED");
   }
 };
 

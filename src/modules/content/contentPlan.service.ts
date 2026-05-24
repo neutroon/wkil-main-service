@@ -14,6 +14,8 @@ export interface BriefingInput {
   currentTrends?: string;
 }
 
+const SOCIAL_MEDIA_SPECIALIST_ROLE = `You are a senior social media specialist, market-aware content strategist, and brand copywriter. Your job is to turn business context into platform-native content that attracts attention, builds trust, and supports measurable campaign goals.`;
+
 export async function* generateContentStrategyStream(briefing: BriefingInput) {
   const profile = await prisma.businessProfile.findUnique({
     where: { id: briefing.businessProfileId },
@@ -64,7 +66,7 @@ ${briefing.currentTrends ? `- Specific Topic/Trends to Focus On: ${briefing.curr
     message: "Stage 1/2: Researching live market trends and holidays...",
   };
 
-  const researchPrompt = `You are a Digital Marketing Strategist. 
+  const researchPrompt = `${SOCIAL_MEDIA_SPECIALIST_ROLE}
 Your task is to research current trends, upcoming holidays, seasonal events, and industry movements relevant to the following business profile for the period between ${briefing.startDate} and ${briefing.endDate}.
 
 ${persona}
@@ -72,8 +74,11 @@ ${ragContext}
 
 Instructions:
 1. Use Google Search to find specific dates for holidays or events.
-2. Identify 3-5 trending topics.
-3. [CRITICAL] Provide a concise research summary in the language and dialect specified in the "Voice" field above (e.g., if Voice is Egyptian Arabic, you MUST write the summary in Egyptian Arabic even if sources are in English).`;
+2. Identify 3-5 trends, seasonal hooks, audience conversations, or category movements that are relevant to this exact business.
+3. Translate each trend into practical content angles a social media specialist would actually brief to a writer.
+4. Highlight audience motivations, likely objections, and timely reasons to post during this period.
+5. Avoid generic trend labels. Tie every recommendation back to the persona, products/services, target audience, and campaign goals.
+6. [CRITICAL] Provide a concise research summary in the language and dialect specified in the "Voice" field above (e.g., if Voice is Egyptian Arabic, you MUST write the summary in Egyptian Arabic even if sources are in English).`;
 
   let researchSummary = "";
   let isGrounded = false;
@@ -134,8 +139,8 @@ Instructions:
     message: "Stage 2/2: Drafting optimal content calendar...",
   };
 
-  const strategyPrompt = `You are an expert Social Media Director.
-Your task is to build a Content Marketing Strategy Calendar between ${briefing.startDate} and ${briefing.endDate}.
+  const strategyPrompt = `${SOCIAL_MEDIA_SPECIALIST_ROLE}
+You are acting as the lead social media director. Build a Content Marketing Strategy Calendar between ${briefing.startDate} and ${briefing.endDate}.
 
 ${persona}
 ${ragContext}
@@ -145,8 +150,12 @@ ${researchSummary}
 --------------------------------
 
 Instructions:
-1. Based on the Persona and Research, plan a content calendar.
-2. [CRITICAL] All user-facing strings in the JSON (topic, etc.) MUST be in the language specified in the "Voice" field.
+1. Based on the persona, internal knowledge, campaign goals, and market research, plan a content calendar with specialist-level judgment.
+2. Choose content pillars that cover a healthy mix of education, authority, trust proof, community engagement, offer/lead generation, and timely trend relevance.
+3. Each topic must be a sharp creative brief, not a vague label. It should include the angle, audience benefit, or emotional trigger.
+4. Match the format to the communication job: carousel for step-by-step education, image_post for strong single ideas, reel/story for quick hooks and timely moments.
+5. Avoid repetitive angles and generic posts that could fit any business.
+6. [CRITICAL] All user-facing strings in the JSON (topic, etc.) MUST be in the language specified in the "Voice" field.
 
 Output strictly as a JSON array of objects.
 
@@ -276,7 +285,7 @@ ${briefing.currentTrends ? `- Specific Topic/Trends to Focus On: ${briefing.curr
     `[StrategyPipe] Stage 1: Deep Researching for Profile ${profile.id}...`,
   );
 
-  const researchPrompt = `You are a Digital Marketing Strategist. 
+  const researchPrompt = `${SOCIAL_MEDIA_SPECIALIST_ROLE}
 Your task is to research current trends, upcoming holidays, seasonal events, and industry movements relevant to the following business profile for the period between ${briefing.startDate} and ${briefing.endDate}.
 
 ${persona}
@@ -284,9 +293,12 @@ ${ragContext}
 
 Instructions:
 1. Use Google Search to find specific dates for holidays or events in this period (both global and local to the business audience).
-2. Identify 3-5 trending topics or content themes that would resonate with the target audience right now.
-3. Suggest the best "Content Pillars" to focus on.
-4. [CRITICAL] Provide a concise, high-quality research summary strictly in the language and dialect specified in the "Voice" field above (e.g., if Voice is Egyptian Arabic, you MUST write the summary in Egyptian Arabic).
+2. Identify 3-5 trends, seasonal hooks, audience conversations, or category movements that would resonate with the target audience right now.
+3. Translate each trend into practical content angles a social media specialist would actually brief to a writer.
+4. Suggest the best "Content Pillars" to focus on and explain why they fit the business goals.
+5. Highlight audience motivations, likely objections, and timely reasons to post during this period.
+6. Avoid generic trend labels. Tie every recommendation back to the persona, products/services, target audience, and campaign goals.
+7. [CRITICAL] Provide a concise, high-quality research summary strictly in the language and dialect specified in the "Voice" field above (e.g., if Voice is Egyptian Arabic, you MUST write the summary in Egyptian Arabic).
 
 Provide the research summary in plain text.`;
 
@@ -327,8 +339,8 @@ Provide the research summary in plain text.`;
     `[StrategyPipe] Stage 2: Strategy Generation for Profile ${profile.id}...`,
   );
 
-  const strategyPrompt = `You are an expert Social Media Director.
-Your task is to build a Content Marketing Strategy Calendar between ${briefing.startDate} and ${briefing.endDate}.
+  const strategyPrompt = `${SOCIAL_MEDIA_SPECIALIST_ROLE}
+You are acting as the lead social media director. Build a Content Marketing Strategy Calendar between ${briefing.startDate} and ${briefing.endDate}.
 
 ${persona}
 ${ragContext}
@@ -340,9 +352,13 @@ ${researchSummary}
 Instructions:
 1. Based on the research and business persona above, calculate the optimal frequency and distribute posts evenly.
 2. For each post, determine: 'platform' (facebook, instagram, linkedin), 'pillar', 'topic', and 'format' (image_post, carousel, reel, story).
-3. Ensure the topics directly leverage the trends and holidays found during research.
-4. [CRITICAL] All user-facing strings in the output JSON (especially 'topic') MUST be in the language specified in the "Voice" field.
-5. Output strictly as a JSON array of objects. No markdown.
+3. Choose content pillars that cover a healthy mix of education, authority, trust proof, community engagement, offer/lead generation, and timely trend relevance.
+4. Each topic must be a sharp creative brief, not a vague label. It should include the angle, audience benefit, or emotional trigger.
+5. Match the format to the communication job: carousel for step-by-step education, image_post for strong single ideas, reel/story for quick hooks and timely moments.
+6. Ensure the topics directly leverage the trends and holidays found during research where relevant.
+7. Avoid repetitive angles and generic posts that could fit any business.
+8. [CRITICAL] All user-facing strings in the output JSON (especially 'topic') MUST be in the language specified in the "Voice" field.
+9. Output strictly as a JSON array of objects. No markdown.
 
 Schema:
 [
@@ -497,10 +513,10 @@ ${profile.faqs && profile.faqs.length > 0 ? `- FAQs: ${profile.faqs.map((f: any)
     schemaInstruct = `
 Output strictly as JSON:
 {
-  "caption": "The main text status update that introduces the carousel including hashtags",
+  "caption": "A platform-native caption that introduces the carousel with a strong hook, useful promise, and hashtags",
   "carouselSlides": [
     {
-      "slideText": "Short punchy text for slide 1",
+      "slideText": "Short punchy slide copy with one clear idea, benefit, or step",
       "slideImagePrompt": "Visual description for slide 1 image generation"
     }
   ]
@@ -509,8 +525,8 @@ Output strictly as JSON:
     schemaInstruct = `
 Output strictly as JSON:
 {
-  "caption": "The caption for the video including hashtags",
-  "reelScript": "Audio/Visual structure. E.g. [0:00 - 0:05] Audio: Hello world. Visual: Face camera."
+  "caption": "The caption for the video with a strong hook, CTA, and hashtags",
+  "reelScript": "Audio/Visual structure with a 0-3 second hook. E.g. [0:00 - 0:05] Audio: Hello world. Visual: Face camera."
 }`;
   } else {
     // Standard image post
@@ -522,7 +538,8 @@ Output strictly as JSON:
 }`;
   }
 
-  const prompt = `You are a creative copywriter executing a single piece of social media content.
+  const prompt = `${SOCIAL_MEDIA_SPECIALIST_ROLE}
+You are executing one publish-ready piece as a senior content writer and social media copywriter.
 Context:
 ${persona}
 ${postKnowledge}
@@ -539,11 +556,14 @@ ${schemaInstruct}
 
 [CRITICAL INSTRUCTIONS]:
 1. Language/Dialect: You MUST write ALL content (caption, slide text, scripts, etc.) strictly in the language specified in the "Voice" field above: ${profile.voice}.
-2. Visual Narrative: Your "imagePrompt" values are for a high-end Art Director. Be descriptive, technical, and artistic. Avoid words like "photorealistic" — instead, describe the lighting, lens, and texture.
-3. Hook-Driven Copy: Captions must not be dry. Use the "AIDA" (Attention, Interest, Desire, Action) framework or professional storytelling.
-4. Fact-Checking: Use the provided "BUSINESS KNOWLEDGE" and persona details to include specific information about products, pricing, or services. Do not be generic.
-5. Identity: Ensure the content perfectly matches the Brand Name and Tone.
-6. Output: Do NOT include any surrounding markdown. Just the raw JSON.`;
+2. Platform-Native Writing: Make the copy feel written by a real social media specialist for ${post.platform}. Use a strong opening hook, scannable value, and a natural CTA.
+3. Audience Fit: Speak directly to the target audience's needs, motivations, objections, and desired outcome. Avoid generic advice that could fit any brand.
+4. Copywriting Framework: Use AIDA, PAS, before/after/bridge, storytelling, or educational sequencing when it fits the topic. Do not mention the framework.
+5. Fact-Checking: Use the provided "BUSINESS KNOWLEDGE" and persona details to include specific information about products, services, policies, or FAQs. Do not invent prices, guarantees, claims, locations, or statistics.
+6. Visual Narrative: Your "imagePrompt" values are for a high-end Art Director. Be descriptive, technical, and artistic. Avoid words like "photorealistic" - instead, describe the lighting, lens, and texture.
+7. Hashtags: Include a concise set of relevant hashtags in the caption, aligned with the language/dialect and audience.
+8. Identity: Ensure the content perfectly matches the Brand Name, Voice, and Tone.
+9. Output: Do NOT include any surrounding markdown. Just the raw JSON.`;
 
   console.log(
     `[ContentPlanService] Generating Post Execution for Post ${postId} (${post.format})...`,

@@ -2,19 +2,94 @@ import { generateContent, generateContentStream } from "@modules/ai-agent/gemini
 import { recordAiUsage, assertQuotaAvailable } from "../billing/billing.service";
 import { logger } from "@utils/logger";
 import { retrieveRelevantChunks } from "../ai-agent/rag/rag.service";
+import { getContentBriefForStrategy } from "./contentBrief.service";
 import prisma from "@config/prisma";
 import { AppError } from "@middlewares/errorHandler.middleware";
 
 export interface BriefingInput {
   businessProfileId: number;
   userId: number;
+  contentBriefId?: number;
   startDate: string; // ISO format
   endDate: string; // ISO format
   goals?: string;
-  currentTrends?: string;
+  currentTrends?: string | string[];
 }
 
 const SOCIAL_MEDIA_SPECIALIST_ROLE = `You are a senior social media specialist, market-aware content strategist, and brand copywriter. Your job is to turn business context into platform-native content that attracts attention, builds trust, and supports measurable campaign goals.`;
+
+function formatJsonForPrompt(value: unknown): string {
+  if (!value) return "Not specified";
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function normalizeOptionalText(value: string | string[] | undefined): string | undefined {
+  if (Array.isArray(value)) return value.filter(Boolean).join(", ");
+  return value;
+}
+
+function buildBriefContext(brief: any) {
+  if (!brief) return "";
+
+  return `
+--- CONFIRMED SIGNAL-LED CONTENT BRIEF ---
+- Goal: ${brief.goal || "Not specified"}
+- Audience Segments: ${formatJsonForPrompt(brief.audienceSegments)}
+- Pain Points: ${formatJsonForPrompt(brief.painPoints)}
+- Objections / Buying Friction: ${formatJsonForPrompt(brief.objections)}
+- Buying Triggers: ${formatJsonForPrompt(brief.buyingTriggers)}
+- Offers / Services to Prioritize: ${formatJsonForPrompt(brief.offers)}
+- Proof Points: ${formatJsonForPrompt(brief.proofPoints)}
+- CTA: ${brief.cta || "Not specified"}
+- Funnel Focus: ${brief.funnelFocus || "mixed"}
+- Tone Preferences: ${brief.tonePreferences || "Use the business profile voice and tone"}
+- Forbidden Topics: ${formatJsonForPrompt(brief.forbiddenTopics)}
+- Competitor Insights: ${formatJsonForPrompt(brief.competitorInsights)}
+------------------------------------------
+  `.trim();
+}
+
+function buildBriefSnapshot(brief: any) {
+  if (!brief) return null;
+  return {
+    id: brief.id,
+    sourceAuditId: brief.sourceAuditId,
+    goal: brief.goal,
+    audienceSegments: brief.audienceSegments,
+    painPoints: brief.painPoints,
+    objections: brief.objections,
+    buyingTriggers: brief.buyingTriggers,
+    offers: brief.offers,
+    proofPoints: brief.proofPoints,
+    cta: brief.cta,
+    funnelFocus: brief.funnelFocus,
+    tonePreferences: brief.tonePreferences,
+    forbiddenTopics: brief.forbiddenTopics,
+    competitorInsights: brief.competitorInsights,
+  };
+}
+
+function contentPlanPostData(item: any) {
+  return {
+    scheduledAt: new Date(item.scheduledAt),
+    platform: item.platform,
+    pillar: item.pillar,
+    topic: item.topic,
+    format: item.format,
+    funnelStage: item.funnelStage || null,
+    contentGoal: item.contentGoal || null,
+    targetPainPoint: item.targetPainPoint || null,
+    objectionHandled: item.objectionHandled || null,
+    cta: item.cta || null,
+    rationale: item.rationale || null,
+    evidenceRefs: item.evidenceRefs || [],
+    status: "pending",
+  };
+}
 
 export async function* generateContentStrategyStream(briefing: BriefingInput) {
   const profile = await prisma.businessProfile.findUnique({
@@ -31,6 +106,13 @@ export async function* generateContentStrategyStream(briefing: BriefingInput) {
   // Pre-flight quota check
   await assertQuotaAvailable(profile.userId, briefing.businessProfileId);
 
+  const contentBrief = await getContentBriefForStrategy({
+    userId: briefing.userId,
+    businessProfileId: briefing.businessProfileId,
+    contentBriefId: briefing.contentBriefId,
+  });
+  const briefContext = buildBriefContext(contentBrief);
+
   // 1. Common Persona Details
   const persona = `
 Business Persona Details:
@@ -43,6 +125,7 @@ Business Persona Details:
 ${profile.faqs.length > 0 ? `- Frequently Asked Questions: ${profile.faqs.map((f) => `Q: ${f.question} A: ${f.answer}`).join(" | ")}` : ""}
 ${briefing.goals ? `- Primary Campaign Goals: ${briefing.goals}` : ""}
 ${briefing.currentTrends ? `- Specific Topic/Trends to Focus On: ${briefing.currentTrends}` : ""}
+${briefContext}
   `.trim();
 
   // 1b. RAG Enhancement: Retrieve relevant chunks based on goals/trends
@@ -151,11 +234,13 @@ ${researchSummary}
 
 Instructions:
 1. Based on the persona, internal knowledge, campaign goals, and market research, plan a content calendar with specialist-level judgment.
-2. Choose content pillars that cover a healthy mix of education, authority, trust proof, community engagement, offer/lead generation, and timely trend relevance.
-3. Each topic must be a sharp creative brief, not a vague label. It should include the angle, audience benefit, or emotional trigger.
-4. Match the format to the communication job: carousel for step-by-step education, image_post for strong single ideas, reel/story for quick hooks and timely moments.
-5. Avoid repetitive angles and generic posts that could fit any business.
-6. [CRITICAL] All user-facing strings in the JSON (topic, etc.) MUST be in the language specified in the "Voice" field.
+2. If a confirmed content brief is present, use it as the strategic source of truth over shallow owner wording.
+3. Choose content pillars that cover a healthy mix of education, authority, trust proof, community engagement, offer/lead generation, and timely trend relevance.
+4. Each topic must be a sharp creative brief, not a vague label. It should include the angle, audience benefit, or emotional trigger.
+5. Every post must include a reason to exist: funnelStage, contentGoal, targetPainPoint, CTA, rationale, and evidenceRefs when available.
+6. Match the format to the communication job: carousel for step-by-step education, image_post for strong single ideas, reel/story for quick hooks and timely moments.
+7. Avoid repetitive angles and generic posts that could fit any business.
+8. [CRITICAL] All user-facing strings in the JSON (topic, etc.) MUST be in the language specified in the "Voice" field.
 
 Output strictly as a JSON array of objects.
 
@@ -166,7 +251,14 @@ Schema:
     "platform": "facebook",
     "pillar": "Educational",
     "topic": "Topic in ${profile.voice}",
-    "format": "carousel"
+    "format": "carousel",
+    "funnelStage": "awareness",
+    "contentGoal": "What this post should accomplish",
+    "targetPainPoint": "Specific problem or desire this post addresses",
+    "objectionHandled": "Specific objection handled, or null",
+    "cta": "Specific next action",
+    "rationale": "Why this post belongs in the campaign",
+    "evidenceRefs": ["message:123"]
   }
 ]`;
 
@@ -210,22 +302,17 @@ Schema:
     data: {
       businessProfileId: profile.id,
       userId: briefing.userId,
+      contentBriefId: contentBrief?.id || null,
       startDate: new Date(briefing.startDate),
       endDate: new Date(briefing.endDate),
       goals: briefing.goals,
-      currentTrends: briefing.currentTrends,
+      currentTrends: normalizeOptionalText(briefing.currentTrends),
+      briefSnapshot: buildBriefSnapshot(contentBrief) || undefined,
       status: "draft",
       isGrounded,
       researchSummary,
       posts: {
-        create: parsedCalendar.map((item: any) => ({
-          scheduledAt: new Date(item.scheduledAt),
-          platform: item.platform,
-          pillar: item.pillar,
-          topic: item.topic,
-          format: item.format,
-          status: "pending",
-        })),
+        create: parsedCalendar.map(contentPlanPostData),
       },
     },
     include: {
@@ -251,6 +338,13 @@ export async function generateContentStrategy(briefing: BriefingInput) {
   // Pre-flight quota check
   await assertQuotaAvailable(profile.userId, briefing.businessProfileId);
 
+  const contentBrief = await getContentBriefForStrategy({
+    userId: briefing.userId,
+    businessProfileId: briefing.businessProfileId,
+    contentBriefId: briefing.contentBriefId,
+  });
+  const briefContext = buildBriefContext(contentBrief);
+
   // 1. Common Persona Details
   const persona = `
 Business Persona Details:
@@ -263,6 +357,7 @@ Business Persona Details:
 ${profile.faqs.length > 0 ? `- Frequently Asked Questions: ${profile.faqs.map((f) => `Q: ${f.question} A: ${f.answer}`).join(" | ")}` : ""}
 ${briefing.goals ? `- Primary Campaign Goals: ${briefing.goals}` : ""}
 ${briefing.currentTrends ? `- Specific Topic/Trends to Focus On: ${briefing.currentTrends}` : ""}
+${briefContext}
   `.trim();
 
   // 1b. RAG Enhancement
@@ -351,14 +446,16 @@ ${researchSummary}
 
 Instructions:
 1. Based on the research and business persona above, calculate the optimal frequency and distribute posts evenly.
-2. For each post, determine: 'platform' (facebook, instagram, linkedin), 'pillar', 'topic', and 'format' (image_post, carousel, reel, story).
-3. Choose content pillars that cover a healthy mix of education, authority, trust proof, community engagement, offer/lead generation, and timely trend relevance.
-4. Each topic must be a sharp creative brief, not a vague label. It should include the angle, audience benefit, or emotional trigger.
-5. Match the format to the communication job: carousel for step-by-step education, image_post for strong single ideas, reel/story for quick hooks and timely moments.
-6. Ensure the topics directly leverage the trends and holidays found during research where relevant.
-7. Avoid repetitive angles and generic posts that could fit any business.
-8. [CRITICAL] All user-facing strings in the output JSON (especially 'topic') MUST be in the language specified in the "Voice" field.
-9. Output strictly as a JSON array of objects. No markdown.
+2. If a confirmed content brief is present, use it as the strategic source of truth over shallow owner wording.
+3. For each post, determine: 'platform' (facebook, instagram, linkedin), 'pillar', 'topic', and 'format' (image_post, carousel, reel, story).
+4. Choose content pillars that cover a healthy mix of education, authority, trust proof, community engagement, offer/lead generation, and timely trend relevance.
+5. Each topic must be a sharp creative brief, not a vague label. It should include the angle, audience benefit, or emotional trigger.
+6. Every post must include a reason to exist: funnelStage, contentGoal, targetPainPoint, CTA, rationale, and evidenceRefs when available.
+7. Match the format to the communication job: carousel for step-by-step education, image_post for strong single ideas, reel/story for quick hooks and timely moments.
+8. Ensure the topics directly leverage the trends and holidays found during research where relevant.
+9. Avoid repetitive angles and generic posts that could fit any business.
+10. [CRITICAL] All user-facing strings in the output JSON (especially 'topic') MUST be in the language specified in the "Voice" field.
+11. Output strictly as a JSON array of objects. No markdown.
 
 Schema:
 [
@@ -367,7 +464,14 @@ Schema:
     "platform": "facebook",
     "pillar": "Educational",
     "topic": "Actual topic in ${profile.voice}",
-    "format": "carousel"
+    "format": "carousel",
+    "funnelStage": "awareness",
+    "contentGoal": "What this post should accomplish",
+    "targetPainPoint": "Specific problem or desire this post addresses",
+    "objectionHandled": "Specific objection handled, or null",
+    "cta": "Specific next action",
+    "rationale": "Why this post belongs in the campaign",
+    "evidenceRefs": ["message:123"]
   }
 ]`;
 
@@ -417,22 +521,17 @@ Schema:
     data: {
       businessProfileId: profile.id,
       userId: briefing.userId,
+      contentBriefId: contentBrief?.id || null,
       startDate: new Date(briefing.startDate),
       endDate: new Date(briefing.endDate),
       goals: briefing.goals,
-      currentTrends: briefing.currentTrends,
+      currentTrends: normalizeOptionalText(briefing.currentTrends),
+      briefSnapshot: buildBriefSnapshot(contentBrief) || undefined,
       status: "draft",
       isGrounded,
       researchSummary,
       posts: {
-        create: parsedCalendar.map((item) => ({
-          scheduledAt: new Date(item.scheduledAt),
-          platform: item.platform,
-          pillar: item.pillar,
-          topic: item.topic,
-          format: item.format,
-          status: "pending",
-        })),
+        create: parsedCalendar.map(contentPlanPostData),
       },
     },
     include: {
@@ -450,6 +549,7 @@ export async function generatePostExecution(postId: number, userId: number) {
     include: {
       contentPlan: {
         include: {
+          contentBrief: true,
           businessProfile: {
             include: {
               faqs: true,
@@ -479,6 +579,7 @@ export async function generatePostExecution(postId: number, userId: number) {
 
   try {
     const profile = post.contentPlan.businessProfile;
+    const briefContext = buildBriefContext(post.contentPlan.contentBrief);
 
     // 2b. Build targeted prompt depending on the format
   const persona = `
@@ -542,8 +643,16 @@ Output strictly as JSON:
 You are executing one publish-ready piece as a senior content writer and social media copywriter.
 Context:
 ${persona}
+${briefContext}
 ${postKnowledge}
 Campaign Goals: ${post.contentPlan.goals || "Provide value and engagement"}
+Strategic Purpose:
+- Funnel Stage: ${post.funnelStage || "Not specified"}
+- Content Goal: ${post.contentGoal || "Not specified"}
+- Target Pain Point: ${post.targetPainPoint || "Not specified"}
+- Objection Handled: ${post.objectionHandled || "Not specified"}
+- CTA: ${post.cta || "Not specified"}
+- Rationale: ${post.rationale || "Not specified"}
 
 Task:
 Write the content for a ${post.platform} post.

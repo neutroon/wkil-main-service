@@ -162,6 +162,7 @@ export async function callModelNode(
     const decisionResult = await invokeDecision({
       systemInstruction: state.systemInstruction,
       contents: windowedContents,
+      channel: state.channel,
     });
     sessionStats = addUsageToSessionStats(
       sessionStats,

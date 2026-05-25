@@ -4,8 +4,8 @@ import { env } from "@config/env";
 import { AppError } from "@middlewares/errorHandler.middleware";
 import { logger } from "@utils/logger";
 import {
-  aiRoutingDecisionSchema,
   externalToolRecoveryRouteSchema,
+  getAiRoutingDecisionSchemaForChannel,
 } from "./agentDecision.schema";
 import type {
   AgentContent,
@@ -411,10 +411,12 @@ export async function invokeToolChoice(params: {
 export async function invokeDecision(params: {
   systemInstruction: string;
   contents: AgentContent[];
+  channel?: string | null;
   temperature?: number;
   timeoutMs?: number;
 }): Promise<DecisionInvokeResult> {
   const messages = toLangChainMessages(params.contents, params.systemInstruction);
+  const decisionSchema = getAiRoutingDecisionSchemaForChannel(params.channel);
 
   const { result, model } = await executeWithModelFallback<any>(
     async (currentModel, abortSignal) => {
@@ -422,7 +424,7 @@ export async function invokeDecision(params: {
         model: currentModel,
         temperature: params.temperature ?? 0.4,
       });
-      const structured = llm.withStructuredOutput(aiRoutingDecisionSchema, {
+      const structured = llm.withStructuredOutput(decisionSchema, {
         name: "AiRoutingDecision",
         includeRaw: true,
       } as any);
@@ -439,7 +441,7 @@ export async function invokeDecision(params: {
       : result;
   let schemaParsed;
   try {
-    schemaParsed = aiRoutingDecisionSchema.parse(parsed);
+    schemaParsed = decisionSchema.parse(parsed);
   } catch (parseError) {
     const rawText = rawMessage ? contentToText(rawMessage.content) : "";
     throw new ModelStructuredOutputError({

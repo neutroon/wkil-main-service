@@ -8,7 +8,6 @@ import { addUsageToSessionStats, invokeDecision } from "../core/modelRuntime";
 
 const STRUCTURED_REPAIR_TIMEOUT_MS = 20_000;
 const MAX_INVALID_OUTPUT_CHARS = 6_000;
-const STRUCTURED_REPAIR_MAX_OUTPUT_TOKENS = 3072;
 
 export type StructuredOutputRepairResult = {
   decision: AiRoutingDecision;
@@ -29,6 +28,36 @@ function buildReplyPolicyContext(state: AgentStateType): string {
   ].join("\n");
 }
 
+function buildChannelContract(state: AgentStateType): string[] {
+  const commonFields = [
+    "- action: one of REPLY_AUTO, HANDOFF_TO_HUMAN, RESOLVE_CONVERSATION",
+    "- replyType: one of NORMAL_REPLY, ASK_FOR_CORRECTION, CONFIRM_ACTION_SUCCESS, SAFE_ACTION_FAILURE, HANDOFF, RESOLVE",
+    "- reasoning: brief internal routing note",
+    "- requiresGrounding: boolean",
+    "- grounded: boolean",
+    "- usedChunkTypes: array of strings",
+    "- missingInfo: string or null",
+    "- handoffCategory: string or null",
+    "- attachment: object with assetName and optional caption, or null",
+  ];
+
+  if (state.channel === "facebook_comment") {
+    return [
+      "Required JSON contract for facebook_comment:",
+      ...commonFields,
+      "- publicContent: public comment text; preserve the original public-facing text when safe",
+      "- privateContent: private message text; preserve the original private-facing text when safe",
+      "- intent: one of SALES_DM, GREET_ONLY, IGNORE, NONE",
+    ];
+  }
+
+  return [
+    "Required JSON contract for direct chat:",
+    ...commonFields,
+    "- content: customer-facing text for direct chat; preserve the original content when safe",
+  ];
+}
+
 function buildRepairPrompt(params: {
   state: AgentStateType;
   invalidOutput: string;
@@ -45,24 +74,15 @@ function buildRepairPrompt(params: {
     "Do not call tools, do not include markdown, and do not include text outside the JSON object.",
     "Do not add new business facts, prices, availability, dates, phone numbers, URLs, identifiers, confirmations, bookings, submissions, or delivery claims.",
     "",
-    "Required JSON contract for direct chat:",
-    "- action: one of REPLY_AUTO, HANDOFF_TO_HUMAN, RESOLVE_CONVERSATION",
-    "- replyType: one of NORMAL_REPLY, ASK_FOR_CORRECTION, CONFIRM_ACTION_SUCCESS, SAFE_ACTION_FAILURE, HANDOFF, RESOLVE",
-    "- reasoning: brief internal routing note",
-    "- content: customer-facing text for direct chat; preserve the original content when safe",
-    "- requiresGrounding: boolean",
-    "- grounded: boolean",
-    "- usedChunkTypes: array of strings",
-    "- missingInfo: string or null",
-    "- handoffCategory: string or null",
-    "- attachment: object with assetName and optional caption, or null",
+    ...buildChannelContract(state),
     "",
     "Repair rules:",
     "1. Preserve the original customer-facing content, action, replyType, grounding fields, usedChunkTypes, missingInfo, handoffCategory, and attachment when they are present and schema-valid.",
     "2. If the output has only small corruption around an otherwise valid JSON object, keep the JSON meaning unchanged.",
-    "3. If customer-facing content cannot be recovered safely, set content to an empty string so the backend can route recovery.",
+    state.channel === "facebook_comment"
+      ? "3. If customer-facing content cannot be recovered safely, set publicContent and privateContent to empty strings so the backend can route recovery."
+      : "3. If customer-facing content cannot be recovered safely, set content to an empty string so the backend can route recovery.",
     "4. If a factual claim is not explicitly supported by the original output fields, do not mark grounded=true.",
-    "5. For facebook_comment, also preserve publicContent/privateContent/intent if present.",
     buildReplyPolicyContext(state),
     "",
     `<parse_error>${parseMessage}</parse_error>`,
@@ -90,6 +110,7 @@ export async function repairStructuredDecisionOutput(params: {
     const repaired = await invokeDecision({
       systemInstruction: "",
       contents: [{ role: "user", content: prompt }],
+      channel: state.channel,
       temperature: 0,
       timeoutMs: STRUCTURED_REPAIR_TIMEOUT_MS,
     });

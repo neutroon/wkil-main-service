@@ -95,6 +95,22 @@ function replyPolicyCorrectionPrompt(state: AgentStateType, reason: string): str
   ].filter(Boolean).join(" ");
 }
 
+function isDirectMessageChannel(channel?: string | null): boolean {
+  return channel === "web" || channel === "whatsapp" || channel === "messenger";
+}
+
+function customerFacingDecisionText(
+  decision: ReturnType<typeof repairAndParseAiResponse>,
+): string {
+  return [
+    decision.content,
+    decision.publicContent,
+    decision.privateContent,
+  ]
+    .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
+    .join("\n");
+}
+
 export async function parseDecisionNode(
   state: AgentStateType,
 ): Promise<Partial<AgentStateType>> {
@@ -170,7 +186,8 @@ export async function parseDecisionNode(
   );
 
   // ── Detect hallucination loops in the final content ───────────────────────
-  const contentToCheck = (decision.content || "") + (decision.reasoning || "");
+  const contentToCheck =
+    customerFacingDecisionText(decision) + (decision.reasoning || "");
   if (hasExcessiveRepetition(contentToCheck)) {
     // SELF-CORRECTION: If we have turns left, try to let the AI fix itself
     if (state.turnCount < 3) {
@@ -255,12 +272,8 @@ export async function parseDecisionNode(
     });
   }
 
-  const isDirectChannel =
-    state.channel === "web" ||
-    state.channel === "whatsapp" ||
-    state.channel === "messenger";
   if (
-    isDirectChannel &&
+    isDirectMessageChannel(state.channel) &&
     decision.action !== "HANDOFF_TO_HUMAN" &&
     (typeof decision.content !== "string" || decision.content.trim() === "")
   ) {

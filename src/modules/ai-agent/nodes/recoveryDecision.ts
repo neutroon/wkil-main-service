@@ -18,6 +18,26 @@ export function latestUserText(state: AgentStateType): string {
   return latest?.content || "";
 }
 
+function recoveryContentFields(
+  state: AgentStateType,
+  recoveryReply: string,
+): Pick<
+  NonNullable<AgentStateType["decision"]>,
+  "content" | "publicContent" | "privateContent" | "intent"
+> {
+  if (state.channel === "facebook_comment") {
+    return {
+      publicContent: recoveryReply,
+      privateContent: "",
+      intent: "NONE",
+    };
+  }
+
+  return {
+    content: recoveryReply,
+  };
+}
+
 export async function buildAiRecoveryDecision(
   state: AgentStateType,
   params: RecoveryDecisionParams,
@@ -40,9 +60,7 @@ export async function buildAiRecoveryDecision(
         ? params.handoffCategory || "MISSING_KNOWLEDGE"
         : null,
     reasoning: params.reasoning,
-    content: recoveryReply,
-    publicContent: recoveryReply,
-    privateContent: recoveryReply,
+    ...recoveryContentFields(state, recoveryReply),
     requiresGrounding: params.requiresGrounding ?? params.action === "HANDOFF_TO_HUMAN",
     grounded: false,
     usedChunkTypes: [],

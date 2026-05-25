@@ -5,7 +5,7 @@ export const aiAttachmentSchema = z.object({
   caption: z.string().nullable().optional(),
 }).nullable().optional();
 
-export const aiRoutingDecisionSchema = z.object({
+const baseRoutingDecisionSchema = z.object({
   action: z.enum([
     "REPLY_AUTO",
     "HANDOFF_TO_HUMAN",
@@ -21,10 +21,6 @@ export const aiRoutingDecisionSchema = z.object({
   ]),
   handoffCategory: z.string().nullable().optional(),
   reasoning: z.string(),
-  content: z.string().optional(),
-  intent: z.enum(["SALES_DM", "GREET_ONLY", "IGNORE", "NONE"]).optional(),
-  publicContent: z.string().optional(),
-  privateContent: z.string().optional(),
   requiresGrounding: z.boolean(),
   grounded: z.boolean(),
   usedChunkTypes: z.array(z.string()),
@@ -32,9 +28,23 @@ export const aiRoutingDecisionSchema = z.object({
   attachment: aiAttachmentSchema,
 });
 
+export const directChatRoutingDecisionSchema = baseRoutingDecisionSchema.extend({
+  content: z.string(),
+});
+
+export const facebookCommentRoutingDecisionSchema = baseRoutingDecisionSchema.extend({
+  intent: z.enum(["SALES_DM", "GREET_ONLY", "IGNORE", "NONE"]).optional(),
+  publicContent: z.string().optional(),
+  privateContent: z.string().optional(),
+});
+
+export function getAiRoutingDecisionSchemaForChannel(channel?: string | null) {
+  return channel === "facebook_comment"
+    ? facebookCommentRoutingDecisionSchema
+    : directChatRoutingDecisionSchema;
+}
+
 export const externalToolRecoveryRouteSchema = z.object({
   route: z.enum(["normal_reply", "handoff"]),
   reasoning: z.string(),
 });
-
-export type AiRoutingDecisionModelOutput = z.infer<typeof aiRoutingDecisionSchema>;

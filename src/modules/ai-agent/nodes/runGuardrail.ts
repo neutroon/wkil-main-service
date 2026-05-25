@@ -15,6 +15,18 @@ import { evaluateGuardrailsForReply } from "../core/aiEngine.utils";
 import { buildAiRecoveryDecision } from "./recoveryDecision";
 import type { AgentStateType } from "../core/agentState";
 
+function customerFacingDecisionText(
+  decision: NonNullable<AgentStateType["decision"]>,
+): string {
+  return [
+    decision.content,
+    decision.publicContent,
+    decision.privateContent,
+  ]
+    .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
+    .join("\n");
+}
+
 export async function runGuardrailNode(
   state: AgentStateType,
 ): Promise<Partial<AgentStateType>> {
@@ -22,7 +34,7 @@ export async function runGuardrailNode(
 
   const result = evaluateGuardrailsForReply(
     state.evidence,
-    state.decision.content || "",
+    customerFacingDecisionText(state.decision),
     state.policy,
   );
 

@@ -3,8 +3,6 @@ import { assertExternalApiUrlLooksSafe } from "./agentActionExecutor.service";
 import { aiSchemaObject } from "@modules/integrations/schemaRules.validation";
 import {
   EXTERNAL_FAILURE_BEHAVIORS,
-  EXTERNAL_ROUTER_TIMEOUT,
-  EXTERNAL_ROUTING_MODES,
   INTEGRATION_ACTION_TYPES,
   INTEGRATION_ACTION_TRIGGERS,
   INTEGRATION_CONFIRMATION_POLICIES,
@@ -22,22 +20,77 @@ const safeExternalUrl = z.string().url("Invalid API URL").superRefine((url, ctx)
   }
 });
 
-const routingMode = z.enum(EXTERNAL_ROUTING_MODES);
 const failureBehavior = z.enum(EXTERNAL_FAILURE_BEHAVIORS);
 const actionType = z.enum(INTEGRATION_ACTION_TYPES);
 const trigger = z.enum(INTEGRATION_ACTION_TRIGGERS);
 const executionMode = z.enum(INTEGRATION_EXECUTION_MODES);
 const confirmationPolicy = z.enum(INTEGRATION_CONFIRMATION_POLICIES);
-const routerTimeoutMs = z.coerce
-  .number()
-  .int()
-  .min(EXTERNAL_ROUTER_TIMEOUT.minMs, "Router timeout must be at least 1 second")
-  .max(EXTERNAL_ROUTER_TIMEOUT.maxMs, "Router timeout must be 10 seconds or less");
 const stringRecord = z.record(z.string(), z.string());
 const nullableStringRecordAsEmpty = z.preprocess(
   (value) => (value === null ? {} : value),
   stringRecord.optional(),
 );
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function getFieldSource(value: unknown): string {
+  if (!isRecord(value)) return "USER_PROVIDED";
+  if (String(value.type ?? "").toUpperCase() === "FIXED") return "FIXED";
+  return String(value.source ?? "USER_PROVIDED").toUpperCase();
+}
+
+function isAiWritableFieldRule(value: unknown): boolean {
+  const source = getFieldSource(value);
+  return source === "USER_PROVIDED" || source === "AI_DERIVED";
+}
+
+export function hasRequiredAiWritableParam(schema: unknown): boolean {
+  if (!isRecord(schema)) return false;
+
+  for (const rule of Object.values(schema)) {
+    if (!isRecord(rule)) continue;
+    if (isAiWritableFieldRule(rule) && rule.required === true) return true;
+    if (
+      String(rule.type || "").toUpperCase() === "OBJECT" &&
+      hasRequiredAiWritableParam(rule.properties)
+    ) {
+      return true;
+    }
+    if (
+      String(rule.type || "").toUpperCase() === "ARRAY" &&
+      isRecord(rule.items) &&
+      hasRequiredAiWritableParam(rule.items.properties ?? rule.items)
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export function validateAgentActionActivationConfig(source: {
+  actionType?: unknown;
+  trigger?: unknown;
+  isActive?: unknown;
+  expectedParamsSchema?: unknown;
+}): string | null {
+  const actionType = String(source.actionType ?? "LOOKUP").toUpperCase();
+  const trigger = String(source.trigger ?? "CHAT_REQUESTED").toUpperCase();
+  const isActive = source.isActive !== false;
+
+  if (
+    isActive &&
+    trigger === "CHAT_REQUESTED" &&
+    actionType === "LOOKUP" &&
+    !hasRequiredAiWritableParam(source.expectedParamsSchema)
+  ) {
+    return "Active lookup actions must define at least one required customer-provided or AI-derived parameter so the HTTP request can be scoped to the customer request.";
+  }
+
+  return null;
+}
 
 /**
  * Agent Action source schema
@@ -53,12 +106,9 @@ export const agentActionSourceSchema = z.object({
     apiUrl: safeExternalUrl,
     method: z.enum(["GET", "POST", "PUT", "DELETE"]).optional().default("GET"),
     headers: nullableStringRecordAsEmpty,
-    queryParams: nullableStringRecordAsEmpty,
     trigger: trigger.optional().default("CHAT_REQUESTED"),
     actionType: actionType.optional().default("LOOKUP"),
     executionMode: executionMode.optional().default("BACKGROUND"),
-    routingMode: routingMode.optional().default("STRICT"),
-    routerTimeoutMs: routerTimeoutMs.optional().default(EXTERNAL_ROUTER_TIMEOUT.defaultMs),
     failureBehavior: failureBehavior.optional().default("AUTO"),
     confirmationPolicy: confirmationPolicy.optional().default("REQUIRE_VERIFIED_RESULT"),
     requestMapping: z.record(z.string(), z.unknown()).nullable().optional(),
@@ -83,12 +133,9 @@ export const updateAgentActionSourceSchema = z.object({
     apiUrl: safeExternalUrl.optional(),
     method: z.enum(["GET", "POST", "PUT", "DELETE"]).optional(),
     headers: nullableStringRecordAsEmpty,
-    queryParams: nullableStringRecordAsEmpty,
     trigger: trigger.optional(),
     actionType: actionType.optional(),
     executionMode: executionMode.optional(),
-    routingMode: routingMode.optional(),
-    routerTimeoutMs: routerTimeoutMs.optional(),
     failureBehavior: failureBehavior.optional(),
     confirmationPolicy: confirmationPolicy.optional(),
     requestMapping: z.record(z.string(), z.unknown()).nullable().optional(),
@@ -114,6 +161,39 @@ export const deleteAgentActionSourceSchema = z.object({
   params: z.object({
     profileId: z.coerce.number(),
     sourceId: z.coerce.number(),
+  }),
+});
+
+export const testAgentActionSourceSchema = z.object({
+  params: z.object({
+    profileId: z.coerce.number(),
+    sourceId: z.coerce.number(),
+  }),
+  body: z.object({
+    args: z.record(z.string(), z.unknown()).optional().default({}),
+    customerPhone: z.string().optional(),
+    conversationId: z.coerce.number().optional(),
+    contextValues: z.record(z.string(), z.unknown()).optional().default({}),
+    latestUserText: z.string().optional(),
+    historyText: z.string().optional(),
+    run: z.boolean().optional().default(false),
+  }),
+});
+
+export const testAgentActionWorkflowSchema = z.object({
+  params: z.object({
+    profileId: z.coerce.number(),
+    workflowId: z.coerce.number(),
+  }),
+  body: z.object({
+    lookupArgs: z.record(z.string(), z.unknown()).optional().default({}),
+    mutationArgs: z.record(z.string(), z.unknown()).optional().default({}),
+    customerPhone: z.string().optional(),
+    conversationId: z.coerce.number().optional(),
+    contextValues: z.record(z.string(), z.unknown()).optional().default({}),
+    latestUserText: z.string().optional(),
+    historyText: z.string().optional(),
+    run: z.boolean().optional().default(false),
   }),
 });
 

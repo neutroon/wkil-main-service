@@ -281,8 +281,8 @@ function sectionChatRequestedActions(ctx: PromptContext): string {
 
   const availabilityRule = ctx.capabilities.hasChatRequestedActions
     ? ctx.capabilities.hasCompletedActionResult
-      ? "A verified completed action result is available. Use it as evidence; call another exposed action only if the customer's original request still requires that different dynamic/account/order/booking/availability/price/status/create/update/cancel operation."
-      : "Use an action only when the customer's latest message explicitly needs that exact dynamic/account/order/booking/availability/price/status/create/update/cancel operation."
+      ? "A verified completed action result is available. Use it as evidence; call another exposed action only if the customer's original request still requires that different dynamic/account/order/booking/registration/contact/availability/price/status/create/update/cancel operation."
+      : "Use an exposed action only when the customer's current request, interpreted with recent chat history, needs that exact dynamic/account/order/booking/registration/contact/availability/price/status/create/update/cancel operation."
     : "No chat-requested action tool is available in this turn; do not try to call one.";
 
   return `<chat_requested_action_protocol>
@@ -291,7 +291,11 @@ ${numbered([
   availabilityRule,
   "Do not use action tools for greetings, small talk, generic business questions answerable from <business_context>, customer memory saving, complaints, handoff decisions, or conversation closing.",
   "Use only real parameters from the customer, chat history, or <chat_context>. Never invent search terms, IDs, contact details, dates, or placeholder values.",
+  "For multi-turn action detail collection, combine the current message with recent chat history and <chat_context> to keep already provided target item/service/course/order, name, phone, email, and preference details. Ask only for the next missing required detail; do not restart the collection or ask again for a detail already present unless it is ambiguous or invalid.",
   "If required parameters are missing, ask one concise clarification question instead of calling the action.",
+  "For booking, registration, follow-up contact, create, update, or cancel requests, the target item/service/course/order and required contact details count as required details even if a helper lookup has no formal schema.",
+  "Do not call a read/list/search helper merely to discover which item the customer wants; ask for the missing target unless the customer explicitly asked to see or check available options.",
+  "If the customer wants registration, booking, or follow-up contact and the matching action is exposed, call that action or ask for its missing required details; do not merely say that staff will handle it.",
   "Never confirm an external result, booking, cancellation, submission, availability, price, delivery, or status until a verified result is present in <completed_integration_action>.",
   "When a verified completed action result is used, answer from that result only and include \"external_tool\" in usedChunkTypes.",
 ])}
@@ -307,6 +311,7 @@ ${ctx.channelProfile.replyStyleRules.map((rule) => `- ${rule}`).join("\n")}
 - Put each major detail on a new line; do not pack multiple course facts, schedules, certificates, or requirements into one continuous paragraph.
 - When listing program content, certificates, documents, schedules, or steps, use one item per line.
 - Avoid inline lists joined with hyphens inside a paragraph; use readable line breaks instead.
+- Do not repeat greetings after the first assistant reply in an active conversation; continue directly with the answer or next required question.
 - Use structured plain text only. No markdown tables, code blocks, headings with #, decorative separators, hashtags, or tag clouds.
 - Use emojis sparingly and only when they fit the configured voice.
 </${ctx.channelProfile.styleTag}>`;
@@ -327,6 +332,8 @@ function sectionCoreRules(ctx: PromptContext): string {
     "Keep the customer-facing content concise and visually readable; avoid long explanations unless the customer explicitly asks for full details.",
     "Never expose technical/internal words to the customer.",
     "Keep grounded, requiresGrounding, usedChunkTypes, and missingInfo consistent with the evidence used.",
+    "If you choose HANDOFF_TO_HUMAN, include a non-empty handoffCategory and make the customer-facing content match that real handoff.",
+    "Do not claim staff will contact, review, register, book, submit, save, or follow up unless you choose HANDOFF_TO_HUMAN or you are answering from a verified completed action result.",
   ];
 
   if (ctx.capabilities.hasMediaAssets) {
@@ -427,7 +434,7 @@ function sectionOutputContract(ctx: PromptContext): string {
   if (ctx.channel === "facebook_comment") {
     return `<output_contract>
 Return exactly one JSON object; no markdown code blocks.
-Fields: action, replyType, reasoning (brief routing note, not hidden model reasoning), publicContent, privateContent, intent, requiresGrounding, grounded, usedChunkTypes, missingInfo, optional attachment.
+Fields: action, replyType, reasoning (brief routing note, not hidden model reasoning), handoffCategory, publicContent, privateContent, intent, requiresGrounding, grounded, usedChunkTypes, missingInfo, optional attachment.
 usedChunkTypes must contain only canonical chunkType values available in this run: ${allowedChunkTypes}. Do not use inner content labels like KNOWLEDGE; for [CUSTOM_SECTION] blocks, cite custom_section.
 If a <reply_policy> block exists, replyType and action must satisfy it.
 </output_contract>`;
@@ -435,7 +442,7 @@ If a <reply_policy> block exists, replyType and action must satisfy it.
 
   return `<output_contract>
 Return exactly one JSON object; no markdown code blocks.
-Fields: action, replyType, reasoning (brief routing note, not hidden model reasoning), content, requiresGrounding, grounded, usedChunkTypes, missingInfo, optional attachment.
+Fields: action, replyType, reasoning (brief routing note, not hidden model reasoning), handoffCategory, content, requiresGrounding, grounded, usedChunkTypes, missingInfo, optional attachment.
 usedChunkTypes must contain only canonical chunkType values available in this run: ${allowedChunkTypes}. Do not use inner content labels like KNOWLEDGE; for [CUSTOM_SECTION] blocks, cite custom_section.
 If a <reply_policy> block exists, replyType and action must satisfy it.
 </output_contract>`;

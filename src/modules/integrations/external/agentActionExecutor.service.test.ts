@@ -2,14 +2,21 @@ import { describe, expect, it } from "vitest";
 import {
   assertExternalArgsAllowedByPolicy,
   assertExternalApiUrlLooksSafe,
+  buildAgentActionSourceTestPreview,
   buildServerInjectedParams,
+  collectMissingRequiredAiWritableParams,
   filterExternalArgsBySchema,
   maskExternalHeaders,
   mergeHeaderUpdate,
+  testAgentActionWorkflowRequest,
   toCanonicalVerificationRead,
   toCanonicalVerificationMutation,
 } from "./agentActionExecutor.service";
-import { updateAgentActionSourceSchema } from "./agentAction.validation";
+import {
+  hasRequiredAiWritableParam,
+  updateAgentActionSourceSchema,
+  validateAgentActionActivationConfig,
+} from "./agentAction.validation";
 
 describe("toCanonicalVerificationRead", () => {
   it("marks non-empty JSON without explicit status as verified (data returned)", () => {
@@ -213,6 +220,14 @@ describe("toCanonicalVerificationRead", () => {
         { latestUserText: "هشام منصور", customerPhone: "201202840018" },
       ),
     ).toEqual({ ok: true });
+
+    expect(
+      assertExternalArgsAllowedByPolicy(
+        schema,
+        { propertyName: "01202840018" },
+        { latestUserText: "رقمي ٠١٢٠٢٨٤٠٠١٨" },
+      ),
+    ).toEqual({ ok: true });
   });
 });
 
@@ -249,15 +264,15 @@ describe("toCanonicalVerificationMutation", () => {
 });
 
 describe("Agent Action production hardening helpers", () => {
-  it("treats null query params as an empty config object on update", () => {
+  it("treats null headers as an empty config object on update", () => {
     const result = updateAgentActionSourceSchema.parse({
       params: { profileId: 1, sourceId: 2 },
       body: {
-        queryParams: null,
+        headers: null,
       },
     });
 
-    expect(result.body.queryParams).toEqual({});
+    expect(result.body.headers).toEqual({});
   });
 
   it("rejects localhost and private IP URLs", () => {
@@ -301,5 +316,199 @@ describe("Agent Action production hardening helpers", () => {
       email: "x@example.com",
     });
   });
-});
 
+  it("requires active lookup actions to declare at least one narrowing parameter", () => {
+    expect(
+      validateAgentActionActivationConfig({
+        actionType: "LOOKUP",
+        trigger: "CHAT_REQUESTED",
+        isActive: true,
+        expectedParamsSchema: null,
+      }),
+    ).toContain("Active lookup actions must define");
+
+    expect(
+      validateAgentActionActivationConfig({
+        actionType: "LOOKUP",
+        trigger: "CHAT_REQUESTED",
+        isActive: true,
+        expectedParamsSchema: {
+          programName: {
+            type: "STRING",
+            source: "USER_PROVIDED",
+            required: true,
+          },
+        },
+      }),
+    ).toBeNull();
+
+    expect(
+      validateAgentActionActivationConfig({
+        actionType: "LOOKUP",
+        trigger: "CHAT_REQUESTED",
+        isActive: false,
+        expectedParamsSchema: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("detects nested required AI-writable lookup parameters", () => {
+    expect(
+      hasRequiredAiWritableParam({
+        selectedProgram: {
+          type: "OBJECT",
+          source: "USER_PROVIDED",
+          properties: {
+            name: {
+              type: "STRING",
+              source: "USER_PROVIDED",
+              required: true,
+            },
+          },
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it("reports missing required test parameters with nested paths", () => {
+    const schema = {
+      program: {
+        type: "OBJECT",
+        source: "USER_PROVIDED",
+        properties: {
+          name: {
+            type: "STRING",
+            source: "USER_PROVIDED",
+            required: true,
+          },
+        },
+      },
+      phone: {
+        type: "STRING",
+        source: "CHAT_CONTEXT",
+        contextKey: "customerPhone",
+        required: true,
+      },
+    };
+
+    expect(collectMissingRequiredAiWritableParams(schema, {})).toEqual([
+      "program.name",
+    ]);
+    expect(
+      collectMissingRequiredAiWritableParams(schema, {
+        program: { name: "TOT" },
+      }),
+    ).toEqual([]);
+  });
+
+  it("builds a masked cURL preview using the same request mapping path", () => {
+    const preview = buildAgentActionSourceTestPreview(
+      {
+        id: 5,
+        apiUrl: "https://example.com/courses",
+        method: "GET",
+        headers: { Authorization: "encrypted-value" },
+        expectedParamsSchema: {
+          programName: {
+            type: "STRING",
+            source: "USER_PROVIDED",
+            required: true,
+          },
+          tenant: {
+            type: "FIXED",
+            source: "FIXED",
+            value: "academy",
+          },
+        },
+        requestMapping: {
+          q: "$args.programName",
+          tenant: "$args.tenant",
+        },
+        actionType: "LOOKUP",
+      },
+      { programName: "TOT" },
+    );
+
+    expect(preview.canRun).toBe(true);
+    expect(preview.url).toBe("https://example.com/courses?q=TOT&tenant=academy");
+    expect(preview.headers.Authorization).toBe("********");
+    expect(preview.curl).toContain("curl");
+    expect(preview.curl).toContain("Authorization: ********");
+  });
+
+  it("previews lookup-to-mutation workflows without running external HTTP", async () => {
+    const response = await testAgentActionWorkflowRequest(
+      {
+        id: 22,
+        lookupSource: {
+          id: 10,
+          name: "Find course",
+          apiUrl: "https://example.com/courses",
+          method: "GET",
+          expectedParamsSchema: {
+            search: {
+              type: "STRING",
+              source: "USER_PROVIDED",
+              required: true,
+            },
+          },
+          requestMapping: {
+            search: "$args.search",
+          },
+          actionType: "LOOKUP",
+        },
+        mutationSource: {
+          id: 11,
+          name: "Create lead",
+          apiUrl: "https://example.com/leads",
+          method: "POST",
+          expectedParamsSchema: {
+            name: {
+              type: "STRING",
+              source: "USER_PROVIDED",
+              required: true,
+            },
+            phone: {
+              type: "STRING",
+              source: "CHAT_CONTEXT",
+              contextKey: "customerPhone",
+            },
+            selectedProgram: {
+              type: "OBJECT",
+              source: "USER_PROVIDED",
+              properties: {
+                name: {
+                  type: "STRING",
+                  source: "ACTION_RESULT",
+                  path: "data.courses.0.name",
+                },
+              },
+            },
+          },
+          actionType: "MUTATION",
+        },
+      },
+      1,
+      {
+        lookupArgs: { search: "tot" },
+        mutationArgs: { name: "Hesham" },
+        context: {
+          contextValues: {
+            customerPhone: "01202840018",
+          },
+        },
+        run: false,
+      },
+    );
+
+    const [lookupStep, mutationStep] = response.steps as any[];
+    expect(response.success).toBe(true);
+    expect(response.run).toBe(false);
+    expect(lookupStep.preview.url).toBe("https://example.com/courses?search=tot");
+    expect(mutationStep.preview.body).toMatchObject({
+      name: "Hesham",
+      phone: "01202840018",
+    });
+    expect(mutationStep.result).toBeNull();
+  });
+});

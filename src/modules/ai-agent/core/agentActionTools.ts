@@ -35,6 +35,32 @@ function collectRequiredFields(
   return required;
 }
 
+function hasRequiredAiWritableField(mapping: unknown): boolean {
+  if (!mapping || typeof mapping !== "object" || Array.isArray(mapping)) {
+    return false;
+  }
+
+  for (const value of Object.values(mapping as Record<string, unknown>)) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    if (isAiWritableFieldRule(value) && (value as any).required === true) {
+      return true;
+    }
+
+    const mappedType = String((value as any).type || "STRING").toUpperCase();
+    if (mappedType === "OBJECT" && hasRequiredAiWritableField((value as any).properties)) {
+      return true;
+    }
+    if (
+      mappedType === "ARRAY" &&
+      hasRequiredAiWritableField((value as any).items?.properties || (value as any).items)
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function describeSchema<T extends z.ZodTypeAny>(
   schema: T,
   description: string,
@@ -111,6 +137,13 @@ export function buildAgentActionTools(dataSources: any[]): AgentToolDefinition[]
     const hasDeclaredParams = Object.keys(schema.shape).length > 0;
     const actionType = String(source.actionType || "LOOKUP").toUpperCase();
     const isMutation = actionType === "MUTATION";
+    if (!isMutation && !hasRequiredAiWritableField(source.expectedParamsSchema)) {
+      logger.warn("ai.external_tool.unscoped_lookup_skipped", {
+        sourceId: source.id,
+        sourceName: source.name,
+      });
+      return [];
+    }
 
     return [
       {
@@ -121,7 +154,11 @@ export function buildAgentActionTools(dataSources: any[]): AgentToolDefinition[]
             : `Chat-requested information action for "${source.name}". Calling this queues the check in the background.`,
           source.description ||
             "Use only when this action directly matches the user's latest request.",
-          "Do not call for greetings, generic support, customer detail saving, handoff, or conversation closing.",
+          "Decide from the current customer request and recent chat history, not the newest message in isolation.",
+          "Do not call for greetings, generic support, customer detail saving, unrelated human handoff, or conversation closing.",
+          "When required details are collected over several turns, combine the current message with recent history and do not ask again for details already present unless they are ambiguous or invalid.",
+          "For booking, registration, follow-up contact, create, update, or cancel requests, ask for any missing target item/service/course/order or required contact detail before calling.",
+          "Do not use this action merely to discover which item the customer wants unless the customer explicitly asked to see or check available options.",
           hasDeclaredParams
             ? "If required details are missing, ask the customer for them instead of inventing parameters."
             : "This action requires no customer-supplied parameters; call it with an empty argument object only when the user's request directly needs this action.",

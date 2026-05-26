@@ -28,15 +28,13 @@ const baseState = (overrides: Record<string, unknown> = {}) =>
       verifiedActions: [],
       unverifiedActions: [],
       failedActions: [],
-      unknownActions: [],
+      unknownActions: ["integration_action_2"],
     },
     policy: {
       strictBlockOnUnverified: true,
-      blockPromiseLanguage: true,
       fallbackTemplates: {
         unverified: "Cannot verify this yet.",
         failed: "Could not verify this.",
-        unsupportedPromise: "Cannot promise follow-up.",
         smallTalkRecovery: "Hi.",
       },
     },
@@ -59,28 +57,28 @@ describe("runGuardrailNode", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     buildAiRecoveryDecisionMock.mockResolvedValue({
-      action: "REPLY_AUTO",
+      action: "HANDOFF_TO_HUMAN",
       replyType: "SAFE_ACTION_FAILURE",
-      reasoning: "Guardrail Triggered: PROMISE_UNSUPPORTED",
-      content: "Cannot promise follow-up.",
+      reasoning: "Guardrail Triggered: TRUTH_UNKNOWN_ACTION",
+      content: "Cannot verify this yet.",
     });
   });
 
-  it("checks facebook private/public content, not only content", async () => {
+  it("routes unknown action evidence through recovery", async () => {
     const result = await runGuardrailNode(baseState());
 
     expect(buildAiRecoveryDecisionMock).toHaveBeenCalledWith(
       expect.any(Object),
       expect.objectContaining({
-        action: "REPLY_AUTO",
-        failureReason: "PROMISE_UNSUPPORTED",
-        emergencyFallback: "Cannot promise follow-up.",
-        allowHandoffLanguage: false,
+        action: "HANDOFF_TO_HUMAN",
+        failureReason: "TRUTH_UNKNOWN_ACTION",
+        emergencyFallback: "Cannot verify this yet.",
+        allowHandoffLanguage: true,
       }),
     );
     expect(result.decision).toMatchObject({
       replyType: "SAFE_ACTION_FAILURE",
-      content: "Cannot promise follow-up.",
+      content: "Cannot verify this yet.",
     });
   });
 });

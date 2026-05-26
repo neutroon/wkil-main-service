@@ -48,5 +48,11 @@ describe("buildUnansweredUserTurnContext", () => {
       { role: "user", text: "I want to register" },
       { role: "model", text: "Sure, send the details." },
     ]);
+    expect(prisma.conversationMessage.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderBy: { id: "desc" },
+        take: 24,
+      }),
+    );
   });
 });

@@ -273,6 +273,14 @@ export async function parseDecisionNode(
   }
 
   if (
+    decision.action === "HANDOFF_TO_HUMAN" &&
+    (typeof decision.handoffCategory !== "string" ||
+      decision.handoffCategory.trim() === "")
+  ) {
+    decision.handoffCategory = "GENERAL_HANDOFF";
+  }
+
+  if (
     isDirectMessageChannel(state.channel) &&
     decision.action !== "HANDOFF_TO_HUMAN" &&
     (typeof decision.content !== "string" || decision.content.trim() === "")

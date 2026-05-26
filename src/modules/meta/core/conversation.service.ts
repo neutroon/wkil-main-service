@@ -4,7 +4,7 @@ import { AppError } from "@middlewares/errorHandler.middleware";
 import { getAccessibleProfileIds } from "@modules/auth/user/user.service";
 import { upsertCustomerFromConversation } from "@modules/business/customer/customer.service";
 
-const HISTORY_LIMIT = 10;
+const HISTORY_LIMIT = 24;
 
 async function attachCustomerMemory(
   conversation: any,

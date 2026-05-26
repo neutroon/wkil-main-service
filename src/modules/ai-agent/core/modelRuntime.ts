@@ -385,7 +385,10 @@ export async function invokeToolChoice(params: {
   temperature?: number;
   timeoutMs?: number;
 }): Promise<ToolChoiceResult> {
-  const messages = toLangChainMessages(params.contents, params.systemInstruction);
+  const messages = toLangChainMessages(
+    params.contents,
+    buildToolChoiceSystemInstruction(params.systemInstruction),
+  );
 
   const { result: message, model } = await executeWithModelFallback<any>(
     (currentModel, abortSignal) => {
@@ -406,6 +409,33 @@ export async function invokeToolChoice(params: {
     modelName: model,
     finishReason: readFinishReason(message),
   };
+}
+
+export function buildToolChoiceSystemInstruction(
+  systemInstruction: string,
+): string {
+  const sanitizedSystemInstruction = systemInstruction
+    .replace(/\n?<output_contract>[\s\S]*?<\/output_contract>/g, "")
+    .replace(
+      /^(\d+)\. Return one structured JSON object only\.$/gm,
+      "$1. During tool selection, follow <tool_selection_stage> output rules instead of the JSON response contract.",
+    )
+    .trim();
+
+  return [
+    sanitizedSystemInstruction,
+    "",
+    "<tool_selection_stage>",
+    "For this tool-selection stage only, suspend the normal JSON output contract.",
+    "Your only job is to decide whether the current customer request, interpreted with recent chat history, needs one of the provided tools.",
+    "If one provided tool is needed and all required arguments are known from the customer, chat history, or chat context, emit a native tool/function call for that tool.",
+    "When checking required arguments, combine the current message with recent chat history and chat context. If a prior turn already contains the target, name, phone, email, or other required value, reuse it; return NO_TOOL_CALL only for details still missing or ambiguous.",
+    "For booking, registration, follow-up contact, create, update, or cancel requests, the target item/service/course/order and required contact details count as required details even if a helper lookup has no formal arguments.",
+    "Do not call a read/list/search helper merely to discover which item the customer wants; return NO_TOOL_CALL so the answer stage can ask for the missing target, unless the customer explicitly asked to see or check available options.",
+    "Do not write JSON. Do not write integration_action_* as text. Do not answer the customer in this stage.",
+    "If no provided tool should be called, or required arguments are missing, return exactly: NO_TOOL_CALL.",
+    "</tool_selection_stage>",
+  ].join("\n");
 }
 
 export async function invokeDecision(params: {

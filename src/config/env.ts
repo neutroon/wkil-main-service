@@ -47,19 +47,6 @@ const envSchema = z.object({
   ML_SERVICE_URL: z.string().url().optional(),
   ML_API_KEY: z.string().optional(),
   RAG_MIN_SIMILARITY: z.coerce.number().optional().default(0.25),
-  EXTERNAL_ACTION_MIN_SEMANTIC_SIMILARITY: z.coerce
-    .number()
-    .min(0)
-    .max(1)
-    .optional()
-    .default(0.45),
-  EXTERNAL_ACTION_MAX_SEMANTIC_TOOLS: z.coerce
-    .number()
-    .int()
-    .positive()
-    .max(5)
-    .optional()
-    .default(2),
   
   // ── Google Cloud / Vertex AI ───────────────────────────────────────────────
   GOOGLE_CLOUD_PROJECT_ID: z.string().optional(),

@@ -11,6 +11,7 @@ import {
   toPromptMessages,
 } from "@modules/ai-agent/chat/conversationTurns";
 import { computeBusinessChatReply } from "@modules/ai-agent/chat/businessChatReply.service";
+import { formatCompletedActionRequestMessage } from "@modules/ai-agent/chat/completedActionRequest";
 import { initialCustomerReplyStatus } from "@modules/ai-agent/chat/deliveryPolicy";
 import {
   notifySavedModelReplySideEffects,
@@ -210,8 +211,8 @@ export async function processIntegrationActionJob(
   const historyRows = await getConversationHistory(job.conversationId);
   const historyTurns = historyToLlmTurns(toPromptMessages(historyRows));
   const channel = normalizeChannel(conversation.channel);
-  const originalRequest =
-    job.latestUserText || latestUserMessage(historyTurns) || "the customer's request";
+  const originalRequest = completedActionOriginalRequest(job, historyTurns);
+  const completedActionMessage = formatCompletedActionRequestMessage(originalRequest);
   const workflows = await listActiveAgentActionWorkflows(job.businessProfileId);
   const workflow =
     (job.workflowId
@@ -226,14 +227,14 @@ export async function processIntegrationActionJob(
     conversationId: job.conversationId,
     channel,
     mode: "ACTION_RESULT",
-    customerText: originalRequest,
+    customerText: completedActionMessage,
     parentActionRunId: job.actionRunId ?? null,
     activeWorkflowId: workflow?.id ?? null,
   });
 
   const reply = await computeBusinessChatReply({
     businessProfile: conversation.businessProfile,
-    messageText: originalRequest,
+    messageText: completedActionMessage,
     historyTurns,
     channel,
     customerPhone: job.customerPhone || conversation.customerPhone || undefined,
@@ -378,6 +379,42 @@ function latestUserMessage(
   historyTurns: { role: "user" | "model"; text: string }[],
 ): string | undefined {
   return [...historyTurns].reverse().find((turn) => turn.role === "user")?.text;
+}
+
+function completedActionOriginalRequest(
+  job: IntegrationActionJob,
+  historyTurns: { role: "user" | "model"; text: string }[],
+): string {
+  const historyText = actionRequestHistoryText(historyTurns) ||
+    (job.historyText || "").trim();
+  const latestText =
+    (job.latestUserText || latestUserMessage(historyTurns) || "").trim();
+
+  if (historyText && latestText && !historyText.includes(latestText)) {
+    return [
+      "Recent chat context before the action:",
+      historyText,
+      "",
+      "Latest customer message:",
+      latestText,
+    ].join("\n");
+  }
+  if (historyText) return `Recent chat context before the action:\n${historyText}`;
+  if (latestText) return latestText;
+  return "the customer's request";
+}
+
+function actionRequestHistoryText(
+  historyTurns: { role: "user" | "model"; text: string }[],
+): string {
+  return historyTurns
+    .map((turn) => {
+      const text = turn.text.trim();
+      if (!text) return "";
+      return `${turn.role === "user" ? "Customer" : "Assistant"}: ${text}`;
+    })
+    .filter(Boolean)
+    .join("\n");
 }
 
 async function findNewerCustomerMessageAfterActionStart(

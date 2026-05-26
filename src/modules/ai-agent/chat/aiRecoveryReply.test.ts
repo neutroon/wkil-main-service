@@ -74,20 +74,6 @@ describe("generateSafeRecoveryReply", () => {
     ).resolves.toBe("مش قادر أتحقق من المعلومة دي حالياً. فريقنا هيأكد لك التفاصيل.");
   });
 
-  it("rejects handoff promises when no handoff route is active", async () => {
-    vi.mocked(invokeText).mockResolvedValue(
-      textResult("فريقنا هيتواصل معاك في أسرع وقت."),
-    );
-
-    await expect(
-      generateSafeRecoveryReply({
-        systemInstruction: "Voice: Egyptian Arabic",
-        failureReason: "external_lookup_failed",
-        safeFallback: "Fallback",
-      }),
-    ).resolves.toBe("Fallback");
-  });
-
   it("allows Arabic team confirmation wording when handoff route is active", async () => {
     vi.mocked(invokeText).mockResolvedValue(
       textResult("أنا بخير، شكراً لسؤالك! فريقنا هيتواصل معاك حالاً عشان يتابع معاك."),

@@ -11,25 +11,20 @@ type ToolResultEnvelope = {
 
 export type AiTruthfulnessPolicy = {
   strictBlockOnUnverified: boolean;
-  blockPromiseLanguage: boolean;
   fallbackTemplates: {
     unverified: string;
     failed: string;
-    unsupportedPromise: string;
     smallTalkRecovery: string;
   };
 };
 
 export const DEFAULT_AI_TRUTHFULNESS_POLICY: AiTruthfulnessPolicy = {
   strictBlockOnUnverified: true,
-  blockPromiseLanguage: true,
   fallbackTemplates: {
     unverified:
       "I cannot confirm this action yet from the latest system data. Please share the exact required identifier so I can verify it.",
     failed:
       "I could not complete verification due to a system lookup issue. Please recheck the details and send them exactly as provided.",
-    unsupportedPromise:
-      "I can only confirm actions that were completed and verified in this chat flow. I cannot promise additional actions that were not executed.",
     smallTalkRecovery:
       "Hi! How can I help you today?",
   },
@@ -92,15 +87,8 @@ export function updateEvidenceFromEnvelope(
   }
 }
 
-function hasUnsupportedPromiseLanguage(text: string): boolean {
-  return /(?:we will call you|we'll call you|someone will contact you|i have escalated|ticket created|تم\s*التواصل|سنتواصل|سوف\s*نتواصل|تم\s*رفع\s*طلب)/i.test(
-    text,
-  );
-}
-
 export function evaluateGuardrailsForReply(
   evidence: EvidenceState,
-  text: string,
   policy: AiTruthfulnessPolicy,
 ): { blocked: false } | { blocked: true; ruleId: string; safeReply: string } {
   if (evidence.failedActions.length > 0) {
@@ -122,13 +110,6 @@ export function evaluateGuardrailsForReply(
       blocked: true,
       ruleId: "TRUTH_UNVERIFIED_ACTION",
       safeReply: policy.fallbackTemplates.unverified,
-    };
-  }
-  if (policy.blockPromiseLanguage && hasUnsupportedPromiseLanguage(text)) {
-    return {
-      blocked: true,
-      ruleId: "PROMISE_UNSUPPORTED",
-      safeReply: policy.fallbackTemplates.unsupportedPromise,
     };
   }
   return { blocked: false };

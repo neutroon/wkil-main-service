@@ -9,13 +9,11 @@ import {
   buildTruthfulnessPolicyForVoice,
 } from "./aiFallbackPolicy";
 import { generateSafeRecoveryReply } from "./aiRecoveryReply";
-import { filterEligibleAgentActionSources } from "./externalToolEligibility";
 import { enqueueCustomerMemoryCapture } from "@modules/meta/core/meta.queue";
 import {
   createAgentTurn,
   updateAgentTurnStatus,
 } from "@modules/ai-agent/core/agentTurn.service";
-import { ensureExternalActionSemanticIndexes } from "@modules/integrations/external/agentActionSemanticIndex.service";
 import {
   activeWorkflowSourceIds,
   listActiveAgentActionWorkflows,
@@ -61,7 +59,6 @@ type WorkflowContinuationContext = {
 };
 
 const CORE_CONTEXT_TYPES = new Set(["identity", "contact", "intents"]);
-const MAX_EXTERNAL_LOOKUP_PROMPT_CHARS = 12_000;
 const MUTATION_CORRECTION_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 async function notIngestedReply(params: {
@@ -222,16 +219,7 @@ export async function prepareAgentParams(params: {
     select: { name: true, mediaType: true, instructions: true },
   });
 
-  const eligibleExternalSources = allowedActionSourceIds
-    ? activeAgentActionSources
-    : activeAgentActionSources.length > 0
-      ? await ensureExternalActionSemanticIndexes(activeAgentActionSources).then(() =>
-          filterEligibleAgentActionSources(activeAgentActionSources, effectiveMessageText, {
-            businessProfileId: businessProfile.id,
-            queryEmbedding: retrieval.queryEmbedding,
-          }),
-        )
-      : [];
+  const eligibleExternalSources = activeAgentActionSources;
   const finalTools = buildAgentActionTools(eligibleExternalSources);
   const externalSourceFailureBehaviors = Object.fromEntries(
     eligibleExternalSources.map((source) => [
@@ -271,7 +259,6 @@ export async function prepareAgentParams(params: {
   if (completedExternalLookup) {
     const serializedLookup = stringifyForPrompt(
       completedActionEnvelopeForPrompt(completedExternalLookup),
-      MAX_EXTERNAL_LOOKUP_PROMPT_CHARS,
     );
     const actionChainInstruction = allowedActionSourceIds && allowedActionSourceIds.length > 0
         ? "This verified lookup/helper result may support one different exposed follow-up business action if the original customer request still requires that action. Do not call another lookup/helper action."
@@ -325,15 +312,12 @@ export async function prepareAgentParams(params: {
   };
 }
 
-function stringifyForPrompt(value: unknown, maxChars: number): string {
-  let text: string;
+function stringifyForPrompt(value: unknown): string {
   try {
-    text = JSON.stringify(value, null, 2);
+    return JSON.stringify(value, null, 2);
   } catch {
-    text = String(value);
+    return String(value);
   }
-  if (text.length <= maxChars) return text;
-  return `${text.slice(0, maxChars)}\n...[truncated]`;
 }
 
 function parseIntegrationActionSourceId(toolName: string): number | null {
@@ -366,7 +350,15 @@ function canExposeFollowUpActionsAfterCompletedAction(
 function completedActionEnvelopeForPrompt(
   completed: CompletedExternalLookup,
 ): CompletedExternalLookup["envelope"] {
-  if (isVerifiedCompletedAction(completed)) return completed.envelope;
+  if (isVerifiedCompletedAction(completed)) {
+    return {
+      success: completed.envelope.success,
+      verification: completed.envelope.verification,
+      actionType: completed.envelope.actionType,
+      reason: completed.envelope.reason,
+      data: completed.envelope.data,
+    };
+  }
 
   return {
     success: false,

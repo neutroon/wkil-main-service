@@ -29,7 +29,6 @@ describe("AI truthfulness guardrails", () => {
         failedActions: [],
         unknownActions: [],
       },
-      "Your order is confirmed.",
       DEFAULT_AI_TRUTHFULNESS_POLICY,
     );
 
@@ -47,7 +46,6 @@ describe("AI truthfulness guardrails", () => {
         failedActions: ["integration_action_2"],
         unknownActions: [],
       },
-      "Done, everything is complete.",
       DEFAULT_AI_TRUTHFULNESS_POLICY,
     );
 
@@ -57,7 +55,7 @@ describe("AI truthfulness guardrails", () => {
     }
   });
 
-  it("allows verified evidence when there is no unsupported promise", () => {
+  it("allows verified evidence after deterministic evidence checks pass", () => {
     const result = evaluateGuardrailsForReply(
       {
         verifiedActions: ["integration_action_2"],
@@ -65,29 +63,10 @@ describe("AI truthfulness guardrails", () => {
         failedActions: [],
         unknownActions: [],
       },
-      "Your request has been saved successfully.",
       DEFAULT_AI_TRUTHFULNESS_POLICY,
     );
 
     expect(result.blocked).toBe(false);
-  });
-
-  it("blocks unsupported promises even with verified action", () => {
-    const result = evaluateGuardrailsForReply(
-      {
-        verifiedActions: ["integration_action_2"],
-        unverifiedActions: [],
-        failedActions: [],
-        unknownActions: [],
-      },
-      "We will call you tomorrow to complete this.",
-      DEFAULT_AI_TRUTHFULNESS_POLICY,
-    );
-
-    expect(result.blocked).toBe(true);
-    if (result.blocked) {
-      expect(result.ruleId).toBe("PROMISE_UNSUPPORTED");
-    }
   });
 });
 

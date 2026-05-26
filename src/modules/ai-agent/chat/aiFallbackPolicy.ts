@@ -16,8 +16,6 @@ const EMERGENCY_FALLBACK_CATALOG: Record<
       "I can’t confirm this from the latest system data yet. Please send the exact details so I can verify them.",
     failed:
       "I can’t verify this right now. I’ll connect you with the team so they can confirm the details accurately.",
-    unsupportedPromise:
-      "I can only confirm actions that were completed and verified in this chat. I’ll connect you with the team if you need extra follow-up.",
     smallTalkRecovery:
       "Hi! How can I help you today?",
   },
@@ -26,8 +24,6 @@ const EMERGENCY_FALLBACK_CATALOG: Record<
       "مش قادر أأكد المعلومة دي من بيانات النظام الحالية. ابعتلي التفاصيل المطلوبة بالظبط عشان أقدر أتحقق منها.",
     failed:
       "مش قادر أتحقق من المعلومة دي حالياً. هحوّلك لفريقنا عشان يأكدوا لك التفاصيل بدقة.",
-    unsupportedPromise:
-      "أقدر أأكد بس الإجراءات اللي تمت واتوثقت في المحادثة دي. هحوّلك لفريقنا لو محتاج متابعة إضافية.",
     smallTalkRecovery:
       "أهلاً بيك! تحب تعرف إيه عن خدماتنا؟",
   },

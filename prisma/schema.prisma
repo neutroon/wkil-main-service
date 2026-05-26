@@ -237,15 +237,9 @@ model AgentActionSource {
   apiUrl            String          // The GET endpoint, e.g., "https://api.store.com/products"
   method            String          @default("GET")
   headers           Json?           // Optional API keys or Bearer tokens
-  queryParams       Json?           // Optional required query params expected by the API
   trigger           AgentActionTrigger @default(CHAT_REQUESTED) // V2: chat-requested workflows only
   actionType        AgentActionType    @default(LOOKUP) // LOOKUP | MUTATION
   executionMode     String          @default("BACKGROUND") // External actions always run through BullMQ
-  routingMode       String          @default("STRICT") // STRICT = semantic pre-router, FAST = expose when active
-  routerTimeoutMs   Int             @default(2500) // Max wait for STRICT semantic routing before falling back
-  routingEmbedding  Unsupported("vector(768)")?
-  routingTextHash   String?
-  routingIndexedAt  DateTime?
   failureBehavior   String          @default("AUTO") // AUTO = AI classifier, HANDOFF_ON_FAILURE, ANSWER_WITH_CONTEXT_ON_FAILURE, SILENT_ON_FAILURE
   confirmationPolicy String         @default("REQUIRE_VERIFIED_RESULT") // REQUIRE_VERIFIED_RESULT | ACCEPT_HTTP_SUCCESS
   requestMapping    Json?
@@ -264,7 +258,6 @@ model AgentActionSource {
 
   @@index([businessProfileId])
   @@index([businessProfileId, trigger, isActive])
-  @@index([routingTextHash])
 }
 
 model AgentActionWorkflow {

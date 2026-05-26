@@ -7,20 +7,21 @@ import {
   updateAgentActionSourceSchema,
   getAgentActionSourceSchema,
   deleteAgentActionSourceSchema,
+  testAgentActionSourceSchema,
+  testAgentActionWorkflowSchema,
   workflowSchema,
   updateWorkflowSchema,
   workflowIdSchema,
+  validateAgentActionActivationConfig,
 } from "./agentAction.validation";
 import { AppError } from "@middlewares/errorHandler.middleware";
 import {
   encryptExternalHeaders,
   mergeHeaderUpdate,
   serializeAgentActionSource,
+  testAgentActionSourceRequest,
+  testAgentActionWorkflowRequest,
 } from "./agentActionExecutor.service";
-import {
-  clearExternalActionSemanticIndex,
-  ensureExternalActionSemanticIndex,
-} from "./agentActionSemanticIndex.service";
 
 const agentActionRoutes = Router();
 
@@ -141,6 +142,47 @@ agentActionRoutes.post(
   },
 );
 
+agentActionRoutes.post(
+  "/business-profiles/:profileId/workflows/:workflowId/test",
+  authenticateToken,
+  validate(testAgentActionWorkflowSchema),
+  authorizeBusinessProfile,
+  async (req: Request, res: Response) => {
+    const profileId = parseInt(req.params.profileId);
+    const workflowId = parseInt(req.params.workflowId);
+    const workflow = await prisma.agentActionWorkflow.findFirst({
+      where: { id: workflowId, businessProfileId: profileId },
+      include: {
+        lookupSource: true,
+        mutationSource: true,
+      },
+    });
+
+    if (!workflow) {
+      throw new AppError("Workflow not found", 404);
+    }
+
+    const response = await testAgentActionWorkflowRequest(
+      workflow,
+      profileId,
+      {
+        lookupArgs: req.body.lookupArgs ?? {},
+        mutationArgs: req.body.mutationArgs ?? {},
+        context: {
+          customerPhone: req.body.customerPhone,
+          conversationId: req.body.conversationId,
+          contextValues: req.body.contextValues ?? {},
+          latestUserText: req.body.latestUserText,
+          historyText: req.body.historyText,
+        },
+        run: req.body.run === true,
+      },
+    );
+
+    return res.json(response);
+  },
+);
+
 agentActionRoutes.put(
   "/business-profiles/:profileId/workflows/:workflowId",
   authenticateToken,
@@ -205,12 +247,9 @@ agentActionRoutes.post(
       apiUrl,
       method,
       headers,
-      queryParams,
       trigger,
       actionType,
       executionMode,
-      routingMode,
-      routerTimeoutMs,
       failureBehavior,
       confirmationPolicy,
       requestMapping,
@@ -218,6 +257,16 @@ agentActionRoutes.post(
       expectedParamsSchema,
       isActive,
     } = req.body;
+
+    const activationError = validateAgentActionActivationConfig({
+      actionType,
+      trigger,
+      isActive,
+      expectedParamsSchema,
+    });
+    if (activationError) {
+      throw new AppError(activationError, 400);
+    }
 
     const newSource = await prisma.agentActionSource.create({
       data: {
@@ -227,12 +276,9 @@ agentActionRoutes.post(
         apiUrl,
         method: method || "GET",
         headers: encryptExternalHeaders(headers),
-        queryParams,
         trigger,
         actionType,
         executionMode,
-        routingMode,
-        routerTimeoutMs,
         failureBehavior,
         confirmationPolicy,
         requestMapping,
@@ -241,10 +287,6 @@ agentActionRoutes.post(
         isActive: isActive !== undefined ? isActive : true,
       },
     });
-
-    if (newSource.isActive && newSource.trigger === "CHAT_REQUESTED") {
-      await ensureExternalActionSemanticIndex(newSource);
-    }
 
     return res.json({
       success: true,
@@ -268,12 +310,9 @@ agentActionRoutes.put(
       apiUrl,
       method,
       headers,
-      queryParams,
       trigger,
       actionType,
       executionMode,
-      routingMode,
-      routerTimeoutMs,
       failureBehavior,
       confirmationPolicy,
       requestMapping,
@@ -290,6 +329,19 @@ agentActionRoutes.put(
       throw new AppError("Agent Action source not found or unauthorized", 404);
     }
 
+    const activationError = validateAgentActionActivationConfig({
+      actionType: actionType ?? existingSource.actionType,
+      trigger: trigger ?? existingSource.trigger,
+      isActive: isActive ?? existingSource.isActive,
+      expectedParamsSchema:
+        expectedParamsSchema !== undefined
+          ? expectedParamsSchema
+          : existingSource.expectedParamsSchema,
+    });
+    if (activationError) {
+      throw new AppError(activationError, 400);
+    }
+
     const updatedSource = await prisma.agentActionSource.update({
       where: { id: existingSource.id },
       data: {
@@ -298,12 +350,9 @@ agentActionRoutes.put(
         apiUrl,
         method,
         headers: mergeHeaderUpdate(existingSource.headers, headers),
-        queryParams,
         trigger,
         actionType,
         executionMode,
-        routingMode,
-        routerTimeoutMs,
         failureBehavior,
         confirmationPolicy,
         requestMapping,
@@ -313,16 +362,44 @@ agentActionRoutes.put(
       },
     });
 
-    if (updatedSource.isActive && updatedSource.trigger === "CHAT_REQUESTED") {
-      await ensureExternalActionSemanticIndex(updatedSource);
-    } else {
-      await clearExternalActionSemanticIndex(updatedSource.id, profileId);
-    }
-
     return res.json({
       success: true,
       source: serializeAgentActionSource(updatedSource),
     });
+  },
+);
+
+agentActionRoutes.post(
+  "/business-profiles/:profileId/:sourceId/test",
+  authenticateToken,
+  validate(testAgentActionSourceSchema),
+  authorizeBusinessProfile,
+  async (req: Request, res: Response) => {
+    const profileId = parseInt(req.params.profileId);
+    const sourceId = parseInt(req.params.sourceId);
+    const source = await prisma.agentActionSource.findFirst({
+      where: { id: sourceId, businessProfileId: profileId },
+    });
+
+    if (!source) {
+      throw new AppError("Agent Action source not found or unauthorized", 404);
+    }
+
+    const response = await testAgentActionSourceRequest(
+      source,
+      profileId,
+      req.body.args ?? {},
+      {
+        customerPhone: req.body.customerPhone,
+        conversationId: req.body.conversationId,
+        contextValues: req.body.contextValues ?? {},
+        latestUserText: req.body.latestUserText,
+        historyText: req.body.historyText,
+      },
+      req.body.run === true,
+    );
+
+    return res.json(response);
   },
 );
 
@@ -336,7 +413,6 @@ agentActionRoutes.delete(
     const profileId = parseInt(req.params.profileId);
     const sourceId = parseInt(req.params.sourceId);
 
-    await clearExternalActionSemanticIndex(sourceId, profileId);
     await prisma.agentActionSource.deleteMany({
       where: { id: sourceId, businessProfileId: profileId },
     });

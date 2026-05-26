@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { computeBusinessChatReply, prepareAgentParams } from "./businessChatReply.service";
-import { filterEligibleAgentActionSources } from "./externalToolEligibility";
 import { buildSystemPrompt } from "../../meta/core/prompt.service";
 import { enqueueCustomerMemoryCapture } from "@modules/meta/core/meta.queue";
 import { runAgentGraphV2 } from "@modules/ai-agent/core/agentGraphV2";
@@ -48,14 +47,6 @@ vi.mock("@config/prisma", () => ({
   },
 }));
 
-vi.mock("./externalToolEligibility", () => ({
-  filterEligibleAgentActionSources: vi.fn(),
-}));
-
-vi.mock("@modules/integrations/external/agentActionSemanticIndex.service", () => ({
-  ensureExternalActionSemanticIndexes: vi.fn(async () => undefined),
-}));
-
 vi.mock("@modules/integrations/external/agentActionWorkflow.service", () => ({
   listActiveAgentActionWorkflows: vi.fn(async () => []),
   activeWorkflowSourceIds: vi.fn(() => new Set()),
@@ -78,11 +69,16 @@ const priceSource = {
   method: "GET",
   url: "https://example.com/prices",
   headers: null,
-  queryParams: null,
-  expectedParamsSchema: null,
+  expectedParamsSchema: {
+    propertyName: {
+      type: "STRING",
+      source: "USER_PROVIDED",
+      required: true,
+      description: "Specific product or service the customer asked about",
+    },
+  },
   trigger: "CHAT_REQUESTED",
   actionType: "LOOKUP",
-  routingMode: "STRICT",
 } as any;
 
 const leadCaptureSource = {
@@ -113,8 +109,6 @@ describe("prepareAgentParams", () => {
   });
 
   it("does not expose customer memory saving in the main chat tool path", async () => {
-    vi.mocked(filterEligibleAgentActionSources).mockResolvedValue([priceSource]);
-
     const result = await prepareAgentParams({
       businessProfile,
       messageText: "what are the prices",
@@ -127,7 +121,12 @@ describe("prepareAgentParams", () => {
       name: "integration_action_2",
       description: expect.stringContaining("queues the check in the background"),
     });
-    expect(result.graphParams?.tools?.[0].schema.safeParse({}).success).toBe(true);
+    expect(result.graphParams?.tools?.[0].schema.safeParse({}).success).toBe(false);
+    expect(
+      result.graphParams?.tools?.[0].schema.safeParse({
+        propertyName: "pagesPilot services",
+      }).success,
+    ).toBe(true);
     expect(buildSystemPrompt).toHaveBeenCalledWith(
       expect.objectContaining({
         channel: "web",
@@ -136,19 +135,9 @@ describe("prepareAgentParams", () => {
         hasCompletedActionResult: false,
       }),
     );
-    expect(filterEligibleAgentActionSources).toHaveBeenCalledWith(
-      [priceSource],
-      "what are the prices",
-      expect.objectContaining({
-        businessProfileId: 1,
-        queryEmbedding: [0.1, 0.2, 0.3],
-      }),
-    );
   });
 
-  it("has no tools when no chat-requested action is eligible", async () => {
-    vi.mocked(filterEligibleAgentActionSources).mockResolvedValue([]);
-
+  it("exposes active action tools for greetings so the model can decide not to call them", async () => {
     const result = await prepareAgentParams({
       businessProfile,
       messageText: "hi",
@@ -156,7 +145,10 @@ describe("prepareAgentParams", () => {
       channel: "web",
     });
 
-    expect(result.graphParams?.tools).toBeUndefined();
+    expect(result.graphParams?.tools).toHaveLength(1);
+    expect(result.graphParams?.tools?.[0]).toMatchObject({
+      name: "integration_action_2",
+    });
   });
 
   it("skips Agent Action routing when the profile has no active action sources", async () => {
@@ -171,7 +163,6 @@ describe("prepareAgentParams", () => {
     });
 
     expect(result.graphParams?.tools).toBeUndefined();
-    expect(filterEligibleAgentActionSources).not.toHaveBeenCalled();
   });
 
   it("uses media understanding text as the model and retrieval query", async () => {
@@ -231,11 +222,9 @@ describe("prepareAgentParams", () => {
     });
 
     expect(result.graphParams?.tools).toBeUndefined();
-    expect(filterEligibleAgentActionSources).not.toHaveBeenCalled();
   });
 
   it("can expose a different action after a completed helper action result", async () => {
-    vi.mocked(filterEligibleAgentActionSources).mockResolvedValue([leadCaptureSource]);
     const originalRequest =
       "ايوه احجز مكان في الدفعه الجديده كورس علم النفس بالفنون";
 
@@ -257,7 +246,15 @@ describe("prepareAgentParams", () => {
           verification: "verified",
           actionType: "integration_action_2",
           reason: "data_returned",
-          data: { courses: [{ title: "الدعم النفسى بالفنون", availableSeats: 5 }] },
+          data: {
+            courses: [
+              {
+                title: "الدعم النفسى بالفنون",
+                availableSeats: 5,
+                createdAt: "2026-01-01T00:00:00.000Z",
+              },
+            ],
+          },
         },
       },
       allowedActionSourceIds: [leadCaptureSource.id],
@@ -268,7 +265,6 @@ describe("prepareAgentParams", () => {
       originalRequest,
       5,
     );
-    expect(filterEligibleAgentActionSources).not.toHaveBeenCalled();
     expect(result.graphParams?.tools).toHaveLength(1);
     expect(result.graphParams?.tools?.[0]).toMatchObject({
       name: "integration_action_7",
@@ -283,6 +279,8 @@ describe("prepareAgentParams", () => {
     expect(result.graphParams?.systemInstruction).toContain(
       "verified lookup/helper result",
     );
+    expect(result.graphParams?.systemInstruction).toContain("الدعم النفسى بالفنون");
+    expect(result.graphParams?.systemInstruction).toContain("createdAt");
   });
 
   it("does not expose more actions after a failed completed action result", async () => {
@@ -308,7 +306,6 @@ describe("prepareAgentParams", () => {
       },
     });
 
-    expect(filterEligibleAgentActionSources).not.toHaveBeenCalled();
     expect(result.graphParams?.tools).toBeUndefined();
     expect(buildSystemPrompt).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -335,8 +332,6 @@ describe("prepareAgentParams", () => {
   });
 
   it("does not enqueue customer memory capture for internal completed-action turns", async () => {
-    vi.mocked(filterEligibleAgentActionSources).mockResolvedValue([]);
-
     await computeBusinessChatReply({
       businessProfile,
       messageText:
@@ -362,8 +357,6 @@ describe("prepareAgentParams", () => {
   });
 
   it("enqueues customer memory capture after the main reply without exposing a save tool", async () => {
-    vi.mocked(filterEligibleAgentActionSources).mockResolvedValue([]);
-
     const reply = await computeBusinessChatReply({
       businessProfile,
       messageText: "يا ريت ابعتيلي رقم ٢",
@@ -376,7 +369,7 @@ describe("prepareAgentParams", () => {
     expect(reply.content).toBe("reply");
     expect(runAgentGraphV2).toHaveBeenCalledWith(
       expect.objectContaining({
-        tools: undefined,
+        tools: [expect.objectContaining({ name: "integration_action_2" })],
         customerPhone: "201202840018",
         agentTurnId: 999,
       }),
@@ -422,8 +415,6 @@ describe("prepareAgentParams", () => {
       })
       .mockResolvedValueOnce(null);
 
-    vi.mocked(filterEligibleAgentActionSources).mockResolvedValue([leadCaptureSource]);
-
     await computeBusinessChatReply({
       businessProfile: {
         ...businessProfile,
@@ -438,7 +429,6 @@ describe("prepareAgentParams", () => {
       conversationId: 172,
     });
 
-    expect(filterEligibleAgentActionSources).not.toHaveBeenCalled();
     expect(runAgentGraphV2).toHaveBeenCalledWith(
       expect.objectContaining({
         activeWorkflowId: 12,

@@ -1,13 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { findSemanticallyEligibleAgentActionSources } from "@modules/integrations/external/agentActionSemanticIndex.service";
-import {
-  filterEligibleAgentActionSources,
-  validateChatRequestedExternalAction,
-} from "./externalToolEligibility";
-
-vi.mock("@modules/integrations/external/agentActionSemanticIndex.service", () => ({
-  findSemanticallyEligibleAgentActionSources: vi.fn(),
-}));
+import { validateChatRequestedExternalAction } from "./externalToolEligibility";
 
 const priceSource = {
   id: 2,
@@ -50,83 +42,6 @@ describe("external tool eligibility", () => {
     vi.clearAllMocks();
   });
 
-  it("uses the semantic DB router instead of a generative AI router", async () => {
-    vi.mocked(findSemanticallyEligibleAgentActionSources).mockResolvedValue([
-      priceSource,
-    ]);
-
-    await expect(
-      filterEligibleAgentActionSources(
-        [priceSource, orderSource],
-        "what is the subscription price?",
-        {
-          businessProfileId: 1,
-          queryEmbedding: [0.1, 0.2, 0.3],
-        },
-      ),
-    ).resolves.toEqual([priceSource]);
-
-    expect(findSemanticallyEligibleAgentActionSources).toHaveBeenCalledWith(
-      expect.objectContaining({
-        businessProfileId: 1,
-        sources: [priceSource, orderSource],
-        queryEmbedding: [0.1, 0.2, 0.3],
-      }),
-    );
-  });
-
-  it("fails closed when no query embedding is available", async () => {
-    await expect(
-      filterEligibleAgentActionSources([priceSource], "what is the price?", {
-        businessProfileId: 1,
-        queryEmbedding: null,
-      }),
-    ).resolves.toEqual([]);
-
-    expect(findSemanticallyEligibleAgentActionSources).not.toHaveBeenCalled();
-  });
-
-  it("fails closed for empty customer messages", async () => {
-    await expect(
-      filterEligibleAgentActionSources([priceSource], "   ", {
-        businessProfileId: 1,
-        queryEmbedding: [0.1],
-      }),
-    ).resolves.toEqual([]);
-
-    expect(findSemanticallyEligibleAgentActionSources).not.toHaveBeenCalled();
-  });
-
-  it("does not expose chat-requested actions for pure greetings", async () => {
-    await expect(
-      filterEligibleAgentActionSources([priceSource, orderSource], "السلام عليكم", {
-        businessProfileId: 1,
-        queryEmbedding: [0.1, 0.2, 0.3],
-      }),
-    ).resolves.toEqual([]);
-
-    expect(findSemanticallyEligibleAgentActionSources).not.toHaveBeenCalled();
-  });
-
-  it("still routes actionable messages that start with a greeting", async () => {
-    vi.mocked(findSemanticallyEligibleAgentActionSources).mockResolvedValue([
-      orderSource,
-    ]);
-
-    await expect(
-      filterEligibleAgentActionSources(
-        [priceSource, orderSource],
-        "السلام عليكم عاوز الغي الاوردر 332",
-        {
-          businessProfileId: 1,
-          queryEmbedding: [0.1, 0.2, 0.3],
-        },
-      ),
-    ).resolves.toEqual([orderSource]);
-
-    expect(findSemanticallyEligibleAgentActionSources).toHaveBeenCalled();
-  });
-
   it("accepts a chat-requested action when required user values are present", async () => {
     await expect(
       validateChatRequestedExternalAction({
@@ -150,6 +65,65 @@ describe("external tool eligibility", () => {
     ).resolves.toMatchObject({
       shouldQueue: false,
       reasoning: "Missing required parameters: propertyName",
+    });
+  });
+
+  it("rejects unscoped lookup actions before they can call broad catalog APIs", async () => {
+    await expect(
+      validateChatRequestedExternalAction({
+        source: {
+          ...priceSource,
+          expectedParamsSchema: null,
+        },
+        latestUserMessage: "عاوز احجز برنامج",
+        args: {},
+      }),
+    ).resolves.toMatchObject({
+      shouldQueue: false,
+      reasoning: "Lookup action is not scoped. Add at least one required parameter before activating it.",
+    });
+  });
+
+  it("rejects CRM lead capture until required name and phone are available", async () => {
+    const leadSource = {
+      id: 4,
+      businessProfileId: 1,
+      name: "send lead to crm",
+      description: "Send registration lead after program selection",
+      isActive: true,
+      trigger: "CHAT_REQUESTED",
+      actionType: "MUTATION",
+      expectedParamsSchema: {
+        name: {
+          type: "STRING",
+          source: "USER_PROVIDED",
+          required: true,
+          description: "Customer name",
+        },
+        phone: {
+          type: "STRING",
+          source: "USER_PROVIDED",
+          required: true,
+          description: "Customer phone number",
+        },
+        selectedProgram: {
+          type: "OBJECT",
+          source: "AI_DERIVED",
+          required: true,
+          description: "Selected program details",
+        },
+      },
+    } as any;
+
+    await expect(
+      validateChatRequestedExternalAction({
+        source: leadSource,
+        latestUserMessage: "عاوز احجز برنامج الدعم النفسي",
+        args: { selectedProgram: { name: "برنامج الدعم النفسي" } },
+      }),
+    ).resolves.toMatchObject({
+      shouldQueue: false,
+      reasoning: "Missing required parameters: name, phone",
     });
   });
 

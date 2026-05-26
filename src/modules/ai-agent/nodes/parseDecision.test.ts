@@ -166,4 +166,32 @@ describe("parseDecisionNode failed action safety", () => {
       usedChunkTypes: ["custom_section"],
     });
   });
+
+  it("adds a default handoff category when the model chooses handoff without one", async () => {
+    const result = await parseDecisionNode(
+      baseState({
+        contents: [
+          { role: "user", content: "محتاج حد يتابع معايا" },
+          {
+            role: "model",
+            content: JSON.stringify({
+              action: "HANDOFF_TO_HUMAN",
+              replyType: "HANDOFF",
+              reasoning: "العميل يحتاج متابعة بشرية.",
+              content: "تمام، هحوّل طلب حضرتك لفريقنا للمتابعة.",
+              requiresGrounding: false,
+              grounded: false,
+              usedChunkTypes: [],
+              missingInfo: null,
+            }),
+          },
+        ],
+      }),
+    );
+
+    expect(result.decision).toMatchObject({
+      action: "HANDOFF_TO_HUMAN",
+      handoffCategory: "GENERAL_HANDOFF",
+    });
+  });
 });

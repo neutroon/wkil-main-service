@@ -9,8 +9,6 @@ const RECOVERY_TIMEOUT_MS = 4_000;
 const MAX_RECOVERY_CHARS = 420;
 const UNSAFE_RECOVERY_PATTERN =
   /\b(api|webhook|crm|exception|stack|database|internal error|tool|function call|confirmed|booked|saved|created|submitted|delivered)\b|تم\s*(التأكيد|الحجز|الحفظ|الإرسال|إنشاء)|تم\s*رفع\s*طلب/i;
-const UNSUPPORTED_HANDOFF_PROMISE_PATTERN =
-  /\b(we will contact you|we'll contact you|our team will contact|someone will contact|team will reach out|team will confirm|team will follow up)\b|(?:فريقنا|حد من فريقنا).{0,32}(?:هيتواصل|سيتواصل|هيأكد|هيؤكد|يتابع|يراجع)|سنتواصل|هنتواصل/i;
 
 export type RecoveryReplyParams = {
   systemInstruction: string;
@@ -40,14 +38,11 @@ function stripJsonOrMarkdown(text: string): string {
   return cleaned;
 }
 
-function isSafeRecoveryReply(text: string, allowHandoffLanguage: boolean): boolean {
+function isSafeRecoveryReply(text: string): boolean {
   const trimmed = text.trim();
   if (!trimmed) return false;
   if (trimmed.length > MAX_RECOVERY_CHARS) return false;
   if (UNSAFE_RECOVERY_PATTERN.test(trimmed)) return false;
-  if (!allowHandoffLanguage && UNSUPPORTED_HANDOFF_PROMISE_PATTERN.test(trimmed)) {
-    return false;
-  }
   return true;
 }
 
@@ -151,7 +146,7 @@ export async function generateSafeRecoveryReply({
 
     try {
       const text = await askRecoveryModel(prompt);
-      if (isSafeRecoveryReply(text, allowHandoffLanguage)) return text;
+      if (isSafeRecoveryReply(text)) return text;
 
       logger.warn("ai.recovery_reply.rejected", {
         failureReason,

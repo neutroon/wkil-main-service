@@ -2,11 +2,7 @@ import {
   assertExternalArgsAllowedByPolicy,
   filterExternalArgsBySchema,
 } from "@modules/integrations/external/agentActionExecutor.service";
-import { findSemanticallyEligibleAgentActionSources } from "@modules/integrations/external/agentActionSemanticIndex.service";
-import { logger } from "@utils/logger";
-import type { BusinessProfileForChat } from "./businessChatReply.service";
 
-type AgentActionSource = BusinessProfileForChat["agentActionSources"][number];
 type ExternalActionValidationSource = {
   id: number;
   businessProfileId?: number | null;
@@ -58,20 +54,12 @@ function collectRequiredAiWritableFields(
   return fields;
 }
 
-function isMissingParamValue(value: unknown): boolean {
-  return value === undefined || value === null || value === "";
+function hasRequiredAiWritableField(schema: unknown): boolean {
+  return collectRequiredAiWritableFields(schema).length > 0;
 }
 
-function normalizeActionRoutingText(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[\u064b-\u065f\u0670]/g, "")
-    .replace(/[إأآ]/g, "ا")
-    .replace(/ى/g, "ي")
-    .replace(/ة/g, "ه")
-    .replace(/[^\p{L}\p{N}\s]+/gu, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+function isMissingParamValue(value: unknown): boolean {
+  return value === undefined || value === null || value === "";
 }
 
 function getByPath(source: unknown, path: string): unknown {
@@ -80,61 +68,6 @@ function getByPath(source: unknown, path: string): unknown {
     if (!isRecord(current)) return undefined;
     return current[part];
   }, source);
-}
-
-const NON_ACTION_OPENING_PHRASES = new Set([
-  "السلام عليكم",
-  "السلام عليكم ورحمه الله وبركاته",
-  "وعليكم السلام",
-  "اهلا",
-  "اهلا وسهلا",
-  "اهلا بيكم",
-  "مرحبا",
-  "هلا",
-  "هاي",
-  "صباح الخير",
-  "مساء الخير",
-  "حد هنا",
-  "في حد هنا",
-  "هل يوجد احد",
-  "hello",
-  "hi",
-  "hey",
-  "good morning",
-  "good evening",
-]);
-
-const NON_ACTION_OPENING_TOKENS = new Set([
-  "السلام",
-  "عليكم",
-  "ورحمه",
-  "الله",
-  "وبركاته",
-  "وعليكم",
-  "اهلا",
-  "وسهلا",
-  "مرحبا",
-  "هلا",
-  "هاي",
-  "صباح",
-  "مساء",
-  "الخير",
-  "hello",
-  "hi",
-  "hey",
-]);
-
-function isClearlyNonActionOpening(message: string): boolean {
-  const normalized = normalizeActionRoutingText(message);
-  if (!normalized) return true;
-  if (NON_ACTION_OPENING_PHRASES.has(normalized)) return true;
-
-  const tokens = normalized.split(" ").filter(Boolean);
-  return (
-    tokens.length > 0 &&
-    tokens.length <= 6 &&
-    tokens.every((token) => NON_ACTION_OPENING_TOKENS.has(token))
-  );
 }
 
 export async function validateChatRequestedExternalAction(params: {
@@ -152,6 +85,16 @@ export async function validateChatRequestedExternalAction(params: {
   }
   if (trigger !== "CHAT_REQUESTED") {
     return { shouldQueue: false, reasoning: "Source is not chat-requested." };
+  }
+  if (
+    String(source.actionType ?? "LOOKUP").toUpperCase() === "LOOKUP" &&
+    !hasRequiredAiWritableField(source.expectedParamsSchema)
+  ) {
+    return {
+      shouldQueue: false,
+      reasoning:
+        "Lookup action is not scoped. Add at least one required parameter before activating it.",
+    };
   }
   if (!params.latestUserMessage.trim()) {
     return { shouldQueue: false, reasoning: "Latest customer message is empty." };
@@ -193,39 +136,4 @@ export async function validateChatRequestedExternalAction(params: {
     shouldQueue: true,
     reasoning: "Deterministic action validation passed.",
   };
-}
-
-export async function filterEligibleAgentActionSources(
-  sources: AgentActionSource[],
-  latestUserMessage: string,
-  options?: {
-    businessProfileId?: number;
-    queryEmbedding?: number[] | null;
-    maxTools?: number;
-    minSimilarity?: number;
-  },
-): Promise<AgentActionSource[]> {
-  if (!latestUserMessage.trim()) return [];
-  if (isClearlyNonActionOpening(latestUserMessage)) {
-    logger.info("integration_action.semantic_router.skipped", {
-      reason: "non_action_opening",
-      businessProfileId: options?.businessProfileId,
-    });
-    return [];
-  }
-  if (!options?.businessProfileId || !options.queryEmbedding?.length) {
-    logger.info("integration_action.semantic_router.skipped", {
-      reason: "missing_query_embedding",
-      businessProfileId: options?.businessProfileId,
-    });
-    return [];
-  }
-
-  return findSemanticallyEligibleAgentActionSources({
-    businessProfileId: options.businessProfileId,
-    sources,
-    queryEmbedding: options.queryEmbedding,
-    maxTools: options.maxTools,
-    minSimilarity: options.minSimilarity,
-  });
 }

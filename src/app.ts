@@ -5,7 +5,9 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import adminRoutes from "@modules/admin/core/admin.routes";
 import managerRoutes from "@modules/admin/manager/manager.routes";
-import leadRoutes from "@modules/business/lead/lead.routes";
+import leadRoutes, {
+  publicLeadRoutes,
+} from "@modules/business/lead/lead.routes";
 import customerRoutes from "@modules/business/customer/customer.routes";
 import facebookRoutes from "@modules/meta/facebook/facebook.routes";
 import userRoutes from "@modules/auth/user/user.routes";
@@ -114,6 +116,7 @@ app.use("/v1/auth", authRoutes);
 // Public/Webhook Routes (Meta sends payloads here without Bearer tokens)
 app.use("/v1/messenger", messengerRoutes);
 app.use("/v1/whatsapp", whatsappRoutes);
+app.use("/v1/leads", publicLeadRoutes);
 
 // API contract and interactive documentation
 app.use("/", docsRoutes);

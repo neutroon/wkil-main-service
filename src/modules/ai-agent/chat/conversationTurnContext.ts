@@ -4,7 +4,7 @@ import {
   toPromptMessages,
 } from "./conversationTurns";
 
-const HISTORY_LIMIT = 10;
+const HISTORY_LIMIT = 24;
 
 type ConversationTurnRow = {
   role: string;

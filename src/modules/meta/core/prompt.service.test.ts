@@ -104,7 +104,18 @@ describe("buildSystemPrompt", () => {
       "Use only real parameters from the customer, chat history, or <chat_context>.",
     );
     expect(prompt).toContain(
+      "For multi-turn action detail collection, combine the current message with recent chat history",
+    );
+    expect(prompt).toContain(
       "If required parameters are missing, ask one concise clarification question instead of calling the action.",
+    );
+    expect(prompt).toContain("target item/service/course/order");
+    expect(prompt).toContain("Do not call a read/list/search helper");
+    expect(prompt).toContain(
+      "do not merely say that staff will handle it",
+    );
+    expect(prompt).toContain(
+      "Do not claim staff will contact, review, register, book, submit, save, or follow up",
     );
   });
 
@@ -193,6 +204,7 @@ describe("buildSystemPrompt", () => {
     );
 
     expect(webPrompt).toContain("bullets are allowed only when they make the answer easier to scan");
+    expect(webPrompt).toContain("Do not repeat greetings after the first assistant reply");
     expect(whatsappPrompt).not.toContain("Channel: Messenger");
     expect(messengerPrompt).not.toContain("Channel: WhatsApp");
   });

@@ -195,7 +195,9 @@ export async function runActionToolsV2Node(
 }
 
 function buildRejectedToolReplyPolicy(reason: string): ReplyPolicy {
-  const field = reason.match(/unprovided_parameter:([A-Za-z0-9_.-]+)/)?.[1];
+  const field =
+    reason.match(/unprovided_parameter:([A-Za-z0-9_.-]+)/)?.[1] ||
+    reason.match(/Missing required parameters:\s*([A-Za-z0-9_.-]+)/)?.[1];
   return {
     active: true,
     reason: "tool_policy_rejected",

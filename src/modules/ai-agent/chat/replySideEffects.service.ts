@@ -9,7 +9,10 @@ type ReplySideEffectInput = {
   businessProfileId: number;
   conversationId: number;
   message: SavedModelMessage;
-  reply: Pick<AiRoutingDecision, "action" | "handoffCategory" | "reasoning">;
+  reply: Pick<
+    AiRoutingDecision,
+    "action" | "handoffCategory" | "reasoning"
+  > & Partial<Pick<AiRoutingDecision, "replyType" | "missingInfo">>;
 };
 
 export async function notifySavedModelReplySideEffects(
@@ -43,6 +46,7 @@ export function shouldScheduleFollowUpsForSavedReply(
 ): boolean {
   if (isSystemErrorReply(params.reply)) return false;
   if (isCustomerHandoff(params.reply)) return false;
+  if (isWaitingForCustomerInput(params.reply)) return false;
   if (params.message.handoffCategory) return false;
   return true;
 }
@@ -85,4 +89,14 @@ function isSystemErrorReply(
   reply: Pick<AiRoutingDecision, "handoffCategory">,
 ): boolean {
   return reply.handoffCategory === "SYSTEM_ERROR";
+}
+
+function isWaitingForCustomerInput(
+  reply: Partial<Pick<AiRoutingDecision, "replyType" | "missingInfo">>,
+): boolean {
+  const replyType = String(reply.replyType || "").toUpperCase();
+  if (replyType === "CLARIFICATION" || replyType === "ASK_FOR_CORRECTION") {
+    return true;
+  }
+  return Boolean(reply.missingInfo);
 }

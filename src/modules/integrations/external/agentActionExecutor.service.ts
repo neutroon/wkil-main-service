@@ -20,7 +20,7 @@ const MAX_EXTERNAL_FETCH_ATTEMPTS = 2;
 const EXTERNAL_FETCH_TIMEOUT_MS = 8_000;
 const BLOCKED_HOSTNAMES = new Set(["localhost", "localhost.localdomain"]);
 
-type ExternalQueryEnvelope = {
+export type ExternalQueryEnvelope = {
   success: boolean;
   verification: CanonicalVerification;
   actionType: string;
@@ -29,13 +29,40 @@ type ExternalQueryEnvelope = {
   error?: string;
 };
 
-type ExternalToolContext = {
+export type ExternalToolContext = {
   customerPhone?: string;
   conversationId?: number;
+  contextValues?: Record<string, unknown>;
   latestUserText?: string;
   historyText?: string;
   parentActionResponse?: unknown;
   workflowInputBindings?: unknown;
+};
+
+type ExternalRequestSource = {
+  id: number;
+  name?: string;
+  apiUrl: string;
+  method: string;
+  headers?: unknown;
+  requestMapping?: unknown;
+  responseMapping?: unknown;
+  expectedParamsSchema?: unknown;
+  actionType?: unknown;
+};
+
+type PreparedExternalRequest = {
+  finalUrl: string;
+  options: RequestInit;
+  allParams: Record<string, any>;
+  mappedRequest: Record<string, any> | null;
+  preview: {
+    method: string;
+    url: string;
+    headers: Record<string, string>;
+    body: unknown;
+    curl: string;
+  };
 };
 
 export type AgentActionSourceStatusMetadata = {
@@ -204,22 +231,13 @@ export function mergeHeaderUpdate(
 export function serializeAgentActionSource<
   T extends {
     headers?: unknown;
-    routingEmbedding?: unknown;
-    routingTextHash?: unknown;
-    routingIndexedAt?: unknown;
   },
 >(
   source: T,
-): Omit<T, "headers" | "routingEmbedding" | "routingTextHash" | "routingIndexedAt"> & {
+): Omit<T, "headers"> & {
   headers?: Record<string, string>;
 } {
-  const {
-    headers,
-    routingEmbedding: _routingEmbedding,
-    routingTextHash: _routingTextHash,
-    routingIndexedAt: _routingIndexedAt,
-    ...publicSource
-  } = source;
+  const { headers, ...publicSource } = source;
 
   return {
     ...publicSource,
@@ -296,6 +314,13 @@ function isFixedFieldRule(value: unknown): boolean {
 }
 
 function getContextValue(context: ExternalToolContext, contextKey: unknown): unknown {
+  if (typeof contextKey !== "string" || !contextKey) return undefined;
+  if (
+    context.contextValues &&
+    Object.prototype.hasOwnProperty.call(context.contextValues, contextKey)
+  ) {
+    return context.contextValues[contextKey];
+  }
   if (contextKey === "customerPhone") return context.customerPhone;
   if (contextKey === "conversationId") return context.conversationId;
   return undefined;
@@ -334,9 +359,11 @@ export function assertExternalArgsAllowedByPolicy(
 }
 
 function valueAppearsInChatContext(value: string, context: ExternalToolContext): boolean {
-  const contextValues = [context.customerPhone, context.conversationId].flatMap(
-    flattenScalarValues,
-  );
+  const contextValues = [
+    context.customerPhone,
+    context.conversationId,
+    context.contextValues,
+  ].flatMap(flattenScalarValues);
   return contextValues.some((item) => {
     const normalized = item.toLowerCase().trim();
     if (!normalized) return false;
@@ -358,7 +385,17 @@ function valueAppearsInUserText(value: string, userText: string): boolean {
 }
 
 function compactForMatching(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9\u0600-\u06ff]+/gi, "");
+  return normalizeArabicDigits(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9\u0600-\u06ff]+/gi, "");
+}
+
+function normalizeArabicDigits(value: string): string {
+  return value.replace(/[\u0660-\u0669\u06f0-\u06f9]/g, (digit) => {
+    const code = digit.charCodeAt(0);
+    const zero = code <= 0x0669 ? 0x0660 : 0x06f0;
+    return String(code - zero);
+  });
 }
 
 export function buildServerInjectedParams(
@@ -457,7 +494,11 @@ function buildWorkflowBoundParams(
     if (source === "ACTION_RESULT") {
       value = getByPath(context.parentActionResponse, String(binding.path || ""));
     } else if (source === "CHAT_CONTEXT") {
-      value = getByPath(context as unknown as Record<string, unknown>, String(binding.path || ""));
+      const bindingPath = String(binding.path || "");
+      value = getByPath(context.contextValues, bindingPath);
+      if (isMissingParamValue(value)) {
+        value = getByPath(context as unknown as Record<string, unknown>, bindingPath);
+      }
     } else if (source === "FIXED") {
       value = binding.value;
     } else if (source === "DEFAULT") {
@@ -662,6 +703,165 @@ function flattenScalarValues(value: unknown): string[] {
   return [];
 }
 
+export function collectMissingRequiredAiWritableParams(
+  schema: unknown,
+  args: Record<string, any>,
+): string[] {
+  const missing = new Set<string>();
+
+  const visit = (currentSchema: unknown, pathPrefix = "") => {
+    if (!isRecord(currentSchema)) return;
+
+    for (const [field, rule] of Object.entries(currentSchema)) {
+      if (!isRecord(rule)) continue;
+      const path = pathPrefix ? `${pathPrefix}.${field}` : field;
+      const type = String(rule.type || "STRING").toUpperCase();
+
+      if (
+        isAiWritableFieldRule(rule) &&
+        rule.required === true &&
+        isMissingParamValue(getByPath(args, path))
+      ) {
+        missing.add(path);
+      }
+
+      if (type === "OBJECT") {
+        visit(rule.properties, path);
+      } else if (type === "ARRAY" && isRecord(rule.items)) {
+        visit(rule.items.properties ?? rule.items, path);
+      }
+    }
+  };
+
+  visit(schema);
+  return Array.from(missing);
+}
+
+function buildExternalRequest(
+  source: ExternalRequestSource,
+  args: Record<string, any>,
+  context: ExternalToolContext,
+  options: { maskHeaders?: boolean } = {},
+): PreparedExternalRequest {
+  const filteredArgs = filterExternalArgsBySchema(
+    source.expectedParamsSchema,
+    args,
+  );
+  const injectedParams = buildServerInjectedParams(
+    source.expectedParamsSchema,
+    context,
+    filteredArgs,
+  );
+  const baseParams = {
+    ...filteredArgs,
+    ...injectedParams,
+  };
+  const allParams = deepMergeRecords(
+    baseParams,
+    buildWorkflowBoundParams(context.workflowInputBindings, baseParams, context),
+  );
+  const mappedRequest = applyObjectMapping(source.requestMapping, {
+    args: allParams,
+    context,
+  });
+  const method = String(source.method || "GET").toUpperCase();
+  let finalUrl = source.apiUrl;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(options.maskHeaders
+      ? maskExternalHeaders(source.headers) ?? {}
+      : decryptExternalHeaders(source.headers)),
+  };
+  const requestOptions: RequestInit = {
+    method,
+    redirect: "manual",
+    headers,
+  };
+  let body: unknown = null;
+
+  if (method === "GET") {
+    const url = new URL(source.apiUrl);
+    for (const [key, val] of Object.entries(mappedRequest ?? allParams)) {
+      if (val !== undefined && val !== null) {
+        url.searchParams.set(key, String(val));
+      }
+    }
+    finalUrl = url.toString();
+  } else {
+    body = mappedRequest ?? allParams;
+    requestOptions.body = JSON.stringify(body);
+  }
+
+  return {
+    finalUrl,
+    options: requestOptions,
+    allParams,
+    mappedRequest,
+    preview: {
+      method,
+      url: finalUrl,
+      headers,
+      body,
+      curl: buildCurlPreview({
+        method,
+        url: finalUrl,
+        headers,
+        body,
+      }),
+    },
+  };
+}
+
+function buildCurlPreview(request: {
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+  body: unknown;
+}): string {
+  const parts = [
+    "curl",
+    "-X",
+    shellQuote(request.method),
+    shellQuote(request.url),
+  ];
+
+  for (const [key, value] of Object.entries(request.headers)) {
+    parts.push("-H", shellQuote(`${key}: ${value}`));
+  }
+
+  if (request.body !== null && request.body !== undefined) {
+    parts.push("--data", shellQuote(JSON.stringify(request.body)));
+  }
+
+  return parts.join(" \\\n  ");
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\"'\"'")}'`;
+}
+
+export function buildAgentActionSourceTestPreview(
+  source: ExternalRequestSource,
+  args: Record<string, any>,
+  context: ExternalToolContext = {},
+) {
+  const prepared = buildExternalRequest(source, args, context, {
+    maskHeaders: true,
+  });
+  const missingArgs = collectMissingRequiredAiWritableParams(
+    source.expectedParamsSchema,
+    args,
+  );
+
+  return {
+    ...prepared.preview,
+    params: prepared.allParams,
+    mappedRequest: prepared.mappedRequest,
+    missingArgs,
+    canRun: missingArgs.length === 0,
+  };
+}
+
 async function fetchOnceWithTimeout(
   url: string,
   options: RequestInit,
@@ -805,6 +1005,16 @@ export async function executeExternalQuery(
     throw new AppError(`Active Agent Action source with id ${sourceId} not found`, 404);
   }
 
+  return executeExternalQueryForSource(source, businessProfileId, sourceId, args, context);
+}
+
+async function executeExternalQueryForSource(
+  source: ExternalRequestSource,
+  businessProfileId: number,
+  sourceId: number,
+  args: Record<string, any>,
+  context: ExternalToolContext = {},
+): Promise<ExternalQueryEnvelope> {
   try {
     await assertExternalApiUrlNetworkSafe(source.apiUrl);
     const filteredArgs = filterExternalArgsBySchema(
@@ -826,51 +1036,9 @@ export async function executeExternalQuery(
         error: `External tool parameter "${policyCheck.field}" was not provided by an allowed source`,
       };
     }
-    const configuredParams = (source.queryParams as object || {}) as Record<string, any>;
-    const injectedParams = buildServerInjectedParams(
-      source.expectedParamsSchema,
-      context,
-      { ...filteredArgs, ...configuredParams },
-    );
-    const baseParams = {
-      ...filteredArgs,
-      ...injectedParams,
-      ...configuredParams,
-    };
-    const allParams = deepMergeRecords(
-      baseParams,
-      buildWorkflowBoundParams(context.workflowInputBindings, baseParams, context),
-    );
-    const mappedRequest = applyObjectMapping(source.requestMapping, {
-      args: allParams,
-      context,
-    });
-    let finalUrl = source.apiUrl;
-    let options: RequestInit = {
-      method: source.method,
-      redirect: "manual",
-      headers: {
-        "Content-Type": "application/json",
-      },
-    };
-
-    if (source.headers) {
-      options.headers = { ...options.headers, ...decryptExternalHeaders(source.headers) };
-    }
-
-    if (source.method === "GET") {
-      const url = new URL(source.apiUrl);
-      for (const [key, val] of Object.entries(mappedRequest ?? allParams)) {
-        if (val !== undefined && val !== null) {
-          url.searchParams.set(key, String(val));
-        }
-      }
-      finalUrl = url.toString();
-    } else {
-      options.body = JSON.stringify(mappedRequest ?? allParams);
-    }
-
-    const fetchResult = await fetchExternalWithRetry(finalUrl, options);
+    const prepared = buildExternalRequest(source, filteredArgs, context);
+    let finalUrl = prepared.finalUrl;
+    const fetchResult = await fetchExternalWithRetry(finalUrl, prepared.options);
     const response = fetchResult.response;
     finalUrl = fetchResult.finalUrl;
 
@@ -890,7 +1058,7 @@ export async function executeExternalQuery(
     }
     const parsedBody = parseExternalResponseBody(body, contentType);
     const mappedResponse = applyObjectMapping(source.responseMapping, {
-      args: allParams,
+      args: prepared.allParams,
       context,
       response: parsedBody,
       responseMeta: {
@@ -964,6 +1132,162 @@ export async function executeExternalQuery(
       error: String(error),
     };
   }
+}
+
+export async function testAgentActionSourceRequest(
+  source: ExternalRequestSource,
+  businessProfileId: number,
+  args: Record<string, any>,
+  context: ExternalToolContext = {},
+  run = false,
+) {
+  const preview = buildAgentActionSourceTestPreview(source, args, context);
+
+  if (!run) {
+    return {
+      success: true,
+      preview,
+      result: null,
+    };
+  }
+
+  if (preview.missingArgs.length > 0) {
+    return {
+      success: false,
+      preview,
+      result: {
+        success: false,
+        verification: "failed" as const,
+        actionType: `integration_action_${source.id}`,
+        reason: "missing_required_parameters",
+        data: null,
+        error: `Missing required test parameters: ${preview.missingArgs.join(", ")}`,
+      },
+    };
+  }
+
+  const testContext = {
+    ...context,
+    latestUserText:
+      context.latestUserText || flattenScalarValues(args).join(" "),
+  };
+  const result = await executeExternalQueryForSource(
+    source,
+    businessProfileId,
+    source.id,
+    args,
+    testContext,
+  );
+
+  return {
+    success: result.success,
+    preview,
+    result,
+  };
+}
+
+type ExternalActionWorkflowForTest = {
+  id: number;
+  name?: string;
+  inputBindings?: unknown;
+  lookupSource?: ExternalRequestSource | null;
+  mutationSource?: ExternalRequestSource | null;
+};
+
+type TestAgentActionWorkflowRequestOptions = {
+  lookupArgs?: Record<string, any>;
+  mutationArgs?: Record<string, any>;
+  context?: ExternalToolContext;
+  run?: boolean;
+};
+
+function sourceStepName(
+  step: "lookup" | "mutation",
+  source: ExternalRequestSource,
+): string {
+  return source.name || `${step}_${source.id}`;
+}
+
+export async function testAgentActionWorkflowRequest(
+  workflow: ExternalActionWorkflowForTest,
+  businessProfileId: number,
+  options: TestAgentActionWorkflowRequestOptions = {},
+) {
+  if (!workflow.lookupSource && !workflow.mutationSource) {
+    throw new AppError("Workflow has no action steps", 400);
+  }
+
+  const run = options.run === true;
+  const context = options.context ?? {};
+  const steps: Array<Record<string, unknown>> = [];
+  let parentActionResponse: ExternalQueryEnvelope | null = null;
+
+  if (workflow.lookupSource) {
+    const lookupResponse = await testAgentActionSourceRequest(
+      workflow.lookupSource,
+      businessProfileId,
+      options.lookupArgs ?? {},
+      context,
+      run,
+    );
+    steps.push({
+      step: "lookup",
+      sourceId: workflow.lookupSource.id,
+      sourceName: sourceStepName("lookup", workflow.lookupSource),
+      ...lookupResponse,
+    });
+
+    if (run) {
+      parentActionResponse = lookupResponse.result;
+      if (!lookupResponse.result?.success) {
+        if (workflow.mutationSource) {
+          steps.push({
+            step: "mutation",
+            sourceId: workflow.mutationSource.id,
+            sourceName: sourceStepName("mutation", workflow.mutationSource),
+            skipped: true,
+            skipReason: "lookup_failed",
+            success: false,
+            preview: null,
+            result: null,
+          });
+        }
+        return {
+          success: false,
+          run,
+          workflowId: workflow.id,
+          steps,
+        };
+      }
+    }
+  }
+
+  if (workflow.mutationSource) {
+    const mutationResponse = await testAgentActionSourceRequest(
+      workflow.mutationSource,
+      businessProfileId,
+      options.mutationArgs ?? {},
+      {
+        ...context,
+        parentActionResponse,
+        workflowInputBindings: workflow.inputBindings,
+      },
+      run,
+    );
+    steps.push({
+      step: "mutation",
+      sourceId: workflow.mutationSource.id,
+      sourceName: sourceStepName("mutation", workflow.mutationSource),
+      ...mutationResponse,
+    });
+  }
+
+  return {
+    success: steps.every((step) => step.success !== false),
+    run,
+    workflowId: workflow.id,
+    steps,
+  };
 }
 
 

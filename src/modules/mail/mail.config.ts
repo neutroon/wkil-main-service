@@ -4,7 +4,7 @@ import { env } from "@config/env";
 
 /**
  * Production-grade SMTP Configuration
- * This bridge connects PagesPilot to your mailing provider via Nodemailer.
+ * This bridge connects Wkil to your mailing provider via Nodemailer.
  */
 
 export const mailer = nodemailer.createTransport({

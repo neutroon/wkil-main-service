@@ -5,7 +5,7 @@ import cloudinary from "./cloudinary.config";
 const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
   params: {
-    folder: "pagespilot-uploads",
+    folder: "wkil-uploads",
     allowed_formats: ["jpg", "jpeg", "png", "gif", "webp"],
     transformation: [{ width: 1920, height: 1080, crop: "limit" }],
   } as any,

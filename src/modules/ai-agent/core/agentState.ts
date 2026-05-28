@@ -2,7 +2,7 @@
  * LangGraph Agent State Schema
  *
  * This is the single source of truth for all data flowing through the
- * PagesPilot AI agent graph. It replaces the 4 mutable variables that
+ * Wkil AI agent graph. It replaces the 4 mutable variables that
  * were manually threaded through the while-loop in runAIEngineLoop:
  *   - turnCount
  *   - hadToolExecutionInTurn

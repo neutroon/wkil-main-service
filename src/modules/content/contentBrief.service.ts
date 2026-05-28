@@ -11,7 +11,7 @@ import {
 } from "../meta/facebook/facebook.service";
 
 const SCRAPING_SERVICE_URL =
-  env.SCRAPING_SERVICE_URL || "https://scraper.pagespilot.com/api/scrape";
+  env.SCRAPING_SERVICE_URL || "https://scraper.wkil.app/api/scrape";
 
 type CompetitorDiscoveryScope =
   | "PROVIDED_ONLY"

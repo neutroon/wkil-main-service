@@ -38,7 +38,7 @@ vi.mock("@modules/ai-agent/core/agentTurn.service", () => ({
 const baseState = () =>
   ({
     businessProfileId: 1,
-    businessName: "PagesPilot",
+    businessName: "Wkil",
     conversationId: 123,
     agentTurnId: 555,
     activeWorkflowId: 9,
@@ -164,3 +164,4 @@ describe("runActionToolsV2Node", () => {
     });
   });
 });
+

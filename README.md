@@ -1,10 +1,10 @@
-# PagesPilot Backend
+# Wkil Backend
 
 A comprehensive social media management platform backend that enables users to create, schedule, and manage Facebook content with AI-powered content generation capabilities.
 
 ## 🎯 Project Overview
 
-PagesPilot is a full-featured backend API for managing social media content, specifically designed for Facebook page management. The platform provides:
+Wkil is a full-featured backend API for managing social media content, specifically designed for Facebook page management. The platform provides:
 
 - **AI-Powered Content Generation**: Leverages Google Gemini and Vertex AI to generate engaging social media posts with customizable tone, length, and context
 - **Facebook Integration**: Complete OAuth integration for Facebook pages with support for posting, scheduling, comment management, and analytics
@@ -68,7 +68,7 @@ Create a `.env` file in the root directory with the following variables:
 
 ### Database
 ```env
-DATABASE_URL="postgresql://username:password@localhost:5432/pagespilot?schema=public"
+DATABASE_URL="postgresql://username:password@localhost:5432/wkil?schema=public"
 ```
 
 ### Server Configuration
@@ -136,14 +136,14 @@ Create a `.env` file in the root directory and add all required environment vari
 #### Option A: Using Local PostgreSQL
 1. Create a PostgreSQL database:
 ```bash
-createdb pagespilot
+createdb wkil
 ```
 
 2. Update `DATABASE_URL` in your `.env` file with your database credentials.
 
 #### Option B: Using Docker PostgreSQL
 ```bash
-docker run --name pagespilot-db -e POSTGRES_PASSWORD=password -e POSTGRES_DB=pagespilot -p 5432:5432 -d postgres
+docker run --name wkil-db -e POSTGRES_PASSWORD=password -e POSTGRES_DB=wkil -p 5432:5432 -d postgres
 ```
 
 ### 5. Run Database Migrations
@@ -320,12 +320,12 @@ npm run prisma:migrate
 
 ### Build Docker Image
 ```bash
-docker build -t pagespilot-backend .
+docker build -t wkil-backend .
 ```
 
 ### Run Docker Container
 ```bash
-docker run -p 8080:8080 --env-file .env pagespilot-backend
+docker run -p 8080:8080 --env-file .env wkil-backend
 ```
 
 ## 🚢 Production Deployment
@@ -400,4 +400,5 @@ ISC
 ---
 
 For more information or support, please contact me.
+
 

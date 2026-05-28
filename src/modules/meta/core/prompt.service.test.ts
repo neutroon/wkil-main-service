@@ -6,7 +6,7 @@ import {
 } from "./prompt.service";
 
 const baseProfile = {
-  name: "pagesPilot",
+  name: "wkil",
   identity: "AI content automation platform",
   voice: "Egyptian Arabic",
   tone: "Inspirational",
@@ -17,7 +17,7 @@ describe("buildSystemPrompt", () => {
   it("builds only relevant capability sections for direct chat", () => {
     const prompt = buildSystemPrompt({
       businessProfile: baseProfile,
-      context: [{ chunkType: "faq", content: "pagesPilot helps automate content." }],
+      context: [{ chunkType: "faq", content: "wkil helps automate content." }],
       channel: "web",
       customerPhone: "+20100111222",
       hasChatRequestedActions: false,
@@ -60,7 +60,7 @@ describe("buildSystemPrompt", () => {
     const prompt = buildSystemPrompt({
       businessProfile: baseProfile,
       context: [
-        { chunkType: "identity", content: "Business: pagesPilot" },
+        { chunkType: "identity", content: "Business: wkil" },
         { chunkType: "custom_section", content: "[KNOWLEDGE]: طرق التقديم" },
         { chunkType: "faq", content: "Q: التسجيل" },
       ],
@@ -78,7 +78,7 @@ describe("buildSystemPrompt", () => {
   it("includes external_tool as a canonical chunk type when completed action evidence exists", () => {
     const prompt = buildSystemPrompt({
       businessProfile: baseProfile,
-      context: [{ chunkType: "identity", content: "Business: pagesPilot" }],
+      context: [{ chunkType: "identity", content: "Business: wkil" }],
       channel: "whatsapp",
       hasCompletedActionResult: true,
     });
@@ -254,3 +254,4 @@ describe("channel prompt profiles", () => {
     );
   });
 });
+

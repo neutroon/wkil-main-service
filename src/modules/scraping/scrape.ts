@@ -9,7 +9,7 @@ import { websiteAnalysisSchema } from "../scraping/scraping.validation";
 
 import { env } from "@config/env";
 
-const SCRAPING_SERVICE_URL = env.SCRAPING_SERVICE_URL || "https://scraper.pagespilot.com/api/scrape";
+const SCRAPING_SERVICE_URL = env.SCRAPING_SERVICE_URL || "https://scraper.wkil.app/api/scrape";
 
 const OnboardingRouter = Router();
 

@@ -247,7 +247,7 @@ async function uploadBufferToCloudinary(
 ): Promise<{ url: string; publicId: string }> {
   return new Promise((resolve, reject) => {
     const uploadStream = cloudinary.uploader.upload_stream(
-      { folder: "pagespilot-ai-generated" },
+      { folder: "wkil-ai-generated" },
       (error, result) => {
         if (error) {
           console.error("Cloudinary upload error:", error.message);

@@ -73,7 +73,7 @@ describe("toCanonicalVerificationRead", () => {
       source: {
         type: "STRING",
         source: "DEFAULT",
-        value: "PagesPilot AI",
+        value: "Wkil AI",
         description: "Default source label",
       },
       tenant: {
@@ -107,7 +107,7 @@ describe("toCanonicalVerificationRead", () => {
         customerPhone: "+201234567890",
       }),
     ).toMatchObject({
-      source: "PagesPilot AI",
+      source: "Wkil AI",
     });
   });
 
@@ -188,7 +188,7 @@ describe("toCanonicalVerificationRead", () => {
     expect(
       assertExternalArgsAllowedByPolicy(
         schema,
-        { propertyName: "pagesPilot services" },
+        { propertyName: "wkil services" },
         { latestUserText: "fd" },
       ),
     ).toEqual({
@@ -512,3 +512,4 @@ describe("Agent Action production hardening helpers", () => {
     expect(mutationStep.result).toBeNull();
   });
 });
+

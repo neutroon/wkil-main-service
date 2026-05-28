@@ -157,7 +157,7 @@ export const authenticateSocialUser = async (
 
   const randomPassword = randomBytes(48).toString("hex");
   const password = await bcrypt.hash(randomPassword, 10);
-  const displayName = profile.name?.trim() || email.split("@")[0] || "PagesPilot User";
+  const displayName = profile.name?.trim() || email.split("@")[0] || "Wkil User";
 
   return prisma.$transaction(async (tx) => {
     const user = await tx.user.create({

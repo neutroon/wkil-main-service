@@ -46,11 +46,12 @@ export const corsOptions = {
       "http://localhost:3000",
       "http://localhost:3001",
       "http://localhost:8080",
-      "https://pagespilot.com",
-      "https://www.pagespilot.com",
-      "https://pagespilot.vercel.app",
-      "https://pagespilot.netlify.app",
-      "https://app.pagespilot.com",
+      "https://wkil.app",
+      "https://www.wkil.app",
+      "https://go.wkil.app",
+      "https://app.wkil.app",
+      "https://wkil.vercel.app",
+      "https://wkil.netlify.app",
     ];
 
     if (allowedOrigins.includes(origin)) {
@@ -58,7 +59,7 @@ export const corsOptions = {
     }
 
     // Dynamic production fallbacks
-    if (origin.endsWith(".pagespilot.com") || origin.endsWith(".vercel.app") || origin === env.FRONTEND_URL) {
+    if (origin.endsWith(".wkil.app") || origin.endsWith(".vercel.app") || origin === env.FRONTEND_URL) {
       return callback(null, true);
     }
 

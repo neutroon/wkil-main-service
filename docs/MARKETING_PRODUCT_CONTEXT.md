@@ -1,4 +1,4 @@
-# PagesPilot Backend — Marketing & Product Context
+# Wkil Backend — Marketing & Product Context
 
 **Purpose:** Single structured reference for positioning, website copy, sales decks, and feature lists.  
 **Scope:** Features implemented in this repository (`back-end`).  
@@ -73,7 +73,7 @@
 
 ### 3.7 Website onboarding / scraping (lead-in to profile)
 
-- **POST `/v1/scrape/analyze-website`:** accepts a URL; calls external **scraping service** (configurable `SCRAPING_SERVICE_URL`, default PagesPilot scraper).
+- **POST `/v1/scrape/analyze-website`:** accepts a URL; calls external **scraping service** (configurable `SCRAPING_SERVICE_URL`, default Wkil scraper).
 - Flow: scrape homepage → **AI picks strategic links** → optional **batch scrape** → **AI extracts structured business identity** for onboarding forms.
 - Bilingual UX detail: Arabic error message on failure path (good for MENA marketing).
 
@@ -192,7 +192,7 @@
 | **Google Vertex AI** | Image generation path for social content |
 | **Cloudinary** | Image storage for uploads and generated assets |
 | **Meta Graph API** | Facebook Pages, Messenger Send API, WhatsApp Cloud API |
-| **Optional: PagesPilot scraper** | `SCRAPING_SERVICE_URL` |
+| **Optional: Wkil scraper** | `SCRAPING_SERVICE_URL` |
 | **Optional: ML sentiment service** | Code exists in `src/routes/sentiment.routes.ts` — **not mounted** in `app.ts` today; mention only as roadmap or wire-up task |
 
 ---
@@ -243,3 +243,4 @@
 ---
 
 *Generated from repository scan. Update this file when you ship new routes or change behavior.*
+

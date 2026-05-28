@@ -308,7 +308,7 @@ describe("customer service", () => {
       updatedAt: new Date(),
       businessProfile: {
         id: 1,
-        name: "PagesPilot",
+        name: "Wkil",
         customerMemoryFields: [],
       },
       conversations: [],

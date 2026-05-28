@@ -7,7 +7,7 @@ import { retrieveRelevantChunksWithEmbedding } from "../rag/rag.service";
 
 vi.mock("../rag/rag.service", () => ({
   retrieveRelevantChunksWithEmbedding: vi.fn().mockResolvedValue({
-    chunks: [{ chunkType: "identity", content: "Business: pagesPilot" }],
+    chunks: [{ chunkType: "identity", content: "Business: wkil" }],
     queryEmbedding: [0.1, 0.2, 0.3],
   }),
 }));
@@ -93,7 +93,7 @@ const leadCaptureSource = {
 const businessProfile = {
   id: 1,
   userId: 1,
-  name: "pagesPilot",
+  name: "wkil",
   identity: "AI content automation platform",
   voice: "Egyptian Arabic",
   tone: "Inspirational",
@@ -124,7 +124,7 @@ describe("prepareAgentParams", () => {
     expect(result.graphParams?.tools?.[0].schema.safeParse({}).success).toBe(false);
     expect(
       result.graphParams?.tools?.[0].schema.safeParse({
-        propertyName: "pagesPilot services",
+        propertyName: "wkil services",
       }).success,
     ).toBe(true);
     expect(buildSystemPrompt).toHaveBeenCalledWith(
@@ -441,3 +441,4 @@ describe("prepareAgentParams", () => {
     );
   });
 });
+

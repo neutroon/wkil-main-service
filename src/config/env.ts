@@ -81,7 +81,7 @@ const envSchema = z.object({
   SMTP_SECURE: z.string().optional().default("false").transform((val) => val === "true"),
   SMTP_USER: z.string().min(1),
   SMTP_PASS: z.string().min(1),
-  MAIL_FROM: z.string().default("PagesPilot <noreply@pagespilot.com>"),
+  MAIL_FROM: z.string().default("Wkil <noreply@wkil.app>"),
 });
 
 // ── Validation ───────────────────────────────────────────────────────────────

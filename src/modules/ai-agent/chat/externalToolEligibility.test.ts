@@ -46,8 +46,8 @@ describe("external tool eligibility", () => {
     await expect(
       validateChatRequestedExternalAction({
         source: priceSource,
-        latestUserMessage: "what is the price for pagesPilot services?",
-        args: { propertyName: "pagesPilot services" },
+        latestUserMessage: "what is the price for wkil services?",
+        args: { propertyName: "wkil services" },
       }),
     ).resolves.toEqual({
       shouldQueue: true,
@@ -230,3 +230,4 @@ describe("external tool eligibility", () => {
     ).resolves.toMatchObject({ shouldQueue: false });
   });
 });
+

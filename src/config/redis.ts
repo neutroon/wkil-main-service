@@ -40,5 +40,5 @@ export const bullConnection: ConnectionOptions = {
 export const bullQueuePrefix =
   env.BULLMQ_PREFIX ||
   (env.NODE_ENV === "development"
-    ? "pagespilot-development"
-    : "pagespilot-production");
+    ? "wkil-development"
+    : "wkil-production");

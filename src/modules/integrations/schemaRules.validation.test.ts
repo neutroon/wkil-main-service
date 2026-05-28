@@ -22,7 +22,7 @@ describe("aiSchemaObject", () => {
   it("rejects legacy shorthand fields", () => {
     const result = aiSchemaObject.safeParse({
       customerName: "Customer full name",
-      source: "fixed: PagesPilot AI",
+      source: "fixed: Wkil AI",
     });
 
     expect(result.success).toBe(false);
@@ -61,7 +61,7 @@ describe("aiSchemaObject", () => {
       source: {
         type: "STRING",
         source: "DEFAULT",
-        value: "PagesPilot AI",
+        value: "Wkil AI",
         description: "Default source label sent if omitted by the user",
       },
     });
@@ -91,3 +91,4 @@ describe("aiSchemaObject", () => {
     ).toBe(false);
   });
 });
+

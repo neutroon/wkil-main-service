@@ -9,8 +9,8 @@ import {
 import { computeBusinessChatReply } from "@modules/ai-agent/chat/businessChatReply.service";
 import { initialCustomerReplyStatus } from "@modules/ai-agent/chat/deliveryPolicy";
 import {
-  notifySavedModelReplySideEffects,
-  scheduleFollowUpsForDeliveredReply,
+  runSavedModelReplySideEffectsInBackground,
+  scheduleFollowUpsForDeliveredReplyInBackground,
 } from "@modules/ai-agent/chat/replySideEffects.service";
 import { historyToLlmTurns, toPromptMessages } from "@modules/ai-agent/chat/conversationTurns";
 import { classifyInboundMessageSignal } from "@modules/ai-agent/chat/messageSignals";
@@ -320,7 +320,7 @@ export async function handleWhatsAppMessage(
       },
     );
 
-    await notifySavedModelReplySideEffects({
+    runSavedModelReplySideEffectsInBackground({
       businessProfileId: account.businessProfileId,
       conversationId: conversation.id,
       message: modelSaved,
@@ -349,7 +349,7 @@ export async function handleWhatsAppMessage(
           });
         }
 
-        await scheduleFollowUpsForDeliveredReply({
+        scheduleFollowUpsForDeliveredReplyInBackground({
           conversationId: conversation.id,
           businessProfileId: account.businessProfileId,
           message: modelSaved,
@@ -379,7 +379,7 @@ export async function handleWhatsAppMessage(
         aiReasoning: message,
         handoffCategory: "SYSTEM_ERROR",
       });
-      await notifySavedModelReplySideEffects({
+      runSavedModelReplySideEffectsInBackground({
         businessProfileId: account.businessProfileId,
         conversationId: conversation.id,
         message: errorSaved,

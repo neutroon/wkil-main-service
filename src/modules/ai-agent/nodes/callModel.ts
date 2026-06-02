@@ -10,7 +10,7 @@ import type { AgentStateType } from "../core/agentState";
 import {
   addUsageToSessionStats,
   invokeDecision,
-  invokeToolChoice,
+  invokeDecisionOrTool,
   isModelStructuredOutputError,
   isRetryableProviderError,
 } from "../core/modelRuntime";
@@ -100,7 +100,7 @@ export async function callModelNode(
 
   try {
     if (state.tools?.length) {
-      const toolChoice = await invokeToolChoice({
+      const decisionOrTool = await invokeDecisionOrTool({
         systemInstruction: state.systemInstruction,
         contents: windowedContents,
         tools: state.tools,
@@ -108,38 +108,38 @@ export async function callModelNode(
 
       sessionStats = addUsageToSessionStats(
         sessionStats,
-        toolChoice.usage,
-        toolChoice.modelName,
+        decisionOrTool.usage,
+        decisionOrTool.modelName,
       );
 
       const outputRejection = shouldRejectModelOutput({
-        finishReason: toolChoice.finishReason,
-        fullText: toolChoice.rawText,
-        functionCallCount: toolChoice.toolCalls.length,
+        finishReason: decisionOrTool.finishReason,
+        fullText: decisionOrTool.rawText,
+        functionCallCount: decisionOrTool.toolCalls.length,
       });
       if (outputRejection.reject) {
         logger.warn("ai.node.callModel.provider_output_rejected", {
           finishReason: outputRejection.reason,
           businessProfileId: state.businessProfileId,
           channel: state.channel,
-          textLength: toolChoice.rawText.length,
-          functionCallCount: toolChoice.toolCalls.length,
+          textLength: decisionOrTool.rawText.length,
+          functionCallCount: decisionOrTool.toolCalls.length,
         });
 
         return recoverRejectedModelOutput({
           state,
           sessionStats,
-          rawText: toolChoice.rawText,
+          rawText: decisionOrTool.rawText,
           rejectionReason: outputRejection.reason,
           context: "Model output was rejected before parsing",
         });
       }
 
-      if (toolChoice.toolCalls.length > 0) {
+      if (decisionOrTool.toolCalls.length > 0) {
         logger.info("ai.node.callModel.tool_calls", {
-          model: toolChoice.modelName,
+          model: decisionOrTool.modelName,
           turnCount: state.turnCount + 1,
-          toolCalls: toolChoice.toolCalls.map((call) => call.name),
+          toolCalls: decisionOrTool.toolCalls.map((call) => call.name),
           businessProfileId: state.businessProfileId,
         });
 
@@ -148,15 +148,35 @@ export async function callModelNode(
             ...state.contents,
             {
               role: "model" as const,
-              content: toolChoice.rawText,
-              toolCalls: toolChoice.toolCalls,
+              content: decisionOrTool.rawText,
+              toolCalls: decisionOrTool.toolCalls,
             },
           ],
-          toolCalls: toolChoice.toolCalls,
+          toolCalls: decisionOrTool.toolCalls,
           turnCount: state.turnCount + 1,
           sessionStats,
         };
       }
+
+      logger.info("ai.node.callModel.decision_or_tool_final", {
+        model: decisionOrTool.modelName,
+        turnCount: state.turnCount + 1,
+        businessProfileId: state.businessProfileId,
+        textLength: decisionOrTool.rawText.length,
+      });
+
+      return {
+        contents: [
+          ...state.contents,
+          {
+            role: "model" as const,
+            content: decisionOrTool.rawText,
+          },
+        ],
+        toolCalls: [],
+        turnCount: state.turnCount + 1,
+        sessionStats,
+      };
     }
 
     const decisionResult = await invokeDecision({

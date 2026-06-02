@@ -46,6 +46,19 @@ workflowV2.addEdge("recordUsage", END);
 
 export const agentGraphV2 = workflowV2.compile({ checkpointer });
 
+let checkpointerSetupPromise: Promise<void> | null = null;
+
+async function ensureCheckpointerSetup(): Promise<void> {
+  if (!checkpointerSetupPromise) {
+    checkpointerSetupPromise = checkpointer.setup().catch((error) => {
+      checkpointerSetupPromise = null;
+      throw error;
+    });
+  }
+
+  return checkpointerSetupPromise;
+}
+
 export interface AgentGraphV2Params {
   agentTurnId: number;
   systemInstruction: string;
@@ -120,7 +133,7 @@ async function _runGraphV2(params: AgentGraphV2Params): Promise<AiRoutingDecisio
   }));
 
   try {
-    await checkpointer.setup();
+    await ensureCheckpointerSetup();
   } catch (error: any) {
     logger.warn("ai.graph_v2.checkpointer_setup_failed", {
       error: error?.message || String(error),

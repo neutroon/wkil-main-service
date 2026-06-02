@@ -168,11 +168,28 @@ export async function prepareAgentParams(params: {
     ? effectiveCustomerRequestText(messageText)
     : customerModelMessage;
 
-  const retrieval = await retrieveRelevantChunksWithEmbedding(
+  const retrievalPromise = retrieveRelevantChunksWithEmbedding(
     businessProfile.id,
     effectiveMessageText,
     5,
   );
+  const activeWorkflowsPromise = listActiveAgentActionWorkflows(
+    businessProfile.id,
+  );
+  const mediaAssetsPromise = prisma.businessProfileMedia.findMany({
+    where: {
+      businessProfileId: businessProfile.id,
+      usageScope: "CHAT_ATTACHMENT",
+      isActive: true,
+      deletedAt: null,
+    },
+    select: { name: true, mediaType: true, instructions: true },
+  });
+  const [retrieval, activeWorkflows, mediaAssets] = await Promise.all([
+    retrievalPromise,
+    activeWorkflowsPromise,
+    mediaAssetsPromise,
+  ]);
   const relevantChunks = retrieval.chunks;
   const contextQuality = resolveContextQuality(relevantChunks);
   const availableChunkTypes = Array.from(
@@ -182,7 +199,6 @@ export async function prepareAgentParams(params: {
     availableChunkTypes.push("external_tool");
   }
 
-  const activeWorkflows = await listActiveAgentActionWorkflows(businessProfile.id);
   const workflowStartSourceIds = activeWorkflowSourceIds(activeWorkflows);
   const activeAgentActionSources = (businessProfile.agentActionSources || []).filter(
     (source) => {
@@ -208,17 +224,6 @@ export async function prepareAgentParams(params: {
       );
     },
   );
-
-  const mediaAssets = await prisma.businessProfileMedia.findMany({
-    where: {
-      businessProfileId: businessProfile.id,
-      usageScope: "CHAT_ATTACHMENT",
-      isActive: true,
-      deletedAt: null,
-    },
-    select: { name: true, mediaType: true, instructions: true },
-  });
-
   const eligibleExternalSources = activeAgentActionSources;
   const finalTools = buildAgentActionTools(eligibleExternalSources);
   const externalSourceFailureBehaviors = Object.fromEntries(
@@ -279,6 +284,7 @@ export async function prepareAgentParams(params: {
     businessProfileId: businessProfile.id,
     channel,
     customerDetailsToolExposed: false,
+    activeActionSourceCount: activeAgentActionSources.length,
     eligibleExternalSourceIds: eligibleExternalSources.map((source) => source.id),
     toolNames: finalTools.map((tool) => tool.name),
   });
@@ -409,6 +415,7 @@ export async function computeBusinessChatReply(params: {
   allowedActionSourceIds?: number[];
   completedExternalLookup?: CompletedExternalLookup;
 }): Promise<AiRoutingDecision> {
+  const startedAt = Date.now();
   const continuation = await findPendingMutationCorrectionContext(params);
   const graphInput = continuation
     ? {
@@ -421,8 +428,21 @@ export async function computeBusinessChatReply(params: {
       }
     : params;
 
+  const prepStartedAt = Date.now();
   const prep = await prepareAgentParams(graphInput);
-  if (prep.errorDecision) return prep.errorDecision;
+  const prepMs = Date.now() - prepStartedAt;
+  if (prep.errorDecision) {
+    logger.info("ai.chat.reply_latency", {
+      businessProfileId: params.businessProfile.id,
+      channel: params.channel,
+      totalMs: Date.now() - startedAt,
+      prepMs,
+      graphMs: 0,
+      underFiveSeconds: Date.now() - startedAt < 5000,
+      path: "preflight_error_decision",
+    });
+    return prep.errorDecision;
+  }
 
   let agentTurnId = params.agentTurnId;
   if (!agentTurnId && params.conversationId) {
@@ -440,10 +460,12 @@ export async function computeBusinessChatReply(params: {
     agentTurnId = turn.id;
   }
 
+  const graphStartedAt = Date.now();
   const decision = await runAgentGraphV2({
     ...prep.graphParams!,
     agentTurnId: agentTurnId ?? Date.now(),
   });
+  const graphMs = Date.now() - graphStartedAt;
   if (agentTurnId) {
     await updateAgentTurnStatus(
       agentTurnId,
@@ -453,6 +475,18 @@ export async function computeBusinessChatReply(params: {
   if (!params.completedExternalLookup) {
     enqueueCustomerMemoryCaptureFromChat(params);
   }
+  logger.info("ai.chat.reply_latency", {
+    businessProfileId: params.businessProfile.id,
+    channel: params.channel,
+    conversationId: params.conversationId,
+    totalMs: Date.now() - startedAt,
+    prepMs,
+    graphMs,
+    underFiveSeconds: Date.now() - startedAt < 5000,
+    action: decision.action,
+    replyType: decision.replyType,
+    toolCount: prep.graphParams?.tools?.length ?? 0,
+  });
   return decision;
 }
 

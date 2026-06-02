@@ -8,8 +8,7 @@ import { upsertCustomerFromConversation } from "@modules/business/customer/custo
 import { computeBusinessChatReply } from "@modules/ai-agent/chat/businessChatReply.service";
 import { initialCustomerReplyStatus } from "@modules/ai-agent/chat/deliveryPolicy";
 import {
-  notifySavedModelReplySideEffects,
-  scheduleFollowUpsForDeliveredReply,
+  runSavedModelReplySideEffectsInBackground,
 } from "@modules/ai-agent/chat/replySideEffects.service";
 import { AiRoutingDecision } from "@modules/ai-agent/core/aiEngine.utils";
 import { buildUnansweredUserTurnContext } from "@modules/ai-agent/chat/conversationTurnContext";
@@ -153,7 +152,7 @@ export async function processWidgetChatMessage(params: {
   );
 
   if (reply.handoffCategory === "SYSTEM_ERROR") {
-    await notifySavedModelReplySideEffects({
+    runSavedModelReplySideEffectsInBackground({
       businessProfileId: install.businessProfileId,
       conversationId: conversation.id,
       message: botMsg,
@@ -165,11 +164,12 @@ export async function processWidgetChatMessage(params: {
     };
   }
 
-  await notifySavedModelReplySideEffects({
+  runSavedModelReplySideEffectsInBackground({
     businessProfileId: install.businessProfileId,
     conversationId: conversation.id,
     message: botMsg,
     reply,
+    scheduleFollowUps: true,
   });
 
   {
@@ -177,13 +177,6 @@ export async function processWidgetChatMessage(params: {
       widgetInstallId: install.id,
       conversationId: conversation.id,
       preview: (reply.content || "").substring(0, 80),
-    });
-
-    await scheduleFollowUpsForDeliveredReply({
-      conversationId: conversation.id,
-      businessProfileId: install.businessProfileId,
-      message: botMsg,
-      reply,
     });
 
     // Resolve attachment for web delivery if AI included one

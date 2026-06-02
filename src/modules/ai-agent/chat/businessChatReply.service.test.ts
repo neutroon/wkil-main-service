@@ -137,7 +137,7 @@ describe("prepareAgentParams", () => {
     );
   });
 
-  it("exposes active action tools for greetings so the model can decide not to call them", async () => {
+  it("exposes active action tools for greetings so model-native tool selection can decide", async () => {
     const result = await prepareAgentParams({
       businessProfile,
       messageText: "hi",
@@ -149,6 +149,11 @@ describe("prepareAgentParams", () => {
     expect(result.graphParams?.tools?.[0]).toMatchObject({
       name: "integration_action_2",
     });
+    expect(buildSystemPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hasChatRequestedActions: true,
+      }),
+    );
   });
 
   it("skips Agent Action routing when the profile has no active action sources", async () => {

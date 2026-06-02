@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { buildToolChoiceSystemInstruction } from "./modelRuntime";
+import {
+  buildDecisionOrToolSystemInstruction,
+  buildToolChoiceSystemInstruction,
+} from "./modelRuntime";
 
 describe("buildToolChoiceSystemInstruction", () => {
   it("makes the tool-selection pass prefer native tool calls over JSON text", () => {
@@ -25,5 +28,28 @@ describe("buildToolChoiceSystemInstruction", () => {
     expect(prompt).toContain("NO_TOOL_CALL");
     expect(prompt).not.toContain("<output_contract>");
     expect(prompt).not.toContain("2. Return one structured JSON object only.");
+  });
+});
+
+describe("buildDecisionOrToolSystemInstruction", () => {
+  it("keeps tool selection semantic without language-specific deterministic rules", () => {
+    const prompt = buildDecisionOrToolSystemInstruction(
+      [
+        "<rules>",
+        "1. Speak strictly in the language and dialect specified in <persona>.",
+        "2. Return one structured JSON object only.",
+        "</rules>",
+        "<output_contract>",
+        "Return exactly one JSON object.",
+        "</output_contract>",
+      ].join("\n"),
+    );
+
+    expect(prompt).toContain("either emit one native tool/function call");
+    expect(prompt).toContain("Use semantic understanding");
+    expect(prompt).toContain("Do not rely on keyword matching");
+    expect(prompt).toContain("return exactly one JSON object");
+    expect(prompt).toContain("<output_contract>");
+    expect(prompt).not.toContain("NO_TOOL_CALL");
   });
 });

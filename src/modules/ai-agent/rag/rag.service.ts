@@ -245,13 +245,16 @@ export async function retrieveRelevantChunksWithEmbedding(
       };
     }
 
-  const { vector: queryEmbedding, totalTokens } = await embedQuery(query);
-  const vector = `[${queryEmbedding.join(",")}]`;
-
-  const profile = await prisma.businessProfile.findUnique({
+  const embeddingPromise = embedQuery(query);
+  const profilePromise = prisma.businessProfile.findUnique({
     where: { id: businessProfileId },
     select: { userId: true },
   });
+  const [{ vector: queryEmbedding, totalTokens }, profile] = await Promise.all([
+    embeddingPromise,
+    profilePromise,
+  ]);
+  const vector = `[${queryEmbedding.join(",")}]`;
 
   if (!profile) return { chunks: [], queryEmbedding };
 
@@ -268,7 +271,7 @@ export async function retrieveRelevantChunksWithEmbedding(
   }).catch(console.error);
 
   // 2. Cosine similarity search via pgvector (fetch extra rows, then threshold)
-  const vectorChunks = await prisma.$queryRaw<
+  const vectorChunksPromise = prisma.$queryRaw<
     RetrievedChunk[]
   >`
     SELECT "id", "chunkType", "content",
@@ -280,12 +283,27 @@ export async function retrieveRelevantChunksWithEmbedding(
   `;
 
   const keywordTerms = tokenizeForKeywordSearch(query);
-  const keywordCandidates = await prisma.businessProfileChunk.findMany({
+  const keywordCandidatesPromise = prisma.businessProfileChunk.findMany({
     where: { businessProfileId },
     select: { id: true, chunkType: true, content: true },
     orderBy: { updatedAt: "desc" },
     take: KEYWORD_FETCH_LIMIT,
   });
+  const coreChunksPromise = prisma.businessProfileChunk.findMany({
+    where: {
+      businessProfileId,
+      chunkType: { in: CORE_CHUNK_TYPES },
+    },
+    select: { id: true, chunkType: true, content: true },
+    orderBy: { chunkIndex: "asc" },
+    take: 5,
+  });
+
+  const [vectorChunks, keywordCandidates, coreChunks] = await Promise.all([
+    vectorChunksPromise,
+    keywordCandidatesPromise,
+    coreChunksPromise,
+  ]);
   const keywordChunks = keywordCandidates
     .map((chunk) => ({
       ...chunk,
@@ -296,15 +314,6 @@ export async function retrieveRelevantChunksWithEmbedding(
     .sort((a, b) => (b.lexicalScore ?? 0) - (a.lexicalScore ?? 0))
     .slice(0, topK);
 
-  const coreChunks = await prisma.businessProfileChunk.findMany({
-    where: {
-      businessProfileId,
-      chunkType: { in: CORE_CHUNK_TYPES },
-    },
-    select: { id: true, chunkType: true, content: true },
-    orderBy: { chunkIndex: "asc" },
-    take: 5,
-  });
   const coreContext = coreChunks.map((chunk) => ({
     ...chunk,
     similarity: 1,

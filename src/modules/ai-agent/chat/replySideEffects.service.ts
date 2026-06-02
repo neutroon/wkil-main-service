@@ -1,4 +1,5 @@
 import type { AiRoutingDecision } from "@modules/ai-agent/core/aiEngine.utils";
+import { logger } from "@utils/logger";
 
 type SavedModelMessage = {
   id: number;
@@ -73,6 +74,33 @@ export async function runSavedModelReplySideEffects(
   if (params.scheduleFollowUps) {
     await scheduleFollowUpsForDeliveredReply(params);
   }
+}
+
+export function runSavedModelReplySideEffectsInBackground(
+  params: ReplySideEffectInput & { scheduleFollowUps?: boolean },
+) {
+  runSavedModelReplySideEffects(params).catch((error: unknown) => {
+    logger.error("ai.reply_side_effects.failed", {
+      businessProfileId: params.businessProfileId,
+      conversationId: params.conversationId,
+      messageId: params.message.id,
+      scheduleFollowUps: Boolean(params.scheduleFollowUps),
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+}
+
+export function scheduleFollowUpsForDeliveredReplyInBackground(
+  params: ReplySideEffectInput,
+) {
+  scheduleFollowUpsForDeliveredReply(params).catch((error: unknown) => {
+    logger.error("ai.reply_followups.schedule_failed", {
+      businessProfileId: params.businessProfileId,
+      conversationId: params.conversationId,
+      messageId: params.message.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
 }
 
 function isCustomerHandoff(

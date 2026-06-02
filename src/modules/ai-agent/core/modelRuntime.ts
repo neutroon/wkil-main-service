@@ -37,6 +37,8 @@ export type ToolChoiceResult = {
   finishReason: string | null;
 };
 
+export type DecisionOrToolResult = ToolChoiceResult;
+
 export type DecisionInvokeResult = {
   decision: AiRoutingDecision;
   rawText: string;
@@ -409,6 +411,56 @@ export async function invokeToolChoice(params: {
     modelName: model,
     finishReason: readFinishReason(message),
   };
+}
+
+export async function invokeDecisionOrTool(params: {
+  systemInstruction: string;
+  contents: AgentContent[];
+  tools: AgentToolDefinition[];
+  temperature?: number;
+  timeoutMs?: number;
+}): Promise<DecisionOrToolResult> {
+  const messages = toLangChainMessages(
+    params.contents,
+    buildDecisionOrToolSystemInstruction(params.systemInstruction),
+  );
+
+  const { result: message, model } = await executeWithModelFallback<any>(
+    (currentModel, abortSignal) => {
+      const llm = createChatModel({
+        model: currentModel,
+        temperature: params.temperature ?? 0.4,
+      }).bindTools(params.tools as any);
+      return llm.invoke(messages, { signal: abortSignal } as any);
+    },
+    "AgentGraph.callModel.decisionOrTool",
+    params.timeoutMs,
+  );
+
+  return {
+    toolCalls: readToolCalls(message),
+    rawText: contentToText(message.content),
+    usage: readUsage(message),
+    modelName: model,
+    finishReason: readFinishReason(message),
+  };
+}
+
+export function buildDecisionOrToolSystemInstruction(
+  systemInstruction: string,
+): string {
+  return [
+    systemInstruction.trim(),
+    "",
+    "<tool_decision_stage>",
+    "In this single pass, either emit one native tool/function call or return the final customer-facing JSON response.",
+    "Use semantic understanding of the current customer request, recent chat history, chat context, and tool descriptions. Do not rely on keyword matching, language assumptions, or accent-specific rules.",
+    "Call a tool only when one provided tool is necessary to satisfy the customer's request and all required arguments are known from the customer, recent chat history, or chat context.",
+    "If no provided tool is necessary, if required arguments are missing or ambiguous, or if the answer is available from business context, return exactly one JSON object that follows the normal output contract.",
+    "For missing or ambiguous required action details, do not call a tool; return a JSON clarification asking for the next needed detail.",
+    "Do not write tool names as text. Use native tool/function calling when a tool is needed.",
+    "</tool_decision_stage>",
+  ].join("\n");
 }
 
 export function buildToolChoiceSystemInstruction(

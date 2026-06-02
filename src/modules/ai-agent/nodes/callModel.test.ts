@@ -3,11 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const {
   buildAiRecoveryDecisionMock,
   invokeDecisionMock,
+  invokeDecisionOrToolMock,
   invokeToolChoiceMock,
   repairStructuredDecisionOutputMock,
 } = vi.hoisted(() => ({
   buildAiRecoveryDecisionMock: vi.fn(),
   invokeDecisionMock: vi.fn(),
+  invokeDecisionOrToolMock: vi.fn(),
   invokeToolChoiceMock: vi.fn(),
   repairStructuredDecisionOutputMock: vi.fn(),
 }));
@@ -35,6 +37,7 @@ vi.mock("../core/modelRuntime", () => ({
     groundingCalls: stats.groundingCalls + usage.groundingCalls,
   })),
   invokeDecision: invokeDecisionMock,
+  invokeDecisionOrTool: invokeDecisionOrToolMock,
   invokeToolChoice: invokeToolChoiceMock,
   isModelStructuredOutputError: vi.fn(() => false),
   isRetryableProviderError: vi.fn(() => false),
@@ -174,5 +177,38 @@ describe("callModelNode provider output validation", () => {
     );
     expect(buildAiRecoveryDecisionMock).not.toHaveBeenCalled();
     expect(result.decision).toEqual(repairedDecision);
+  });
+
+  it("uses one model-native pass when tools are available and no tool is called", async () => {
+    invokeDecisionOrToolMock.mockResolvedValueOnce({
+      toolCalls: [],
+      rawText: JSON.stringify({
+        action: "REPLY_AUTO",
+        replyType: "NORMAL_REPLY",
+        reasoning: "Answered from business context.",
+        content: "Hello",
+        requiresGrounding: false,
+        grounded: true,
+        usedChunkTypes: [],
+        missingInfo: null,
+      }),
+      usage: { promptTokens: 10, completionTokens: 5, groundingCalls: 0 },
+      modelName: "gemini-3-flash-preview",
+      finishReason: "STOP",
+    });
+
+    const result = await callModelNode({
+      ...baseState(),
+      tools: [{ name: "integration_action_2", description: "Tool", schema: {} }],
+    });
+
+    expect(invokeDecisionOrToolMock).toHaveBeenCalledOnce();
+    expect(invokeDecisionMock).not.toHaveBeenCalled();
+    expect(result.toolCalls).toEqual([]);
+    const contents = result.contents || [];
+    expect(contents[contents.length - 1]).toMatchObject({
+      role: "model",
+      content: expect.stringContaining("Answered from business context"),
+    });
   });
 });

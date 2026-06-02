@@ -1,15 +1,18 @@
 import { Router } from "express";
 import {
+  changeCurrentUserPassword,
+  deleteCurrentUserAccount,
   getCurrentUser,
   loginUserController,
   registerUser,
+  updateCurrentUser,
 } from "../user/user.controller";
 import {
   authenticateToken,
   logout,
   refreshToken,
 } from "@modules/auth/core/auth.middleware";
-import { getCsrfToken } from "@middlewares/csrf.middleware";
+import { getCsrfToken, validateCsrfToken } from "@middlewares/csrf.middleware";
 import { 
   authLimiter, 
   csrfLimiter,
@@ -22,7 +25,9 @@ import {
   socialAuthSchema,
   forgotPasswordSchema, 
   resetPasswordSchema,
-  verifyEmailSchema
+  verifyEmailSchema,
+  updateCurrentUserSchema,
+  changePasswordSchema
 } from "../core/auth.validation";
 import * as authController from "./auth.controller";
 
@@ -86,9 +91,31 @@ authRoutes.post(
 // Token management routes
 authRoutes.get("/csrf-token", csrfLimiter, getCsrfToken);
 authRoutes.post("/refresh", refreshToken);
-authRoutes.post("/logout", logout);
+authRoutes.post("/logout", validateCsrfToken, logout);
 
 authRoutes.get("/me", authenticateToken, getCurrentUser);
+authRoutes.put(
+  "/me",
+  authenticateToken,
+  validateCsrfToken,
+  validate(updateCurrentUserSchema),
+  updateCurrentUser,
+);
+authRoutes.put(
+  "/me/password",
+  authenticateToken,
+  validateCsrfToken,
+  securityActionLimiter,
+  validate(changePasswordSchema),
+  changeCurrentUserPassword,
+);
+authRoutes.delete(
+  "/me",
+  authenticateToken,
+  validateCsrfToken,
+  securityActionLimiter,
+  deleteCurrentUserAccount,
+);
 
 export default authRoutes;
 

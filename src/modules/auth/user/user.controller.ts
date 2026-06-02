@@ -7,6 +7,9 @@ import {
   getUserById,
   getAllUsers,
   updateUserRole,
+  updateCurrentUserProfile,
+  changeUserPassword,
+  deactivateCurrentUser,
   deactivateUser,
   reactivateUser,
   permanentlyDeleteUser,
@@ -121,6 +124,78 @@ export const getCurrentUser = async (req: Request, res: Response) => {
     throw new AppError("User not found", 404);
   }
   res.status(200).json(user);
+};
+
+export const updateCurrentUser = async (req: Request, res: Response) => {
+  const userId = (req as any).user.id;
+  const user = await updateCurrentUserProfile(userId, req.body);
+  if (!user) {
+    throw new AppError("User not found", 404);
+  }
+
+  res.status(200).json({
+    message: "Profile updated successfully",
+    user,
+  });
+};
+
+export const changeCurrentUserPassword = async (
+  req: Request,
+  res: Response,
+) => {
+  const userId = (req as any).user.id;
+  const { currentPassword, newPassword } = req.body;
+
+  const user = await changeUserPassword(
+    userId,
+    currentPassword,
+    newPassword,
+  );
+  if (!user) {
+    throw new AppError("User not found", 404);
+  }
+
+  const accessToken = generateAccessToken({
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+  });
+  const refreshToken = generateRefreshToken({
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+  });
+
+  const salt = await bcrypt.genSalt(10);
+  const hash = await bcrypt.hash(refreshToken, salt);
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      refreshTokenHash: hash,
+      previousRefreshTokenHash: null,
+      refreshTokenExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      rotatedAt: new Date(),
+    },
+  });
+
+  setAuthCookies(res, accessToken, refreshToken);
+
+  res.status(200).json({
+    message: "Password changed successfully",
+    user,
+  });
+};
+
+export const deleteCurrentUserAccount = async (
+  req: Request,
+  res: Response,
+) => {
+  const userId = (req as any).user.id;
+  await deactivateCurrentUser(userId);
+  clearAuthCookies(res);
+  res.status(200).json({ message: "Account deleted successfully" });
 };
 
 export const getUsers = async (req: Request, res: Response) => {

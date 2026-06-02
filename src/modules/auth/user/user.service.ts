@@ -125,8 +125,8 @@ export const getUserById = async (
   id: number,
   includeInactive: boolean = false,
 ) => {
-  return prisma.user.findUnique({
-    where: { id },
+  const user = await prisma.user.findFirst({
+    where: includeInactive ? { id } : { id, isActive: true },
     select: {
       id: true,
       name: true,
@@ -179,9 +179,133 @@ export const getUserById = async (
           createdAt: true,
         },
       },
+      socialIdentities: {
+        select: { avatarUrl: true },
+        orderBy: { updatedAt: "desc" },
+        take: 1,
+      },
       _count: {
         select: { businessProfiles: true },
       },
+    },
+  });
+
+  if (!user) return null;
+
+  const { socialIdentities, ...safeUser } = user;
+  return {
+    ...safeUser,
+    avatar: socialIdentities.find((identity) => identity.avatarUrl)?.avatarUrl ?? undefined,
+  };
+};
+
+export const updateCurrentUserProfile = async (
+  id: number,
+  input: { name?: string; email?: string; avatar?: string },
+) => {
+  const existing = await prisma.user.findFirst({
+    where: { id, isActive: true },
+    select: { id: true, email: true },
+  });
+
+  if (!existing) {
+    throw new AppError("User not found", 404, true, "USER_NOT_FOUND");
+  }
+
+  if (
+    input.email !== undefined &&
+    input.email.toLowerCase() !== existing.email.toLowerCase()
+  ) {
+    throw new AppError(
+      "Email address cannot be changed from this endpoint",
+      400,
+      true,
+      "EMAIL_CHANGE_DISABLED",
+    );
+  }
+
+  const data: Prisma.UserUpdateInput = {};
+  if (input.name !== undefined) {
+    data.name = input.name.trim();
+  }
+
+  if (Object.keys(data).length > 0) {
+    await prisma.user.update({
+      where: { id },
+      data,
+    });
+  }
+
+  return getUserById(id);
+};
+
+export const changeUserPassword = async (
+  id: number,
+  currentPassword: string,
+  newPassword: string,
+) => {
+  const user = await prisma.user.findFirst({
+    where: { id, isActive: true },
+    select: {
+      id: true,
+      password: true,
+    },
+  });
+
+  if (!user) {
+    throw new AppError("User not found", 404, true, "USER_NOT_FOUND");
+  }
+
+  const currentPasswordMatches = await bcrypt.compare(
+    currentPassword,
+    user.password,
+  );
+  if (!currentPasswordMatches) {
+    throw new AppError(
+      "Current password is incorrect",
+      401,
+      true,
+      "INVALID_CURRENT_PASSWORD",
+    );
+  }
+
+  const passwordUnchanged = await bcrypt.compare(newPassword, user.password);
+  if (passwordUnchanged) {
+    throw new AppError(
+      "New password must be different from the current password",
+      400,
+      true,
+      "PASSWORD_UNCHANGED",
+    );
+  }
+
+  await prisma.user.update({
+    where: { id },
+    data: { password: await bcrypt.hash(newPassword, 10) },
+  });
+
+  return getUserById(id);
+};
+
+export const deactivateCurrentUser = async (id: number) => {
+  return prisma.user.update({
+    where: { id },
+    data: {
+      isActive: false,
+      deletedAt: new Date(),
+      refreshTokenHash: null,
+      previousRefreshTokenHash: null,
+      refreshTokenExpiresAt: null,
+      rotatedAt: null,
+    },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      role: true,
+      isActive: true,
+      deletedAt: true,
+      updatedAt: true,
     },
   });
 };

@@ -54,3 +54,24 @@ export const verifyEmailSchema = z.object({
     token: z.string().min(1, "Token is required"),
   }),
 });
+
+/**
+ * Current User Profile Update Schema
+ */
+export const updateCurrentUserSchema = z.object({
+  body: z.object({
+    name: z.string().min(2, "Name must be at least 2 characters").optional(),
+    email: z.string().email("Invalid email format").optional(),
+    avatar: z.string().url("Avatar must be a valid URL").optional().or(z.literal("")),
+  }),
+});
+
+/**
+ * Authenticated Password Change Schema
+ */
+export const changePasswordSchema = z.object({
+  body: z.object({
+    currentPassword: z.string().min(1, "Current password is required"),
+    newPassword: z.string().min(8, "Password must be at least 8 characters"),
+  }),
+});

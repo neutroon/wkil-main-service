@@ -34,6 +34,15 @@ export const facebookSdkCallbackSchema = z.object({
 });
 
 /**
+ * Facebook Token Validation Schema
+ */
+export const facebookValidateTokenSchema = z.object({
+  query: z.object({
+    access_token: z.string().optional(),
+  }),
+});
+
+/**
  * Facebook Pages Fetch Schema
  */
 export const facebookPagesSchema = z.object({

@@ -5,6 +5,7 @@ import {
   facebookLoginSchema, 
   facebookCallbackSchema, 
   facebookSdkCallbackSchema,
+  facebookValidateTokenSchema,
   facebookPagesSchema,
   facebookPostSchema,
   facebookScheduleSchema,
@@ -26,7 +27,7 @@ const facebookRoutes = Router();
 facebookRoutes.get("/login", validate(facebookLoginSchema), (req, res) => facebookController.login(req, res));
 facebookRoutes.post("/login/callback", authenticateToken, validate(facebookCallbackSchema), (req, res) => facebookController.callback(req, res));
 facebookRoutes.post("/login/sdk", authenticateToken, validate(facebookSdkCallbackSchema), (req, res) => facebookController.sdkCallback(req, res));
-facebookRoutes.get("/validate-token", authenticateToken, (req, res) => facebookController.validateToken(req, res));
+facebookRoutes.get("/validate-token", authenticateToken, validate(facebookValidateTokenSchema), (req, res) => facebookController.validateToken(req, res));
 
 // ─── Accounts & Analytics ─────────────────────────────────────────────────────
 facebookRoutes.get("/accounts", authenticateToken, (req, res) => facebookController.listAccounts(req, res));

@@ -322,8 +322,24 @@ export class FacebookController {
    */
   async validateToken(req: Request, res: Response) {
     const { access_token } = req.query as any;
-    if (!access_token) throw new AppError("access_token is required", 400);
-    const isValid = await validateAccessToken(access_token);
+    let token = access_token;
+
+    if (!token) {
+      const userId = (req as any).user.id;
+      const account = await prisma.facebookAccount.findFirst({
+        where: { userId, isActive: true },
+        orderBy: { updatedAt: "desc" },
+        select: { accessToken: true },
+      });
+
+      if (!account?.accessToken) {
+        return res.json({ isValid: false });
+      }
+
+      token = decryptFacebookSecret(account.accessToken);
+    }
+
+    const isValid = await validateAccessToken(token);
     return res.json({ isValid });
   }
 

@@ -1,0 +1,8 @@
+extends:
+  - recommended
+
+rules:
+  # This Express app intentionally has a few order-dependent paths and shared
+  # error middleware, so route coverage is checked separately from lint style.
+  no-ambiguous-paths: off
+  operation-4xx-response: off

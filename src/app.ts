@@ -36,6 +36,7 @@ import aiAnalyticsRoutes from "@modules/analytics/ai/analytics.routes";
 import conversationsRoutes from "@modules/inbox/inbox.routes";
 import mediaRoutes from "@modules/media/meta-media.routes";
 import mediaLibraryRoutes from "@modules/media/media.routes";
+import docsRoutes from "@modules/docs/docs.routes";
 import { identifyUserForRateLimit } from "@middlewares/identify.middleware";
 import { errorHandler } from "@middlewares/errorHandler.middleware";
 import prisma from "@config/prisma";
@@ -114,28 +115,8 @@ app.use("/v1/auth", authRoutes);
 app.use("/v1/messenger", messengerRoutes);
 app.use("/v1/whatsapp", whatsappRoutes);
 
-// Protected Enterprise Routes (Require Authentication & Email Verification)
-app.use(authenticateToken);
-app.use(requireVerified);
-app.use(validateCsrfToken); // Enforce CSRF on all protected mutating routes
-
-app.use("/v1/users", userRoutes);
-app.use("/v1/content", contentRoutes);
-app.use("/v1/facebook", facebookRoutes);
-app.use("/v1/meta/media", mediaRoutes);
-app.use("/v1/meta/conversations", conversationsRoutes);
-app.use("/v1/leads", leadRoutes);
-app.use("/v1/customers", customerRoutes);
-app.use("/v1/admin", adminRoutes);
-app.use("/v1/admin/mission-control", missionControlRouter);
-app.use("/v1/manager", managerRoutes);
-app.use("/v1/dashboard", dashboardRoutes);
-app.use("/v1/scrape", scrapeRoutes);
-app.use("/v1/business-profile", businessProfileRoutes);
-app.use("/v1/agent-actions", agentActionRoutes);
-app.use("/v1/widget", widgetRoutes);
-app.use("/v1/analytics", aiAnalyticsRoutes);
-app.use("/v1/media", mediaLibraryRoutes);
+// API contract and interactive documentation
+app.use("/", docsRoutes);
 
 // Health check endpoint (System Vitals Diagnostic)
 app.get("/v1/health", async (_req, res) => {
@@ -162,6 +143,29 @@ app.get("/v1/health", async (_req, res) => {
     },
   });
 });
+
+// Protected Enterprise Routes (Require Authentication & Email Verification)
+app.use(authenticateToken);
+app.use(requireVerified);
+app.use(validateCsrfToken); // Enforce CSRF on all protected mutating routes
+
+app.use("/v1/users", userRoutes);
+app.use("/v1/content", contentRoutes);
+app.use("/v1/facebook", facebookRoutes);
+app.use("/v1/meta/media", mediaRoutes);
+app.use("/v1/meta/conversations", conversationsRoutes);
+app.use("/v1/leads", leadRoutes);
+app.use("/v1/customers", customerRoutes);
+app.use("/v1/admin", adminRoutes);
+app.use("/v1/admin/mission-control", missionControlRouter);
+app.use("/v1/manager", managerRoutes);
+app.use("/v1/dashboard", dashboardRoutes);
+app.use("/v1/scrape", scrapeRoutes);
+app.use("/v1/business-profile", businessProfileRoutes);
+app.use("/v1/agent-actions", agentActionRoutes);
+app.use("/v1/widget", widgetRoutes);
+app.use("/v1/analytics", aiAnalyticsRoutes);
+app.use("/v1/media", mediaLibraryRoutes);
 
 // Sentry Error Handler (must be before custom error handlers)
 Sentry.setupExpressErrorHandler(app);

@@ -1,0 +1,2748 @@
+openapi: 3.1.0
+info:
+  title: WKIL Backend API
+  version: 1.0.0
+  license:
+    name: ISC
+    identifier: ISC
+  description: Contract for the Express v1 backend, including auth, Meta channels, content, media, widgets, admin, manager, analytics, integrations, and operational endpoints.
+servers:
+  - url: /
+    description: Current API host
+security:
+  - bearerAuth: []
+  - accessTokenCookie: []
+tags:
+  - name: Docs
+    description: OpenAPI document and interactive documentation.
+  - name: Health
+    description: Operational health endpoints.
+  - name: Auth
+    description: Identity, sessions, CSRF, and account lifecycle.
+  - name: Messenger
+    description: Facebook Messenger webhooks, conversations, and replies.
+  - name: WhatsApp
+    description: WhatsApp webhooks, accounts, conversations, templates, and admin operations.
+  - name: Inbox
+    description: Unified Meta conversation operations.
+  - name: Facebook
+    description: Facebook OAuth, pages, posting, comments, and analytics.
+  - name: Meta Media
+    description: Secure proxying for Meta-hosted media.
+  - name: Leads
+    description: Lead capture and lead listing.
+  - name: Customers
+    description: Customer records and customer conversation history.
+  - name: Admin
+    description: Platform administration, billing, users, assignments, and support operations.
+  - name: Mission Control
+    description: Bull Board queue monitoring routes.
+  - name: Manager
+    description: Manager dashboard, managed users, and assignment operations.
+  - name: Dashboard
+    description: User dashboard statistics, activity, and setup progress.
+  - name: Business Profile
+    description: Business profile configuration and brand assets.
+  - name: Agent Actions
+    description: External action sources and workflows used by the AI agent.
+  - name: Widget
+    description: Authenticated web widget install and inbox management.
+  - name: Public Widget
+    description: Public website widget configuration, chat, media, history, and preflight routes.
+  - name: Content
+    description: AI content briefs, plans, post generation, approval, and uploads.
+  - name: Media
+    description: Media library upload, metadata, proxying, sync, and AI generation.
+  - name: Analytics
+    description: AI analytics endpoints.
+  - name: Scraping
+    description: Website analysis for onboarding.
+paths:
+  /v1/openapi.json:
+    get:
+      tags: [Docs]
+      operationId: getOpenApiJson
+      summary: Get the OpenAPI document as JSON
+      security: []
+      responses:
+        "200":
+          description: Parsed OpenAPI document.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "500": { $ref: "#/components/responses/ServerError" }
+  /docs:
+    get:
+      tags: [Docs]
+      operationId: getSwaggerDocs
+      summary: Open Swagger UI
+      security: []
+      responses:
+        "200":
+          description: Swagger UI HTML.
+          content:
+            text/html:
+              schema:
+                type: string
+  /v1/health:
+    get:
+      tags: [Health]
+      operationId: getHealth
+      summary: Check API and database health
+      security: []
+      responses:
+        "200":
+          description: Healthy service state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HealthResponse" }
+        "503":
+          description: Degraded service state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HealthResponse" }
+
+  /v1/auth/register:
+    post:
+      tags: [Auth]
+      operationId: registerAuthUser
+      summary: Register a user
+      security: []
+      requestBody: { $ref: "#/components/requestBodies/Register" }
+      responses:
+        "201": { $ref: "#/components/responses/AuthOk" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /v1/auth/login:
+    post:
+      tags: [Auth]
+      operationId: loginAuthUser
+      summary: Log in and set auth cookies
+      security: []
+      requestBody: { $ref: "#/components/requestBodies/Login" }
+      responses:
+        "200": { $ref: "#/components/responses/AuthOk" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/auth/social/google:
+    post:
+      tags: [Auth]
+      operationId: googleSocialAuth
+      summary: Authenticate with a Google token
+      security: []
+      requestBody: { $ref: "#/components/requestBodies/SocialAuth" }
+      responses:
+        "200": { $ref: "#/components/responses/AuthOk" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /v1/auth/social/facebook:
+    post:
+      tags: [Auth]
+      operationId: facebookSocialAuth
+      summary: Authenticate with a Facebook token
+      security: []
+      requestBody: { $ref: "#/components/requestBodies/SocialAuth" }
+      responses:
+        "200": { $ref: "#/components/responses/AuthOk" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /v1/auth/verify-email:
+    get:
+      tags: [Auth]
+      operationId: verifyEmail
+      summary: Verify an email address
+      security: []
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema: { type: string, minLength: 1 }
+      responses:
+        "200": { $ref: "#/components/responses/MessageOk" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /v1/auth/forgot-password:
+    post:
+      tags: [Auth]
+      operationId: forgotPassword
+      summary: Start password reset
+      security: []
+      requestBody: { $ref: "#/components/requestBodies/EmailOnly" }
+      responses:
+        "200": { $ref: "#/components/responses/MessageOk" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /v1/auth/reset-password:
+    post:
+      tags: [Auth]
+      operationId: resetPassword
+      summary: Reset password with token
+      security: []
+      requestBody: { $ref: "#/components/requestBodies/ResetPassword" }
+      responses:
+        "200": { $ref: "#/components/responses/MessageOk" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /v1/auth/resend-verification:
+    post:
+      tags: [Auth]
+      operationId: resendVerification
+      summary: Resend verification email
+      security: []
+      requestBody: { $ref: "#/components/requestBodies/EmailOnly" }
+      responses:
+        "200": { $ref: "#/components/responses/MessageOk" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /v1/auth/csrf-token:
+    get:
+      tags: [Auth]
+      operationId: getCsrfToken
+      summary: Get CSRF token
+      security: []
+      responses:
+        "200":
+          description: CSRF token response.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CsrfTokenResponse" }
+  /v1/auth/refresh:
+    post:
+      tags: [Auth]
+      operationId: refreshToken
+      summary: Rotate refresh token and return a new access token
+      security:
+        - refreshTokenCookie: []
+      responses:
+        "200": { $ref: "#/components/responses/AuthOk" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/auth/logout:
+    post:
+      tags: [Auth]
+      operationId: logout
+      summary: Clear auth cookies and revoke refresh state when possible
+      security:
+        - bearerAuth: []
+          csrfHeader: []
+        - accessTokenCookie: []
+          csrfHeader: []
+        - csrfHeader: []
+      responses:
+        "200": { $ref: "#/components/responses/MessageOk" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/auth/me:
+    get:
+      tags: [Auth]
+      operationId: getCurrentUser
+      summary: Get current user
+      responses:
+        "200":
+          description: Current user.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    put:
+      tags: [Auth]
+      operationId: updateCurrentUser
+      summary: Update current user profile
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      requestBody: { $ref: "#/components/requestBodies/UpdateCurrentUser" }
+      responses:
+        "200": { $ref: "#/components/responses/ProfileUpdateOk" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    delete:
+      tags: [Auth]
+      operationId: deleteCurrentUserAccount
+      summary: Delete the current user account
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      responses:
+        "200": { $ref: "#/components/responses/MessageOk" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/auth/me/password:
+    put:
+      tags: [Auth]
+      operationId: changeCurrentUserPassword
+      summary: Change current user password
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      requestBody: { $ref: "#/components/requestBodies/ChangePassword" }
+      responses:
+        "200": { $ref: "#/components/responses/ProfileUpdateOk" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/messenger/webhook:
+    get:
+      tags: [Messenger]
+      operationId: verifyMessengerWebhook
+      summary: Verify Messenger webhook subscription
+      security: []
+      parameters:
+        - { name: hub.mode, in: query, required: false, schema: { type: string } }
+        - { name: hub.verify_token, in: query, required: false, schema: { type: string } }
+        - { name: hub.challenge, in: query, required: false, schema: { type: string } }
+      responses:
+        "200": { description: Webhook challenge or verification status. }
+    post:
+      tags: [Messenger]
+      operationId: handleMessengerWebhook
+      summary: Receive Messenger webhook events
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/messenger:
+    get:
+      tags: [Messenger]
+      operationId: listMessengerConversations
+      summary: List Messenger conversations
+      parameters:
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+        - $ref: "#/components/parameters/CursorQuery"
+        - $ref: "#/components/parameters/ChannelQuery"
+        - $ref: "#/components/parameters/StatusQuery"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/messenger/{id}/messages:
+    get:
+      tags: [Messenger]
+      operationId: listMessengerMessages
+      summary: List Messenger conversation messages
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+        - $ref: "#/components/parameters/CursorQuery"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/messenger/conversations/{id}/messages:
+    post:
+      tags: [Messenger]
+      operationId: sendMessengerMessage
+      summary: Send a manual Messenger reply
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      requestBody: { $ref: "#/components/requestBodies/MessengerReply" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/messenger/conversations/{id}/media:
+    post:
+      tags: [Messenger]
+      operationId: sendMessengerMedia
+      summary: Upload and send media to a Messenger conversation
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      requestBody: { $ref: "#/components/requestBodies/SingleFileUpload" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /v1/whatsapp/webhook:
+    get:
+      tags: [WhatsApp]
+      operationId: verifyWhatsAppWebhook
+      summary: Verify WhatsApp webhook subscription
+      security: []
+      parameters:
+        - { name: hub.mode, in: query, required: false, schema: { type: string } }
+        - { name: hub.verify_token, in: query, required: false, schema: { type: string } }
+        - { name: hub.challenge, in: query, required: false, schema: { type: string } }
+      responses:
+        "200": { description: Webhook challenge or verification status. }
+    post:
+      tags: [WhatsApp]
+      operationId: handleWhatsAppWebhook
+      summary: Receive WhatsApp webhook events
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/whatsapp/oauth/phone-numbers:
+    get:
+      tags: [WhatsApp]
+      operationId: previewWhatsAppPhoneNumbers
+      summary: Preview OAuth phone numbers
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/whatsapp/oauth:
+    post:
+      tags: [WhatsApp]
+      operationId: connectWhatsAppOAuth
+      summary: Connect WhatsApp OAuth assets
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      requestBody: { $ref: "#/components/requestBodies/GenericJson" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /v1/whatsapp/accounts:
+    get:
+      tags: [WhatsApp]
+      operationId: listWhatsAppAccounts
+      summary: List connected WhatsApp accounts
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/whatsapp/accounts/{id}:
+    delete:
+      tags: [WhatsApp]
+      operationId: deactivateWhatsAppAccount
+      summary: Deactivate a WhatsApp account
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200": { $ref: "#/components/responses/MessageOk" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/whatsapp/accounts/{id}/link-business:
+    post:
+      tags: [WhatsApp]
+      operationId: linkWhatsAppBusiness
+      summary: Link WhatsApp account to a business profile
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      requestBody: { $ref: "#/components/requestBodies/GenericJson" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/whatsapp/accounts/{id}/unlink-business:
+    delete:
+      tags: [WhatsApp]
+      operationId: unlinkWhatsAppBusiness
+      summary: Unlink WhatsApp account from its business profile
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/whatsapp/conversations:
+    get:
+      tags: [WhatsApp]
+      operationId: listWhatsAppConversations
+      summary: List WhatsApp conversations
+      parameters:
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+        - $ref: "#/components/parameters/CursorQuery"
+        - $ref: "#/components/parameters/ChannelQuery"
+        - $ref: "#/components/parameters/StatusQuery"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/whatsapp/conversations/{id}/messages:
+    get:
+      tags: [WhatsApp]
+      operationId: listWhatsAppMessages
+      summary: List WhatsApp conversation messages
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+        - $ref: "#/components/parameters/CursorQuery"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+    post:
+      tags: [WhatsApp]
+      operationId: sendWhatsAppMessage
+      summary: Send a manual WhatsApp reply
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      requestBody: { $ref: "#/components/requestBodies/ConversationMessage" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /v1/whatsapp/conversations/{id}/media:
+    post:
+      tags: [WhatsApp]
+      operationId: sendWhatsAppMedia
+      summary: Upload and send media to a WhatsApp conversation
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      requestBody: { $ref: "#/components/requestBodies/SingleFileUpload" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /v1/whatsapp/conversations/{id}/template:
+    post:
+      tags: [WhatsApp]
+      operationId: sendWhatsAppTemplate
+      summary: Send a WhatsApp template message
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      requestBody: { $ref: "#/components/requestBodies/WhatsAppTemplate" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/whatsapp/templates:
+    get:
+      tags: [WhatsApp]
+      operationId: listWhatsAppTemplates
+      summary: List WhatsApp templates
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/whatsapp/admin/users/{userId}/accounts:
+    get:
+      tags: [WhatsApp]
+      operationId: adminListWhatsAppUserAccounts
+      summary: Admin list WhatsApp accounts for a user
+      parameters:
+        - $ref: "#/components/parameters/UserIdPath"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/whatsapp/admin/transfer:
+    post:
+      tags: [WhatsApp]
+      operationId: adminTransferWhatsApp
+      summary: Admin transfer WhatsApp ownership or assets
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      requestBody: { $ref: "#/components/requestBodies/GenericJson" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/meta/conversations/{id}/messages:
+    get:
+      tags: [Inbox]
+      operationId: listMetaConversationMessages
+      summary: List unified Meta conversation messages
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+        - $ref: "#/components/parameters/CursorQuery"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/meta/conversations/{id}/read:
+    patch:
+      tags: [Inbox]
+      operationId: markMetaConversationRead
+      summary: Mark unified conversation as read
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200": { $ref: "#/components/responses/SuccessOk" }
+  /v1/meta/conversations/{id}/typing:
+    post:
+      tags: [Inbox]
+      operationId: sendMetaTypingSignal
+      summary: Send unified conversation typing signal
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200": { $ref: "#/components/responses/SuccessOk" }
+  /v1/meta/conversations/{id}/ai-toggle:
+    patch:
+      tags: [Inbox]
+      operationId: toggleMetaConversationAi
+      summary: Toggle AI handling for a unified conversation
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      requestBody: { $ref: "#/components/requestBodies/ConversationAiToggle" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/meta/conversations/{id}/status:
+    patch:
+      tags: [Inbox]
+      operationId: updateMetaConversationStatus
+      summary: Update unified conversation status
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      requestBody: { $ref: "#/components/requestBodies/ConversationStatus" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/meta/conversations/{id}:
+    delete:
+      tags: [Inbox]
+      operationId: deleteMetaConversation
+      summary: Delete unified conversation
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200": { $ref: "#/components/responses/SuccessOk" }
+
+  /v1/facebook/login:
+    get:
+      tags: [Facebook]
+      operationId: startFacebookLogin
+      summary: Build Facebook OAuth login URL
+      parameters:
+        - { name: redirect_uri, in: query, required: true, schema: { type: string, format: uri } }
+        - { name: state, in: query, required: false, schema: { type: string, minLength: 8, maxLength: 256 } }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /v1/facebook/login/callback:
+    post:
+      tags: [Facebook]
+      operationId: completeFacebookLoginCallback
+      summary: Complete Facebook OAuth code callback
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      requestBody: { $ref: "#/components/requestBodies/FacebookCallback" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/facebook/login/sdk:
+    post:
+      tags: [Facebook]
+      operationId: completeFacebookSdkLogin
+      summary: Connect Facebook using JS SDK token
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      requestBody: { $ref: "#/components/requestBodies/FacebookSdk" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/facebook/validate-token:
+    get:
+      tags: [Facebook]
+      operationId: validateFacebookToken
+      summary: Validate connected Facebook token
+      parameters:
+        - name: access_token
+          in: query
+          required: false
+          schema: { type: string }
+          description: Optional token override. When omitted, the backend validates the current user's connected Facebook account token.
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/facebook/accounts:
+    get:
+      tags: [Facebook]
+      operationId: listFacebookAccounts
+      summary: List Facebook accounts
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/facebook/accounts/{id}:
+    delete:
+      tags: [Facebook]
+      operationId: deactivateFacebookAccount
+      summary: Deactivate a Facebook account
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200": { $ref: "#/components/responses/SuccessOk" }
+  /v1/facebook/switch-device:
+    post:
+      tags: [Facebook]
+      operationId: switchFacebookDevice
+      summary: Update Facebook device context
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      requestBody: { $ref: "#/components/requestBodies/GenericJson" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/facebook/analytics:
+    get:
+      tags: [Facebook]
+      operationId: getFacebookAnalytics
+      summary: Get Facebook analytics
+      parameters:
+        - $ref: "#/components/parameters/DaysQuery"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/facebook/admin/analytics:
+    get:
+      tags: [Facebook]
+      operationId: getFacebookAdminAnalytics
+      summary: Get Facebook admin analytics
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/facebook/pages:
+    get:
+      tags: [Facebook]
+      operationId: listFacebookPages
+      summary: List Facebook pages
+      parameters:
+        - { name: access_token, in: query, required: false, schema: { type: string } }
+        - { name: facebook_account_id, in: query, required: false, schema: { type: integer } }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/facebook/pages/sync:
+    post:
+      tags: [Facebook]
+      operationId: syncFacebookPages
+      summary: Sync Facebook pages
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/facebook/pages/{pageId}:
+    get:
+      tags: [Facebook]
+      operationId: getFacebookPageDetails
+      summary: Get Facebook page details
+      parameters:
+        - $ref: "#/components/parameters/PageIdPath"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+    delete:
+      tags: [Facebook]
+      operationId: disconnectFacebookPage
+      summary: Disconnect Facebook page
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/PageIdPath"
+      responses:
+        "200": { $ref: "#/components/responses/SuccessOk" }
+  /v1/facebook/pages/{pageId}/link-business:
+    post:
+      tags: [Facebook]
+      operationId: linkFacebookPageBusiness
+      summary: Link Facebook page to business profile
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/PageIdPath"
+      requestBody: { $ref: "#/components/requestBodies/FacebookLinkBusiness" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/facebook/pages/{pageId}/unlink-business:
+    delete:
+      tags: [Facebook]
+      operationId: unlinkFacebookPageBusiness
+      summary: Unlink Facebook page from business profile
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/PageIdPath"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/facebook/pages/{pageId}/settings:
+    patch:
+      tags: [Facebook]
+      operationId: updateFacebookPageSettings
+      summary: Update Facebook page automation settings
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/PageIdPath"
+      requestBody: { $ref: "#/components/requestBodies/FacebookPageSettings" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/facebook/post:
+    post:
+      tags: [Facebook]
+      operationId: createFacebookPost
+      summary: Publish a Facebook post
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      requestBody: { $ref: "#/components/requestBodies/FacebookPost" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/facebook/schedule:
+    post:
+      tags: [Facebook]
+      operationId: scheduleFacebookPost
+      summary: Schedule a Facebook post
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      requestBody: { $ref: "#/components/requestBodies/FacebookSchedule" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/facebook/page-posts/{pageId}:
+    get:
+      tags: [Facebook]
+      operationId: listFacebookPagePosts
+      summary: List posts for a Facebook page
+      parameters:
+        - $ref: "#/components/parameters/PageIdPath"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/facebook/post/{postId}:
+    delete:
+      tags: [Facebook]
+      operationId: deleteFacebookPost
+      summary: Delete a Facebook post
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/PostIdStringPath"
+      responses:
+        "200": { $ref: "#/components/responses/SuccessOk" }
+  /v1/facebook/comments/{postId}:
+    get:
+      tags: [Facebook]
+      operationId: listFacebookComments
+      summary: List comments for a Facebook post
+      parameters:
+        - $ref: "#/components/parameters/PostIdStringPath"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/facebook/reply/{commentId}:
+    post:
+      tags: [Facebook]
+      operationId: replyToFacebookComment
+      summary: Reply to a Facebook comment
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/CommentIdPath"
+      requestBody: { $ref: "#/components/requestBodies/GenericJson" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/facebook/private-reply/{messageId}:
+    post:
+      tags: [Facebook]
+      operationId: sendFacebookPrivateReply
+      summary: Send a private reply for a Facebook message
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/MessageIdPath"
+      requestBody: { $ref: "#/components/requestBodies/FacebookPrivateReply" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+
+  /v1/meta/media/{conversationId}/{mediaId}:
+    get:
+      tags: [Meta Media]
+      operationId: streamMetaMedia
+      summary: Stream media from Meta through the backend
+      parameters:
+        - $ref: "#/components/parameters/ConversationIdPath"
+        - $ref: "#/components/parameters/MediaIdStringPath"
+        - { name: token, in: query, required: false, schema: { type: string } }
+      responses:
+        "200": { $ref: "#/components/responses/BinaryStream" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/leads:
+    get:
+      tags: [Leads]
+      operationId: listLeads
+      summary: List leads
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+    post:
+      tags: [Leads]
+      operationId: createLead
+      summary: Create a lead
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      requestBody: { $ref: "#/components/requestBodies/Lead" }
+      responses:
+        "201": { $ref: "#/components/responses/Created" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /v1/customers:
+    get:
+      tags: [Customers]
+      operationId: listCustomers
+      summary: List customers
+      parameters:
+        - { name: businessProfileId, in: query, required: false, schema: { type: integer } }
+        - { name: q, in: query, required: false, schema: { type: string } }
+        - { name: hasPhone, in: query, required: false, schema: { type: boolean } }
+        - { name: status, in: query, required: false, schema: { type: string } }
+        - { name: channel, in: query, required: false, schema: { type: string } }
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/customers/{id}:
+    get:
+      tags: [Customers]
+      operationId: getCustomer
+      summary: Get a customer
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+    patch:
+      tags: [Customers]
+      operationId: updateCustomer
+      summary: Update a customer
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      requestBody: { $ref: "#/components/requestBodies/CustomerUpdate" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/customers/{id}/conversations:
+    get:
+      tags: [Customers]
+      operationId: listCustomerConversations
+      summary: List conversations for a customer
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+
+  /v1/admin/addAdmin:
+    post:
+      tags: [Admin]
+      operationId: createAdmin
+      summary: Create an admin
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      requestBody: { $ref: "#/components/requestBodies/CreateAdminManager" }
+      responses:
+        "201": { $ref: "#/components/responses/AuthOk" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/admin/create-manager:
+    post:
+      tags: [Admin]
+      operationId: createManager
+      summary: Create a manager
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      requestBody: { $ref: "#/components/requestBodies/CreateAdminManager" }
+      responses:
+        "201": { $ref: "#/components/responses/AuthOk" }
+  /v1/admin/create-user:
+    post:
+      tags: [Admin]
+      operationId: createPlatformUser
+      summary: Create a platform user
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      requestBody: { $ref: "#/components/requestBodies/RegisterPlatformUser" }
+      responses:
+        "201": { $ref: "#/components/responses/AuthOk" }
+  /v1/admin/users:
+    get:
+      tags: [Admin]
+      operationId: adminListUsers
+      summary: List users
+      parameters:
+        - { name: includeInactive, in: query, required: false, schema: { type: boolean } }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/admin/users/{id}:
+    get:
+      tags: [Admin]
+      operationId: adminGetUser
+      summary: Get user by id
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+    put:
+      tags: [Admin]
+      operationId: adminUpdateUser
+      summary: Update user
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      requestBody: { $ref: "#/components/requestBodies/UpdateUser" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+    delete:
+      tags: [Admin]
+      operationId: adminDeleteUser
+      summary: Permanently delete user
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200": { $ref: "#/components/responses/SuccessOk" }
+  /v1/admin/users/{id}/deactivate:
+    patch:
+      tags: [Admin]
+      operationId: adminDeactivateUser
+      summary: Deactivate user
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/admin/users/{id}/reactivate:
+    patch:
+      tags: [Admin]
+      operationId: adminReactivateUser
+      summary: Reactivate user
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/admin/settings/billing:
+    get:
+      tags: [Admin]
+      operationId: getBillingSettings
+      summary: Get billing settings
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+    post:
+      tags: [Admin]
+      operationId: updateBillingSettings
+      summary: Update billing settings
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      requestBody: { $ref: "#/components/requestBodies/BillingSettings" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/admin/billing/profiles/{id}/reset:
+    post:
+      tags: [Admin]
+      operationId: resetBusinessUsage
+      summary: Reset business usage
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/admin/billing/profiles/{id}/usage:
+    patch:
+      tags: [Admin]
+      operationId: updateBusinessUsage
+      summary: Update business usage
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      requestBody: { $ref: "#/components/requestBodies/BusinessUsage" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/admin/business-profiles/{id}:
+    get:
+      tags: [Admin]
+      operationId: adminGetBusinessProfile
+      summary: Get business profile as admin
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+    put:
+      tags: [Admin]
+      operationId: adminUpdateBusinessProfile
+      summary: Update business profile as admin
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      requestBody: { $ref: "#/components/requestBodies/BusinessProfileUpdate" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/admin/leads:
+    get:
+      tags: [Admin]
+      operationId: adminListLeads
+      summary: List leads as admin
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/admin/assign-user:
+    post:
+      tags: [Admin]
+      operationId: adminAssignUser
+      summary: Assign a user to a manager
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      requestBody: { $ref: "#/components/requestBodies/UserAssignment" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/admin/assignments:
+    get:
+      tags: [Admin]
+      operationId: adminListAssignments
+      summary: List manager assignments
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/admin/assignments/{id}:
+    delete:
+      tags: [Admin]
+      operationId: adminRemoveAssignment
+      summary: Remove manager assignment
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200": { $ref: "#/components/responses/SuccessOk" }
+  /v1/admin/facebook/analytics:
+    get:
+      tags: [Admin]
+      operationId: adminFacebookAnalytics
+      summary: Get admin Facebook analytics
+      parameters:
+        - $ref: "#/components/parameters/DaysQuery"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/admin/facebook/users/{userId}/accounts:
+    get:
+      tags: [Admin]
+      operationId: adminListFacebookUserAccounts
+      summary: List Facebook accounts for a user
+      parameters:
+        - $ref: "#/components/parameters/UserIdPath"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/admin/facebook/accounts/{id}:
+    delete:
+      tags: [Admin]
+      operationId: adminDeactivateFacebookAccount
+      summary: Deactivate Facebook account as admin
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200": { $ref: "#/components/responses/SuccessOk" }
+  /v1/admin/mission-control:
+    get:
+      tags: [Mission Control]
+      operationId: openMissionControl
+      summary: Open Bull Board mission control UI
+      responses:
+        "200": { $ref: "#/components/responses/Html" }
+  /v1/admin/mission-control/{path}:
+    get:
+      tags: [Mission Control]
+      operationId: getMissionControlAsset
+      summary: Bull Board UI/API asset or nested route
+      parameters:
+        - { name: path, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+
+  /v1/manager/create-user:
+    post:
+      tags: [Manager]
+      operationId: managerCreateUser
+      summary: Create a managed user
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      requestBody: { $ref: "#/components/requestBodies/Register" }
+      responses:
+        "201": { $ref: "#/components/responses/AuthOk" }
+  /v1/manager/dashboard:
+    get:
+      tags: [Manager]
+      operationId: getManagerDashboard
+      summary: Get manager dashboard
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/manager/my-users:
+    get:
+      tags: [Manager]
+      operationId: listManagedUsers
+      summary: List users managed by the current manager
+      parameters:
+        - $ref: "#/components/parameters/DaysQuery"
+        - { name: includeInactive, in: query, required: false, schema: { type: boolean } }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/manager/my-users/{id}:
+    get:
+      tags: [Manager]
+      operationId: getManagedUser
+      summary: Get managed user
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/manager/my-users/{id}/analytics:
+    get:
+      tags: [Manager]
+      operationId: getManagedUserAnalytics
+      summary: Get analytics for a managed user
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+        - $ref: "#/components/parameters/DaysQuery"
+        - { name: includeInactive, in: query, required: false, schema: { type: boolean } }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/manager/my-users/{id}/deactivate:
+    patch:
+      tags: [Manager]
+      operationId: deactivateManagedUser
+      summary: Deactivate managed user
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/manager/my-users/{id}/reactivate:
+    patch:
+      tags: [Manager]
+      operationId: reactivateManagedUser
+      summary: Reactivate managed user
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/manager/business-profiles/{id}:
+    get:
+      tags: [Manager]
+      operationId: getManagedBusinessProfile
+      summary: Get managed business profile
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+    put:
+      tags: [Manager]
+      operationId: updateManagedBusinessProfile
+      summary: Update managed business profile
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      requestBody: { $ref: "#/components/requestBodies/BusinessProfileUpdate" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/manager/assign-user:
+    post:
+      tags: [Manager]
+      operationId: managerAssignUser
+      summary: Admin-only manager assignment from manager router
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      requestBody: { $ref: "#/components/requestBodies/UserAssignment" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/manager/assignments:
+    get:
+      tags: [Manager]
+      operationId: managerListAssignments
+      summary: Admin-only list assignments from manager router
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/manager/assignments/{id}:
+    delete:
+      tags: [Manager]
+      operationId: managerRemoveAssignment
+      summary: Admin-only remove assignment from manager router
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200": { $ref: "#/components/responses/SuccessOk" }
+
+  /v1/dashboard/activity:
+    get:
+      tags: [Dashboard]
+      operationId: getDashboardActivity
+      summary: Get dashboard activity
+      parameters:
+        - $ref: "#/components/parameters/DaysQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/dashboard/stats:
+    get:
+      tags: [Dashboard]
+      operationId: getDashboardStats
+      summary: Get dashboard stats
+      parameters:
+        - $ref: "#/components/parameters/DaysQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/dashboard/unified:
+    get:
+      tags: [Dashboard]
+      operationId: getUnifiedDashboardStats
+      summary: Get unified dashboard stats
+      parameters:
+        - $ref: "#/components/parameters/DaysQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/dashboard/setup-progress:
+    post:
+      tags: [Dashboard]
+      operationId: recordSetupProgress
+      summary: Record setup progress event
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      requestBody: { $ref: "#/components/requestBodies/SetupProgressEvent" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+
+  /v1/scrape/analyze-website:
+    post:
+      tags: [Scraping]
+      operationId: analyzeWebsite
+      summary: Scrape and analyze a website for onboarding
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      requestBody: { $ref: "#/components/requestBodies/WebsiteAnalysis" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /v1/business-profile:
+    get:
+      tags: [Business Profile]
+      operationId: listBusinessProfiles
+      summary: List current user's business profiles
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+    post:
+      tags: [Business Profile]
+      operationId: createBusinessProfile
+      summary: Create business profile
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      requestBody: { $ref: "#/components/requestBodies/BusinessProfile" }
+      responses:
+        "201": { $ref: "#/components/responses/Created" }
+  /v1/business-profile/{id}:
+    put:
+      tags: [Business Profile]
+      operationId: updateBusinessProfile
+      summary: Update business profile
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      requestBody: { $ref: "#/components/requestBodies/BusinessProfileUpdate" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+    delete:
+      tags: [Business Profile]
+      operationId: deleteBusinessProfile
+      summary: Delete business profile
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200": { $ref: "#/components/responses/SuccessOk" }
+  /v1/business-profile/{id}/retrieve:
+    post:
+      tags: [Business Profile]
+      operationId: retrieveBusinessProfile
+      summary: Retrieve business profile context
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/business-profile/{id}/preview-chat:
+    post:
+      tags: [Business Profile]
+      operationId: previewBusinessProfileChat
+      summary: Preview AI chat for a business profile
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      requestBody: { $ref: "#/components/requestBodies/GenericJson" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/business-profile/logo:
+    post:
+      tags: [Business Profile]
+      operationId: uploadBusinessLogo
+      summary: Upload business logo
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      requestBody: { $ref: "#/components/requestBodies/LogoUpload" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+
+  /v1/agent-actions/business-profiles/{profileId}:
+    get:
+      tags: [Agent Actions]
+      operationId: listAgentActionSources
+      summary: List agent action sources for a business profile
+      parameters:
+        - $ref: "#/components/parameters/ProfileIdPath"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+    post:
+      tags: [Agent Actions]
+      operationId: createAgentActionSource
+      summary: Create agent action source
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/ProfileIdPath"
+      requestBody: { $ref: "#/components/requestBodies/AgentActionSource" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/agent-actions/business-profiles/{profileId}/workflows:
+    get:
+      tags: [Agent Actions]
+      operationId: listAgentActionWorkflows
+      summary: List agent action workflows
+      parameters:
+        - $ref: "#/components/parameters/ProfileIdPath"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+    post:
+      tags: [Agent Actions]
+      operationId: createAgentActionWorkflow
+      summary: Create agent action workflow
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/ProfileIdPath"
+      requestBody: { $ref: "#/components/requestBodies/AgentActionWorkflow" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/agent-actions/business-profiles/{profileId}/workflows/{workflowId}/test:
+    post:
+      tags: [Agent Actions]
+      operationId: testAgentActionWorkflow
+      summary: Test agent action workflow
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/ProfileIdPath"
+        - $ref: "#/components/parameters/WorkflowIdPath"
+      requestBody: { $ref: "#/components/requestBodies/AgentActionWorkflowTest" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/agent-actions/business-profiles/{profileId}/workflows/{workflowId}:
+    put:
+      tags: [Agent Actions]
+      operationId: updateAgentActionWorkflow
+      summary: Update agent action workflow
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/ProfileIdPath"
+        - $ref: "#/components/parameters/WorkflowIdPath"
+      requestBody: { $ref: "#/components/requestBodies/AgentActionWorkflowUpdate" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+    delete:
+      tags: [Agent Actions]
+      operationId: deleteAgentActionWorkflow
+      summary: Delete agent action workflow
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/ProfileIdPath"
+        - $ref: "#/components/parameters/WorkflowIdPath"
+      responses:
+        "200": { $ref: "#/components/responses/SuccessOk" }
+  /v1/agent-actions/business-profiles/{profileId}/{sourceId}:
+    put:
+      tags: [Agent Actions]
+      operationId: updateAgentActionSource
+      summary: Update agent action source
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/ProfileIdPath"
+        - $ref: "#/components/parameters/SourceIdPath"
+      requestBody: { $ref: "#/components/requestBodies/AgentActionSourceUpdate" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+    delete:
+      tags: [Agent Actions]
+      operationId: deleteAgentActionSource
+      summary: Delete agent action source
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/ProfileIdPath"
+        - $ref: "#/components/parameters/SourceIdPath"
+      responses:
+        "200": { $ref: "#/components/responses/SuccessOk" }
+  /v1/agent-actions/business-profiles/{profileId}/{sourceId}/test:
+    post:
+      tags: [Agent Actions]
+      operationId: testAgentActionSource
+      summary: Test agent action source
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/ProfileIdPath"
+        - $ref: "#/components/parameters/SourceIdPath"
+      requestBody: { $ref: "#/components/requestBodies/AgentActionSourceTest" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+
+  /v1/widget/installs:
+    get:
+      tags: [Widget]
+      operationId: listWidgetInstalls
+      summary: List widget installs
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+    post:
+      tags: [Widget]
+      operationId: createWidgetInstall
+      summary: Create widget install
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      requestBody: { $ref: "#/components/requestBodies/WidgetInstall" }
+      responses:
+        "201": { $ref: "#/components/responses/Created" }
+  /v1/widget/installs/{id}:
+    patch:
+      tags: [Widget]
+      operationId: updateWidgetInstall
+      summary: Update widget install
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      requestBody: { $ref: "#/components/requestBodies/WidgetInstallUpdate" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+    delete:
+      tags: [Widget]
+      operationId: deactivateWidgetInstall
+      summary: Soft-deactivate widget install
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200": { $ref: "#/components/responses/SuccessOk" }
+  /v1/widget/installs/{id}/hard:
+    delete:
+      tags: [Widget]
+      operationId: hardDeleteWidgetInstall
+      summary: Permanently delete widget install
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200": { $ref: "#/components/responses/SuccessOk" }
+  /v1/widget/conversations:
+    get:
+      tags: [Widget]
+      operationId: listWidgetConversations
+      summary: List web widget conversations
+      parameters:
+        - $ref: "#/components/parameters/PageQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+        - $ref: "#/components/parameters/StatusQuery"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/widget/conversations/{id}/messages:
+    get:
+      tags: [Widget]
+      operationId: listWidgetConversationMessages
+      summary: List web widget conversation messages
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+        - $ref: "#/components/parameters/LimitQuery"
+        - $ref: "#/components/parameters/CursorQuery"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+    post:
+      tags: [Widget]
+      operationId: sendWidgetConversationMessage
+      summary: Send reply to web widget conversation
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      requestBody: { $ref: "#/components/requestBodies/WidgetReply" }
+      responses:
+        "201": { $ref: "#/components/responses/Created" }
+  /v1/widget/conversations/{id}/read:
+    patch:
+      tags: [Widget]
+      operationId: markWidgetConversationRead
+      summary: Mark web widget conversation as read
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200": { $ref: "#/components/responses/SuccessOk" }
+
+  /v1/public/widget/config:
+    options:
+      tags: [Public Widget]
+      operationId: preflightWidgetConfig
+      summary: CORS preflight for widget config
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/WidgetSiteKeyHeader"
+      responses:
+        "204": { description: Preflight accepted. }
+    get:
+      tags: [Public Widget]
+      operationId: getPublicWidgetConfig
+      summary: Get public widget branding and settings
+      security:
+        - widgetSiteKey: []
+      parameters:
+        - $ref: "#/components/parameters/WidgetSiteKeyHeader"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/public/widget/chat:
+    options:
+      tags: [Public Widget]
+      operationId: preflightWidgetChat
+      summary: CORS preflight for widget chat
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/WidgetSiteKeyHeader"
+      responses:
+        "204": { description: Preflight accepted. }
+    post:
+      tags: [Public Widget]
+      operationId: sendPublicWidgetChat
+      summary: Send public widget chat message
+      security:
+        - widgetSiteKey: []
+      parameters:
+        - $ref: "#/components/parameters/WidgetSiteKeyHeader"
+      requestBody: { $ref: "#/components/requestBodies/PublicWidgetChat" }
+      responses:
+        "200":
+          description: Chat response, or SSE stream when stream is true.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GenericObject" }
+            text/event-stream:
+              schema: { type: string }
+  /v1/public/widget/chat/media:
+    options:
+      tags: [Public Widget]
+      operationId: preflightWidgetMediaChat
+      summary: CORS preflight for widget media chat
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/WidgetSiteKeyHeader"
+      responses:
+        "204": { description: Preflight accepted. }
+    post:
+      tags: [Public Widget]
+      operationId: sendPublicWidgetMediaChat
+      summary: Send public widget media chat message
+      security:
+        - widgetSiteKey: []
+      parameters:
+        - $ref: "#/components/parameters/WidgetSiteKeyHeader"
+      requestBody: { $ref: "#/components/requestBodies/PublicWidgetMediaChat" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/public/widget/chat/history:
+    get:
+      tags: [Public Widget]
+      operationId: getPublicWidgetChatHistory
+      summary: Get public widget chat history
+      security:
+        - widgetSiteKey: []
+      parameters:
+        - $ref: "#/components/parameters/WidgetSiteKeyHeader"
+        - { name: visitorId, in: query, required: true, schema: { type: string, minLength: 1 } }
+        - { name: conversationId, in: query, required: false, schema: { type: integer } }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+
+  /v1/content/brief/audit:
+    post:
+      tags: [Content]
+      operationId: generateContentBriefAudit
+      summary: Generate streaming content audit and draft brief
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      requestBody: { $ref: "#/components/requestBodies/ContentAudit" }
+      responses:
+        "200": { $ref: "#/components/responses/EventStream" }
+  /v1/content/brief:
+    post:
+      tags: [Content]
+      operationId: saveContentBrief
+      summary: Save or confirm content brief
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      requestBody: { $ref: "#/components/requestBodies/ContentBrief" }
+      responses:
+        "201": { $ref: "#/components/responses/Created" }
+  /v1/content/brief/{id}:
+    get:
+      tags: [Content]
+      operationId: getContentBrief
+      summary: Get content brief
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/content/generate-post:
+    post:
+      tags: [Content]
+      operationId: generatePostContent
+      summary: Generate social post content
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      requestBody: { $ref: "#/components/requestBodies/GeneratePost" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/content/plan/generate-strategy:
+    post:
+      tags: [Content]
+      operationId: generateContentStrategy
+      summary: Generate streaming content strategy plan
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      requestBody: { $ref: "#/components/requestBodies/GenerateStrategy" }
+      responses:
+        "200": { $ref: "#/components/responses/EventStream" }
+  /v1/content/plan/{planId}/generate-post/{postId}:
+    post:
+      tags: [Content]
+      operationId: generatePlannedPostExecution
+      summary: Generate execution content for a planned post
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/PlanIdPath"
+        - $ref: "#/components/parameters/PostIdPath"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/content/plan/posts/{postId}/approve:
+    patch:
+      tags: [Content]
+      operationId: approveContentPlanPost
+      summary: Approve a content plan post
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/PostIdPath"
+      requestBody: { $ref: "#/components/requestBodies/ApprovePost" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/content/plan/list/active:
+    get:
+      tags: [Content]
+      operationId: listActiveContentPlans
+      summary: List active content plans
+      parameters:
+        - { name: businessProfileId, in: query, required: false, schema: { type: integer } }
+        - $ref: "#/components/parameters/LimitQuery"
+        - $ref: "#/components/parameters/OffsetQuery"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/content/plan/{id}:
+    get:
+      tags: [Content]
+      operationId: getContentPlan
+      summary: Get a content plan
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/content/upload-image:
+    post:
+      tags: [Content]
+      operationId: uploadContentImage
+      summary: Upload content image
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      requestBody: { $ref: "#/components/requestBodies/ImageUpload" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+
+  /v1/media:
+    get:
+      tags: [Media]
+      operationId: listMediaAssets
+      summary: List media library assets
+      parameters:
+        - { name: businessProfileId, in: query, required: true, schema: { type: integer } }
+        - { name: usageScope, in: query, required: false, schema: { $ref: "#/components/schemas/MediaUsageScope" } }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+    post:
+      tags: [Media]
+      operationId: uploadMediaAsset
+      summary: Upload media library asset
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      requestBody: { $ref: "#/components/requestBodies/MediaUpload" }
+      responses:
+        "201": { $ref: "#/components/responses/Created" }
+  /v1/media/{id}:
+    patch:
+      tags: [Media]
+      operationId: updateMediaAsset
+      summary: Update media asset metadata
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      requestBody: { $ref: "#/components/requestBodies/MediaUpdate" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+    delete:
+      tags: [Media]
+      operationId: deleteMediaAsset
+      summary: Soft-delete media asset
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200": { $ref: "#/components/responses/MessageOk" }
+  /v1/media/{id}/sync-status:
+    get:
+      tags: [Media]
+      operationId: getMediaSyncStatus
+      summary: Get platform sync status for media asset
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/media/file/{key}:
+    get:
+      tags: [Media]
+      operationId: proxyMediaFile
+      summary: Proxy an R2 media file by key
+      security: []
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string }, description: R2 object key. Nested keys are served by the Express wildcard route. }
+      responses:
+        "200": { $ref: "#/components/responses/BinaryStream" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/media/{id}/retry:
+    post:
+      tags: [Media]
+      operationId: retryMediaSync
+      summary: Re-enqueue media platform sync
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200": { $ref: "#/components/responses/SuccessOk" }
+  /v1/media/ai/generate:
+    post:
+      tags: [Media]
+      operationId: generateAiMedia
+      summary: Queue AI visual generation
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      requestBody: { $ref: "#/components/requestBodies/AiMediaGenerate" }
+      responses:
+        "202": { $ref: "#/components/responses/Accepted" }
+  /v1/media/ai/refine:
+    post:
+      tags: [Media]
+      operationId: refineAiMedia
+      summary: Queue AI visual refinement
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      requestBody: { $ref: "#/components/requestBodies/AiMediaRefine" }
+      responses:
+        "202": { $ref: "#/components/responses/Accepted" }
+
+  /v1/analytics/ai-performance:
+    get:
+      tags: [Analytics]
+      operationId: getAiPerformanceAnalytics
+      summary: Get AI performance analytics
+      parameters:
+        - $ref: "#/components/parameters/DaysQuery"
+        - { name: businessProfileId, in: query, required: false, schema: { type: integer } }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    accessTokenCookie:
+      type: apiKey
+      in: cookie
+      name: accessToken
+    refreshTokenCookie:
+      type: apiKey
+      in: cookie
+      name: refreshToken
+    csrfHeader:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+    widgetSiteKey:
+      type: apiKey
+      in: header
+      name: X-Widget-Site-Key
+  parameters:
+    IdPath: { name: id, in: path, required: true, schema: { type: integer } }
+    UserIdPath: { name: userId, in: path, required: true, schema: { type: integer } }
+    ProfileIdPath: { name: profileId, in: path, required: true, schema: { type: integer } }
+    SourceIdPath: { name: sourceId, in: path, required: true, schema: { type: integer } }
+    WorkflowIdPath: { name: workflowId, in: path, required: true, schema: { type: integer } }
+    PageIdPath: { name: pageId, in: path, required: true, schema: { type: string, minLength: 1 } }
+    PlanIdPath: { name: planId, in: path, required: true, schema: { type: integer } }
+    PostIdPath: { name: postId, in: path, required: true, schema: { type: integer } }
+    PostIdStringPath: { name: postId, in: path, required: true, schema: { type: string, minLength: 1 } }
+    CommentIdPath: { name: commentId, in: path, required: true, schema: { type: string, minLength: 1 } }
+    MessageIdPath: { name: messageId, in: path, required: true, schema: { type: integer } }
+    ConversationIdPath: { name: conversationId, in: path, required: true, schema: { type: integer } }
+    MediaIdStringPath: { name: mediaId, in: path, required: true, schema: { type: string, minLength: 1 } }
+    PageQuery: { name: page, in: query, required: false, schema: { type: integer, minimum: 1, default: 1 } }
+    LimitQuery: { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+    OffsetQuery: { name: offset, in: query, required: false, schema: { type: integer, minimum: 0, default: 0 } }
+    CursorQuery: { name: cursor, in: query, required: false, schema: { type: integer } }
+    ChannelQuery: { name: channel, in: query, required: false, schema: { type: string } }
+    StatusQuery: { name: status, in: query, required: false, schema: { type: string } }
+    DaysQuery: { name: days, in: query, required: false, schema: { type: integer } }
+    WidgetSiteKeyHeader:
+      name: X-Widget-Site-Key
+      in: header
+      required: false
+      schema: { type: string }
+  responses:
+    Ok:
+      description: Successful response.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/GenericObject" }
+    Created:
+      description: Created response.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/GenericObject" }
+    Accepted:
+      description: Accepted for background processing.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/MessageResponse" }
+    AuthOk:
+      description: Auth response.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/AuthResponse" }
+    ProfileUpdateOk:
+      description: Profile update response.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ProfileUpdateResponse" }
+    MessageOk:
+      description: Message response.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/MessageResponse" }
+    SuccessOk:
+      description: Success response.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/SuccessResponse" }
+    EventStream:
+      description: Server-sent event stream.
+      content:
+        text/event-stream:
+          schema: { type: string }
+    BinaryStream:
+      description: Binary stream.
+      content:
+        application/octet-stream:
+          schema: { type: string, format: binary }
+    Html:
+      description: HTML response.
+      content:
+        text/html:
+          schema: { type: string }
+    BadRequest:
+      description: Bad request or validation failure.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    Unauthorized:
+      description: Authentication required or failed.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    Forbidden:
+      description: Permission denied.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    NotFound:
+      description: Resource not found.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    ServerError:
+      description: Server error.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+  requestBodies:
+    GenericJson:
+      required: false
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/GenericObject" }
+    Register:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/RegisterRequest" }
+    Login:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/LoginRequest" }
+    SocialAuth:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/SocialAuthRequest" }
+    EmailOnly:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/EmailOnlyRequest" }
+    ResetPassword:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ResetPasswordRequest" }
+    UpdateCurrentUser:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/UpdateCurrentUserRequest" }
+    ChangePassword:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ChangePasswordRequest" }
+    CreateAdminManager:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/CreateAdminManagerRequest" }
+    RegisterPlatformUser:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/RegisterPlatformUserRequest" }
+    UpdateUser:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/UpdateUserRequest" }
+    BillingSettings:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [billing_multiplier]
+            properties:
+              billing_multiplier: { type: number }
+    BusinessUsage:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [tokensUsed]
+            properties:
+              tokensUsed: { type: number }
+    UserAssignment:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [managerId, userId]
+            properties:
+              managerId: { type: integer, minimum: 1 }
+              userId: { type: integer, minimum: 1 }
+    Lead:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/LeadRequest" }
+    CustomerUpdate:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/CustomerUpdateRequest" }
+    SetupProgressEvent:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [event]
+            properties:
+              event: { type: string, enum: [INBOX_OPENED, AGENT_CONFIGURED] }
+    WebsiteAnalysis:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [url]
+            properties:
+              url: { type: string, format: uri }
+    BusinessProfile:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/BusinessProfileRequest" }
+    BusinessProfileUpdate:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/BusinessProfileUpdateRequest" }
+    LogoUpload:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            type: object
+            required: [logo]
+            properties:
+              logo: { type: string, format: binary }
+    AgentActionSource:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/AgentActionSourceRequest" }
+    AgentActionSourceUpdate:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/AgentActionSourceUpdateRequest" }
+    AgentActionWorkflow:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/AgentActionWorkflowRequest" }
+    AgentActionWorkflowUpdate:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/AgentActionWorkflowUpdateRequest" }
+    AgentActionSourceTest:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/AgentActionSourceTestRequest" }
+    AgentActionWorkflowTest:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/AgentActionWorkflowTestRequest" }
+    WidgetInstall:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/WidgetInstallRequest" }
+    WidgetInstallUpdate:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/WidgetInstallUpdateRequest" }
+    WidgetReply:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [text]
+            properties:
+              text: { type: string, minLength: 1, maxLength: 4000 }
+    PublicWidgetChat:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/PublicWidgetChatRequest" }
+    PublicWidgetMediaChat:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            type: object
+            required: [visitorId, file]
+            properties:
+              visitorId: { type: string, minLength: 8, maxLength: 128 }
+              message: { type: string, maxLength: 4000, default: "" }
+              conversationId: { type: integer }
+              file: { type: string, format: binary }
+    ContentAudit:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ContentAuditRequest" }
+    ContentBrief:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ContentBriefRequest" }
+    GeneratePost:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/GeneratePostRequest" }
+    GenerateStrategy:
+      required: true
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/GenerateStrategyRequest" }
+    ApprovePost:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              manual: { type: boolean, default: false }
+    ImageUpload:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            type: object
+            required: [image]
+            properties:
+              image: { type: string, format: binary }
+    MediaUpload:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            type: object
+            required: [businessProfileId, name, instructions, file]
+            properties:
+              businessProfileId: { type: integer }
+              name: { type: string, minLength: 2 }
+              instructions: { type: string, minLength: 10 }
+              usageScope: { $ref: "#/components/schemas/MediaUsageScope" }
+              file: { type: string, format: binary }
+    MediaUpdate:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              name: { type: string, minLength: 2 }
+              instructions: { type: string, minLength: 10 }
+    AiMediaGenerate:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [businessProfileId, prompt]
+            properties:
+              businessProfileId: { type: integer }
+              prompt: { type: string, minLength: 5 }
+              postId: { type: integer }
+    AiMediaRefine:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [businessProfileId, assetId, instruction]
+            properties:
+              businessProfileId: { type: integer }
+              assetId: { type: integer }
+              instruction: { type: string, minLength: 5 }
+              postId: { type: integer }
+    FacebookCallback:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [code, redirect_uri]
+            properties:
+              code: { type: string, minLength: 1 }
+              redirect_uri: { type: string, format: uri }
+    FacebookSdk:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [accessToken]
+            properties:
+              accessToken: { type: string, minLength: 1 }
+              userId: { type: string }
+              expiresIn: { type: integer, minimum: 1 }
+              grantedScopes: { type: string }
+              signedRequest: { type: string }
+    FacebookLinkBusiness:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [businessProfileId]
+            properties:
+              businessProfileId: { type: integer }
+    FacebookPageSettings:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              commentAutoDmEnabled: { type: boolean }
+              commentPublicGreeting: { type: string }
+    FacebookPost:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [pageId, message]
+            properties:
+              pageId: { type: string, minLength: 1 }
+              message: { type: string, minLength: 1 }
+              accessToken: { type: string }
+              imageUrl: { type: string, format: uri }
+              facebookAccountId: { type: integer }
+    FacebookSchedule:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [pageId, message, scheduleTime]
+            properties:
+              pageId: { type: string, minLength: 1 }
+              message: { type: string, minLength: 1 }
+              accessToken: { type: string }
+              scheduleTime: { type: number }
+    FacebookPrivateReply:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [message]
+            properties:
+              message: { type: string, minLength: 1 }
+    MessengerReply:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [message]
+            properties:
+              message: { type: string, minLength: 1, maxLength: 2000 }
+              type: { type: string, enum: [text, image, file], default: text }
+              attachmentId: { type: string }
+    ConversationMessage:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [message]
+            properties:
+              message: { type: string, minLength: 1, maxLength: 2000 }
+    WhatsAppTemplate:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [templateName, languageCode]
+            properties:
+              templateName: { type: string, minLength: 1 }
+              languageCode: { type: string, minLength: 2 }
+              components: { type: array, items: true, default: [] }
+              textPreview: { type: string }
+    ConversationAiToggle:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [enabled]
+            properties:
+              enabled: { type: boolean }
+    ConversationStatus:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [status]
+            properties:
+              status: { type: string, enum: [OPEN, RESOLVED, ARCHIVED] }
+    SingleFileUpload:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            type: object
+            required: [file]
+            properties:
+              file: { type: string, format: binary }
+  schemas:
+    GenericObject:
+      type: object
+      additionalProperties: true
+    ErrorResponse:
+      type: object
+      additionalProperties: true
+      properties:
+        status: { type: string }
+        message: { type: string }
+        code: { type: string }
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              path: { type: string }
+              message: { type: string }
+    MessageResponse:
+      type: object
+      additionalProperties: true
+      properties:
+        message: { type: string }
+        accessToken: { type: string }
+        status: { type: string }
+    SuccessResponse:
+      type: object
+      additionalProperties: true
+      properties:
+        success: { type: boolean }
+        message: { type: string }
+    CsrfTokenResponse:
+      type: object
+      required: [csrfToken]
+      properties:
+        csrfToken: { type: string }
+    AuthResponse:
+      type: object
+      additionalProperties: true
+      properties:
+        user: { $ref: "#/components/schemas/User" }
+        message: { type: string }
+        accessToken: { type: string }
+    ProfileUpdateResponse:
+      type: object
+      required: [message, user]
+      additionalProperties: true
+      properties:
+        message: { type: string }
+        user: { $ref: "#/components/schemas/User" }
+    User:
+      type: object
+      additionalProperties: true
+      properties:
+        id: { type: integer }
+        email: { type: string, format: email }
+        name: { type: string }
+        role: { type: string, enum: [user, manager, admin, super_admin] }
+        avatar: { type: string, format: uri }
+        isActive: { type: boolean }
+        isEmailVerified: { type: boolean }
+        isBusinessProfileCreated: { type: boolean }
+        plan: { type: string }
+        monthlyCreditsUsed: { type: number }
+    HealthResponse:
+      type: object
+      required: [status, database, timestamp, system]
+      properties:
+        status: { type: string, enum: [healthy, degraded] }
+        database: { type: string, enum: [UP, DOWN] }
+        timestamp: { type: string, format: date-time }
+        system:
+          type: object
+          properties:
+            uptime: { type: number }
+            memory: { type: object, additionalProperties: true }
+            cpu: { type: array, items: { type: number } }
+            platform: { type: string }
+    RegisterRequest:
+      type: object
+      required: [email, password, name]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 8 }
+        name: { type: string, minLength: 1 }
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 1 }
+    SocialAuthRequest:
+      type: object
+      required: [token]
+      properties:
+        token: { type: string, minLength: 1 }
+    EmailOnlyRequest:
+      type: object
+      required: [email]
+      properties:
+        email: { type: string, format: email }
+    ResetPasswordRequest:
+      type: object
+      required: [token, newPassword]
+      properties:
+        token: { type: string, minLength: 1 }
+        newPassword: { type: string, minLength: 8 }
+    UpdateCurrentUserRequest:
+      type: object
+      properties:
+        name: { type: string, minLength: 2 }
+        email:
+          type: string
+          format: email
+          description: Must match the current account email; email changes are disabled for identity stability.
+    ChangePasswordRequest:
+      type: object
+      required: [currentPassword, newPassword]
+      properties:
+        currentPassword: { type: string, minLength: 1 }
+        newPassword: { type: string, minLength: 8 }
+    CreateAdminManagerRequest:
+      type: object
+      required: [name, email, password]
+      properties:
+        name: { type: string, minLength: 2 }
+        email: { type: string, format: email }
+        password: { type: string, minLength: 8 }
+    RegisterPlatformUserRequest:
+      allOf:
+        - $ref: "#/components/schemas/CreateAdminManagerRequest"
+        - type: object
+          properties:
+            role: { type: string, enum: [user, manager, admin], default: user }
+    UpdateUserRequest:
+      type: object
+      properties:
+        name: { type: string, minLength: 2 }
+        email: { type: string, format: email }
+        role: { type: string, enum: [user, manager, admin] }
+        plan: { type: string }
+        monthlyQuota: { type: number }
+        monthlyCreditQuota: { type: number }
+    LeadRequest:
+      type: object
+      required: [name, email]
+      properties:
+        name: { type: string, minLength: 2, maxLength: 100 }
+        email: { type: string, format: email }
+        url: { type: string, format: uri }
+        message: { type: string, maxLength: 1000 }
+    CustomerUpdateRequest:
+      type: object
+      properties:
+        displayName: { type: string, minLength: 1 }
+        phone: { type: [string, "null"] }
+        email: { type: [string, "null"], format: email }
+        status: { type: string, minLength: 1 }
+        notes: { type: [string, "null"] }
+        capturedFieldUpdates:
+          type: object
+          additionalProperties:
+            oneOf:
+              - { type: string }
+              - { type: number }
+              - { type: boolean }
+              - { type: "null" }
+    FollowUpDelay:
+      type: object
+      required: [amount, unit]
+      properties:
+        amount: { type: integer, minimum: 1, maximum: 10080 }
+        unit: { type: string, enum: [MINUTES, HOURS, DAYS] }
+    BusinessProfileRequest:
+      type: object
+      required: [name, identity, targetAudience, voice, tone, productsServices, expectedUserIntents]
+      properties:
+        name: { type: string, minLength: 1 }
+        identity: { type: string, minLength: 1 }
+        targetAudience: { type: string, minLength: 1 }
+        voice: { type: string, minLength: 1 }
+        tone: { type: string, minLength: 1 }
+        productsServices: { type: array, minItems: 1, items: { type: string } }
+        expectedUserIntents: { type: array, minItems: 1, items: { type: string } }
+        corePolicies: { type: string }
+        phoneNumbers: { type: array, items: { type: string }, default: [] }
+        workingHours: { type: string }
+        address: { type: string }
+        faqs:
+          type: array
+          default: []
+          items:
+            type: object
+            required: [question, answer]
+            properties:
+              question: { type: string, minLength: 1 }
+              answer: { type: string, minLength: 1 }
+        knowledgeSections:
+          type: array
+          default: []
+          items:
+            type: object
+            required: [title, content]
+            properties:
+              title: { type: string, minLength: 1 }
+              content: { type: string, minLength: 1 }
+        brandLogoUrl: { type: string, format: uri }
+        brandPrimaryColor: { type: string, pattern: "^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$" }
+        brandSecondaryColor: { type: string, pattern: "^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$" }
+        brandAccentColor: { type: string, pattern: "^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$" }
+        visualAesthetic: { type: string }
+        artStyle: { type: string }
+        brandKitCompleted: { type: boolean, default: false }
+        brandWatermarkEnabled: { type: boolean, default: false }
+        watermarkPosition: { type: string, enum: [TOP_LEFT, TOP_RIGHT, BOTTOM_LEFT, BOTTOM_RIGHT, CENTER], default: BOTTOM_RIGHT }
+        customerDetailsInstructions: { type: string }
+        customerMemoryFields:
+          type: array
+          minItems: 3
+          maxItems: 3
+          items:
+            type: object
+            properties:
+              key: { type: string }
+              label: { type: string }
+              description: { type: string }
+        aiBehaviorInstructions: { type: string, maxLength: 4000 }
+        handoffEnabled: { type: boolean, default: true }
+        followUpEnabled: { type: boolean, default: false }
+        followUpMode: { type: string, enum: [AUTO, CUSTOM], default: AUTO }
+        followUpDelays: { type: array, maxItems: 5, items: { $ref: "#/components/schemas/FollowUpDelay" }, default: [] }
+        followUpInstructions: { type: string, maxLength: 2000 }
+        scrapedWebsiteUrl: { type: string, format: uri }
+        scrapedMarkdown: { type: string }
+    BusinessProfileUpdateRequest:
+      type: object
+      description: Partial business profile update body. Accepts any subset of the create profile fields.
+      additionalProperties: true
+    AgentActionMethod:
+      type: string
+      enum: [GET, POST, PUT, DELETE]
+    AgentActionSourceRequest:
+      type: object
+      required: [name, description, apiUrl]
+      properties:
+        name: { type: string, minLength: 1 }
+        description: { type: string, minLength: 1 }
+        apiUrl: { type: string, format: uri }
+        method: { $ref: "#/components/schemas/AgentActionMethod" }
+        headers: { type: object, additionalProperties: { type: string } }
+        trigger: { type: string, enum: [CHAT_REQUESTED], default: CHAT_REQUESTED }
+        actionType: { type: string, enum: [LOOKUP, MUTATION], default: LOOKUP }
+        executionMode: { type: string, enum: [BACKGROUND], default: BACKGROUND }
+        failureBehavior: { type: string, enum: [AUTO, HANDOFF_ON_FAILURE, ANSWER_WITH_CONTEXT_ON_FAILURE, SILENT_ON_FAILURE], default: AUTO }
+        confirmationPolicy: { type: string, enum: [REQUIRE_VERIFIED_RESULT, ACCEPT_HTTP_SUCCESS], default: REQUIRE_VERIFIED_RESULT }
+        requestMapping: { type: [object, "null"], additionalProperties: true }
+        responseMapping: { type: [object, "null"], additionalProperties: true }
+        expectedParamsSchema: { type: [object, "null"], additionalProperties: true }
+        isActive: { type: boolean, default: true }
+    AgentActionSourceUpdateRequest:
+      type: object
+      description: Partial agent action source update body. Accepts any subset of the create source fields.
+      additionalProperties: true
+    AgentActionWorkflowRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1 }
+        description: { type: [string, "null"] }
+        lookupSourceId: { type: [integer, "null"], minimum: 1 }
+        mutationSourceId: { type: [integer, "null"], minimum: 1 }
+        inputBindings:
+          type: [object, "null"]
+          additionalProperties:
+            type: object
+            required: [source]
+            properties:
+              source: { type: string, enum: [USER_PROVIDED, CHAT_CONTEXT, ACTION_RESULT, FIXED, DEFAULT] }
+              path: { type: string }
+              value: true
+              default: true
+        isActive: { type: boolean, default: true }
+    AgentActionWorkflowUpdateRequest:
+      type: object
+      description: Partial workflow update body. Accepts one or more workflow fields.
+      additionalProperties: true
+    AgentActionSourceTestRequest:
+      type: object
+      properties:
+        args: { type: object, additionalProperties: true, default: {} }
+        customerPhone: { type: string }
+        conversationId: { type: integer }
+        contextValues: { type: object, additionalProperties: true, default: {} }
+        latestUserText: { type: string }
+        historyText: { type: string }
+        run: { type: boolean, default: false }
+    AgentActionWorkflowTestRequest:
+      type: object
+      properties:
+        lookupArgs: { type: object, additionalProperties: true, default: {} }
+        mutationArgs: { type: object, additionalProperties: true, default: {} }
+        customerPhone: { type: string }
+        conversationId: { type: integer }
+        contextValues: { type: object, additionalProperties: true, default: {} }
+        latestUserText: { type: string }
+        historyText: { type: string }
+        run: { type: boolean, default: false }
+    WidgetInstallRequest:
+      type: object
+      required: [businessProfileId, allowedOrigins]
+      properties:
+        businessProfileId: { type: integer, minimum: 1 }
+        allowedOrigins:
+          oneOf:
+            - { type: string }
+            - { type: array, minItems: 1, items: { type: string } }
+        label: { type: string, maxLength: 200 }
+    WidgetInstallUpdateRequest:
+      type: object
+      properties:
+        allowedOrigins:
+          oneOf:
+            - { type: string }
+            - { type: array, minItems: 1, items: { type: string } }
+        label: { type: string, maxLength: 200 }
+        isActive: { type: boolean }
+    PublicWidgetChatRequest:
+      type: object
+      required: [visitorId, message]
+      properties:
+        visitorId: { type: string, minLength: 8, maxLength: 128 }
+        message: { type: string, minLength: 1, maxLength: 4000 }
+        conversationId: { type: [integer, "null"] }
+        stream: { type: boolean }
+        siteKey: { type: string, description: Optional alternative to X-Widget-Site-Key header for POST requests. }
+    ContentAuditRequest:
+      type: object
+      properties:
+        businessProfileId: { type: integer }
+        startDate: { type: string }
+        endDate: { type: string }
+        goal: { type: string, maxLength: 1000, default: "" }
+        currentTrends: { type: string, maxLength: 1000, default: "" }
+        signalWindowDays: { type: integer, minimum: 7, maximum: 365, default: 90 }
+        competitorDiscoveryScope: { type: string, enum: [PROVIDED_ONLY, PROVIDED_AND_AI_SEARCH, AI_DISCOVERY], default: PROVIDED_AND_AI_SEARCH }
+        competitorAnalysisModes:
+          type: array
+          default: [WEBSITE_SEARCH]
+          items: { type: string, enum: [WEBSITE_SEARCH, SOCIAL_SAMPLES, PUBLIC_SOCIAL_SCRAPE] }
+        competitors:
+          type: array
+          maxItems: 10
+          items:
+            type: object
+            properties:
+              name: { type: string, maxLength: 120 }
+              url: { type: string, format: uri }
+        socialSamples:
+          type: array
+          maxItems: 20
+          items:
+            type: object
+            properties:
+              competitorName: { type: string, maxLength: 120 }
+              platform: { type: string, maxLength: 50 }
+              url: { type: string, format: uri }
+              text: { type: string, maxLength: 4000 }
+    ContentBriefRequest:
+      type: object
+      required: [businessProfileId]
+      properties:
+        businessProfileId: { type: integer }
+        sourceAuditId: { type: integer }
+        status: { type: string, enum: [draft, confirmed, archived], default: confirmed }
+        goal: { type: string, maxLength: 1000 }
+        audienceSegments: { type: array, items: true, default: [] }
+        painPoints: { type: array, items: true, default: [] }
+        objections: { type: array, items: true, default: [] }
+        buyingTriggers: { type: array, items: true, default: [] }
+        offers: { type: array, items: true, default: [] }
+        proofPoints: { type: array, items: true, default: [] }
+        cta: { type: string, maxLength: 500 }
+        funnelFocus: { type: string, maxLength: 500 }
+        tonePreferences: { type: string, maxLength: 1000 }
+        forbiddenTopics: { type: array, items: true, default: [] }
+        competitorInsights: true
+        ownerAnswers: true
+    GeneratePostRequest:
+      type: object
+      required: [topic]
+      properties:
+        topic: { type: string, minLength: 3, maxLength: 200 }
+        businessProfileId: { type: integer }
+        length: { type: string, enum: [short, medium, long], default: medium }
+        keywords: { type: array, items: { type: string }, default: [] }
+        context: { type: string, maxLength: 500, default: "" }
+        generateImage: { type: boolean, default: false }
+    GenerateStrategyRequest:
+      type: object
+      required: [startDate, endDate]
+      properties:
+        businessProfileId: { type: integer }
+        contentBriefId: { type: integer }
+        startDate: { type: string, minLength: 1 }
+        endDate: { type: string, minLength: 1 }
+        goals: { type: string }
+        currentTrends:
+          oneOf:
+            - { type: string }
+            - { type: array, items: { type: string } }
+    MediaUsageScope:
+      type: string
+      enum: [CHAT_ATTACHMENT, CONTENT_ASSET]

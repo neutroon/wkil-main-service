@@ -1,6 +1,6 @@
 import { embedQuery, embedTexts } from "../gemini";
 import { recordAiUsage, assertQuotaAvailable } from "@modules/billing/billing.service";
-import prisma from "@config/prisma";
+import prisma, { Prisma } from "@config/prisma";
 import { logger } from "@utils/logger";
 import { chunkBusinessProfile } from "./chunker";
 import { CHUNK_TYPE_FIELDS } from "./chunkTypeFields";
@@ -10,6 +10,7 @@ import { env } from "@config/env";
 const MAX_CHUNK_CHARS = 2000;
 const CORE_CHUNK_TYPES = ["identity", "contact", "intents"];
 const KEYWORD_FETCH_LIMIT = 200;
+const STRONG_KEYWORD_SCORE_THRESHOLD = 0.25;
 
 type RetrievedChunk = {
   id?: number;
@@ -17,6 +18,12 @@ type RetrievedChunk = {
   content: string;
   similarity: number;
   lexicalScore?: number;
+};
+
+type ChunkRow = {
+  id: number;
+  chunkType: string;
+  content: string;
 };
 
 export type PublicRetrievedChunk = {
@@ -52,6 +59,87 @@ function scoreKeywordMatch(content: string, terms: string[]): number {
   const lowerContent = content.toLowerCase();
   const matches = terms.filter((term) => lowerContent.includes(term)).length;
   return matches / terms.length;
+}
+
+function hasStrongKeywordEvidence(chunks: RetrievedChunk[]): boolean {
+  return chunks.some(
+    (chunk) =>
+      !CORE_CHUNK_TYPES.includes(chunk.chunkType) &&
+      (chunk.lexicalScore ?? 0) >= STRONG_KEYWORD_SCORE_THRESHOLD,
+  );
+}
+
+function escapeLikePattern(term: string): string {
+  return term.replace(/[\\%_]/g, "\\$&");
+}
+
+async function fetchKeywordCandidates(
+  businessProfileId: number,
+  keywordTerms: string[],
+): Promise<ChunkRow[]> {
+  if (keywordTerms.length === 0) return [];
+
+  const clauses = Prisma.join(
+    keywordTerms.map((term) => {
+      const pattern = `%${escapeLikePattern(term)}%`;
+      return Prisma.sql`"content" ILIKE ${pattern} ESCAPE '\\'`;
+    }),
+    " OR ",
+  );
+
+  return prisma.$queryRaw<ChunkRow[]>`
+    SELECT "id", "chunkType", "content"
+    FROM public."BusinessProfileChunk"
+    WHERE "businessProfileId" = ${businessProfileId}
+      AND (${clauses})
+    ORDER BY "chunkIndex" ASC
+    LIMIT ${KEYWORD_FETCH_LIMIT}
+  `;
+}
+
+function remainingDeadlineMs(deadlineAt?: number): number | undefined {
+  if (!deadlineAt) return undefined;
+  return Math.max(0, deadlineAt - Date.now());
+}
+
+async function withRagDeadline<T>(params: {
+  operation: () => Promise<T>;
+  fallback: T;
+  deadlineAt?: number;
+  businessProfileId: number;
+  label: string;
+  configuredTimeoutMs?: number;
+}): Promise<T> {
+  const remainingMs = remainingDeadlineMs(params.deadlineAt);
+  if (remainingMs === undefined) return params.operation();
+  if (remainingMs <= 0) {
+    logger.warn("rag.retrieve.step_timeout", {
+      businessProfileId: params.businessProfileId,
+      label: params.label,
+      timeoutMs: params.configuredTimeoutMs,
+      remainingMs,
+    });
+    return params.fallback;
+  }
+
+  let timeout: NodeJS.Timeout | undefined;
+  const timeoutPromise = new Promise<T>((resolve) => {
+    timeout = setTimeout(() => {
+      logger.warn("rag.retrieve.step_timeout", {
+        businessProfileId: params.businessProfileId,
+        label: params.label,
+        timeoutMs: params.configuredTimeoutMs,
+        remainingMs,
+      });
+      resolve(params.fallback);
+    }, remainingMs);
+  });
+
+  try {
+    return await Promise.race([params.operation(), timeoutPromise]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 function mergeRankedChunks(
@@ -212,7 +300,12 @@ export async function retrieveRelevantChunks(
   businessProfileId: number,
   query: string,
   topK: number = 5,
-  options?: { minSimilarity?: number; fetchLimit?: number },
+  options?: {
+    minSimilarity?: number;
+    fetchLimit?: number;
+    userId?: number;
+    timeoutMs?: number;
+  },
 ): Promise<PublicRetrievedChunk[]> {
   const result = await retrieveRelevantChunksWithEmbedding(
     businessProfileId,
@@ -227,83 +320,100 @@ export async function retrieveRelevantChunksWithEmbedding(
   businessProfileId: number,
   query: string,
   topK: number = 5,
-  options?: { minSimilarity?: number; fetchLimit?: number },
+  options?: {
+    minSimilarity?: number;
+    fetchLimit?: number;
+    userId?: number;
+    timeoutMs?: number;
+  },
 ): Promise<{ chunks: PublicRetrievedChunk[]; queryEmbedding: number[] | null }> {
   const minSimilarity = options?.minSimilarity ?? getRagSimilarityThreshold();
   const fetchLimit =
     options?.fetchLimit ?? Math.min(50, Math.max(topK * 5, 15));
+  const deadlineAt = options?.timeoutMs ? Date.now() + options.timeoutMs : undefined;
 
-  // 1. Embed the user's query
-  // Guard against empty query (e.g. voice messages without transcription)
-    // If the query is empty but we're in a multimodal context (media attached),
-    // we should return the "Global Identity" chunks so the AI knows who it is.
-    if (!query || query.trim().length === 0) {
-      logger.debug("rag.retrieve.empty_query_using_identity", { businessProfileId });
-      return {
-        chunks: await getIdentityContext(businessProfileId),
-        queryEmbedding: null,
-      };
-    }
-
-  const embeddingPromise = embedQuery(query);
-  const profilePromise = prisma.businessProfile.findUnique({
-    where: { id: businessProfileId },
-    select: { userId: true },
-  });
-  const [{ vector: queryEmbedding, totalTokens }, profile] = await Promise.all([
-    embeddingPromise,
-    profilePromise,
-  ]);
-  const vector = `[${queryEmbedding.join(",")}]`;
-
-  if (!profile) return { chunks: [], queryEmbedding };
-
-  // Pre-flight quota check
-  await assertQuotaAvailable(profile.userId, businessProfileId);
-
-  // Log retrieval embedding usage
-  recordAiUsage({
-    userId: profile.userId,
-    businessProfileId,
-    embeddingTokens: totalTokens,
-    modelName: "gemini-embedding-001",
-    operation: "rag_retrieve",
-  }).catch(console.error);
-
-  // 2. Cosine similarity search via pgvector (fetch extra rows, then threshold)
-  const vectorChunksPromise = prisma.$queryRaw<
-    RetrievedChunk[]
-  >`
-    SELECT "id", "chunkType", "content",
-    1 - (embedding <=> ${vector}::vector) AS similarity
-    FROM public."BusinessProfileChunk"
-    WHERE "businessProfileId" = ${businessProfileId}
-    ORDER BY embedding <=> ${vector}::vector
-    LIMIT ${fetchLimit}
-  `;
+  // If the query is empty but we're in a multimodal context, return identity
+  // chunks so the AI still knows which business it represents.
+  if (!query || query.trim().length === 0) {
+    logger.debug("rag.retrieve.empty_query_using_identity", { businessProfileId });
+    return {
+      chunks: await withRagDeadline({
+        operation: () => getIdentityContext(businessProfileId),
+        fallback: [],
+        deadlineAt,
+        businessProfileId,
+        label: "identity_context",
+        configuredTimeoutMs: options?.timeoutMs,
+      }),
+      queryEmbedding: null,
+    };
+  }
 
   const keywordTerms = tokenizeForKeywordSearch(query);
-  const keywordCandidatesPromise = prisma.businessProfileChunk.findMany({
-    where: { businessProfileId },
-    select: { id: true, chunkType: true, content: true },
-    orderBy: { updatedAt: "desc" },
-    take: KEYWORD_FETCH_LIMIT,
+  const keywordCandidatesPromise = withRagDeadline<ChunkRow[]>({
+    operation: () => fetchKeywordCandidates(businessProfileId, keywordTerms),
+    fallback: [],
+    deadlineAt,
+    businessProfileId,
+    label: "keyword_candidates",
+    configuredTimeoutMs: options?.timeoutMs,
   });
-  const coreChunksPromise = prisma.businessProfileChunk.findMany({
-    where: {
-      businessProfileId,
-      chunkType: { in: CORE_CHUNK_TYPES },
-    },
-    select: { id: true, chunkType: true, content: true },
-    orderBy: { chunkIndex: "asc" },
-    take: 5,
+  const coreChunksPromise = withRagDeadline<ChunkRow[]>({
+    operation: () => prisma.businessProfileChunk.findMany({
+      where: {
+        businessProfileId,
+        chunkType: { in: CORE_CHUNK_TYPES },
+      },
+      select: { id: true, chunkType: true, content: true },
+      orderBy: { chunkIndex: "asc" },
+      take: 5,
+    }),
+    fallback: [],
+    deadlineAt,
+    businessProfileId,
+    label: "core_chunks",
+    configuredTimeoutMs: options?.timeoutMs,
   });
-
-  const [vectorChunks, keywordCandidates, coreChunks] = await Promise.all([
-    vectorChunksPromise,
+  const profilePromise = options?.userId
+    ? Promise.resolve({ userId: options.userId })
+    : withRagDeadline<{ userId: number } | null>({
+        operation: () => prisma.businessProfile.findUnique({
+          where: { id: businessProfileId },
+          select: { userId: true },
+        }),
+        fallback: null,
+        deadlineAt,
+        businessProfileId,
+        label: "profile_lookup",
+        configuredTimeoutMs: options?.timeoutMs,
+      });
+  const [profile, keywordCandidates, coreChunks] = await Promise.all([
+    profilePromise,
     keywordCandidatesPromise,
     coreChunksPromise,
   ]);
+
+  if (!profile) return { chunks: [], queryEmbedding: null };
+
+  // Pre-flight quota check
+  const quotaChecked = await withRagDeadline({
+    operation: async () => {
+      await assertQuotaAvailable(profile.userId, businessProfileId);
+      return true;
+    },
+    fallback: false,
+    deadlineAt,
+    businessProfileId,
+    label: "quota_check",
+    configuredTimeoutMs: options?.timeoutMs,
+  });
+  if (!quotaChecked) {
+    logger.warn("rag.retrieve.quota_check_deferred", {
+      businessProfileId,
+      timeoutMs: options?.timeoutMs,
+    });
+  }
+
   const keywordChunks = keywordCandidates
     .map((chunk) => ({
       ...chunk,
@@ -319,6 +429,71 @@ export async function retrieveRelevantChunksWithEmbedding(
     similarity: 1,
     lexicalScore: 1,
   }));
+
+  let queryEmbedding: number[] | null = null;
+  let vectorChunks: RetrievedChunk[] = [];
+
+  const shouldUseVectorSearch =
+    keywordTerms.length >= 2 &&
+    !hasStrongKeywordEvidence(keywordChunks) &&
+    (remainingDeadlineMs(deadlineAt) ?? 1) > 0;
+
+  if (shouldUseVectorSearch) {
+    const embeddingResult = await withRagDeadline({
+      operation: () => embedQuery(query, {
+        timeoutMs: remainingDeadlineMs(deadlineAt) ?? options?.timeoutMs,
+      })
+        .then((result) => ({ ok: true as const, result }))
+        .catch((error) => ({ ok: false as const, error })),
+      fallback: { ok: false as const, error: new Error("RAG_RETRIEVAL_TIMEOUT") },
+      deadlineAt,
+      businessProfileId,
+      label: "query_embedding",
+      configuredTimeoutMs: options?.timeoutMs,
+    });
+
+    if (!embeddingResult.ok) {
+      logger.warn("rag.retrieve.embedding_fallback_to_lexical", {
+        businessProfileId,
+        timeoutMs: options?.timeoutMs,
+        error:
+          embeddingResult.error instanceof Error
+            ? embeddingResult.error.message
+            : String(embeddingResult.error),
+        queryPreview: query.slice(0, 80),
+      });
+    } else {
+      const { vector: embeddedQuery, totalTokens } = embeddingResult.result;
+      queryEmbedding = embeddedQuery;
+      const vector = `[${queryEmbedding.join(",")}]`;
+
+      // Log retrieval embedding usage
+      recordAiUsage({
+        userId: profile.userId,
+        businessProfileId,
+        embeddingTokens: totalTokens,
+        modelName: "gemini-embedding-001",
+        operation: "rag_retrieve",
+      }).catch(console.error);
+
+      // Cosine similarity search via pgvector (fetch extra rows, then threshold)
+      vectorChunks = await withRagDeadline<RetrievedChunk[]>({
+        operation: () => prisma.$queryRaw<RetrievedChunk[]>`
+          SELECT "id", "chunkType", "content",
+          1 - (embedding <=> ${vector}::vector) AS similarity
+          FROM public."BusinessProfileChunk"
+          WHERE "businessProfileId" = ${businessProfileId}
+          ORDER BY embedding <=> ${vector}::vector
+          LIMIT ${fetchLimit}
+        `,
+        fallback: [],
+        deadlineAt,
+        businessProfileId,
+        label: "vector_search",
+        configuredTimeoutMs: options?.timeoutMs,
+      });
+    }
+  }
 
   const filteredVectorChunks = applySimilarityThreshold(
     vectorChunks,

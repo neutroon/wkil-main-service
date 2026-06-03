@@ -155,7 +155,7 @@ export function buildAgentActionTools(dataSources: any[]): AgentToolDefinition[]
           source.description ||
             "Use only when this action directly matches the user's latest request.",
           "Decide from the current customer request and recent chat history, not the newest message in isolation.",
-          "Do not call for greetings, generic support, customer detail saving, unrelated human handoff, or conversation closing.",
+          "Do not call for hello/salam openings, generic support, customer detail saving, unrelated human handoff, or conversation closing.",
           "When required details are collected over several turns, combine the current message with recent history and do not ask again for details already present unless they are ambiguous or invalid.",
           "For booking, registration, follow-up contact, create, update, or cancel requests, ask for any missing target item/service/course/order or required contact detail before calling.",
           "Do not use this action merely to discover which item the customer wants unless the customer explicitly asked to see or check available options.",

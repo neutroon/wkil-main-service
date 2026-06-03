@@ -75,6 +75,29 @@ describe("buildSystemPrompt", () => {
     );
   });
 
+  it("maps opening messages to NORMAL_REPLY instead of an invented greeting type", () => {
+    const prompt = buildSystemPrompt({
+      businessProfile: baseProfile,
+      context: [],
+      channel: "whatsapp",
+    });
+
+    expect(prompt).toContain(
+      "Allowed replyType values: NORMAL_REPLY, ASK_FOR_CORRECTION, CONFIRM_ACTION_SUCCESS, SAFE_ACTION_FAILURE, HANDOFF, RESOLVE.",
+    );
+    expect(prompt).toContain(
+      "For hello, salam, or opening-only messages, use replyType=NORMAL_REPLY.",
+    );
+    expect(prompt).toContain(
+      "Do not invent replyType values outside this list.",
+    );
+    expect(prompt).toContain(
+      "Opening message: action=REPLY_AUTO, replyType=NORMAL_REPLY",
+    );
+    expect(prompt).not.toContain("Greeting:");
+    expect(prompt).not.toContain("GREETING");
+  });
+
   it("includes external_tool as a canonical chunk type when completed action evidence exists", () => {
     const prompt = buildSystemPrompt({
       businessProfile: baseProfile,
@@ -204,7 +227,7 @@ describe("buildSystemPrompt", () => {
     );
 
     expect(webPrompt).toContain("bullets are allowed only when they make the answer easier to scan");
-    expect(webPrompt).toContain("Do not repeat greetings after the first assistant reply");
+    expect(webPrompt).toContain("Do not repeat hello/salam openings after the first assistant reply");
     expect(whatsappPrompt).not.toContain("Channel: Messenger");
     expect(messengerPrompt).not.toContain("Channel: WhatsApp");
   });

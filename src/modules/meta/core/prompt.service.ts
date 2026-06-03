@@ -289,7 +289,7 @@ function sectionChatRequestedActions(ctx: PromptContext): string {
 ${numbered([
   "Chat-requested actions are queued background actions. A tool call queues the action; it does not mean the external result is ready.",
   availabilityRule,
-  "Do not use action tools for greetings, small talk, generic business questions answerable from <business_context>, customer memory saving, complaints, handoff decisions, or conversation closing.",
+  "Do not use action tools for hello/salam openings, small talk, generic business questions answerable from <business_context>, customer memory saving, complaints, handoff decisions, or conversation closing.",
   "Use only real parameters from the customer, chat history, or <chat_context>. Never invent search terms, IDs, contact details, dates, or placeholder values.",
   "For multi-turn action detail collection, combine the current message with recent chat history and <chat_context> to keep already provided target item/service/course/order, name, phone, email, and preference details. Ask only for the next missing required detail; do not restart the collection or ask again for a detail already present unless it is ambiguous or invalid.",
   "If required parameters are missing, ask one concise clarification question instead of calling the action.",
@@ -311,7 +311,7 @@ ${ctx.channelProfile.replyStyleRules.map((rule) => `- ${rule}`).join("\n")}
 - Put each major detail on a new line; do not pack multiple course facts, schedules, certificates, or requirements into one continuous paragraph.
 - When listing program content, certificates, documents, schedules, or steps, use one item per line.
 - Avoid inline lists joined with hyphens inside a paragraph; use readable line breaks instead.
-- Do not repeat greetings after the first assistant reply in an active conversation; continue directly with the answer or next required question.
+- Do not repeat hello/salam openings after the first assistant reply in an active conversation; continue directly with the answer or next required question.
 - Use structured plain text only. No markdown tables, code blocks, headings with #, decorative separators, hashtags, or tag clouds.
 - Use emojis sparingly and only when they fit the configured voice.
 </${ctx.channelProfile.styleTag}>`;
@@ -360,12 +360,12 @@ function sectionExamples(ctx: PromptContext): string {
   const examples =
     ctx.channel === "facebook_comment"
       ? [
-          "Greeting: short publicContent only; no business facts unless grounded.",
+          "Opening public comment: replyType=NORMAL_REPLY, short publicContent only; no business facts unless grounded.",
           "Needs details: short safe publicContent plus grounded privateContent or one private clarification question.",
           "Spam/off-topic: intent IGNORE with empty publicContent and privateContent.",
         ]
       : [
-          "Greeting: REPLY_AUTO, requiresGrounding=false, grounded=false; warm reply without factual claims.",
+          "Opening message: action=REPLY_AUTO, replyType=NORMAL_REPLY, requiresGrounding=false, grounded=false, usedChunkTypes=[]; answer hello/salam warmly without factual claims.",
           "Grounded answer: answer only from allowed evidence and mark grounded=true.",
           ctx.handoffEnabled
             ? "Missing evidence: ask one clarification question or HANDOFF_TO_HUMAN; never invent."
@@ -431,10 +431,13 @@ function allowedChunkTypesForOutput(ctx: PromptContext): string {
 
 function sectionOutputContract(ctx: PromptContext): string {
   const allowedChunkTypes = allowedChunkTypesForOutput(ctx);
+  const allowedReplyTypes =
+    "NORMAL_REPLY, ASK_FOR_CORRECTION, CONFIRM_ACTION_SUCCESS, SAFE_ACTION_FAILURE, HANDOFF, RESOLVE";
   if (ctx.channel === "facebook_comment") {
     return `<output_contract>
 Return exactly one JSON object; no markdown code blocks.
 Fields: action, replyType, reasoning (brief routing note, not hidden model reasoning), handoffCategory, publicContent, privateContent, intent, requiresGrounding, grounded, usedChunkTypes, missingInfo, optional attachment.
+Allowed replyType values: ${allowedReplyTypes}. For hello, salam, or opening-only messages, use replyType=NORMAL_REPLY. Do not invent replyType values outside this list.
 usedChunkTypes must contain only canonical chunkType values available in this run: ${allowedChunkTypes}. Do not use inner content labels like KNOWLEDGE; for [CUSTOM_SECTION] blocks, cite custom_section.
 If a <reply_policy> block exists, replyType and action must satisfy it.
 </output_contract>`;
@@ -443,6 +446,7 @@ If a <reply_policy> block exists, replyType and action must satisfy it.
   return `<output_contract>
 Return exactly one JSON object; no markdown code blocks.
 Fields: action, replyType, reasoning (brief routing note, not hidden model reasoning), handoffCategory, content, requiresGrounding, grounded, usedChunkTypes, missingInfo, optional attachment.
+Allowed replyType values: ${allowedReplyTypes}. For hello, salam, or opening-only messages, use replyType=NORMAL_REPLY. Do not invent replyType values outside this list.
 usedChunkTypes must contain only canonical chunkType values available in this run: ${allowedChunkTypes}. Do not use inner content labels like KNOWLEDGE; for [CUSTOM_SECTION] blocks, cite custom_section.
 If a <reply_policy> block exists, replyType and action must satisfy it.
 </output_contract>`;

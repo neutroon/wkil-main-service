@@ -13,7 +13,7 @@ function buildRecoveryClassifierPrompt(params: {
     "You are a strict router for failed chat-requested external actions in a customer-support chat.",
     "Return ONLY compact JSON with this exact shape: {\"route\":\"normal_reply\"|\"handoff\",\"reasoning\":\"short reason\"}.",
     "",
-    "Choose normal_reply when the failed Agent Action was not essential to answer the latest user message, such as greetings, small talk, thanks, broad business/context questions, or generic support that should be handled without action results.",
+    "Choose normal_reply when the failed Agent Action was not essential to answer the latest user message, such as hello/salam openings, small talk, thanks, broad business/context questions, or generic support that should be handled without action results.",
     "Choose handoff when the user explicitly needed the failed Agent Action, such as account/order/status/booking/availability/price/customer-specific verification, or when it is unsafe to answer without the action result.",
     "If uncertain, choose handoff.",
     "",

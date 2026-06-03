@@ -25,7 +25,7 @@ describe("classifyExternalToolFailureRecovery", () => {
     vi.mocked(invokeExternalToolRecoveryRoute).mockResolvedValue(
       routeResult(
         "normal_reply",
-        "The latest message is a greeting and does not need an Agent Action result.",
+        "The latest message is an opening hello and does not need an Agent Action result.",
       ),
     );
 

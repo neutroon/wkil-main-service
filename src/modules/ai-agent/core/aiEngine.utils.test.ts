@@ -119,6 +119,23 @@ describe("AI response parsing", () => {
     expect(decision.requiresGrounding).toBe(false);
   });
 
+  it("rejects unsupported replyType values instead of normalizing them", () => {
+    expect(() =>
+      repairAndParseAiResponse(
+        JSON.stringify({
+          action: "REPLY_AUTO",
+          replyType: "GREETING",
+          reasoning: "رد على التحية.",
+          content: "وعليكم السلام، اهلا بيك.",
+          requiresGrounding: false,
+          grounded: false,
+          usedChunkTypes: [],
+          missingInfo: "",
+        }),
+      ),
+    ).toThrow(/AI_RESPONSE_SCHEMA_INVALID:replyType/);
+  });
+
   it("rejects malformed partial JSON instead of inventing a fallback decision", () => {
     expect(() =>
       repairAndParseAiResponse(

@@ -5,7 +5,6 @@ import { runActionToolsV2Node } from "../nodes/runActionToolsV2";
 import { parseDecisionNode } from "../nodes/parseDecision";
 import { runGuardrailNode } from "../nodes/runGuardrail";
 import { recordUsageNode } from "../nodes/recordUsage";
-import { checkpointer } from "./checkpointer";
 import { DEFAULT_AI_TRUTHFULNESS_POLICY } from "./aiEngine.utils";
 import { assertQuotaAvailable } from "@modules/billing/billing.service";
 import { logger } from "@utils/logger";
@@ -44,20 +43,7 @@ workflowV2.addConditionalEdges("parseDecision", (state) => {
 workflowV2.addEdge("runGuardrail", "recordUsage");
 workflowV2.addEdge("recordUsage", END);
 
-export const agentGraphV2 = workflowV2.compile({ checkpointer });
-
-let checkpointerSetupPromise: Promise<void> | null = null;
-
-async function ensureCheckpointerSetup(): Promise<void> {
-  if (!checkpointerSetupPromise) {
-    checkpointerSetupPromise = checkpointer.setup().catch((error) => {
-      checkpointerSetupPromise = null;
-      throw error;
-    });
-  }
-
-  return checkpointerSetupPromise;
-}
+export const agentGraphV2 = workflowV2.compile();
 
 export interface AgentGraphV2Params {
   agentTurnId: number;
@@ -66,6 +52,7 @@ export interface AgentGraphV2Params {
   customerMessage: string;
   tools?: AgentToolDefinition[];
   businessProfileId: number;
+  userId?: number;
   businessName?: string;
   businessVoice?: string;
   businessTone?: string;
@@ -79,6 +66,7 @@ export interface AgentGraphV2Params {
   conversationId?: number;
   conversationRunId?: string;
   latestUserMessageId?: number;
+  responseDeadlineAt?: number;
   activeWorkflowId?: number | null;
   parentActionRunId?: number | null;
   actionStepKey?: string | null;
@@ -110,13 +98,13 @@ export async function runAgentGraphV2(
 }
 
 async function _runGraphV2(params: AgentGraphV2Params): Promise<AiRoutingDecision> {
-  const profile = await prisma.businessProfile.findUnique({
+  const userId = params.userId ?? (await prisma.businessProfile.findUnique({
     where: { id: params.businessProfileId },
     select: { userId: true },
-  });
-  if (!profile) throw new Error("Business profile not found");
+  }))?.userId;
+  if (!userId) throw new Error("Business profile not found");
 
-  await assertQuotaAvailable(profile.userId, params.businessProfileId);
+  await assertQuotaAvailable(userId, params.businessProfileId);
 
   const policy = {
     ...DEFAULT_AI_TRUTHFULNESS_POLICY,
@@ -132,14 +120,6 @@ async function _runGraphV2(params: AgentGraphV2Params): Promise<AiRoutingDecisio
     content: turn.text ?? textFromLegacyParts(turn.parts),
   }));
 
-  try {
-    await ensureCheckpointerSetup();
-  } catch (error: any) {
-    logger.warn("ai.graph_v2.checkpointer_setup_failed", {
-      error: error?.message || String(error),
-    });
-  }
-
   const finalState = await agentGraphV2.invoke(
     {
       systemInstruction: params.systemInstruction,
@@ -148,7 +128,7 @@ async function _runGraphV2(params: AgentGraphV2Params): Promise<AiRoutingDecisio
       businessName: params.businessName,
       businessVoice: params.businessVoice,
       businessTone: params.businessTone,
-      userId: profile.userId,
+      userId,
       customerPhone: params.customerPhone,
       channel: params.channel,
       contextQuality: params.contextQuality,
@@ -160,6 +140,7 @@ async function _runGraphV2(params: AgentGraphV2Params): Promise<AiRoutingDecisio
       agentTurnId: params.agentTurnId,
       conversationRunId: params.conversationRunId,
       latestUserMessageId: params.latestUserMessageId,
+      responseDeadlineAt: params.responseDeadlineAt,
       activeWorkflowId: params.activeWorkflowId ?? undefined,
       parentActionRunId: params.parentActionRunId ?? undefined,
       actionStepKey: params.actionStepKey ?? undefined,

@@ -16,7 +16,6 @@ export async function recordUsageNode(
   state: AgentStateType,
 ): Promise<Partial<AgentStateType>> {
   const { sessionStats, userId, businessProfileId, channel } = state;
-
   try {
     const deltaPrompt = Math.max(
       0,
@@ -32,7 +31,7 @@ export async function recordUsageNode(
     );
 
     if (deltaPrompt > 0 || deltaCompletion > 0 || deltaGrounding > 0) {
-      const usagePayload = {
+      void recordUsageInBackground({
         userId,
         businessProfileId,
         modelName: sessionStats.modelName,
@@ -40,34 +39,14 @@ export async function recordUsageNode(
         completionTokens: deltaCompletion,
         groundingCalls: deltaGrounding,
         operation: `chat_${channel || "direct"}`,
-      };
-
-      try {
-        await enqueueAiUsageRecord(usagePayload, {
-          jobId: [
-            "ai-usage-terminal",
-            state.agentTurnId || "turn",
-            sessionStats.modelName,
-            deltaPrompt,
-            deltaCompletion,
-            deltaGrounding,
-          ].join("-"),
-        });
-      } catch (enqueueError: any) {
-        logger.error("ai.node.recordUsage.enqueue_failed", {
-          error: enqueueError.message,
-          businessProfileId,
-        });
-        await recordAiUsage(usagePayload);
-      }
+      }, {
+        agentTurnId: state.agentTurnId,
+        businessProfileId,
+        modelName: sessionStats.modelName,
+        totalPromptTokens: sessionStats.promptTokens,
+        totalCompletionTokens: sessionStats.completionTokens,
+      });
     }
-
-    logger.info("ai.node.recordUsage.queued", {
-      businessProfileId,
-      model: sessionStats.modelName,
-      promptTokens: sessionStats.promptTokens,
-      completionTokens: sessionStats.completionTokens,
-    });
   } catch (billingError: any) {
     // Billing failure must NEVER block the AI response.
     // Log the error but let the graph continue to completion.
@@ -79,4 +58,48 @@ export async function recordUsageNode(
 
   // No state updates — this is a pure side-effect node
   return {};
+}
+
+async function recordUsageInBackground(
+  usagePayload: Parameters<typeof recordAiUsage>[0],
+  context: {
+    agentTurnId?: number;
+    businessProfileId: number;
+    modelName: string;
+    totalPromptTokens: number;
+    totalCompletionTokens: number;
+  },
+) {
+  try {
+    await enqueueAiUsageRecord(usagePayload, {
+      jobId: [
+        "ai-usage-terminal",
+        context.agentTurnId || "turn",
+        context.modelName,
+        usagePayload.promptTokens,
+        usagePayload.completionTokens,
+        usagePayload.groundingCalls,
+      ].join("-"),
+    });
+    logger.info("ai.node.recordUsage.queued", {
+      businessProfileId: context.businessProfileId,
+      model: context.modelName,
+      promptTokens: context.totalPromptTokens,
+      completionTokens: context.totalCompletionTokens,
+    });
+  } catch (enqueueError: any) {
+    logger.error("ai.node.recordUsage.enqueue_failed", {
+      error: enqueueError.message,
+      businessProfileId: context.businessProfileId,
+    });
+
+    try {
+      await recordAiUsage(usagePayload);
+    } catch (fallbackError: any) {
+      logger.error("ai.node.recordUsage.fallback_failed", {
+        error: fallbackError?.message || String(fallbackError),
+        businessProfileId: context.businessProfileId,
+      });
+    }
+  }
 }

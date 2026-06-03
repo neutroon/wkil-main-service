@@ -4,6 +4,10 @@ import { buildSystemPrompt } from "../../meta/core/prompt.service";
 import { enqueueCustomerMemoryCapture } from "@modules/meta/core/meta.queue";
 import { runAgentGraphV2 } from "@modules/ai-agent/core/agentGraphV2";
 import { retrieveRelevantChunksWithEmbedding } from "../rag/rag.service";
+import { updateAgentTurnStatus } from "@modules/ai-agent/core/agentTurn.service";
+import { logger } from "@utils/logger";
+import { listActiveAgentActionWorkflows } from "@modules/integrations/external/agentActionWorkflow.service";
+import prisma from "@config/prisma";
 
 vi.mock("../rag/rag.service", () => ({
   retrieveRelevantChunksWithEmbedding: vi.fn().mockResolvedValue({
@@ -135,9 +139,30 @@ describe("prepareAgentParams", () => {
         hasCompletedActionResult: false,
       }),
     );
+    expect(result.prepTimings).toEqual(
+      expect.objectContaining({
+        ragMs: expect.any(Number),
+        workflowsMs: expect.any(Number),
+        mediaMs: expect.any(Number),
+        promptMs: expect.any(Number),
+        ragTimeoutMs: expect.any(Number),
+        prepLookupTimeoutMs: expect.any(Number),
+      }),
+    );
+    expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
+      "ai.chat.prepared_tools",
+      expect.objectContaining({
+        ragMs: expect.any(Number),
+        workflowsMs: expect.any(Number),
+        mediaMs: expect.any(Number),
+        promptMs: expect.any(Number),
+        ragTimeoutMs: expect.any(Number),
+        prepLookupTimeoutMs: expect.any(Number),
+      }),
+    );
   });
 
-  it("exposes active action tools for greetings so model-native tool selection can decide", async () => {
+  it("exposes active action tools for opening messages so model-native tool selection can decide", async () => {
     const result = await prepareAgentParams({
       businessProfile,
       messageText: "hi",
@@ -196,8 +221,65 @@ describe("prepareAgentParams", () => {
       1,
       expect.stringContaining("certificate photo"),
       5,
+      expect.objectContaining({
+        userId: 1,
+        timeoutMs: expect.any(Number),
+      }),
     );
     expect(result.graphParams?.customerMessage).toContain("certificate photo");
+  });
+
+  it("shrinks the RAG timeout when the chat response deadline is nearly exhausted", async () => {
+    await prepareAgentParams({
+      businessProfile,
+      messageText: "what are the prices",
+      historyTurns: [],
+      channel: "web",
+      responseDeadlineAt: Date.now() + 500,
+    });
+
+    const options = vi.mocked(retrieveRelevantChunksWithEmbedding).mock
+      .calls[0][3] as { timeoutMs: number };
+    expect(options.timeoutMs).toBeGreaterThan(0);
+    expect(options.timeoutMs).toBeLessThanOrEqual(500);
+  });
+
+  it("does not let slow workflow or media lookups block chat prep", async () => {
+    vi.mocked(listActiveAgentActionWorkflows).mockReturnValueOnce(
+      new Promise(() => undefined) as any,
+    );
+    vi.mocked(prisma.businessProfileMedia.findMany).mockReturnValueOnce(
+      new Promise(() => undefined) as any,
+    );
+
+    const startedAt = Date.now();
+    const result = await prepareAgentParams({
+      businessProfile,
+      messageText: "what are the prices",
+      historyTurns: [],
+      channel: "web",
+      responseDeadlineAt: Date.now() + 270,
+    });
+
+    expect(Date.now() - startedAt).toBeLessThan(500);
+    expect(result.graphParams?.tools).toHaveLength(1);
+    expect(buildSystemPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hasMediaAssets: false,
+      }),
+    );
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      "ai.chat.prep_lookup_timeout",
+      expect.objectContaining({
+        label: "active_workflows",
+      }),
+    );
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      "ai.chat.prep_lookup_timeout",
+      expect.objectContaining({
+        label: "media_assets",
+      }),
+    );
   });
 
   it("does not expose non-chat action schemas", async () => {
@@ -269,6 +351,10 @@ describe("prepareAgentParams", () => {
       1,
       originalRequest,
       5,
+      expect.objectContaining({
+        userId: 1,
+        timeoutMs: expect.any(Number),
+      }),
     );
     expect(result.graphParams?.tools).toHaveLength(1);
     expect(result.graphParams?.tools?.[0]).toMatchObject({
@@ -375,8 +461,10 @@ describe("prepareAgentParams", () => {
     expect(runAgentGraphV2).toHaveBeenCalledWith(
       expect.objectContaining({
         tools: [expect.objectContaining({ name: "integration_action_2" })],
+        userId: 1,
         customerPhone: "201202840018",
         agentTurnId: 999,
+        responseDeadlineAt: expect.any(Number),
       }),
     );
     expect(enqueueCustomerMemoryCapture).toHaveBeenCalledWith(
@@ -389,6 +477,39 @@ describe("prepareAgentParams", () => {
         recentTurns: [{ role: "user", text: "علم النفس" }],
       }),
     );
+    expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
+      "ai.chat.reply_latency",
+      expect.objectContaining({
+        totalMs: expect.any(Number),
+        prepMs: expect.any(Number),
+        ragMs: expect.any(Number),
+        workflowsMs: expect.any(Number),
+        mediaMs: expect.any(Number),
+        promptMs: expect.any(Number),
+        ragTimeoutMs: expect.any(Number),
+        prepLookupTimeoutMs: expect.any(Number),
+        graphMs: expect.any(Number),
+      }),
+    );
+  });
+
+  it("does not wait for terminal agent-turn status persistence before returning the reply", async () => {
+    vi.mocked(updateAgentTurnStatus).mockReturnValueOnce(
+      new Promise(() => undefined) as any,
+    );
+
+    const startedAt = Date.now();
+    const reply = await computeBusinessChatReply({
+      businessProfile,
+      messageText: "hello",
+      historyTurns: [],
+      channel: "web",
+      conversationId: 172,
+    });
+
+    expect(Date.now() - startedAt).toBeLessThan(500);
+    expect(reply.content).toBe("reply");
+    expect(updateAgentTurnStatus).toHaveBeenCalledWith(999, "COMPLETED");
   });
 
   it("continues a failed mutation workflow with the same verified lookup context", async () => {

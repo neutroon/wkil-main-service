@@ -169,7 +169,7 @@ export async function runActionToolsV2Node(
     throw error;
   }
 
-  await updateAgentTurnStatus(state.agentTurnId, "WAITING_ACTION");
+  void updateAgentTurnStatus(state.agentTurnId, "WAITING_ACTION");
 
   return {
     hadToolExecution: true,

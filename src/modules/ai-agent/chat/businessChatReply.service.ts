@@ -24,6 +24,7 @@ import {
 } from "@modules/ai-agent/core/replyPolicy";
 import prisma from "@config/prisma";
 import { logger } from "@utils/logger";
+import { env } from "@config/env";
 import { effectiveCustomerRequestText } from "./completedActionRequest";
 import {
   customerMessageForModel,
@@ -58,8 +59,75 @@ type WorkflowContinuationContext = {
   completedExternalLookup: CompletedExternalLookup;
 };
 
+type TimedResult<T> = {
+  value: T;
+  ms: number;
+};
+
+type AgentPrepTimings = {
+  ragMs: number;
+  workflowsMs: number;
+  mediaMs: number;
+  promptMs: number;
+  ragTimeoutMs: number;
+  prepLookupTimeoutMs: number;
+};
+
 const CORE_CONTEXT_TYPES = new Set(["identity", "contact", "intents"]);
 const MUTATION_CORRECTION_WINDOW_MS = 24 * 60 * 60 * 1000;
+const CHAT_RESPONSE_DEADLINE_BUFFER_MS = 250;
+
+function ragTimeoutForChat(responseDeadlineAt?: number): number {
+  if (!responseDeadlineAt) return env.AI_CHAT_RAG_TIMEOUT_MS;
+  const remainingMs = responseDeadlineAt - Date.now() - CHAT_RESPONSE_DEADLINE_BUFFER_MS;
+  return Math.max(1, Math.min(env.AI_CHAT_RAG_TIMEOUT_MS, remainingMs));
+}
+
+function prepLookupTimeoutForChat(responseDeadlineAt?: number): number {
+  if (!responseDeadlineAt) return env.AI_CHAT_PREP_LOOKUP_TIMEOUT_MS;
+  const remainingMs = responseDeadlineAt - Date.now() - CHAT_RESPONSE_DEADLINE_BUFFER_MS;
+  return Math.max(1, Math.min(env.AI_CHAT_PREP_LOOKUP_TIMEOUT_MS, remainingMs));
+}
+
+async function timed<T>(operation: () => Promise<T>): Promise<TimedResult<T>> {
+  const startedAt = Date.now();
+  const value = await operation();
+  return {
+    value,
+    ms: Date.now() - startedAt,
+  };
+}
+
+async function timedWithFallback<T>(params: {
+  operation: () => Promise<T>;
+  timeoutMs: number;
+  fallback: T;
+  label: string;
+  businessProfileId: number;
+}): Promise<TimedResult<T>> {
+  const startedAt = Date.now();
+  let timeout: NodeJS.Timeout | undefined;
+  const timeoutPromise = new Promise<T>((resolve) => {
+    timeout = setTimeout(() => {
+      logger.warn("ai.chat.prep_lookup_timeout", {
+        businessProfileId: params.businessProfileId,
+        label: params.label,
+        timeoutMs: params.timeoutMs,
+      });
+      resolve(params.fallback);
+    }, params.timeoutMs);
+  });
+
+  try {
+    const value = await Promise.race([params.operation(), timeoutPromise]);
+    return {
+      value,
+      ms: Date.now() - startedAt,
+    };
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
 
 async function notIngestedReply(params: {
   businessName: string;
@@ -124,6 +192,7 @@ export async function prepareAgentParams(params: {
   conversationId?: number;
   conversationRunId?: string;
   latestUserMessageId?: number;
+  responseDeadlineAt?: number;
   agentTurnId?: number;
   activeWorkflowId?: number | null;
   parentActionRunId?: number | null;
@@ -168,28 +237,55 @@ export async function prepareAgentParams(params: {
     ? effectiveCustomerRequestText(messageText)
     : customerModelMessage;
 
-  const retrievalPromise = retrieveRelevantChunksWithEmbedding(
-    businessProfile.id,
-    effectiveMessageText,
-    5,
+  const ragTimeoutMs = ragTimeoutForChat(params.responseDeadlineAt);
+  const prepLookupTimeoutMs = prepLookupTimeoutForChat(params.responseDeadlineAt);
+  const retrievalResult = await timed(() =>
+    retrieveRelevantChunksWithEmbedding(
+      businessProfile.id,
+      effectiveMessageText,
+      5,
+      {
+        userId: businessProfile.userId,
+        timeoutMs: ragTimeoutMs,
+      },
+    ),
   );
-  const activeWorkflowsPromise = listActiveAgentActionWorkflows(
-    businessProfile.id,
+  const hasActionSources = (businessProfile.agentActionSources || []).some(
+    (source) => source.isActive && (source as any).trigger === "CHAT_REQUESTED",
   );
-  const mediaAssetsPromise = prisma.businessProfileMedia.findMany({
-    where: {
-      businessProfileId: businessProfile.id,
-      usageScope: "CHAT_ATTACHMENT",
-      isActive: true,
-      deletedAt: null,
-    },
-    select: { name: true, mediaType: true, instructions: true },
+  const activeWorkflowsPromise = timedWithFallback({
+    operation: () =>
+      hasActionSources
+        ? listActiveAgentActionWorkflows(businessProfile.id)
+        : Promise.resolve([]),
+    timeoutMs: prepLookupTimeoutMs,
+    fallback: [],
+    label: "active_workflows",
+    businessProfileId: businessProfile.id,
   });
-  const [retrieval, activeWorkflows, mediaAssets] = await Promise.all([
-    retrievalPromise,
+  const mediaAssetsPromise = timedWithFallback({
+    operation: () =>
+      prisma.businessProfileMedia.findMany({
+        where: {
+          businessProfileId: businessProfile.id,
+          usageScope: "CHAT_ATTACHMENT",
+          isActive: true,
+          deletedAt: null,
+        },
+        select: { name: true, mediaType: true, instructions: true },
+      }),
+    timeoutMs: prepLookupTimeoutMs,
+    fallback: [],
+    label: "media_assets",
+    businessProfileId: businessProfile.id,
+  });
+  const [activeWorkflowsResult, mediaAssetsResult] = await Promise.all([
     activeWorkflowsPromise,
     mediaAssetsPromise,
   ]);
+  const retrieval = retrievalResult.value;
+  const activeWorkflows = activeWorkflowsResult.value;
+  const mediaAssets = mediaAssetsResult.value;
   const relevantChunks = retrieval.chunks;
   const contextQuality = resolveContextQuality(relevantChunks);
   const availableChunkTypes = Array.from(
@@ -233,6 +329,7 @@ export async function prepareAgentParams(params: {
     ]),
   );
 
+  const promptStartedAt = Date.now();
   const systemInstruction = buildSystemPrompt({
     businessProfile: {
       name: businessProfile.name,
@@ -279,6 +376,15 @@ export async function prepareAgentParams(params: {
       .join("\n");
     finalSystemInstruction += `\n\n<media_catalog>\nYou may send one file per response using the attachment field.\nAvailable assets:\n${catalog}\n\nRules:\n1. Only reference exact names from the list above.\n2. Never invent an asset name.\n3. Never send attachments to public Facebook comments.\n4. Only attach a file when it is genuinely relevant to the customer's request.\n</media_catalog>`;
   }
+  const promptMs = Date.now() - promptStartedAt;
+  const prepTimings: AgentPrepTimings = {
+    ragMs: retrievalResult.ms,
+    workflowsMs: activeWorkflowsResult.ms,
+    mediaMs: mediaAssetsResult.ms,
+    promptMs,
+    ragTimeoutMs,
+    prepLookupTimeoutMs,
+  };
 
   logger.info("ai.chat.prepared_tools", {
     businessProfileId: businessProfile.id,
@@ -287,15 +393,18 @@ export async function prepareAgentParams(params: {
     activeActionSourceCount: activeAgentActionSources.length,
     eligibleExternalSourceIds: eligibleExternalSources.map((source) => source.id),
     toolNames: finalTools.map((tool) => tool.name),
+    ...prepTimings,
   });
 
   return {
+    prepTimings,
     graphParams: {
       systemInstruction: finalSystemInstruction,
       historyTurns,
       customerMessage: customerModelMessage,
       tools: finalTools.length > 0 ? finalTools : undefined,
       businessProfileId: businessProfile.id,
+      userId: businessProfile.userId,
       businessName: businessProfile.name,
       businessVoice: businessProfile.voice || undefined,
       businessTone: businessProfile.tone || undefined,
@@ -307,6 +416,7 @@ export async function prepareAgentParams(params: {
       conversationId,
       conversationRunId: params.conversationRunId,
       latestUserMessageId: params.latestUserMessageId,
+      responseDeadlineAt: params.responseDeadlineAt,
       agentTurnId,
       activeWorkflowId,
       parentActionRunId,
@@ -416,17 +526,22 @@ export async function computeBusinessChatReply(params: {
   completedExternalLookup?: CompletedExternalLookup;
 }): Promise<AiRoutingDecision> {
   const startedAt = Date.now();
+  const responseDeadlineAt = startedAt + env.AI_CHAT_RESPONSE_DEADLINE_MS;
   const continuation = await findPendingMutationCorrectionContext(params);
+  const graphInputBase = {
+    ...params,
+    responseDeadlineAt,
+  };
   const graphInput = continuation
     ? {
-        ...params,
+        ...graphInputBase,
         activeWorkflowId: continuation.activeWorkflowId,
         parentActionRunId: continuation.parentActionRunId,
         actionStepKey: continuation.actionStepKey,
         allowedActionSourceIds: continuation.allowedActionSourceIds,
         completedExternalLookup: continuation.completedExternalLookup,
       }
-    : params;
+    : graphInputBase;
 
   const prepStartedAt = Date.now();
   const prep = await prepareAgentParams(graphInput);
@@ -437,6 +552,7 @@ export async function computeBusinessChatReply(params: {
       channel: params.channel,
       totalMs: Date.now() - startedAt,
       prepMs,
+      ...(prep.prepTimings ?? {}),
       graphMs: 0,
       underFiveSeconds: Date.now() - startedAt < 5000,
       path: "preflight_error_decision",
@@ -449,6 +565,7 @@ export async function computeBusinessChatReply(params: {
     const turn = await createAgentTurn({
       businessProfileId: params.businessProfile.id,
       conversationId: params.conversationId,
+      inputMessageId: params.latestUserMessageId ?? null,
       channel: params.channel,
       mode: params.completedExternalLookup ? "ACTION_RESULT" : "CUSTOMER_MESSAGE",
       customerText: params.messageText,
@@ -467,7 +584,7 @@ export async function computeBusinessChatReply(params: {
   });
   const graphMs = Date.now() - graphStartedAt;
   if (agentTurnId) {
-    await updateAgentTurnStatus(
+    void updateAgentTurnStatus(
       agentTurnId,
       decision.agentTurnStatus || "COMPLETED",
     );
@@ -481,6 +598,7 @@ export async function computeBusinessChatReply(params: {
     conversationId: params.conversationId,
     totalMs: Date.now() - startedAt,
     prepMs,
+    ...(prep.prepTimings ?? {}),
     graphMs,
     underFiveSeconds: Date.now() - startedAt < 5000,
     action: decision.action,

@@ -10,6 +10,7 @@ export const MODEL_PRICING: Record<
   "gemini-3-flash": { prompt: 0.075, completion: 0.30 },
   "gemini-3-flash-preview": { prompt: 0.075, completion: 0.30 },
   "gemini-3.1-flash-lite": { prompt: 0.018, completion: 0.072 },
+  "gemini-3.1-flash-lite-preview": { prompt: 0.018, completion: 0.072 },
   "gemini-3.1-flash-image-preview": { prompt: 0.50, completion: 60.00 },
 };
 

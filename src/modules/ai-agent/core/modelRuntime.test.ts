@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildDecisionOrToolSystemInstruction,
   buildToolChoiceSystemInstruction,
+  getChatModelTiers,
 } from "./modelRuntime";
 
 describe("buildToolChoiceSystemInstruction", () => {
@@ -51,5 +52,15 @@ describe("buildDecisionOrToolSystemInstruction", () => {
     expect(prompt).toContain("return exactly one JSON object");
     expect(prompt).toContain("<output_contract>");
     expect(prompt).not.toContain("NO_TOOL_CALL");
+  });
+});
+
+describe("getChatModelTiers", () => {
+  it("defaults chat to the low-latency tier before quality fallbacks", () => {
+    expect(getChatModelTiers()).toEqual([
+      "gemini-3.1-flash-lite-preview",
+      "gemini-3-flash-preview",
+      "gemini-2.5-flash",
+    ]);
   });
 });

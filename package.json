@@ -13,6 +13,7 @@
     "start": "node dist/server.js",
     "test": "vitest run",
     "test:watch": "vitest",
+    "smoke:chat-latency": "node scripts/chat-latency-smoke.js",
     "docs:lint": "redocly lint docs/openapi.yaml",
     "docs:routes": "node scripts/check-openapi-routes.js",
     "docs:bundle": "redocly bundle docs/openapi.yaml --output dist/openapi.json --ext json",

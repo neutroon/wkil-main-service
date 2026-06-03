@@ -17,9 +17,9 @@ import type { AiRoutingDecision } from "./aiEngine.utils";
 import { repairAndParseAiResponse } from "./aiEngine.utils";
 
 const MODEL_TIMEOUT_MS = 60_000;
-const MODEL_TIERS = [
-  "gemini-3-flash-preview",
+const DEFAULT_MODEL_TIERS = [
   "gemini-3.1-flash-lite-preview",
+  "gemini-3-flash-preview",
   "gemini-2.5-flash",
 ];
 
@@ -166,15 +166,24 @@ async function withTimeout<T>(
   }
 }
 
+export function getChatModelTiers(): string[] {
+  const configured = env.AI_CHAT_MODEL_TIERS.split(",")
+    .map((model) => model.trim())
+    .filter(Boolean);
+
+  return configured.length > 0 ? configured : DEFAULT_MODEL_TIERS;
+}
+
 async function executeWithModelFallback<T>(
   operation: (model: string, abortSignal: AbortSignal) => Promise<T>,
   context: string,
   timeoutMs = MODEL_TIMEOUT_MS,
 ): Promise<{ result: T; model: string }> {
+  const modelTiers = getChatModelTiers();
   let lastError: any;
 
-  for (let tierIndex = 0; tierIndex < MODEL_TIERS.length; tierIndex++) {
-    const model = MODEL_TIERS[tierIndex];
+  for (let tierIndex = 0; tierIndex < modelTiers.length; tierIndex++) {
+    const model = modelTiers[tierIndex];
     let attempt = 0;
 
     while (attempt < 2) {
@@ -204,11 +213,11 @@ async function executeWithModelFallback<T>(
           continue;
         }
 
-        if (tierIndex < MODEL_TIERS.length - 1) {
+        if (tierIndex < modelTiers.length - 1) {
           logger.warn("ai.model_runtime.fallback_model", {
             context,
             model,
-            nextModel: MODEL_TIERS[tierIndex + 1],
+            nextModel: modelTiers[tierIndex + 1],
             retryable,
             error: parseProviderErrorMessage(error),
           });
@@ -238,7 +247,7 @@ function createChatModel(params: {
     model: params.model,
     apiKey: env.GEMINI_API_KEY,
     temperature: params.temperature ?? 0.4,
-    maxOutputTokens: params.maxOutputTokens ?? 2048,
+    maxOutputTokens: params.maxOutputTokens ?? env.AI_CHAT_MAX_OUTPUT_TOKENS,
   });
 }
 

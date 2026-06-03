@@ -103,6 +103,28 @@ function throwIfAborted(abortSignal?: AbortSignal) {
   }
 }
 
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number | undefined,
+  abortController: AbortController,
+): Promise<T> {
+  if (!timeoutMs) return promise;
+
+  let timeout: NodeJS.Timeout | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => {
+      abortController.abort("GEMINI_TIMEOUT");
+      reject(new Error("GEMINI_TIMEOUT"));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 function waitWithAbort(ms: number, abortSignal?: AbortSignal) {
   if (!abortSignal) {
     return new Promise((res) => setTimeout(res, ms));
@@ -131,14 +153,23 @@ function waitWithAbort(ms: number, abortSignal?: AbortSignal) {
 }
 
 export async function executeWithFallback<T>(
-  operation: (model: string) => Promise<T>,
+  operation: (model: string, abortSignal: AbortSignal) => Promise<T>,
   context: string,
   onRetry?: (message: string) => void,
   customTiers?: string[],
   abortSignal?: AbortSignal,
+  timeoutMs?: number,
 ): Promise<{ result: T; model: string }> {
   const tiers = customTiers || [MODELS.PRIMARY, MODELS.RESERVE, MODELS.STABLE];
+  const deadlineAt = timeoutMs ? Date.now() + timeoutMs : undefined;
   let lastError: any;
+
+  function remainingTimeoutMs(): number | undefined {
+    if (!deadlineAt) return undefined;
+    const remainingMs = deadlineAt - Date.now();
+    if (remainingMs <= 0) throw new Error("GEMINI_TIMEOUT");
+    return remainingMs;
+  }
 
   for (let t = 0; t < tiers.length; t++) {
     const currentModel = tiers[t];
@@ -146,12 +177,20 @@ export async function executeWithFallback<T>(
     const maxAttempts = 2;
 
     while (attempts < maxAttempts) {
+      const attemptAbortController = new AbortController();
+      const abortCurrentAttempt = () => attemptAbortController.abort("GEMINI_TIMEOUT");
+      abortSignal?.addEventListener("abort", abortCurrentAttempt, { once: true });
       try {
         throwIfAborted(abortSignal);
-        const result = await operation(currentModel);
+        const result = await withTimeout(
+          operation(currentModel, attemptAbortController.signal),
+          remainingTimeoutMs(),
+          attemptAbortController,
+        );
         return { result, model: currentModel };
       } catch (error: any) {
         lastError = error;
+        throwIfAborted(attemptAbortController.signal);
         throwIfAborted(abortSignal);
         const isRetryable = isRetryableGeminiError(error);
 
@@ -162,7 +201,10 @@ export async function executeWithFallback<T>(
           const msg = `[GeminiResilience] ${context} - Model ${currentModel} hit ${error.status || "spike"}. Retrying in ${Math.round(delay)}ms...`;
           logger.warn(msg);
           if (onRetry) onRetry(msg);
-          await waitWithAbort(delay, abortSignal);
+          await waitWithAbort(
+            Math.min(delay, remainingTimeoutMs() ?? delay),
+            abortSignal,
+          );
           continue;
         }
 
@@ -181,6 +223,9 @@ export async function executeWithFallback<T>(
 
         logger.error(`Gemini final failure: ${errorMessage}`);
         throw new AppError(errorMessage, 502);
+      }
+      finally {
+        abortSignal?.removeEventListener("abort", abortCurrentAttempt);
       }
     }
   }
@@ -324,6 +369,7 @@ async function embedTexts(
 
 async function embedQuery(
   text: string,
+  options: { timeoutMs?: number } = {},
 ): Promise<{ vector: number[]; totalTokens: number }> {
   if (!text || text.trim().length === 0) {
     return { vector: new Array(768).fill(0), totalTokens: 0 };
@@ -343,6 +389,8 @@ async function embedQuery(
     "EmbedQuery",
     undefined,
     ["gemini-embedding-001"],
+    undefined,
+    options.timeoutMs,
   );
 
   return {

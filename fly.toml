@@ -1,9 +1,9 @@
-# fly.toml app configuration file generated for pagespilot on 2025-09-20T09:54:49Z
+# fly.toml app configuration file generated for wkil-main-service on 2026-06-03T22:08:30Z
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
-app = 'pagespilot'
+app = 'wkil-main-service'
 primary_region = 'cdg'
 
 [build]

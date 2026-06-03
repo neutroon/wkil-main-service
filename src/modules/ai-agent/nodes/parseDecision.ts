@@ -16,12 +16,22 @@ import {
 } from "../core/aiEngine.utils";
 import {
   buildAiRecoveryDecision,
+  buildImmediateSystemRecoveryDecision,
   buildMissingKnowledgeDecision,
   buildSystemRecoveryDecision,
 } from "./recoveryDecision";
 import { validateDecisionAgainstReplyPolicy } from "../core/replyPolicy";
 import type { AgentStateType } from "../core/agentState";
 import { repairStructuredDecisionOutput } from "./structuredOutputRepair";
+
+const CHAT_RESPONSE_DEADLINE_BUFFER_MS = 250;
+
+function remainingChatResponseBudgetMs(
+  state: Pick<AgentStateType, "responseDeadlineAt">,
+): number | undefined {
+  if (!state.responseDeadlineAt) return undefined;
+  return state.responseDeadlineAt - Date.now() - CHAT_RESPONSE_DEADLINE_BUFFER_MS;
+}
 
 function normalizeChunkTypeClaim(
   chunkType: string,
@@ -157,11 +167,16 @@ export async function parseDecisionNode(
       businessProfileId: state.businessProfileId,
     });
 
-    const repaired = await repairStructuredDecisionOutput({
-      state,
-      invalidOutput: responseText,
-      parseError,
-    });
+    const repairTimeoutMs = remainingChatResponseBudgetMs(state);
+    const repaired =
+      repairTimeoutMs === undefined || repairTimeoutMs > 0
+        ? await repairStructuredDecisionOutput({
+            state,
+            invalidOutput: responseText,
+            parseError,
+            timeoutMs: repairTimeoutMs,
+          })
+        : null;
     if (repaired) {
       decision = repaired.decision;
       repairedSessionStats = repaired.sessionStats;
@@ -171,11 +186,18 @@ export async function parseDecisionNode(
       };
     } else {
       return {
-        decision: await buildSystemRecoveryDecision(state, {
-          reasoning:
-            "AI response parsing failed and structured self-repair could not recover a valid routing decision.",
-          failureReason: "ai_response_parse_failed",
-        }),
+        decision:
+          repairTimeoutMs !== undefined && repairTimeoutMs <= 0
+            ? buildImmediateSystemRecoveryDecision(state, {
+                reasoning:
+                  "AI response parsing failed and no response budget remained for structured self-repair.",
+                handoffCategory: "SYSTEM_TIMEOUT",
+              })
+            : await buildSystemRecoveryDecision(state, {
+                reasoning:
+                  "AI response parsing failed and structured self-repair could not recover a valid routing decision.",
+                failureReason: "ai_response_parse_failed",
+              }),
       };
     }
   }

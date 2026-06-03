@@ -41,6 +41,20 @@ describe("buildAiRecoveryDecision", () => {
     expect(decision?.intent).toBeUndefined();
   });
 
+  it("uses the static fallback without another model call when the chat deadline is exhausted", async () => {
+    const decision = await buildAiRecoveryDecision(
+      baseState({ responseDeadlineAt: Date.now() }),
+      baseParams,
+    );
+
+    expect(generateSafeRecoveryReply).not.toHaveBeenCalled();
+    expect(decision).toMatchObject({
+      action: "REPLY_AUTO",
+      replyType: "SAFE_ACTION_FAILURE",
+      content: "Fallback reply.",
+    });
+  });
+
   it("returns facebook-comment recovery content without direct content", async () => {
     const decision = await buildAiRecoveryDecision(
       baseState({ channel: "facebook_comment" }),

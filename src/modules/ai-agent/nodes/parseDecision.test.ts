@@ -138,6 +138,36 @@ describe("parseDecisionNode failed action safety", () => {
     });
   });
 
+  it("skips structured-output repair when the chat response deadline is exhausted", async () => {
+    const result = await parseDecisionNode(
+      baseState({
+        responseDeadlineAt: Date.now(),
+        contents: [
+          { role: "user", content: "اهلا" },
+          {
+            role: "model",
+            content: JSON.stringify({
+              action: "REPLY_AUTO",
+              reasoning: "Missing replyType should fail strict parsing.",
+              content: "أهلاً بحضرتك، أقدر أساعدك؟",
+              requiresGrounding: false,
+              grounded: false,
+              usedChunkTypes: [],
+            }),
+          },
+        ],
+      }),
+    );
+
+    expect(repairStructuredDecisionOutput).not.toHaveBeenCalled();
+    expect(result.decision).toMatchObject({
+      action: "HANDOFF_TO_HUMAN",
+      replyType: "HANDOFF",
+      handoffCategory: "SYSTEM_TIMEOUT",
+      content: "Please wait for a human.",
+    });
+  });
+
   it("normalizes KNOWLEDGE chunk claims to custom_section evidence", async () => {
     const result = await parseDecisionNode(
       baseState({

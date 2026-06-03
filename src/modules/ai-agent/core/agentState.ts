@@ -111,6 +111,7 @@ export const AgentState = Annotation.Root({
   agentTurnId:       Annotation<number | undefined>(),
   conversationRunId: Annotation<string | undefined>(),
   latestUserMessageId: Annotation<number | undefined>(),
+  responseDeadlineAt: Annotation<number | undefined>(),
   activeWorkflowId:  Annotation<number | undefined>(),
   parentActionRunId: Annotation<number | undefined>(),
   actionStepKey:     Annotation<string | undefined>(),

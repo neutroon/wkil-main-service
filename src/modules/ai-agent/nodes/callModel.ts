@@ -14,10 +14,32 @@ import {
   isModelStructuredOutputError,
   isRetryableProviderError,
 } from "../core/modelRuntime";
-import { buildAiRecoveryDecision, buildSystemRecoveryDecision } from "./recoveryDecision";
+import {
+  buildAiRecoveryDecision,
+  buildImmediateSystemRecoveryDecision,
+  buildSystemRecoveryDecision,
+} from "./recoveryDecision";
 import { repairStructuredDecisionOutput } from "./structuredOutputRepair";
 
 const BLOCKED_FINISH_REASONS = new Set(["SAFETY", "RECITATION"]);
+const CHAT_RESPONSE_DEADLINE_BUFFER_MS = 250;
+
+function remainingChatResponseBudgetMs(
+  state: Pick<AgentStateType, "responseDeadlineAt">,
+): number | undefined {
+  if (!state.responseDeadlineAt) return undefined;
+  return state.responseDeadlineAt - Date.now() - CHAT_RESPONSE_DEADLINE_BUFFER_MS;
+}
+
+function buildDeadlineExpiredDecision(
+  state: AgentStateType,
+  reasoning: string,
+): AgentStateType["decision"] {
+  return buildImmediateSystemRecoveryDecision(state, {
+    reasoning,
+    handoffCategory: "SYSTEM_TIMEOUT",
+  });
+}
 
 export function normalizeModelFinishReason(reason?: string | null): string | null {
   return typeof reason === "string" && reason.trim()
@@ -60,11 +82,16 @@ async function recoverRejectedModelOutput(params: {
 
   if (rejectionReason === "MAX_TOKENS" && invalidOutput.startsWith("{")) {
     const stateWithStats = { ...state, sessionStats };
-    const repaired = await repairStructuredDecisionOutput({
-      state: stateWithStats,
-      invalidOutput,
-      parseError: new Error("Model returned partial JSON before MAX_TOKENS."),
-    });
+    const repairTimeoutMs = remainingChatResponseBudgetMs(stateWithStats);
+    const repaired =
+      repairTimeoutMs === undefined || repairTimeoutMs > 0
+        ? await repairStructuredDecisionOutput({
+            state: stateWithStats,
+            invalidOutput,
+            parseError: new Error("Model returned partial JSON before MAX_TOKENS."),
+            timeoutMs: repairTimeoutMs,
+          })
+        : null;
 
     if (repaired) {
       return repaired;
@@ -97,6 +124,17 @@ export async function callModelNode(
   const systemTokens = estimateSystemTokens(state.systemInstruction);
   const windowedContents = windowContents(state.contents, systemTokens);
   let sessionStats = state.sessionStats;
+  const modelTimeoutMs = remainingChatResponseBudgetMs(state);
+
+  if (modelTimeoutMs !== undefined && modelTimeoutMs <= 0) {
+    return {
+      decision: buildDeadlineExpiredDecision(
+        state,
+        "Chat response deadline expired before the provider call could start.",
+      ),
+      sessionStats,
+    };
+  }
 
   try {
     if (state.tools?.length) {
@@ -104,6 +142,7 @@ export async function callModelNode(
         systemInstruction: state.systemInstruction,
         contents: windowedContents,
         tools: state.tools,
+        timeoutMs: modelTimeoutMs,
       });
 
       sessionStats = addUsageToSessionStats(
@@ -183,6 +222,7 @@ export async function callModelNode(
       systemInstruction: state.systemInstruction,
       contents: windowedContents,
       channel: state.channel,
+      timeoutMs: modelTimeoutMs,
     });
     sessionStats = addUsageToSessionStats(
       sessionStats,
@@ -235,11 +275,17 @@ export async function callModelNode(
 
       const invalidOutput = error.rawText.trim();
       if (invalidOutput.startsWith("{")) {
-        const repaired = await repairStructuredDecisionOutput({
-          state: { ...state, sessionStats },
-          invalidOutput,
-          parseError: error.cause ?? error,
-        });
+        const stateWithStats = { ...state, sessionStats };
+        const repairTimeoutMs = remainingChatResponseBudgetMs(stateWithStats);
+        const repaired =
+          repairTimeoutMs === undefined || repairTimeoutMs > 0
+            ? await repairStructuredDecisionOutput({
+                state: stateWithStats,
+                invalidOutput,
+                parseError: error.cause ?? error,
+                timeoutMs: repairTimeoutMs,
+              })
+            : null;
 
         if (repaired) {
           return repaired;
@@ -281,13 +327,21 @@ export async function callModelNode(
       channel: state.channel,
     });
 
+    if (isTimeout) {
+      return {
+        decision: buildDeadlineExpiredDecision(
+          state,
+          "Provider timed out before returning a safe structured decision.",
+        ),
+        sessionStats,
+      };
+    }
+
     return {
       decision: await buildSystemRecoveryDecision(state, {
-        reasoning: isTimeout
-          ? "Provider timed out before returning a safe structured decision."
-          : `Provider failed before returning a safe structured decision: ${error?.message || String(error)}`,
-        failureReason: isTimeout ? "provider_timeout" : "provider_failure",
-        handoffCategory: isTimeout ? "SYSTEM_TIMEOUT" : "SYSTEM_ERROR",
+        reasoning: `Provider failed before returning a safe structured decision: ${error?.message || String(error)}`,
+        failureReason: "provider_failure",
+        handoffCategory: "SYSTEM_ERROR",
       }),
       sessionStats,
     };

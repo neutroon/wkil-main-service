@@ -1,6 +1,8 @@
 import { generateSafeRecoveryReply } from "@modules/ai-agent/chat/aiRecoveryReply";
 import type { AgentStateType } from "@modules/ai-agent/core/agentState";
 
+const CHAT_RESPONSE_DEADLINE_BUFFER_MS = 250;
+
 type RecoveryDecisionParams = {
   action: "REPLY_AUTO" | "HANDOFF_TO_HUMAN";
   reasoning: string;
@@ -38,19 +40,29 @@ function recoveryContentFields(
   };
 }
 
+function remainingRecoveryBudgetMs(state: AgentStateType): number | undefined {
+  if (!state.responseDeadlineAt) return undefined;
+  return state.responseDeadlineAt - Date.now() - CHAT_RESPONSE_DEADLINE_BUFFER_MS;
+}
+
 export async function buildAiRecoveryDecision(
   state: AgentStateType,
   params: RecoveryDecisionParams,
 ): Promise<AgentStateType["decision"]> {
-  const recoveryReply = await generateSafeRecoveryReply({
-    systemInstruction: state.systemInstruction,
-    channel: state.channel,
-    customerMessage: params.customerMessage ?? latestUserText(state),
-    failureReason: params.failureReason,
-    safeFallback: params.emergencyFallback,
-    allowHandoffLanguage:
-      params.allowHandoffLanguage ?? params.action === "HANDOFF_TO_HUMAN",
-  });
+  const timeoutMs = remainingRecoveryBudgetMs(state);
+  const recoveryReply =
+    timeoutMs !== undefined && timeoutMs <= 0
+      ? params.emergencyFallback
+      : await generateSafeRecoveryReply({
+          systemInstruction: state.systemInstruction,
+          channel: state.channel,
+          customerMessage: params.customerMessage ?? latestUserText(state),
+          failureReason: params.failureReason,
+          safeFallback: params.emergencyFallback,
+          allowHandoffLanguage:
+            params.allowHandoffLanguage ?? params.action === "HANDOFF_TO_HUMAN",
+          timeoutMs,
+        });
 
   return {
     action: params.action,
@@ -116,4 +128,22 @@ export function buildSystemRecoveryDecision(
     requiresGrounding: false,
     missingInfo: null,
   });
+}
+
+export function buildImmediateSystemRecoveryDecision(
+  state: AgentStateType,
+  params: { reasoning: string; handoffCategory?: string },
+): AgentStateType["decision"] {
+  return {
+    action: "HANDOFF_TO_HUMAN",
+    replyType: "HANDOFF",
+    handoffCategory: params.handoffCategory || "SYSTEM_TIMEOUT",
+    reasoning: params.reasoning,
+    ...recoveryContentFields(state, state.policy.fallbackTemplates.failed),
+    requiresGrounding: false,
+    grounded: false,
+    usedChunkTypes: [],
+    missingInfo: null,
+    attachment: null,
+  };
 }

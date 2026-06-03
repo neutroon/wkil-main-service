@@ -80,6 +80,7 @@ describe("repairStructuredDecisionOutput", () => {
       state: baseState,
       invalidOutput: '{"action":"REPLY_AUTO"',
       parseError: new Error("AI_RESPONSE_JSON_OBJECT_INCOMPLETE"),
+      timeoutMs: 1_500,
     });
 
     expect(result?.decision).toMatchObject({
@@ -91,6 +92,9 @@ describe("repairStructuredDecisionOutput", () => {
       promptTokens: 110,
       completionTokens: 30,
       modelName: "gemini-3-flash-preview",
+    });
+    expect(vi.mocked(invokeDecision).mock.calls[0][0]).toMatchObject({
+      timeoutMs: 1_500,
     });
   });
 
@@ -142,6 +146,10 @@ describe("repairStructuredDecisionOutput", () => {
 
     const repairPrompt = vi.mocked(invokeDecision).mock.calls[0][0].contents[0].content;
     expect(repairPrompt).toContain("Required JSON contract for facebook_comment");
+    expect(repairPrompt).toContain(
+      "replyType: one of NORMAL_REPLY, ASK_FOR_CORRECTION, CONFIRM_ACTION_SUCCESS, SAFE_ACTION_FAILURE, HANDOFF, RESOLVE",
+    );
+    expect(repairPrompt).not.toContain("GREETING");
     expect(repairPrompt).toContain("publicContent: public comment text");
     expect(repairPrompt).toContain("privateContent: private message text");
     expect(repairPrompt).not.toContain("content: customer-facing text for direct chat");

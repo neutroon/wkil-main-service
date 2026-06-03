@@ -124,4 +124,31 @@ describe("generateSafeRecoveryReply", () => {
 
     expect(invokeText).toHaveBeenCalledTimes(2);
   });
+
+  it("uses timeoutMs as one total budget across recovery attempts", async () => {
+    const nowSpy = vi.spyOn(Date, "now");
+    const times = [1_000, 1_000, 1_600];
+    nowSpy.mockImplementation(() => times.shift() ?? 1_600);
+    vi.mocked(invokeText).mockResolvedValue(
+      textResult("Done, your request has been confirmed and saved."),
+    );
+
+    try {
+      await expect(
+        generateSafeRecoveryReply({
+          systemInstruction: "Use English.",
+          failureReason: "external_lookup_failed",
+          safeFallback: "Fallback",
+          timeoutMs: 500,
+        }),
+      ).resolves.toBe("Fallback");
+    } finally {
+      nowSpy.mockRestore();
+    }
+
+    expect(invokeText).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(invokeText).mock.calls[0]?.[0]).toMatchObject({
+      timeoutMs: 500,
+    });
+  });
 });

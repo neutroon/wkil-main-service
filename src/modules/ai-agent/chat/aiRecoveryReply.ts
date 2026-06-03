@@ -17,6 +17,7 @@ export type RecoveryReplyParams = {
   failureReason: string;
   safeFallback: string;
   allowHandoffLanguage?: boolean;
+  timeoutMs?: number;
 };
 
 function stripJsonOrMarkdown(text: string): string {
@@ -115,11 +116,11 @@ function buildRecoveryPrompt(params: {
     .join("\n");
 }
 
-async function askRecoveryModel(prompt: string): Promise<string> {
+async function askRecoveryModel(prompt: string, timeoutMs: number): Promise<string> {
   const result = await invokeText({
     prompt,
     temperature: 0.2,
-    timeoutMs: RECOVERY_TIMEOUT_MS,
+    timeoutMs,
     context: "AgentGraph.recoveryReply",
   });
 
@@ -133,8 +134,16 @@ export async function generateSafeRecoveryReply({
   failureReason,
   safeFallback,
   allowHandoffLanguage = false,
+  timeoutMs,
 }: RecoveryReplyParams): Promise<string> {
+  const deadlineAt = timeoutMs ? Date.now() + timeoutMs : undefined;
+
   for (const rewriteMoreCautiously of [false, true]) {
+    const remainingMs = deadlineAt
+      ? deadlineAt - Date.now()
+      : RECOVERY_TIMEOUT_MS;
+    if (remainingMs <= 0) return safeFallback;
+
     const prompt = buildRecoveryPrompt({
       systemInstruction,
       channel,
@@ -145,7 +154,10 @@ export async function generateSafeRecoveryReply({
     });
 
     try {
-      const text = await askRecoveryModel(prompt);
+      const text = await askRecoveryModel(
+        prompt,
+        Math.min(RECOVERY_TIMEOUT_MS, remainingMs),
+      );
       if (isSafeRecoveryReply(text)) return text;
 
       logger.warn("ai.recovery_reply.rejected", {

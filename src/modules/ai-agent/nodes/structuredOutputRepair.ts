@@ -102,6 +102,7 @@ export async function repairStructuredDecisionOutput(params: {
   state: AgentStateType;
   invalidOutput: string;
   parseError: unknown;
+  timeoutMs?: number;
 }): Promise<StructuredOutputRepairResult | null> {
   const { state, invalidOutput, parseError } = params;
 
@@ -112,7 +113,13 @@ export async function repairStructuredDecisionOutput(params: {
       contents: [{ role: "user", content: prompt }],
       channel: state.channel,
       temperature: 0,
-      timeoutMs: STRUCTURED_REPAIR_TIMEOUT_MS,
+      timeoutMs: Math.max(
+        1,
+        Math.min(
+          params.timeoutMs ?? STRUCTURED_REPAIR_TIMEOUT_MS,
+          STRUCTURED_REPAIR_TIMEOUT_MS,
+        ),
+      ),
     });
 
     const repairedText = repaired.rawText.trim();

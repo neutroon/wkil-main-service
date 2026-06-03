@@ -2,12 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   buildAiRecoveryDecisionMock,
+  buildImmediateSystemRecoveryDecisionMock,
   invokeDecisionMock,
   invokeDecisionOrToolMock,
   invokeToolChoiceMock,
   repairStructuredDecisionOutputMock,
 } = vi.hoisted(() => ({
   buildAiRecoveryDecisionMock: vi.fn(),
+  buildImmediateSystemRecoveryDecisionMock: vi.fn(),
   invokeDecisionMock: vi.fn(),
   invokeDecisionOrToolMock: vi.fn(),
   invokeToolChoiceMock: vi.fn(),
@@ -45,6 +47,7 @@ vi.mock("../core/modelRuntime", () => ({
 
 vi.mock("./recoveryDecision", () => ({
   buildAiRecoveryDecision: buildAiRecoveryDecisionMock,
+  buildImmediateSystemRecoveryDecision: buildImmediateSystemRecoveryDecisionMock,
   buildSystemRecoveryDecision: vi.fn(async () => ({
     action: "HANDOFF_TO_HUMAN",
     replyType: "HANDOFF",
@@ -89,6 +92,18 @@ function baseState() {
 describe("callModelNode provider output validation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    buildImmediateSystemRecoveryDecisionMock.mockReturnValue({
+      action: "HANDOFF_TO_HUMAN",
+      replyType: "HANDOFF",
+      handoffCategory: "SYSTEM_TIMEOUT",
+      reasoning: "deadline recovery",
+      content: "failed",
+      requiresGrounding: false,
+      grounded: false,
+      usedChunkTypes: [],
+      missingInfo: null,
+      attachment: null,
+    });
   });
 
   it("rejects safety-blocked model output before JSON parsing", () => {
@@ -203,12 +218,91 @@ describe("callModelNode provider output validation", () => {
     });
 
     expect(invokeDecisionOrToolMock).toHaveBeenCalledOnce();
+    expect(invokeDecisionOrToolMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timeoutMs: undefined,
+      }),
+    );
     expect(invokeDecisionMock).not.toHaveBeenCalled();
     expect(result.toolCalls).toEqual([]);
     const contents = result.contents || [];
     expect(contents[contents.length - 1]).toMatchObject({
       role: "model",
       content: expect.stringContaining("Answered from business context"),
+    });
+  });
+
+  it("passes the remaining chat response budget to the model call", async () => {
+    invokeDecisionMock.mockResolvedValueOnce({
+      decision: {
+        action: "REPLY_AUTO",
+        replyType: "NORMAL_REPLY",
+        reasoning: "Answered from business context.",
+        content: "Hello",
+        requiresGrounding: false,
+        grounded: true,
+        usedChunkTypes: [],
+        missingInfo: null,
+      },
+      rawText: '{"action":"REPLY_AUTO"}',
+      usage: { promptTokens: 10, completionTokens: 5, groundingCalls: 0 },
+      modelName: "gemini-3-flash-preview",
+      finishReason: "STOP",
+    });
+
+    await callModelNode({
+      ...baseState(),
+      responseDeadlineAt: Date.now() + 4_000,
+    });
+
+    expect(invokeDecisionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timeoutMs: expect.any(Number),
+      }),
+    );
+    expect(invokeDecisionMock.mock.calls[0][0].timeoutMs).toBeGreaterThan(0);
+    expect(invokeDecisionMock.mock.calls[0][0].timeoutMs).toBeLessThanOrEqual(3_750);
+  });
+
+  it("uses immediate recovery when the chat response deadline is exhausted", async () => {
+    const result = await callModelNode({
+      ...baseState(),
+      responseDeadlineAt: Date.now() + 10,
+    });
+
+    expect(invokeDecisionMock).not.toHaveBeenCalled();
+    expect(buildImmediateSystemRecoveryDecisionMock).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        handoffCategory: "SYSTEM_TIMEOUT",
+      }),
+    );
+    expect(buildAiRecoveryDecisionMock).not.toHaveBeenCalled();
+    expect(result.decision).toMatchObject({
+      action: "HANDOFF_TO_HUMAN",
+      handoffCategory: "SYSTEM_TIMEOUT",
+    });
+  });
+
+  it("uses immediate recovery on provider timeout without calling a recovery model", async () => {
+    invokeDecisionMock.mockRejectedValueOnce(new Error("MODEL_TIMEOUT"));
+
+    const result = await callModelNode({
+      ...baseState(),
+      responseDeadlineAt: Date.now() + 4_000,
+    });
+
+    expect(invokeDecisionMock).toHaveBeenCalledOnce();
+    expect(buildImmediateSystemRecoveryDecisionMock).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        handoffCategory: "SYSTEM_TIMEOUT",
+      }),
+    );
+    expect(buildAiRecoveryDecisionMock).not.toHaveBeenCalled();
+    expect(result.decision).toMatchObject({
+      action: "HANDOFF_TO_HUMAN",
+      handoffCategory: "SYSTEM_TIMEOUT",
     });
   });
 });

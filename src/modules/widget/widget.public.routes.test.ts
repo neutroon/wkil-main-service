@@ -86,7 +86,7 @@ const baseInstall: WidgetInstall = {
   id: 1,
   userId: 10,
   businessProfileId: 20,
-  publicSiteKey: "wpk_test_xxxxxxxx",
+  publicSiteKey: "wsk_test_xxxxxxxx",
   allowedOrigins: ["https://shop.example"],
   label: null,
   isActive: true,
@@ -157,7 +157,7 @@ describe("POST /chat (public widget)", () => {
       method: "POST",
       path: "/chat",
       headers: {
-        "x-widget-site-key": "wpk_test_xxxxxxxx",
+        "x-widget-site-key": "wsk_test_xxxxxxxx",
       },
       body: JSON.stringify({
         visitorId: "12345678-abcd-ef00-0000-000000000001",
@@ -179,7 +179,7 @@ describe("POST /chat (public widget)", () => {
       method: "POST",
       path: "/chat",
       headers: {
-        "x-widget-site-key": "wpk_test_xxxxxxxx",
+        "x-widget-site-key": "wsk_test_xxxxxxxx",
         origin: "https://shop.example",
       },
       body: JSON.stringify({
@@ -205,7 +205,7 @@ describe("POST /chat (public widget)", () => {
       method: "POST",
       path: "/chat",
       headers: {
-        "x-widget-site-key": "wpk_test_xxxxxxxx",
+        "x-widget-site-key": "wsk_test_xxxxxxxx",
         origin: "https://shop.example",
       },
       body: JSON.stringify({
@@ -247,7 +247,7 @@ describe("POST /chat (public widget)", () => {
       method: "POST",
       path: "/chat",
       headers: {
-        "x-widget-site-key": "wpk_test_xxxxxxxx",
+        "x-widget-site-key": "wsk_test_xxxxxxxx",
         origin: "https://shop.example",
       },
       body: JSON.stringify({
@@ -280,7 +280,7 @@ describe("POST /chat (public widget)", () => {
       method: "POST",
       path: "/chat",
       headers: {
-        "x-widget-site-key": "wpk_test_xxxxxxxx",
+        "x-widget-site-key": "wsk_test_xxxxxxxx",
         origin: "https://shop.example",
       },
       body: JSON.stringify({
@@ -337,7 +337,7 @@ describe("OPTIONS /chat (CORS preflight)", () => {
       method: "OPTIONS",
       path: "/chat",
       headers: {
-        "x-widget-site-key": "wpk_test_xxxxxxxx",
+        "x-widget-site-key": "wsk_test_xxxxxxxx",
         origin: "https://shop.example",
       },
     });

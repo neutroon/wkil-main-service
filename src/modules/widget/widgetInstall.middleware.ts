@@ -4,10 +4,37 @@ import { env } from "@config/env";
 import type { WidgetInstall } from "@prisma/client";
 
 export function parseAllowedOrigins(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter(
-    (x): x is string => typeof x === "string" && x.length > 0,
-  );
+  const rawOrigins = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(/[\n,]+/)
+      : [];
+  const origins: string[] = [];
+
+  for (const rawOrigin of rawOrigins) {
+    if (typeof rawOrigin !== "string") continue;
+    const trimmed = rawOrigin.trim();
+    if (!trimmed) continue;
+
+    if (trimmed === "*") {
+      origins.push("*");
+      continue;
+    }
+
+    try {
+      const hasScheme = /^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(trimmed);
+      const withProtocol = hasScheme ? trimmed : `https://${trimmed}`;
+      const origin = new URL(withProtocol);
+      if (origin.protocol !== "http:" && origin.protocol !== "https:") {
+        continue;
+      }
+      origins.push(origin.origin);
+    } catch {
+      // Invalid origins are ignored; routes reject the request if none remain.
+    }
+  }
+
+  return [...new Set(origins)];
 }
 
 function isOriginAllowed(

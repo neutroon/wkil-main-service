@@ -825,7 +825,7 @@ paths:
       tags: [Leads]
       operationId: createLead
       summary: Create a lead
-      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      security: []
       requestBody: { $ref: "#/components/requestBodies/Lead" }
       responses:
         "201": { $ref: "#/components/responses/Created" }

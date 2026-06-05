@@ -52,10 +52,26 @@ function resolveImport(specifier) {
 
 function getDefaultImports(source) {
   const imports = new Map();
-  const importPattern = /import\s+(\w+)\s+from\s+["']([^"']+)["']/g;
+  const defaultImportPattern =
+    /import\s+(\w+)\s*(?:,\s*\{[^}]*\})?\s+from\s+["']([^"']+)["']/g;
+  const namedImportPattern =
+    /import\s+(?:\w+\s*,\s*)?\{([^}]+)\}\s+from\s+["']([^"']+)["']/g;
 
-  for (const match of source.matchAll(importPattern)) {
+  for (const match of source.matchAll(defaultImportPattern)) {
     imports.set(match[1], match[2]);
+  }
+
+  for (const match of source.matchAll(namedImportPattern)) {
+    const [, importList, specifier] = match;
+
+    for (const importName of importList.split(",")) {
+      const parts = importName.trim().split(/\s+as\s+/);
+      const localName = parts[1] || parts[0];
+
+      if (localName) {
+        imports.set(localName.trim(), specifier);
+      }
+    }
   }
 
   return imports;

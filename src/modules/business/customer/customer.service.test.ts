@@ -290,6 +290,30 @@ describe("customer service", () => {
     );
   });
 
+  it("filters customers to records with non-empty saved details", async () => {
+    mockedPrisma.customer.count.mockResolvedValue(0 as never);
+    mockedPrisma.customer.findMany.mockResolvedValue([] as never);
+
+    await listCustomers({
+      userId: 5,
+      status: "captured",
+      limit: 50,
+    });
+
+    expect(mockedPrisma.customer.count).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        AND: [
+          {
+            AND: [
+              { capturedFields: { not: null } },
+              { NOT: { capturedFields: { equals: {} } } },
+            ],
+          },
+        ],
+      }),
+    });
+  });
+
   it("updates and deletes saved captured fields for an accessible customer", async () => {
     const baseCustomer = {
       id: 30,
@@ -339,5 +363,54 @@ describe("customer service", () => {
       }),
     });
     expect(updated.capturedFields).toEqual({ interest: "enterprise" });
+  });
+
+  it("clears captured fields when the last saved detail is deleted", async () => {
+    const baseCustomer = {
+      id: 31,
+      businessProfileId: 1,
+      displayName: "Mona",
+      phone: null,
+      email: null,
+      avatarUrl: null,
+      primaryChannel: "web",
+      status: "ACTIVE",
+      notes: null,
+      capturedFields: { interest: "pricing" },
+      externalIdentities: [],
+      lastInteractionAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      businessProfile: {
+        id: 1,
+        name: "Wkil",
+        customerMemoryFields: [],
+      },
+      conversations: [],
+      _count: { conversations: 0 },
+    };
+    mockedPrisma.customer.findFirst
+      .mockResolvedValueOnce(baseCustomer as never)
+      .mockResolvedValueOnce({
+        ...baseCustomer,
+        capturedFields: {},
+      } as never);
+    mockedPrisma.customer.update.mockResolvedValue({
+      ...baseCustomer,
+      capturedFields: {},
+    } as never);
+
+    await updateCustomerForUser(5, 31, {
+      capturedFieldUpdates: {
+        interest: null,
+      },
+    });
+
+    expect(mockedPrisma.customer.update).toHaveBeenCalledWith({
+      where: { id: 31 },
+      data: expect.objectContaining({
+        capturedFields: null,
+      }),
+    });
   });
 });

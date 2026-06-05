@@ -85,7 +85,9 @@ function applyCapturedFieldUpdates(
     }
   }
 
-  return next as Prisma.InputJsonObject;
+  return Object.keys(next).length > 0
+    ? (next as Prisma.InputJsonObject)
+    : Prisma.JsonNull;
 }
 
 function mergeExternalIds(
@@ -463,7 +465,12 @@ export async function listCustomers(params: {
 
   if (params.status && params.status !== "all") {
     if (params.status === "captured") {
-      where.capturedFields = { not: Prisma.JsonNull };
+      andFilters.push({
+        AND: [
+          { capturedFields: { not: Prisma.JsonNull } },
+          { NOT: { capturedFields: { equals: {} } } },
+        ],
+      });
     } else if (params.status === "handoff") {
       where.conversations = {
         some: { messages: { some: { handoffCategory: { not: null } } } },

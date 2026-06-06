@@ -39,6 +39,41 @@ export function normalizeCustomerEmail(value: unknown): string | null {
   return text.toLowerCase();
 }
 
+function cleanPhoneCandidate(value: unknown): string | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  return cleanString(value);
+}
+
+function isPhoneLikeFieldKey(key: string) {
+  const spacedKey = key
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .toLowerCase();
+  return (
+    /\b(phone|mobile|whatsapp|telephone|tel|cell)\b/.test(spacedKey) ||
+    /هاتف|موبايل|جوال|واتساب|تليفون/.test(key)
+  );
+}
+
+function extractPhoneFromDetails(details: Record<string, unknown>) {
+  const directPhone = cleanPhoneCandidate(details.phone);
+  if (directPhone && normalizeCustomerPhone(directPhone)) {
+    return directPhone;
+  }
+
+  for (const [key, value] of Object.entries(details)) {
+    if (!isPhoneLikeFieldKey(key)) continue;
+    const phone = cleanPhoneCandidate(value);
+    if (phone && normalizeCustomerPhone(phone)) {
+      return phone;
+    }
+  }
+
+  return null;
+}
+
 function preferredDisplayName(params: {
   displayName?: string | null;
   phone?: string | null;
@@ -299,7 +334,7 @@ export async function updateCustomerFromSavedDetails(params: {
       })
     : null;
 
-  const phone = cleanString(details.phone) || conversation?.customerPhone || (conversation?.channel === "whatsapp" ? conversation.senderId : null);
+  const phone = extractPhoneFromDetails(details) || conversation?.customerPhone || (conversation?.channel === "whatsapp" ? conversation.senderId : null);
   const email = cleanString(details.email);
   const normalizedPhone = normalizeCustomerPhone(phone);
   const normalizedEmail = normalizeCustomerEmail(email);
@@ -551,7 +586,13 @@ export async function updateCustomerForUser(
   },
 ) {
   const existing = await getCustomerForUser(userId, customerId);
-  const phone = data.phone !== undefined ? cleanString(data.phone) : undefined;
+  const capturedPhone = data.capturedFieldUpdates
+    ? extractPhoneFromDetails(data.capturedFieldUpdates)
+    : null;
+  const phone =
+    data.phone !== undefined
+      ? cleanString(data.phone)
+      : capturedPhone ?? undefined;
   const email = data.email !== undefined ? cleanString(data.email) : undefined;
   const capturedFields = applyCapturedFieldUpdates(
     existing.capturedFields,

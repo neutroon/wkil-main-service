@@ -245,6 +245,60 @@ describe("customer service", () => {
     expect(mockedPrisma.conversation.updateMany).not.toHaveBeenCalled();
   });
 
+  it("promotes phone-like saved details into the customer phone fields", async () => {
+    const conversation = {
+      id: 88,
+      businessProfileId: 1,
+      customerId: 30,
+      channel: "messenger",
+      senderId: "psid-1",
+      customerName: "Mona",
+      customerPhone: null,
+      customerAvatar: null,
+    };
+    const existing = {
+      id: 30,
+      businessProfileId: 1,
+      displayName: "Mona",
+      phone: null,
+      normalizedPhone: null,
+      email: null,
+      normalizedEmail: null,
+      capturedFields: { source: "chat" },
+    };
+    mockedPrisma.conversation.findFirst.mockResolvedValue(conversation as never);
+    mockedPrisma.customer.findFirst.mockResolvedValue(existing as never);
+    mockedPrisma.customer.update.mockResolvedValue({
+      ...existing,
+      phone: "+20 100 111 2222",
+      normalizedPhone: "+201001112222",
+      capturedFields: {
+        source: "chat",
+        whatsappNumber: "+20 100 111 2222",
+      },
+    } as never);
+
+    await updateCustomerFromSavedDetails({
+      businessProfileId: 1,
+      conversationId: 88,
+      details: {
+        whatsappNumber: "+20 100 111 2222",
+      },
+    });
+
+    expect(mockedPrisma.customer.update).toHaveBeenCalledWith({
+      where: { id: 30 },
+      data: expect.objectContaining({
+        phone: "+20 100 111 2222",
+        normalizedPhone: "+201001112222",
+        capturedFields: {
+          source: "chat",
+          whatsappNumber: "+20 100 111 2222",
+        },
+      }),
+    });
+  });
+
   it("does not expose customers outside the user's accessible profiles", async () => {
     mockedPrisma.customer.findFirst.mockResolvedValue(null);
 
@@ -363,6 +417,59 @@ describe("customer service", () => {
       }),
     });
     expect(updated.capturedFields).toEqual({ interest: "enterprise" });
+  });
+
+  it("syncs manually edited phone-like captured fields to the customer phone", async () => {
+    const baseCustomer = {
+      id: 30,
+      businessProfileId: 1,
+      displayName: "Mona",
+      phone: null,
+      email: null,
+      avatarUrl: null,
+      primaryChannel: "web",
+      status: "ACTIVE",
+      notes: null,
+      capturedFields: {},
+      externalIdentities: [],
+      lastInteractionAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      businessProfile: {
+        id: 1,
+        name: "Wkil",
+        customerMemoryFields: [],
+      },
+      conversations: [],
+      _count: { conversations: 0 },
+    };
+    mockedPrisma.customer.findFirst
+      .mockResolvedValueOnce(baseCustomer as never)
+      .mockResolvedValueOnce({
+        ...baseCustomer,
+        phone: "0100 111 2222",
+        capturedFields: { customerPhone: "0100 111 2222" },
+      } as never);
+    mockedPrisma.customer.update.mockResolvedValue({
+      ...baseCustomer,
+      phone: "0100 111 2222",
+      capturedFields: { customerPhone: "0100 111 2222" },
+    } as never);
+
+    await updateCustomerForUser(5, 30, {
+      capturedFieldUpdates: {
+        customerPhone: "0100 111 2222",
+      },
+    });
+
+    expect(mockedPrisma.customer.update).toHaveBeenCalledWith({
+      where: { id: 30 },
+      data: expect.objectContaining({
+        phone: "0100 111 2222",
+        normalizedPhone: "01001112222",
+        capturedFields: { customerPhone: "0100 111 2222" },
+      }),
+    });
   });
 
   it("clears captured fields when the last saved detail is deleted", async () => {

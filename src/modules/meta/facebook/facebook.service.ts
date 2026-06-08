@@ -286,6 +286,7 @@ export const generateAuthUrl = (params: FacebookAuthUrlParams): string => {
     "pages_show_list",
     "pages_manage_posts",
     "pages_read_engagement",
+    "pages_read_user_content",
     "pages_messaging",
     "pages_manage_metadata",
     "pages_manage_engagement",

@@ -53,13 +53,25 @@ vi.mock("@utils/apiClient", () => ({
 }));
 
 import { metaClient } from "@utils/apiClient";
-import { prepareSdkFacebookToken } from "./facebook.service";
+import { generateAuthUrl, prepareSdkFacebookToken } from "./facebook.service";
 
 const mockedMetaGet = metaClient.get as unknown as Mock;
 
 describe("Facebook SDK login token preparation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("requests page user content access during OAuth login", () => {
+    const authUrl = generateAuthUrl({
+      redirect_uri: "https://app.example.com/facebook/callback",
+      state: "review-state",
+    });
+
+    const url = new URL(authUrl);
+    const requestedScopes = url.searchParams.get("scope")?.split(",") || [];
+
+    expect(requestedScopes).toContain("pages_read_user_content");
   });
 
   it("validates a SDK token and exchanges it for a long-lived token", async () => {

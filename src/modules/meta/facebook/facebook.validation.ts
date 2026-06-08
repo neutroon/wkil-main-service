@@ -143,3 +143,13 @@ export const facebookCommentIdParamSchema = z.object({
     commentId: z.string().min(1, "commentId is required"),
   }),
 });
+
+export const facebookCommentReplySchema = z.object({
+  params: z.object({
+    commentId: z.string().min(1, "commentId is required"),
+  }),
+  body: z.object({
+    message: z.string().trim().min(1, "message is required"),
+    pageId: z.string().min(1, "pageId is required"),
+  }),
+});

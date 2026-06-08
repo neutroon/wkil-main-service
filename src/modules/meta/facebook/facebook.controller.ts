@@ -302,8 +302,32 @@ export class FacebookController {
    */
   async replyToComment(req: Request, res: Response) {
     const { commentId } = req.params;
-    const { message, accessToken } = req.body;
-    const result = await replyToComment({ commentId, message, accessToken: accessToken || undefined });
+    const { message, pageId } = req.body;
+    const userId = (req as any).user.id;
+
+    const page = await prisma.facebookPage.findFirst({
+      where: {
+        pageId,
+        facebookAccount: { userId },
+        isActive: true,
+      },
+      orderBy: { updatedAt: "desc" },
+      select: {
+        pageAccessToken: true,
+        pageId: true,
+        businessProfileId: true,
+      },
+    });
+
+    if (!page) throw new AppError("Facebook page not found", 404);
+
+    const result = await replyToComment({
+      commentId,
+      message,
+      accessToken: decryptFacebookSecret(page.pageAccessToken),
+      pageId: page.pageId,
+      businessProfileId: page.businessProfileId ?? undefined,
+    });
     return res.json(result);
   }
 

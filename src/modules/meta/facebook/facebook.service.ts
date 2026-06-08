@@ -150,7 +150,7 @@ export interface FacebookScheduleParams {
 export interface FacebookCommentParams {
   commentId: string;
   message: string;
-  accessToken: string;
+  accessToken?: string;
 }
 
 export interface FacebookPrivateReplyParams {
@@ -625,6 +625,16 @@ export const replyToComment = async (
         activePageId = ownerPage.pageId;
       }
     }
+  }
+
+  if (!activeToken && activePageId) {
+    activeToken = await getPageAccessToken(activePageId);
+  } else if (!activeToken && commentId.includes("_")) {
+    activeToken = await getPageAccessToken(commentId.split("_")[0]);
+  }
+
+  if (!activeToken) {
+    throw new AppError("Access token is required for Facebook comment replies", 401);
   }
 
   const scopedId = scopeCommentId(commentId, activePageId);

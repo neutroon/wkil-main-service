@@ -11,7 +11,7 @@ import {
   facebookScheduleSchema,
   facebookPageIdParamSchema,
   facebookPostIdParamSchema,
-  facebookCommentIdParamSchema,
+  facebookCommentReplySchema,
   facebookAnalyticsSchema,
   facebookIdParamSchema,
   facebookLinkBusinessSchema,
@@ -51,7 +51,7 @@ facebookRoutes.post("/schedule", authenticateToken, validate(facebookScheduleSch
 facebookRoutes.get("/page-posts/:pageId", authenticateToken, validate(facebookPageIdParamSchema), (req, res) => facebookController.getPagePosts(req, res));
 facebookRoutes.delete("/post/:postId", authenticateToken, validate(facebookPostIdParamSchema), (req, res) => facebookController.deletePost(req, res));
 facebookRoutes.get("/comments/:postId", authenticateToken, validate(facebookPostIdParamSchema), (req, res) => facebookController.getComments(req, res));
-facebookRoutes.post("/reply/:commentId", authenticateToken, validate(facebookCommentIdParamSchema), (req, res) => facebookController.replyToComment(req, res));
+facebookRoutes.post("/reply/:commentId", authenticateToken, validate(facebookCommentReplySchema), (req, res) => facebookController.replyToComment(req, res));
 facebookRoutes.post("/private-reply/:messageId", authenticateToken, validate(facebookPrivateReplySchema), (req, res) => facebookController.sendPrivateReply(req, res));
 
 export default facebookRoutes;

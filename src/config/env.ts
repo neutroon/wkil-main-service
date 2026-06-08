@@ -47,9 +47,9 @@ const envSchema = z.object({
   ML_SERVICE_URL: z.string().url().optional(),
   ML_API_KEY: z.string().optional(),
   RAG_MIN_SIMILARITY: z.coerce.number().optional().default(0.25),
-  AI_CHAT_RESPONSE_DEADLINE_MS: z.coerce.number().int().min(1000).max(60000).default(4800),
-  AI_CHAT_RAG_TIMEOUT_MS: z.coerce.number().int().min(250).max(10000).default(1800),
-  AI_CHAT_PREP_LOOKUP_TIMEOUT_MS: z.coerce.number().int().min(100).max(5000).default(500),
+  AI_CHAT_RESPONSE_DEADLINE_MS: z.coerce.number().int().min(1000).max(60000).default(60000),
+  AI_CHAT_RAG_TIMEOUT_MS: z.coerce.number().int().min(250).max(10000).default(10000),
+  AI_CHAT_PREP_LOOKUP_TIMEOUT_MS: z.coerce.number().int().min(100).max(5000).default(5000),
   AI_CHAT_MODEL_TIERS: z
     .string()
     .default("gemini-3.1-flash-lite-preview,gemini-3-flash-preview,gemini-2.5-flash"),

@@ -30,10 +30,13 @@ const prisma = basePrisma.$extends({
 
               if (result && typeof result === "object" && !Array.isArray(result)) {
                 let messageWithContext = result as any;
-                if (!messageWithContext.conversation?.businessProfileId) {
+                if (
+                  !messageWithContext.conversation?.businessProfileId ||
+                  messageWithContext.conversation?.channel === undefined
+                ) {
                   const context = await basePrisma.conversation.findUnique({
                     where: { id: messageWithContext.conversationId },
-                    select: { businessProfileId: true }
+                    select: { businessProfileId: true, channel: true }
                   });
                   messageWithContext = { ...messageWithContext, conversation: context };
                 }

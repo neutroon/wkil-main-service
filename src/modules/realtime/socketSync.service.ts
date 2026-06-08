@@ -18,17 +18,20 @@ export const syncSocketFromMessage = async (message: any) => {
     // or we fetch it if missing. (Extended in Prisma logic)
     const { conversationId, conversation } = message;
     const businessProfileId = conversation?.businessProfileId;
+    const channel = conversation?.channel ?? null;
 
     if (businessProfileId) {
       // 1. Notify the specific Business Dashboard
       emitToBusiness(businessProfileId, "new_message", {
         conversationId,
+        channel,
         message,
       });
 
       // 2. Notify the specific Conversation Room (Inbox)
       emitToConversation(conversationId, "new_message", {
         conversationId,
+        channel,
         message,
       });
 

@@ -68,10 +68,37 @@ function isLocalOrigin(origin: string | undefined): boolean {
   return Boolean(origin && (origin.includes("localhost") || origin.includes("127.0.0.1")));
 }
 
+function normalizeOrigin(value: string | undefined): string {
+  if (!value) return "";
+  try {
+    return new URL(value).origin;
+  } catch {
+    return value.replace(/\/+$/, "");
+  }
+}
+
 function isDashboardOriginAllowed(origin: string | undefined): boolean {
   if (isLocalOrigin(origin)) return true;
   if (!origin) return env.NODE_ENV !== "production";
-  return origin === env.FRONTEND_URL;
+
+  const normalizedOrigin = normalizeOrigin(origin);
+  const allowedOrigins = new Set(
+    [
+      env.FRONTEND_URL,
+      "https://wkil.app",
+      "https://www.wkil.app",
+      "https://go.wkil.app",
+      "https://app.wkil.app",
+      "https://wkil.vercel.app",
+      "https://wkil.netlify.app",
+    ].map(normalizeOrigin),
+  );
+
+  return (
+    allowedOrigins.has(normalizedOrigin) ||
+    normalizedOrigin.endsWith(".wkil.app") ||
+    normalizedOrigin.endsWith(".vercel.app")
+  );
 }
 
 function isWidgetOriginAllowed(

@@ -49,11 +49,18 @@ export const syncBulkMessageStatus = (params: {
   metadata?: any;
 }) => {
   const { businessProfileId, conversationId, status, metadata } = params;
-  
-  emitToBusiness(businessProfileId, "message_status_updated", {
+
+  const payload = {
     conversationId,
     status,
     ...metadata
+  };
+
+  emitToBusiness(businessProfileId, "message_status_updated", {
+    ...payload
+  });
+  emitToBusiness(businessProfileId, "message_status", {
+    ...payload
   });
   
   logger.debug("socket.bulk_sync.success", { conversationId, status });

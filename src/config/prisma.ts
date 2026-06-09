@@ -1,14 +1,30 @@
 import { PrismaClient, Prisma } from "@prisma/client";
 import { logger } from "@utils/logger";
+import { recordPrismaQuery } from "@utils/dbQueryTrace";
 
 const basePrisma = new PrismaClient();
+
+const prismaWithQueryTrace = basePrisma.$extends({
+  query: {
+    $allModels: {
+      async $allOperations({ args, query }) {
+        const startedAt = Date.now();
+        try {
+          return await query(args);
+        } finally {
+          recordPrismaQuery(Date.now() - startedAt);
+        }
+      },
+    },
+  },
+});
 
 /**
  * ELITE TIER: Automated Side-Effects Extension
  * This extension intercepts every write to 'conversationMessage' and 
  * triggers a socket emit to keep the UI perfectly in sync with the DB.
  */
-const prisma = basePrisma.$extends({
+const prisma = prismaWithQueryTrace.$extends({
   query: {
     conversationMessage: {
       async $allOperations({ model, operation, args, query }) {

@@ -84,7 +84,7 @@ export async function processWidgetChatMessage(params: {
         latestUserMessageId: userMessage.id,
       }),
     );
-    const turnContext = await latency.measure("turnContextMs", () =>
+    const turnContext = await latency.measureDb("turnContextMs", () =>
       buildUnansweredUserTurnContext({
         conversationId: conversation.id,
         latestUserMessageId: userMessage.id,
@@ -177,7 +177,7 @@ export async function processWidgetChatMessage(params: {
       throw err;
     }
 
-    const botMsg = await latency.measure("saveOutboundMs", () =>
+    const botMsg = await latency.measureDb("saveOutboundMs", () =>
       saveMessage(
         conversation.id,
         "model",
@@ -242,7 +242,7 @@ export async function processWidgetChatMessage(params: {
           type: resolved.mediaType,
           caption: reply.attachment.caption ?? null,
         };
-        await latency.measure("saveOutboundMs", () =>
+        await latency.measureDb("saveOutboundMs", () =>
           saveMessage(
             conversation.id,
             "model",
@@ -345,7 +345,7 @@ async function setupWidgetChat(params: {
         latency,
       })
     : null;
-  const userMessage = await latency.measure("saveInboundMs", () =>
+  const userMessage = await latency.measureDb("saveInboundMs", () =>
     saveMessage(conversation.id, "user", message, {
       type: mediaPayload?.type,
       mediaId: mediaPayload?.mediaId,

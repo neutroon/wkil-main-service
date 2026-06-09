@@ -619,7 +619,7 @@ export async function processMetaMessage(
       aiEnabled: (conversation as any).aiEnabled 
     });
 
-    const userSaved = await latency.measure("saveInboundMs", () =>
+    const userSaved = await latency.measureDb("saveInboundMs", () =>
       saveMessage(conversation.id, job.isFromBusiness ? "model" : "user", messageText || "", {
         externalId,
         type: type || "text",
@@ -679,7 +679,7 @@ export async function processMetaMessage(
           ...(mediaMetadata || {}),
           analysis,
         };
-        await latency.measure("saveInboundMs", () =>
+        await latency.measureDb("saveInboundMs", () =>
           prisma.conversationMessage.update({
             where: { id: userSaved.id },
             data: { mediaMetadata: enrichedMediaMetadata },
@@ -690,7 +690,7 @@ export async function processMetaMessage(
 
     // 5. AI Reply Generation
     logger.info("meta.processor.computing_reply", { conversationId: conversation.id });
-    const turnContextPromise = latency.measure("turnContextMs", () =>
+    const turnContextPromise = latency.measureDb("turnContextMs", () =>
       buildUnansweredUserTurnContext({
         conversationId: conversation.id,
         latestUserMessageId: userSaved.id,
@@ -826,7 +826,7 @@ export async function processMetaMessage(
       await latency.measure("runGuardMs", () =>
         assertLatestConversationAiRun(activeRun, "before_meta_model_save"),
       );
-      modelSaved = await latency.measure("saveOutboundMs", () =>
+      modelSaved = await latency.measureDb("saveOutboundMs", () =>
         saveMessage(conversation.id, "model", mainContent, {
           status: privateStatus,
           aiReasoning: reply.reasoning,
@@ -857,7 +857,7 @@ export async function processMetaMessage(
     if (isComment && (reply.publicContent || pageSettings?.commentPublicGreeting)) {
       const publicTxt = (reply.publicContent || pageSettings?.commentPublicGreeting || "Thanks {name}!").replace(/{name}/g, customerName).trim();
       if (publicTxt.length > 0) {
-        publicSaved = await latency.measure("saveOutboundMs", () =>
+        publicSaved = await latency.measureDb("saveOutboundMs", () =>
           saveMessage(conversation.id, "model", publicTxt, {
             status: publicStatus,
             handoffCategory: "PUBLIC_COMMENT_REPLY",

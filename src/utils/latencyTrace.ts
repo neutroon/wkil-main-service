@@ -1,6 +1,11 @@
+import {
+  traceDbQueriesForStage,
+  type DbQueryTraceSink,
+} from "./dbQueryTrace";
+
 export type LatencyTraceFields = Record<string, number>;
 
-export class LatencyTrace {
+export class LatencyTrace implements DbQueryTraceSink {
   private readonly startedAt = Date.now();
   private readonly fields: LatencyTraceFields = {};
 
@@ -21,6 +26,19 @@ export class LatencyTrace {
       (this.fields[field] ?? 0) + Math.max(0, Math.round(Number(valueMs)));
   }
 
+  max(field: string, valueMs: number | undefined | null) {
+    if (!Number.isFinite(valueMs)) return;
+    const value = Math.max(0, Math.round(Number(valueMs)));
+    this.fields[field] = Math.max(this.fields[field] ?? 0, value);
+  }
+
+  addDbQuery(field: string, durationMs: number) {
+    const prefix = field.endsWith("Ms") ? field.slice(0, -2) : field;
+    this.add(`${prefix}DbQueries`, 1);
+    this.add(`${prefix}DbMs`, durationMs);
+    this.max(`${prefix}DbMaxMs`, durationMs);
+  }
+
   async measure<T>(field: string, operation: () => Promise<T>): Promise<T> {
     const startedAt = Date.now();
     try {
@@ -28,6 +46,12 @@ export class LatencyTrace {
     } finally {
       this.add(field, Date.now() - startedAt);
     }
+  }
+
+  async measureDb<T>(field: string, operation: () => Promise<T>): Promise<T> {
+    return this.measure(field, () =>
+      traceDbQueriesForStage(field, this, operation),
+    );
   }
 
   snapshot(): LatencyTraceFields & { totalMs: number } {

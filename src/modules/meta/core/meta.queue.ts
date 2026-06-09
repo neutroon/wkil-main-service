@@ -263,10 +263,12 @@ export const expressWorker = new Worker(
   "meta-express",
   async (job: Job<MetaEngineJob>) => {
     const { type, payload } = job.data;
+    const queueWaitMs = Math.max(0, Date.now() - (job.timestamp || Date.now()));
     logger.info("meta.engine.worker_start.express", {
       jobId: job.id,
       type,
       platform: payload.platform,
+      queueWaitMs,
     });
 
     if (type === "media_sync") {
@@ -296,7 +298,11 @@ export const expressWorker = new Worker(
       const { processCustomerMemoryCaptureJob } = await import("@modules/business/customer/customerMemoryCapture.job");
       await processCustomerMemoryCaptureJob(payload);
     } else {
-      await processMetaMessage(payload);
+      await processMetaMessage(payload, {
+        jobId: job.id,
+        jobName: job.name,
+        queueWaitMs,
+      });
     }
   },
   { connection: bullConnection, prefix: bullQueuePrefix, concurrency: 8 },

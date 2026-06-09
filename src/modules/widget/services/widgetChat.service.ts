@@ -21,6 +21,10 @@ import type { WidgetInstall } from "@prisma/client";
 import { AppError } from "@middlewares/errorHandler.middleware";
 import { generateR2Key, uploadToR2 } from "@modules/media/services/r2Storage.service";
 import { invokeMediaUnderstanding } from "@modules/ai-agent/core/modelRuntime";
+import {
+  createLatencyTrace,
+  type LatencyTrace,
+} from "@utils/latencyTrace";
 
 function pageIdForWidget(installId: number): string {
   return `widget:${installId}`;
@@ -45,134 +49,169 @@ export async function processWidgetChatMessage(params: {
   attachment?: { url: string; type: string; caption?: string | null } | null;
 }> {
   const { install, message } = params;
-  const { conversation, businessProfile, userMessage } =
-    await setupWidgetChat(params);
-
-  if (conversation.aiEnabled === false) {
-    logger.info("widget.chat.automation_skip", {
-      conversationId: conversation.id,
-      reason: "AI_TOGGLE_OFF",
-    });
-    return {
-      reply: "",
-      conversationId: conversation.id,
-    };
-  }
-
-  const run = await startConversationAiRun({
-    conversationId: conversation.id,
-    latestUserMessageId: userMessage.id,
+  const latency = createLatencyTrace({
+    queueWaitMs: 0,
+    identityMs: 0,
+    deliveryMs: 0,
   });
-  const turnContext = await buildUnansweredUserTurnContext({
-    conversationId: conversation.id,
-    latestUserMessageId: userMessage.id,
-  });
+  let businessProfileIdForTrace = install.businessProfileId;
+  let conversationIdForTrace: number | undefined = params.conversationId;
+  let traceOutcome = "completed";
+  let traceAction: string | undefined;
+  let traceReplyType: string | undefined;
 
-  let reply: AiRoutingDecision;
   try {
-    reply = await computeBusinessChatReply({
-      businessProfile,
-      messageText: turnContext.messageText || message,
-      historyTurns: turnContext.historyTurns,
-      channel: "web",
-      conversationId: conversation.id,
-      conversationRunId: run.runId,
-      latestUserMessageId: userMessage.id,
-    });
-    await assertLatestConversationAiRun(run, "after_widget_reply_compute");
-  } catch (err: unknown) {
-    if (isStaleConversationRunError(err)) {
+    const { conversation, businessProfile, userMessage } =
+      await setupWidgetChat(params, latency);
+    businessProfileIdForTrace = businessProfile.id;
+    conversationIdForTrace = conversation.id;
+
+    if (conversation.aiEnabled === false) {
+      traceOutcome = "ai_disabled";
+      logger.info("widget.chat.automation_skip", {
+        conversationId: conversation.id,
+        reason: "AI_TOGGLE_OFF",
+      });
       return {
         reply: "",
         conversationId: conversation.id,
       };
     }
 
-    const msg = err instanceof Error ? err.message : String(err);
-    logger.error("widget.chat.ai_failed", {
-      widgetInstallId: install.id,
-      conversationId: conversation.id,
-      error: msg,
-    });
-    reply = {
-      action: "HANDOFF_TO_HUMAN",
-      handoffCategory: "SYSTEM_ERROR",
-      reasoning: `Infrastructure Failure: ${msg}`,
-      content: null,
-    };
-  }
+    const run = await latency.measure("runStartMs", () =>
+      startConversationAiRun({
+        conversationId: conversation.id,
+        latestUserMessageId: userMessage.id,
+      }),
+    );
+    const turnContext = await latency.measure("turnContextMs", () =>
+      buildUnansweredUserTurnContext({
+        conversationId: conversation.id,
+        latestUserMessageId: userMessage.id,
+      }),
+    );
 
-  if (reply.action === "RESOLVE_CONVERSATION") {
-    await prisma.conversation.update({
-      where: { id: conversation.id },
-      data: { status: "RESOLVED" },
-    });
-    logger.info("widget.chat.conversation_resolved_by_ai", {
-      conversationId: conversation.id,
-    });
-    return { reply: "", conversationId: conversation.id };
-  }
+    let reply: AiRoutingDecision;
+    try {
+      reply = await latency.measure("aiMs", () =>
+        computeBusinessChatReply({
+          businessProfile,
+          messageText: turnContext.messageText || message,
+          historyTurns: turnContext.historyTurns,
+          channel: "web",
+          conversationId: conversation.id,
+          conversationRunId: run.runId,
+          latestUserMessageId: userMessage.id,
+        }),
+      );
+      await latency.measure("runGuardMs", () =>
+        assertLatestConversationAiRun(run, "after_widget_reply_compute"),
+      );
+    } catch (err: unknown) {
+      if (isStaleConversationRunError(err)) {
+        traceOutcome = "stale_run";
+        return {
+          reply: "",
+          conversationId: conversation.id,
+        };
+      }
 
-  const status = initialCustomerReplyStatus(reply, "web");
-  const replyContent = (reply.content || "").trim();
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error("widget.chat.ai_failed", {
+        widgetInstallId: install.id,
+        conversationId: conversation.id,
+        error: msg,
+      });
+      reply = {
+        action: "HANDOFF_TO_HUMAN",
+        handoffCategory: "SYSTEM_ERROR",
+        reasoning: `Infrastructure Failure: ${msg}`,
+        content: null,
+      };
+    }
+    traceAction = reply.action;
+    traceReplyType = reply.replyType;
 
-  if (reply.action === "REPLY_AUTO" && replyContent.length === 0 && !reply.attachment) {
-    logger.info("widget.chat.empty_auto_reply_skipped", {
-      widgetInstallId: install.id,
-      conversationId: conversation.id,
-      reasoning: reply.reasoning,
-    });
-    return {
-      reply: "",
-      conversationId: conversation.id,
-    };
-  }
+    if (reply.action === "RESOLVE_CONVERSATION") {
+      traceOutcome = "resolved";
+      await latency.measure("statusUpdateMs", () =>
+        prisma.conversation.update({
+          where: { id: conversation.id },
+          data: { status: "RESOLVED" },
+        }),
+      );
+      logger.info("widget.chat.conversation_resolved_by_ai", {
+        conversationId: conversation.id,
+      });
+      return { reply: "", conversationId: conversation.id };
+    }
 
-  try {
-    await assertLatestConversationAiRun(run, "before_widget_reply_save");
-  } catch (err: unknown) {
-    if (isStaleConversationRunError(err)) {
+    const status = initialCustomerReplyStatus(reply, "web");
+    const replyContent = (reply.content || "").trim();
+
+    if (reply.action === "REPLY_AUTO" && replyContent.length === 0 && !reply.attachment) {
+      traceOutcome = "empty_auto_reply";
+      logger.info("widget.chat.empty_auto_reply_skipped", {
+        widgetInstallId: install.id,
+        conversationId: conversation.id,
+        reasoning: reply.reasoning,
+      });
       return {
         reply: "",
         conversationId: conversation.id,
       };
     }
-    throw err;
-  }
 
-  const botMsg = await saveMessage(
-    conversation.id,
-    "model",
-    replyContent,
-    {
-      status,
-      aiReasoning: reply.reasoning,
-      handoffCategory: reply.handoffCategory,
-    },
-  );
+    try {
+      await latency.measure("runGuardMs", () =>
+        assertLatestConversationAiRun(run, "before_widget_reply_save"),
+      );
+    } catch (err: unknown) {
+      if (isStaleConversationRunError(err)) {
+        traceOutcome = "stale_run";
+        return {
+          reply: "",
+          conversationId: conversation.id,
+        };
+      }
+      throw err;
+    }
 
-  if (reply.handoffCategory === "SYSTEM_ERROR") {
+    const botMsg = await latency.measure("saveOutboundMs", () =>
+      saveMessage(
+        conversation.id,
+        "model",
+        replyContent,
+        {
+          status,
+          aiReasoning: reply.reasoning,
+          handoffCategory: reply.handoffCategory,
+        },
+      ),
+    );
+
+    if (reply.handoffCategory === "SYSTEM_ERROR") {
+      traceOutcome = "system_error";
+      runSavedModelReplySideEffectsInBackground({
+        businessProfileId: install.businessProfileId,
+        conversationId: conversation.id,
+        message: botMsg,
+        reply,
+      });
+      return {
+        reply: "",
+        conversationId: conversation.id,
+      };
+    }
+
     runSavedModelReplySideEffectsInBackground({
       businessProfileId: install.businessProfileId,
       conversationId: conversation.id,
       message: botMsg,
       reply,
+      scheduleFollowUps: true,
     });
-    return {
-      reply: "",
-      conversationId: conversation.id,
-    };
-  }
 
-  runSavedModelReplySideEffectsInBackground({
-    businessProfileId: install.businessProfileId,
-    conversationId: conversation.id,
-    message: botMsg,
-    reply,
-    scheduleFollowUps: true,
-  });
-
-  {
     logger.info("widget.chat.reply_sent", {
       widgetInstallId: install.id,
       conversationId: conversation.id,
@@ -186,12 +225,16 @@ export async function processWidgetChatMessage(params: {
       caption?: string | null;
     } | null = null;
     if (reply.attachment?.assetName) {
-      const { resolveAssetForChannel } =
-        await import("@modules/media/services/mediaLibrary.service");
-      const resolved = await resolveAssetForChannel(
-        reply.attachment.assetName,
-        install.businessProfileId,
-        "web",
+      const { resolveAssetForChannel } = await latency.measure(
+        "attachmentMs",
+        () => import("@modules/media/services/mediaLibrary.service"),
+      );
+      const resolved = await latency.measure("attachmentMs", () =>
+        resolveAssetForChannel(
+          reply.attachment!.assetName,
+          install.businessProfileId,
+          "web",
+        ),
       );
       if (resolved?.url) {
         attachmentForWidget = {
@@ -199,15 +242,17 @@ export async function processWidgetChatMessage(params: {
           type: resolved.mediaType,
           caption: reply.attachment.caption ?? null,
         };
-        await saveMessage(
-          conversation.id,
-          "model",
-          reply.attachment.caption ?? "",
-          {
-            type: resolved.mediaType,
-            status: "SENT",
-            mediaMetadata: { url: resolved.url },
-          },
+        await latency.measure("saveOutboundMs", () =>
+          saveMessage(
+            conversation.id,
+            "model",
+            reply.attachment?.caption ?? "",
+            {
+              type: resolved.mediaType,
+              status: "SENT",
+              mediaMetadata: { url: resolved.url },
+            },
+          ),
         );
       }
     }
@@ -217,6 +262,21 @@ export async function processWidgetChatMessage(params: {
       conversationId: conversation.id,
       attachment: attachmentForWidget,
     };
+  } catch (error) {
+    traceOutcome = "error";
+    throw error;
+  } finally {
+    logger.info("chat.channel_latency", {
+      channel: "web",
+      source: "widget",
+      widgetInstallId: install.id,
+      businessProfileId: businessProfileIdForTrace,
+      conversationId: conversationIdForTrace,
+      outcome: traceOutcome,
+      action: traceAction,
+      replyType: traceReplyType,
+      ...latency.snapshot(),
+    });
   }
 }
 
@@ -229,58 +289,69 @@ async function setupWidgetChat(params: {
   message: string;
   conversationId?: number;
   media?: WidgetInboundMedia;
-}) {
+}, latency: LatencyTrace) {
   const { install, visitorId, message, conversationId, media } = params;
   const pageId = pageIdForWidget(install.id);
 
-  let conversation;
+  let conversation: any;
   // Treat null as undefined to trigger auto-discovery
   const effectiveConversationId =
     conversationId === null ? undefined : conversationId;
 
   if (effectiveConversationId !== undefined) {
-    const verified = await prisma.conversation.findFirst({
-      where: { id: effectiveConversationId, pageId, senderId: visitorId },
-    });
+    const verified = await latency.measure("conversationSetupMs", () =>
+      prisma.conversation.findFirst({
+        where: { id: effectiveConversationId, pageId, senderId: visitorId },
+      }),
+    );
     if (!verified)
       throw new AppError("Invalid conversationId for this visitor", 400);
     conversation = verified;
     if (!conversation.customerId) {
-      const customer = await upsertCustomerFromConversation({
-        businessProfileId: install.businessProfileId,
-        conversationId: conversation.id,
-        channel: "web",
-        senderId: visitorId,
-      });
+      const customer = await latency.measure("conversationSetupMs", () =>
+        upsertCustomerFromConversation({
+          businessProfileId: install.businessProfileId,
+          conversationId: conversation.id,
+          channel: "web",
+          senderId: visitorId,
+        }),
+      );
       conversation = { ...conversation, customerId: customer.id };
     }
   } else {
-    conversation = await getOrCreateConversation(
-      pageId,
-      visitorId,
-      install.businessProfileId,
-      { channel: "web" },
+    conversation = await latency.measure("conversationSetupMs", () =>
+      getOrCreateConversation(
+        pageId,
+        visitorId,
+        install.businessProfileId,
+        { channel: "web" },
+      ),
     );
   }
 
-  const businessProfile = await prisma.businessProfile.findUniqueOrThrow({
-    where: { id: install.businessProfileId },
-    include: {
-      agentActionSources: { where: { isActive: true } },
-    },
-  });
+  const businessProfile = await latency.measure("businessProfileMs", () =>
+    prisma.businessProfile.findUniqueOrThrow({
+      where: { id: install.businessProfileId },
+      include: {
+        agentActionSources: { where: { isActive: true } },
+      },
+    }),
+  );
 
   const mediaPayload = media
     ? await prepareWidgetMediaPayload({
         businessProfileId: install.businessProfileId,
         media,
+        latency,
       })
     : null;
-  const userMessage = await saveMessage(conversation.id, "user", message, {
-    type: mediaPayload?.type,
-    mediaId: mediaPayload?.mediaId,
-    mediaMetadata: mediaPayload?.mediaMetadata,
-  });
+  const userMessage = await latency.measure("saveInboundMs", () =>
+    saveMessage(conversation.id, "user", message, {
+      type: mediaPayload?.type,
+      mediaId: mediaPayload?.mediaId,
+      mediaMetadata: mediaPayload?.mediaMetadata,
+    }),
+  );
 
   return { conversation, businessProfile, userMessage };
 }
@@ -288,11 +359,16 @@ async function setupWidgetChat(params: {
 async function prepareWidgetMediaPayload(params: {
   businessProfileId: number;
   media: WidgetInboundMedia;
+  latency: LatencyTrace;
 }) {
   const type = mediaTypeFromMime(params.media.mimeType);
   const key = generateR2Key(params.businessProfileId, params.media.originalName);
-  const url = await uploadToR2(key, params.media.buffer, params.media.mimeType);
-  const analysis = await understandWidgetMedia(params.media);
+  const url = await params.latency.measure("mediaUploadMs", () =>
+    uploadToR2(key, params.media.buffer, params.media.mimeType),
+  );
+  const analysis = await params.latency.measure("mediaUnderstandingMs", () =>
+    understandWidgetMedia(params.media),
+  );
 
   return {
     type,

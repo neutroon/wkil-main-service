@@ -26,6 +26,7 @@ import {
   startConversationAiRun,
   type ConversationAiRun,
 } from "@modules/ai-agent/chat/conversationRunGuard";
+import { createLatencyTrace } from "@utils/latencyTrace";
 
 export type MetaPlatform = "messenger" | "whatsapp" | "visual_production" | "visual_refine" | "media_sync" | "facebook" | "instagram" | "linkedin";
 
@@ -57,6 +58,12 @@ export interface MetaMessageJob {
   watermark?: number;
   isTyping?: boolean;
 }
+
+type MetaProcessorTraceOptions = {
+  jobId?: string;
+  jobName?: string;
+  queueWaitMs?: number;
+};
 
 interface IdentityResolution {
   businessProfileId: number;
@@ -374,6 +381,12 @@ function resolveCustomerProfile(job: MetaMessageJob) {
   };
 }
 
+function channelForLatencyTrace(job: MetaMessageJob) {
+  if (job.commentId || job.type === "FACEBOOK_COMMENT") return "facebook_comment";
+  if (job.platform === "whatsapp") return "whatsapp";
+  return "messenger";
+}
+
 /**
  * Background Profile Enrichment
  * Fetches real name/photo from Meta and updates the conversation record.
@@ -417,9 +430,23 @@ async function enrichContactInBackground(
 /**
  * High-Resilience Unified Meta Processor.
  */
-export async function processMetaMessage(job: MetaMessageJob) {
+export async function processMetaMessage(
+  job: MetaMessageJob,
+  traceOptions: MetaProcessorTraceOptions = {},
+) {
   const { platform, identifier, senderId, messageText, externalId, type, mediaId, mediaMetadata } = job;
   let activeRun: ConversationAiRun | undefined;
+  const shouldTraceChannelLatency =
+    type !== "status_update" && type !== "typing_indicator";
+  const latency = createLatencyTrace({
+    queueWaitMs: traceOptions.queueWaitMs ?? 0,
+  });
+  let traceBusinessProfileId = job.businessProfileId;
+  let traceConversationId = job.conversationId;
+  let traceOutcome = "completed";
+  let traceAction: string | undefined;
+  let traceReplyType: string | undefined;
+  let traceError: string | undefined;
 
   try {
     // --- BACKGROUND EVENTS BRANCH ---
@@ -487,7 +514,9 @@ export async function processMetaMessage(job: MetaMessageJob) {
       identifier,
       businessProfileId: job.businessProfileId,
     });
-    const { businessProfileId, businessProfile, accessToken, pageSettings } = await resolveAccountIdentity(job);
+    const { businessProfileId, businessProfile, accessToken, pageSettings } =
+      await latency.measure("identityMs", () => resolveAccountIdentity(job));
+    traceBusinessProfileId = businessProfileId;
     logger.info("meta.processor.identity_resolved", { 
       businessProfileId, 
       tokenSnippet: accessToken.substring(0, 10) + "..." 
@@ -495,8 +524,14 @@ export async function processMetaMessage(job: MetaMessageJob) {
 
     // 2. Idempotency Check
     if (externalId) {
-      const existing = await prisma.conversationMessage.findFirst({ where: { externalId }, select: { id: true } });
+      const existing = await latency.measure("idempotencyMs", () =>
+        prisma.conversationMessage.findFirst({
+          where: { externalId },
+          select: { id: true },
+        }),
+      );
       if (existing) {
+        traceOutcome = "duplicate_message";
         logger.info("meta.processor.message_already_exists", { externalId });
         return;
       }
@@ -504,9 +539,18 @@ export async function processMetaMessage(job: MetaMessageJob) {
 
     // 3. Early Returns
     if (type === "FACEBOOK_COMMENT_PUBLIC_REPLY") {
+      traceOutcome = "public_reply_only";
       logger.info("meta.processor.comment_public_reply_mode");
       const { replyToComment } = await import("../facebook/facebook.service");
-      await replyToComment({ commentId: job.commentId!, message: messageText, accessToken, pageId: identifier, businessProfileId });
+      await latency.measure("deliveryMs", () =>
+        replyToComment({
+          commentId: job.commentId!,
+          message: messageText,
+          accessToken,
+          pageId: identifier,
+          businessProfileId,
+        }),
+      );
       return;
     }
 
@@ -519,10 +563,12 @@ export async function processMetaMessage(job: MetaMessageJob) {
     // If this is a reply FROM the admin on Facebook, we need to find the conversation
     // it belongs to by looking up the parent comment we are replying to.
     if (job.isFromBusiness && isComment && job.parentId) {
-      const parentMessage = await prisma.conversationMessage.findFirst({
-        where: { externalId: job.parentId },
-        select: { conversationId: true }
-      });
+      const parentMessage = await latency.measure("conversationSetupMs", () =>
+        prisma.conversationMessage.findFirst({
+          where: { externalId: job.parentId },
+          select: { conversationId: true }
+        }),
+      );
       if (parentMessage) {
         conversationIdOverride = parentMessage.conversationId;
         logger.info("meta.processor.mirroring.parent_conversation_found", { 
@@ -533,6 +579,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
     }
 
     if (job.isFromBusiness && isComment && !conversationIdOverride) {
+      traceOutcome = "business_comment_unmapped";
       logger.info("meta.processor.business_comment_unmapped_skipped", {
         commentId: job.commentId,
         parentId: job.parentId,
@@ -542,18 +589,23 @@ export async function processMetaMessage(job: MetaMessageJob) {
     }
 
     const conversation = conversationIdOverride 
-      ? await prisma.conversation.findUnique({ where: { id: conversationIdOverride } })
-      : await getOrCreateConversation(identifier, senderId, businessProfileId, {
-          channel: isComment ? "facebook_comment" : platform,
-          customerName,
-          externalId: job.commentId,
-          postId: job.postId,
-          sourceCommentText: isComment ? messageText : undefined,
-        });
+      ? await latency.measure("conversationSetupMs", () =>
+          prisma.conversation.findUnique({ where: { id: conversationIdOverride } }),
+        )
+      : await latency.measure("conversationSetupMs", () =>
+          getOrCreateConversation(identifier, senderId, businessProfileId, {
+            channel: isComment ? "facebook_comment" : platform,
+            customerName,
+            externalId: job.commentId,
+            postId: job.postId,
+            sourceCommentText: isComment ? messageText : undefined,
+          }),
+        );
 
     if (!conversation) {
        throw new UnrecoverableError("Could not resolve conversation for Meta message.");
     }
+    traceConversationId = conversation.id;
 
     // 5. Trigger Background Enrichment for Messenger DM PSIDs only.
     // Facebook comment author IDs are not Messenger PSIDs, and calling the
@@ -567,15 +619,18 @@ export async function processMetaMessage(job: MetaMessageJob) {
       aiEnabled: (conversation as any).aiEnabled 
     });
 
-    const userSaved = await saveMessage(conversation.id, job.isFromBusiness ? "model" : "user", messageText || "", {
-      externalId,
-      type: type || "text",
-      mediaId,
-      mediaMetadata,
-      isPrivate: platform === "messenger" ? true : (job.isPrivate ?? false),
-    });
+    const userSaved = await latency.measure("saveInboundMs", () =>
+      saveMessage(conversation.id, job.isFromBusiness ? "model" : "user", messageText || "", {
+        externalId,
+        type: type || "text",
+        mediaId,
+        mediaMetadata,
+        isPrivate: platform === "messenger" ? true : (job.isPrivate ?? false),
+      }),
+    );
 
     if (job.isFromBusiness || !(conversation as any).aiEnabled) {
+      traceOutcome = job.isFromBusiness ? "mirrored_message" : "ai_disabled";
       logger.info("meta.processor.skipping_ai", { 
         reason: job.isFromBusiness ? "MIRRORED_MESSAGE" : "AI_DISABLED_FOR_THREAD"
       });
@@ -589,6 +644,7 @@ export async function processMetaMessage(job: MetaMessageJob) {
       mediaMetadata,
     });
     if (!inboundSignal.shouldTriggerAi) {
+      traceOutcome = `skipped_${inboundSignal.reason || "passive_inbound"}`;
       logger.info("meta.processor.skipping_ai", {
         reason: inboundSignal.reason,
         conversationId: conversation.id,
@@ -597,52 +653,62 @@ export async function processMetaMessage(job: MetaMessageJob) {
       return;
     }
 
-    activeRun = await startConversationAiRun({
-      conversationId: conversation.id,
-      latestUserMessageId: userSaved.id,
-    });
+    activeRun = await latency.measure("runStartMs", () =>
+      startConversationAiRun({
+        conversationId: conversation.id,
+        latestUserMessageId: userSaved.id,
+      }),
+    );
 
     let enrichedMediaMetadata = mediaMetadata;
     if (
       mediaId &&
       (platform === "messenger" || platform === "whatsapp")
     ) {
-      const analysis = await understandInboundMedia({
-        platform,
-        accessToken,
-        mediaId,
-        type,
-        mediaMetadata,
-      });
+      const analysis = await latency.measure("mediaUnderstandingMs", () =>
+        understandInboundMedia({
+          platform,
+          accessToken,
+          mediaId,
+          type,
+          mediaMetadata,
+        }),
+      );
       if (analysis) {
         enrichedMediaMetadata = {
           ...(mediaMetadata || {}),
           analysis,
         };
-        await prisma.conversationMessage.update({
-          where: { id: userSaved.id },
-          data: { mediaMetadata: enrichedMediaMetadata },
-        });
+        await latency.measure("saveInboundMs", () =>
+          prisma.conversationMessage.update({
+            where: { id: userSaved.id },
+            data: { mediaMetadata: enrichedMediaMetadata },
+          }),
+        );
       }
     }
 
     // 5. AI Reply Generation
     logger.info("meta.processor.computing_reply", { conversationId: conversation.id });
-    const turnContextPromise = buildUnansweredUserTurnContext({
-      conversationId: conversation.id,
-      latestUserMessageId: userSaved.id,
-      postId: job.postId,
-    });
+    const turnContextPromise = latency.measure("turnContextMs", () =>
+      buildUnansweredUserTurnContext({
+        conversationId: conversation.id,
+        latestUserMessageId: userSaved.id,
+        postId: job.postId,
+      }),
+    );
     const postContextPromise = isComment && job.postId
-      ? import("../facebook/facebook.service").then(async ({ getPostContext, getCommentText }) => {
-          const [pContext, parContext] = await Promise.all([
-            getPostContext(job.postId!, accessToken),
-            job.parentId ? getCommentText(job.parentId, accessToken) : Promise.resolve(null),
-          ]);
-          return pContext
-            ? { content: pContext.content, media: pContext.media, parentContext: parContext || undefined }
-            : undefined;
-        })
+      ? latency.measure("postContextMs", () =>
+          import("../facebook/facebook.service").then(async ({ getPostContext, getCommentText }) => {
+            const [pContext, parContext] = await Promise.all([
+              getPostContext(job.postId!, accessToken),
+              job.parentId ? getCommentText(job.parentId, accessToken) : Promise.resolve(null),
+            ]);
+            return pContext
+              ? { content: pContext.content, media: pContext.media, parentContext: parContext || undefined }
+              : undefined;
+          }),
+        )
       : Promise.resolve(undefined);
     const socketSyncPromise = import("@modules/realtime/socketSync.service");
     const agentTurnModulePromise = import("@modules/ai-agent/core/agentTurn.service");
@@ -653,34 +719,42 @@ export async function processMetaMessage(job: MetaMessageJob) {
       agentTurnModulePromise,
     ]);
     const effectiveTurnText = turnContext.messageText || messageText || "";
-    const agentTurn = await createAgentTurn({
-      businessProfileId,
-      conversationId: conversation.id,
-      inputMessageId: userSaved.id,
-      channel: isComment ? "facebook_comment" : platform,
-      mode: "CUSTOMER_MESSAGE",
-      customerText: effectiveTurnText,
-    });
+    const agentTurn = await latency.measure("agentTurnMs", () =>
+      createAgentTurn({
+        businessProfileId,
+        conversationId: conversation.id,
+        inputMessageId: userSaved.id,
+        channel: isComment ? "facebook_comment" : platform,
+        mode: "CUSTOMER_MESSAGE",
+        customerText: effectiveTurnText,
+      }),
+    );
     syncTypingStatus({ businessProfileId, conversationId: conversation.id, isTyping: true });
 
     let reply;
     try {
-      reply = await computeBusinessChatReply({
-        businessProfile,
-        messageText: effectiveTurnText,
-        historyTurns: turnContext.historyTurns,
-        channel: isComment ? "facebook_comment" : (platform as any),
-        customerPhone: platform === "whatsapp" ? senderId : undefined,
-        postContext,
-        conversationId: conversation.id,
-        conversationRunId: activeRun.runId,
-        latestUserMessageId: userSaved.id,
-        agentTurnId: agentTurn.id,
-      });
-      await assertLatestConversationAiRun(activeRun, "after_meta_reply_compute");
+      reply = await latency.measure("aiMs", () =>
+        computeBusinessChatReply({
+          businessProfile,
+          messageText: effectiveTurnText,
+          historyTurns: turnContext.historyTurns,
+          channel: isComment ? "facebook_comment" : (platform as any),
+          customerPhone: platform === "whatsapp" ? senderId : undefined,
+          postContext,
+          conversationId: conversation.id,
+          conversationRunId: activeRun!.runId,
+          latestUserMessageId: userSaved.id,
+          agentTurnId: agentTurn.id,
+        }),
+      );
+      await latency.measure("runGuardMs", () =>
+        assertLatestConversationAiRun(activeRun, "after_meta_reply_compute"),
+      );
     } finally {
       syncTypingStatus({ businessProfileId, conversationId: conversation.id, isTyping: false });
     }
+    traceAction = reply.action;
+    traceReplyType = reply.replyType;
 
     logger.info("meta.processor.reply_computed", { 
       action: reply.action, 
@@ -689,7 +763,13 @@ export async function processMetaMessage(job: MetaMessageJob) {
     });
 
     if (reply.action === "RESOLVE_CONVERSATION") {
-      await prisma.conversation.update({ where: { id: conversation.id }, data: { status: "RESOLVED" } });
+      traceOutcome = "resolved";
+      await latency.measure("statusUpdateMs", () =>
+        prisma.conversation.update({
+          where: { id: conversation.id },
+          data: { status: "RESOLVED" },
+        }),
+      );
       return;
     }
 
@@ -705,21 +785,24 @@ export async function processMetaMessage(job: MetaMessageJob) {
     let syncedMediaId: string | undefined;
 
     if (reply.attachment && reply.attachment.assetName) {
+      const attachmentAssetName = reply.attachment.assetName;
       try {
-        const mediaRecord = await prisma.businessProfileMedia.findFirst({
-          where: { 
-            businessProfileId, 
-            name: { equals: reply.attachment.assetName, mode: "insensitive" },
-            usageScope: "CHAT_ATTACHMENT",
-            isActive: true,
-            deletedAt: null 
-          },
-          include: {
-            syncs: {
-              where: { platform: platform === "messenger" ? "messenger" : "whatsapp", identifier }
+        const mediaRecord = await latency.measure("attachmentMs", () =>
+          prisma.businessProfileMedia.findFirst({
+            where: {
+              businessProfileId,
+              name: { equals: attachmentAssetName, mode: "insensitive" },
+              usageScope: "CHAT_ATTACHMENT",
+              isActive: true,
+              deletedAt: null
+            },
+            include: {
+              syncs: {
+                where: { platform: platform === "messenger" ? "messenger" : "whatsapp", identifier }
+              }
             }
-          }
-        });
+          }),
+        );
         
         if (mediaRecord) {
           aiMediaAsset = mediaRecord;
@@ -727,10 +810,10 @@ export async function processMetaMessage(job: MetaMessageJob) {
           if (validSync) {
              syncedMediaId = validSync.externalMediaId;
           } else {
-             logger.warn("meta.processor.media_not_synced", { assetName: reply.attachment.assetName, platform, identifier });
+             logger.warn("meta.processor.media_not_synced", { assetName: attachmentAssetName, platform, identifier });
           }
         } else {
-          logger.warn("meta.processor.media_not_found", { assetName: reply.attachment.assetName });
+          logger.warn("meta.processor.media_not_found", { assetName: attachmentAssetName });
         }
       } catch (err) {
         logger.error("meta.processor.media_fetch_error", { error: String(err) });
@@ -740,18 +823,22 @@ export async function processMetaMessage(job: MetaMessageJob) {
     // B. Save Model Message
     let modelSaved: any;
     if (mainContent.length > 0 || aiMediaAsset || reply.action === "HANDOFF_TO_HUMAN") {
-      await assertLatestConversationAiRun(activeRun, "before_meta_model_save");
-      modelSaved = await saveMessage(conversation.id, "model", mainContent, {
-        status: privateStatus,
-        aiReasoning: reply.reasoning,
-        handoffCategory: (isComment && reply.intent === "SALES_DM") ? "PRIVATE_DM_REPLY" : reply.handoffCategory,
-        intent: reply.intent,
-        isPrivate: platform === "messenger" ? true : (isComment && reply.intent === "SALES_DM"),
-        origin: isComment ? "facebook_comment_reply" : undefined,
-        type: aiMediaAsset ? aiMediaAsset.mediaType : "text",
-        mediaId: syncedMediaId,
-        mediaMetadata: aiMediaAsset ? { url: aiMediaAsset.publicUrl, name: aiMediaAsset.name } : undefined
-      });
+      await latency.measure("runGuardMs", () =>
+        assertLatestConversationAiRun(activeRun, "before_meta_model_save"),
+      );
+      modelSaved = await latency.measure("saveOutboundMs", () =>
+        saveMessage(conversation.id, "model", mainContent, {
+          status: privateStatus,
+          aiReasoning: reply.reasoning,
+          handoffCategory: (isComment && reply.intent === "SALES_DM") ? "PRIVATE_DM_REPLY" : reply.handoffCategory,
+          intent: reply.intent,
+          isPrivate: platform === "messenger" ? true : (isComment && reply.intent === "SALES_DM"),
+          origin: isComment ? "facebook_comment_reply" : undefined,
+          type: aiMediaAsset ? aiMediaAsset.mediaType : "text",
+          mediaId: syncedMediaId,
+          mediaMetadata: aiMediaAsset ? { url: aiMediaAsset.publicUrl, name: aiMediaAsset.name } : undefined
+        }),
+      );
       logger.info("meta.processor.model_saved", { messageId: modelSaved.id, status: privateStatus, hasMedia: !!aiMediaAsset });
       notifySavedModelReplySideEffects({
         businessProfileId,
@@ -770,21 +857,27 @@ export async function processMetaMessage(job: MetaMessageJob) {
     if (isComment && (reply.publicContent || pageSettings?.commentPublicGreeting)) {
       const publicTxt = (reply.publicContent || pageSettings?.commentPublicGreeting || "Thanks {name}!").replace(/{name}/g, customerName).trim();
       if (publicTxt.length > 0) {
-        publicSaved = await saveMessage(conversation.id, "model", publicTxt, {
-          status: publicStatus,
-          handoffCategory: "PUBLIC_COMMENT_REPLY",
-          intent: reply.intent,
-          isPrivate: false,
-          origin: "facebook_comment_public_reply",
-        });
+        publicSaved = await latency.measure("saveOutboundMs", () =>
+          saveMessage(conversation.id, "model", publicTxt, {
+            status: publicStatus,
+            handoffCategory: "PUBLIC_COMMENT_REPLY",
+            intent: reply.intent,
+            isPrivate: false,
+            origin: "facebook_comment_public_reply",
+          }),
+        );
         logger.info("meta.processor.public_saved", { messageId: publicSaved.id, status: publicStatus });
       }
     }
 
     // B. Platform Delivery
-    const { mirrorCommentReplyToMessenger, syncMessageStatus } = await import("../core/metaDelivery.service");
+    const { mirrorCommentReplyToMessenger, syncMessageStatus } =
+      await latency.measure("moduleImportMs", () => import("../core/metaDelivery.service"));
 
-    if (reply.handoffCategory !== "SYSTEM_ERROR") {
+    const deliveryStartedAt = Date.now();
+    let deliveryMeasured = false;
+    try {
+      if (reply.handoffCategory !== "SYSTEM_ERROR") {
 
       if (platform === "messenger") {
 
@@ -792,7 +885,10 @@ export async function processMetaMessage(job: MetaMessageJob) {
         if (isComment) {
           // IGNORE: bail before any social action
           if (reply.intent === "IGNORE") {
+            traceOutcome = "ignored";
             logger.info("meta.processor.delivery_skipped", { reason: "IGNORE_INTENT" });
+            deliveryMeasured = true;
+            latency.add("deliveryMs", Date.now() - deliveryStartedAt);
             return;
           }
 
@@ -914,14 +1010,20 @@ export async function processMetaMessage(job: MetaMessageJob) {
         }
       }
 
-    } else {
-      logger.info("meta.processor.delivery_skipped", {
-        handoff: reply.handoffCategory,
-        contentLength: mainContent.length
-      });
+      } else {
+        logger.info("meta.processor.delivery_skipped", {
+          handoff: reply.handoffCategory,
+          contentLength: mainContent.length
+        });
+      }
+    } finally {
+      if (!deliveryMeasured) {
+        latency.add("deliveryMs", Date.now() - deliveryStartedAt);
+      }
     }
   } catch (err: any) {
     if (isStaleConversationRunError(err)) {
+      traceOutcome = "stale_run";
       logger.info("meta.processor.superseded_run_stopped", {
         platform,
         identifier,
@@ -931,9 +1033,31 @@ export async function processMetaMessage(job: MetaMessageJob) {
       });
       return;
     }
-    if (err instanceof UnrecoverableError) throw err;
+    traceError = err?.message || String(err);
+    if (err instanceof UnrecoverableError) {
+      traceOutcome = "unrecoverable_error";
+      throw err;
+    }
+    traceOutcome = "error";
     logger.error("meta.processor.failure", { platform, identifier, error: err.message, stack: err.stack });
     throw err;
+  } finally {
+    if (shouldTraceChannelLatency) {
+      logger.info("chat.channel_latency", {
+        channel: channelForLatencyTrace(job),
+        source: "meta",
+        platform,
+        jobId: traceOptions.jobId,
+        jobName: traceOptions.jobName,
+        businessProfileId: traceBusinessProfileId,
+        conversationId: traceConversationId,
+        outcome: traceOutcome,
+        action: traceAction,
+        replyType: traceReplyType,
+        error: traceError,
+        ...latency.snapshot(),
+      });
+    }
   }
 }
 

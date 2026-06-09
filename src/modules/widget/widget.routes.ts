@@ -310,12 +310,6 @@ widgetRoutes.post(
     const saved = await saveMessage(id, "agent", text.trim(), {
       status: "SENT",
     });
-    
-    // Update conversation timestamp
-    await prisma.conversation.update({
-      where: { id },
-      data: { updatedAt: new Date() }
-    });
 
     return res.status(201).json({ data: saved });
   }

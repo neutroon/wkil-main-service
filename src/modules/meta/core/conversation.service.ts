@@ -3,6 +3,8 @@ import type { ConversationMessageStatus } from "@prisma/client";
 import { AppError } from "@middlewares/errorHandler.middleware";
 import { getAccessibleProfileIds } from "@modules/auth/user/user.service";
 import { upsertCustomerFromConversation } from "@modules/business/customer/customer.service";
+import { runOutsideDbQueryTrace } from "@utils/dbQueryTrace";
+import { logger } from "@utils/logger";
 
 const HISTORY_LIMIT = 24;
 
@@ -199,24 +201,58 @@ export async function saveMessage(
     },
   });
 
-  // Always bump the conversation updatedAt whenever a message is saved
-  await prisma.conversation.update({
-    where: { id: conversationId },
-    data: { updatedAt: new Date() },
+  runMessagePersistenceSideEffectsInBackground({
+    conversationId,
+    messageId: msg.id,
+    role,
   });
-
-  const conversation = await prisma.conversation.findUnique({
-    where: { id: conversationId },
-    select: { customerId: true },
-  });
-  if (conversation?.customerId) {
-    await prisma.customer.updateMany({
-      where: { id: conversation.customerId },
-      data: { lastInteractionAt: new Date() },
-    });
-  }
 
   return msg;
+}
+
+function runMessagePersistenceSideEffectsInBackground(params: {
+  conversationId: number;
+  messageId: number;
+  role: "user" | "model" | "agent";
+}) {
+  runOutsideDbQueryTrace(() => {
+    setImmediate(() => {
+      touchConversationAfterMessageSave(params).catch((error: any) => {
+        logger.warn("conversation.message_side_effects_failed", {
+          conversationId: params.conversationId,
+          messageId: params.messageId,
+          role: params.role,
+          error: error?.message || String(error),
+        });
+      });
+    });
+  });
+}
+
+async function touchConversationAfterMessageSave(params: {
+  conversationId: number;
+  messageId: number;
+  role: "user" | "model" | "agent";
+}) {
+  const touchedAt = new Date();
+  const conversation = await prisma.conversation.update({
+    where: { id: params.conversationId },
+    data: { updatedAt: touchedAt },
+    select: {
+      id: true,
+      businessProfileId: true,
+      customerId: true,
+      channel: true,
+      updatedAt: true,
+    },
+  });
+
+  if (conversation.customerId) {
+    await prisma.customer.updateMany({
+      where: { id: conversation.customerId },
+      data: { lastInteractionAt: touchedAt },
+    });
+  }
 }
 
 // ─── UI / inbox helpers ───────────────────────────────────────────────────────

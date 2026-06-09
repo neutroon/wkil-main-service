@@ -19,6 +19,10 @@ export function traceDbQueriesForStage<T>(
   return dbQueryTraceStorage.run({ stage, sink }, operation);
 }
 
+export function runOutsideDbQueryTrace<T>(operation: () => T): T {
+  return dbQueryTraceStorage.exit(operation);
+}
+
 export function recordPrismaQuery(durationMs: number | undefined | null) {
   const context = dbQueryTraceStorage.getStore();
   if (!context || !Number.isFinite(durationMs)) return;

@@ -7,6 +7,7 @@ import { createAdapter } from "@socket.io/redis-adapter";
 import Redis from "ioredis";
 import { logger } from "@utils/logger";
 import { AppError } from "@middlewares/errorHandler.middleware";
+import { processWidgetChatMessage } from "@modules/widget/services/widgetChat.service";
 
 let io: SocketIOServer | null = null;
 
@@ -299,6 +300,50 @@ export function initSocket(server: HTTPServer): SocketIOServer {
       const room = `conversation:${id}`;
       socket.join(room);
       logger.info("socket.join_room", { socketId: socket.id, room });
+    });
+
+    socket.on("send_message", async (data: { visitorId: string; message: string; conversationId?: number }) => {
+      const widgetIdentity = socket.data.identity?.widget;
+      if (!widgetIdentity) return;
+
+      try {
+        const install = await prisma.widgetInstall.findFirst({
+          where: { id: widgetIdentity.installId, isActive: true },
+        });
+        if (!install) return;
+
+        const result = await processWidgetChatMessage({
+          install,
+          visitorId: data.visitorId,
+          message: data.message,
+          conversationId: data.conversationId,
+        });
+
+        // Auto-join sender to the conversation room
+        socket.join(`conversation:${result.conversationId}`);
+
+        // Emit the AI response to the room
+        emitToConversation(result.conversationId, "new_message", {
+          conversationId: result.conversationId,
+          channel: "web",
+          message: {
+            role: "model",
+            content: result.reply,
+            conversationId: result.conversationId,
+            attachment: result.attachment ?? null,
+            createdAt: new Date().toISOString(),
+          },
+        });
+
+        logger.info("widget.send_message.complete", {
+          conversationId: result.conversationId,
+        });
+      } catch (error) {
+        logger.error("widget.send_message.failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        socket.emit("message_error", { error: "Unable to process your message." });
+      }
     });
 
     socket.on("leave_conversation", (conversationId: string | number) => {

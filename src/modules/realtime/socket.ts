@@ -312,6 +312,10 @@ export function initSocket(server: HTTPServer): SocketIOServer {
         });
         if (!install) return;
 
+        const wasAlreadyInRoom = data.conversationId
+          ? socket.rooms.has(`conversation:${data.conversationId}`)
+          : false;
+
         const result = await processWidgetChatMessage({
           install,
           visitorId: data.visitorId,
@@ -322,18 +326,22 @@ export function initSocket(server: HTTPServer): SocketIOServer {
         // Auto-join sender to the conversation room
         socket.join(`conversation:${result.conversationId}`);
 
-        // Emit the AI response to the room
-        emitToConversation(result.conversationId, "new_message", {
-          conversationId: result.conversationId,
-          channel: "web",
-          message: {
-            role: "model",
-            content: result.reply,
+        // Only emit manually if the socket wasn't already in the room.
+        // Otherwise the Prisma hook (syncSocketFromMessage) already
+        // delivered the message to the room during processWidgetChatMessage.
+        if (!wasAlreadyInRoom) {
+          emitToConversation(result.conversationId, "new_message", {
             conversationId: result.conversationId,
-            attachment: result.attachment ?? null,
-            createdAt: new Date().toISOString(),
-          },
-        });
+            channel: "web",
+            message: {
+              role: "model",
+              content: result.reply,
+              conversationId: result.conversationId,
+              attachment: result.attachment ?? null,
+              createdAt: new Date().toISOString(),
+            },
+          });
+        }
 
         logger.info("widget.send_message.complete", {
           conversationId: result.conversationId,

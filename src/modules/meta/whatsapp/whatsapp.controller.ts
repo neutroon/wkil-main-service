@@ -434,6 +434,34 @@ export class WhatsAppController {
   }
 
   /**
+   * POST /v1/whatsapp/accounts/:id/re-subscribe
+   */
+  async reSubscribeWebhook(req: Request, res: Response) {
+    const userId = (req as any).user.id;
+    const { id } = req.params as any;
+
+    const account = await prisma.whatsAppAccount.findFirst({
+      where: { id, userId, isActive: true },
+    });
+
+    if (!account) throw new AppError("WhatsApp account not found", 404);
+    if (!account.wabaId || !account.accessToken) {
+      throw new AppError("Account has no WABA ID or access token", 400);
+    }
+
+    const accessToken = decryptFacebookSecret(account.accessToken);
+    await subscribeWebhook(account.wabaId, accessToken);
+
+    logger.info("whatsapp.account.webhook_resubscribed", {
+      id,
+      wabaId: account.wabaId,
+      phoneNumberId: account.phoneNumberId,
+    });
+
+    return res.json({ success: true, message: "Webhook re-subscribed successfully" });
+  }
+
+  /**
    * DELETE /v1/whatsapp/accounts/:id
    */
   async deactivateAccount(req: Request, res: Response) {

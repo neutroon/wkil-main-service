@@ -54,6 +54,12 @@ whatsappRoutes.post("/oauth", authenticateToken, (req, res) =>
 whatsappRoutes.get("/accounts", authenticateToken, (req, res) =>
   whatsappController.listAccounts(req, res),
 );
+whatsappRoutes.post(
+  "/accounts/:id/re-subscribe",
+  authenticateToken,
+  validate(idParamSchema),
+  (req, res) => whatsappController.reSubscribeWebhook(req, res),
+);
 whatsappRoutes.delete(
   "/accounts/:id",
   authenticateToken,

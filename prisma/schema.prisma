@@ -217,6 +217,7 @@ model WidgetInstall {
   businessProfileId Int
   businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
   publicSiteKey     String          @unique
+  identitySecret    String          @unique
   allowedOrigins    Json
   label             String?
   isActive          Boolean         @default(true)

@@ -140,9 +140,15 @@ widgetRoutes.patch(
       throw new AppError("Install not found", 404);
     }
 
-    const { allowedOrigins, label, isActive } = req.body;
+    const { businessProfileId, allowedOrigins, label, isActive } = req.body;
     const data: any = {};
 
+    if (businessProfileId !== undefined) {
+      if (!(await authorizeProfile(userId, businessProfileId))) {
+        throw new AppError("Business profile not found", 403);
+      }
+      data.businessProfileId = businessProfileId;
+    }
     if (allowedOrigins !== undefined) {
       const origins = parseAllowedOrigins(allowedOrigins);
       if (origins.length === 0) {

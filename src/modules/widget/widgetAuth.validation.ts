@@ -21,6 +21,7 @@ export const updateWidgetInstallSchema = z.object({
     id: z.coerce.number(),
   }),
   body: z.object({
+    businessProfileId: z.number().int().positive("Invalid businessProfileId").optional(),
     allowedOrigins: z.union([z.string(), z.array(z.string())]).optional(),
     label: z.string().max(200).optional(),
     isActive: z.boolean().optional(),

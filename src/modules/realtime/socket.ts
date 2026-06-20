@@ -8,6 +8,7 @@ import Redis from "ioredis";
 import { logger } from "@utils/logger";
 import { AppError } from "@middlewares/errorHandler.middleware";
 import { processWidgetChatMessage } from "@modules/widget/services/widgetChat.service";
+import { getOrCreateConversation } from "@modules/meta/core/conversation.service";
 
 let io: SocketIOServer | null = null;
 
@@ -312,36 +313,25 @@ export function initSocket(server: HTTPServer): SocketIOServer {
         });
         if (!install) return;
 
-        const wasAlreadyInRoom = data.conversationId
-          ? socket.rooms.has(`conversation:${data.conversationId}`)
-          : false;
+        // Pre-create / find conversation so the socket can join the room
+        // BEFORE processWidgetChatMessage saves the AI response.
+        // This ensures the Prisma extension (syncSocketFromMessage)
+        // delivers the message to the room naturally.
+        const pageId = `widget:${install.id}`;
+        const conv = await getOrCreateConversation(
+          pageId,
+          data.visitorId,
+          install.businessProfileId,
+          { channel: "web" },
+        );
+        socket.join(`conversation:${conv.id}`);
 
         const result = await processWidgetChatMessage({
           install,
           visitorId: data.visitorId,
           message: data.message,
-          conversationId: data.conversationId,
+          conversationId: conv.id,
         });
-
-        // Auto-join sender to the conversation room
-        socket.join(`conversation:${result.conversationId}`);
-
-        // Only emit manually if the socket wasn't already in the room.
-        // Otherwise the Prisma hook (syncSocketFromMessage) already
-        // delivered the message to the room during processWidgetChatMessage.
-        if (!wasAlreadyInRoom) {
-          emitToConversation(result.conversationId, "new_message", {
-            conversationId: result.conversationId,
-            channel: "web",
-            message: {
-              role: "model",
-              content: result.reply,
-              conversationId: result.conversationId,
-              attachment: result.attachment ?? null,
-              createdAt: new Date().toISOString(),
-            },
-          });
-        }
 
         logger.info("widget.send_message.complete", {
           conversationId: result.conversationId,

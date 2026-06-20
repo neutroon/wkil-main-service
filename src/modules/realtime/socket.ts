@@ -9,6 +9,12 @@ import { logger } from "@utils/logger";
 import { AppError } from "@middlewares/errorHandler.middleware";
 import { processWidgetChatMessage } from "@modules/widget/services/widgetChat.service";
 import { getOrCreateConversation } from "@modules/meta/core/conversation.service";
+import {
+  parseWidgetUser,
+  verifyWidgetUserIdentity,
+  syncVerifiedUserEmail,
+  type VerifiedWidgetUser,
+} from "@modules/widget/services/widgetIdentity.service";
 
 let io: SocketIOServer | null = null;
 
@@ -23,6 +29,7 @@ export type SocketIdentity = {
     installId: number;
     businessProfileId: number;
     visitorId: string;
+    verifiedUser?: VerifiedWidgetUser;
   };
 };
 
@@ -154,6 +161,7 @@ async function authenticateWidgetSocket(socket: Socket): Promise<SocketIdentity[
       id: true,
       businessProfileId: true,
       allowedOrigins: true,
+      identitySecret: true,
     },
   });
   if (!install) return null;
@@ -163,10 +171,27 @@ async function authenticateWidgetSocket(socket: Socket): Promise<SocketIdentity[
     return null;
   }
 
+  // Verify authenticated user identity if provided
+  let verifiedUser: VerifiedWidgetUser | undefined;
+  const rawUser = socket.handshake.auth?.user;
+  if (rawUser) {
+    const parsed = parseWidgetUser(rawUser);
+    if (parsed) {
+      verifiedUser = verifyWidgetUserIdentity(install.identitySecret, parsed) ?? undefined;
+      if (parsed && !verifiedUser) {
+        logger.warn("widget.identity_verification_failed", {
+          siteKey: siteKey.slice(0, 8),
+          userId: parsed.id.slice(0, 16),
+        });
+      }
+    }
+  }
+
   return {
     installId: install.id,
     businessProfileId: install.businessProfileId,
     visitorId,
+    verifiedUser,
   };
 }
 
@@ -313,24 +338,30 @@ export function initSocket(server: HTTPServer): SocketIOServer {
         });
         if (!install) return;
 
-        // Pre-create / find conversation so the socket can join the room
-        // BEFORE processWidgetChatMessage saves the AI response.
-        // This ensures the Prisma extension (syncSocketFromMessage)
-        // delivers the message to the room naturally.
         const pageId = `widget:${install.id}`;
         const conv = await getOrCreateConversation(
           pageId,
           data.visitorId,
           install.businessProfileId,
-          { channel: "web" },
+          {
+            channel: "web",
+            customerName: widgetIdentity.verifiedUser?.name,
+            customerPhone: widgetIdentity.verifiedUser?.phone,
+            customerAvatar: widgetIdentity.verifiedUser?.avatar,
+          },
         );
         socket.join(`conversation:${conv.id}`);
+
+        if (widgetIdentity.verifiedUser?.email && conv.customerId) {
+          await syncVerifiedUserEmail(conv.customerId, widgetIdentity.verifiedUser.email);
+        }
 
         const result = await processWidgetChatMessage({
           install,
           visitorId: data.visitorId,
           message: data.message,
           conversationId: conv.id,
+          verifiedUser: widgetIdentity.verifiedUser,
         });
 
         logger.info("widget.send_message.complete", {

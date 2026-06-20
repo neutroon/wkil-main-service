@@ -17,6 +17,14 @@ export const widgetChatSchema = z.object({
       .max(MESSAGE_MAX, `message exceeds maximum length of ${MESSAGE_MAX}`),
     conversationId: z.number().nullable().optional(),
     stream: z.boolean().optional(),
+    user: z.object({
+      id: z.string().min(1).max(128),
+      hash: z.string().min(16).max(256),
+      name: z.string().max(256).optional(),
+      email: z.string().max(256).optional(),
+      phone: z.string().max(64).optional(),
+      avatar: z.string().max(1024).optional(),
+    }).optional(),
   }),
 });
 

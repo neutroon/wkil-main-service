@@ -25,6 +25,10 @@ import {
   createLatencyTrace,
   type LatencyTrace,
 } from "@utils/latencyTrace";
+import {
+  syncVerifiedUserEmail,
+  type VerifiedWidgetUser,
+} from "@modules/widget/services/widgetIdentity.service";
 
 function pageIdForWidget(installId: number): string {
   return `widget:${installId}`;
@@ -43,6 +47,7 @@ export async function processWidgetChatMessage(params: {
   message: string;
   conversationId?: number;
   media?: WidgetInboundMedia;
+  verifiedUser?: VerifiedWidgetUser;
 }): Promise<{
   reply: string;
   conversationId: number;
@@ -289,12 +294,12 @@ async function setupWidgetChat(params: {
   message: string;
   conversationId?: number;
   media?: WidgetInboundMedia;
+  verifiedUser?: VerifiedWidgetUser;
 }, latency: LatencyTrace) {
-  const { install, visitorId, message, conversationId, media } = params;
+  const { install, visitorId, message, conversationId, media, verifiedUser } = params;
   const pageId = pageIdForWidget(install.id);
 
   let conversation: any;
-  // Treat null as undefined to trigger auto-discovery
   const effectiveConversationId =
     conversationId === null ? undefined : conversationId;
 
@@ -314,9 +319,15 @@ async function setupWidgetChat(params: {
           conversationId: conversation.id,
           channel: "web",
           senderId: visitorId,
+          customerName: verifiedUser?.name,
+          customerPhone: verifiedUser?.phone,
+          customerAvatar: verifiedUser?.avatar,
         }),
       );
       conversation = { ...conversation, customerId: customer.id };
+    }
+    if (verifiedUser?.email && conversation.customerId) {
+      await syncVerifiedUserEmail(conversation.customerId, verifiedUser.email);
     }
   } else {
     conversation = await latency.measure("conversationSetupMs", () =>
@@ -324,9 +335,17 @@ async function setupWidgetChat(params: {
         pageId,
         visitorId,
         install.businessProfileId,
-        { channel: "web" },
+        {
+          channel: "web",
+          customerName: verifiedUser?.name,
+          customerPhone: verifiedUser?.phone,
+          customerAvatar: verifiedUser?.avatar,
+        },
       ),
     );
+    if (verifiedUser?.email && conversation.customerId) {
+      await syncVerifiedUserEmail(conversation.customerId, verifiedUser.email);
+    }
   }
 
   const businessProfile = await latency.measure("businessProfileMs", () =>

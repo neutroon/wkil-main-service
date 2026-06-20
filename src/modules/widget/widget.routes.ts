@@ -17,6 +17,7 @@ import {
   widgetIdParamSchema
 } from "./widgetAuth.validation";
 import { AppError } from "@middlewares/errorHandler.middleware";
+import { generateIdentitySecret } from "./services/widgetIdentity.service";
 
 const widgetRoutes = Router();
 
@@ -58,6 +59,7 @@ widgetRoutes.post(
         userId,
         businessProfileId,
         publicSiteKey: newPublicSiteKey(),
+        identitySecret: generateIdentitySecret(),
         allowedOrigins: origins,
         label: label || null,
       },
@@ -81,6 +83,26 @@ widgetRoutes.get("/installs", async (req: Request, res: Response) => {
   });
   return res.json({ data: installs });
 });
+
+/** GET /v1/widget/installs/:id/identity-secret — per-install HMAC secret for identity verification */
+widgetRoutes.get(
+  "/installs/:id/identity-secret",
+  validate(widgetIdParamSchema),
+  async (req: Request, res: Response) => {
+    const userId = (req as any).user.id as number;
+    const id = parseInt(req.params.id, 10);
+
+    const install = await prisma.widgetInstall.findFirst({
+      where: { id, userId },
+      select: { identitySecret: true },
+    });
+    if (!install) {
+      throw new AppError("Install not found", 404);
+    }
+
+    return res.json({ enabled: true, identitySecret: install.identitySecret });
+  },
+);
 
 /** DELETE /v1/widget/installs/:id/hard — remove row (cannot be undone) */
 widgetRoutes.delete(

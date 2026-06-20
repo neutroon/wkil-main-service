@@ -13,6 +13,7 @@ import {
   widgetHistorySchema,
 } from "./widget.validation";
 import { AppError } from "@middlewares/errorHandler.middleware";
+import { verifyWidgetUserFromRequest } from "./services/widgetIdentity.service";
 
 const widgetPublicRoutes = Router();
 const widgetMediaUpload = multer({
@@ -105,11 +106,16 @@ widgetPublicRoutes.post(
       throw new AppError("Widget context missing", 500);
     }
 
-    const { visitorId, message, conversationId, stream } = req.body;
+    const { visitorId, message, conversationId, stream, user } = req.body;
     const normalizedMessage = normalizeWidgetText(message);
     if (!normalizedMessage) {
       throw new AppError("message is required", 400);
     }
+
+    const verifiedUser = verifyWidgetUserFromRequest(
+      install.identitySecret,
+      user,
+    );
 
     const runChat = () =>
       processWidgetChatMessage({
@@ -117,6 +123,7 @@ widgetPublicRoutes.post(
         visitorId: visitorId.trim(),
         message: normalizedMessage,
         conversationId,
+        verifiedUser: verifiedUser ?? undefined,
       });
 
     if (stream === true) {

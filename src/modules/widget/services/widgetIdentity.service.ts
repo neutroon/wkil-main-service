@@ -95,3 +95,23 @@ export async function syncVerifiedUserEmail(
     data: { email },
   });
 }
+
+/**
+ * Always overwrite customer profile fields with verified user data.
+ * Called on every verified message so the profile stays current.
+ */
+export async function syncVerifiedUserProfile(
+  customerId: number,
+  user: VerifiedWidgetUser,
+): Promise<void> {
+  const data: Record<string, string> = {};
+  if (user.name) data.displayName = user.name;
+  if (user.phone) data.phone = user.phone;
+  if (user.email) data.email = user.email;
+  if (Object.keys(data).length === 0) return;
+
+  await prisma.customer.update({
+    where: { id: customerId },
+    data,
+  });
+}

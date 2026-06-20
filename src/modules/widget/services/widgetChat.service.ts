@@ -27,6 +27,7 @@ import {
 } from "@utils/latencyTrace";
 import {
   syncVerifiedUserEmail,
+  syncVerifiedUserProfile,
   type VerifiedWidgetUser,
 } from "@modules/widget/services/widgetIdentity.service";
 
@@ -326,8 +327,22 @@ async function setupWidgetChat(params: {
       );
       conversation = { ...conversation, customerId: customer.id };
     }
-    if (verifiedUser?.email && conversation.customerId) {
-      await syncVerifiedUserEmail(conversation.customerId, verifiedUser.email);
+    if (verifiedUser && conversation.customerId) {
+      await syncVerifiedUserProfile(conversation.customerId, verifiedUser);
+    }
+    // Always refresh conversation-level customer fields from verified data
+    if (verifiedUser) {
+      const convUpdate: Record<string, string> = {};
+      if (verifiedUser.name) convUpdate.customerName = verifiedUser.name;
+      if (verifiedUser.phone) convUpdate.customerPhone = verifiedUser.phone;
+      if (verifiedUser.avatar) convUpdate.customerAvatar = verifiedUser.avatar;
+      if (Object.keys(convUpdate).length > 0) {
+        await prisma.conversation.update({
+          where: { id: conversation.id },
+          data: convUpdate,
+        });
+        conversation = { ...conversation, ...convUpdate };
+      }
     }
   } else {
     conversation = await latency.measure("conversationSetupMs", () =>
@@ -343,8 +358,22 @@ async function setupWidgetChat(params: {
         },
       ),
     );
-    if (verifiedUser?.email && conversation.customerId) {
-      await syncVerifiedUserEmail(conversation.customerId, verifiedUser.email);
+    if (verifiedUser && conversation.customerId) {
+      await syncVerifiedUserProfile(conversation.customerId, verifiedUser);
+    }
+    // Always refresh conversation-level customer fields from verified data
+    if (verifiedUser) {
+      const convUpdate: Record<string, string> = {};
+      if (verifiedUser.name) convUpdate.customerName = verifiedUser.name;
+      if (verifiedUser.phone) convUpdate.customerPhone = verifiedUser.phone;
+      if (verifiedUser.avatar) convUpdate.customerAvatar = verifiedUser.avatar;
+      if (Object.keys(convUpdate).length > 0) {
+        await prisma.conversation.update({
+          where: { id: conversation.id },
+          data: convUpdate,
+        });
+        conversation = { ...conversation, ...convUpdate };
+      }
     }
   }
 

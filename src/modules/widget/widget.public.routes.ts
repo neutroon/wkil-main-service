@@ -50,6 +50,7 @@ widgetPublicRoutes.options("/config", widgetInstallAndCors);
 /**
  * GET /v1/public/widget/config
  * Returns branding and configuration for the widget based on siteKey.
+ * Install-level settings override BusinessProfile brand kit.
  */
 widgetPublicRoutes.get(
   "/config",
@@ -77,21 +78,25 @@ widgetPublicRoutes.get(
       throw new AppError("Business profile not found", 404);
     }
 
+    // Parse install-level settings overrides
+    const s = (install.settings ?? null) as Record<string, any> | null;
+
     return res.json({
       branding: {
-        name: profile.name,
-        logoUrl: profile.brandLogoUrl,
+        name: s?.headerTitle ?? profile.name,
+        logoUrl: s?.logoUrl ?? profile.brandLogoUrl,
         colors: {
-          primary: profile.brandPrimaryColor,
-          secondary: profile.brandSecondaryColor,
-          accent: profile.brandAccentColor,
+          primary: s?.colors?.primary ?? profile.brandPrimaryColor,
+          secondary: s?.colors?.secondary ?? profile.brandSecondaryColor,
+          accent: s?.colors?.accent ?? profile.brandAccentColor,
         },
+        position: s?.position ?? "bottom-right",
+        headerSubtitle: s?.headerSubtitle ?? null,
+        welcomeMessage: s?.welcomeMessage ?? null,
+        launcherStyle: s?.launcherStyle ?? "rounded",
+        greetingDelayMs: s?.greetingDelayMs ?? 5000,
         aesthetic: profile.visualAesthetic,
         artStyle: profile.artStyle,
-      },
-      settings: {
-        // Future: add widget-specific settings here (e.g. initial message)
-        initialMessage: "Hello! How can I help you today?",
       },
     });
   },

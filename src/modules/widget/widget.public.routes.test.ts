@@ -89,8 +89,8 @@ const baseInstall: WidgetInstall = {
   publicSiteKey: "wsk_test_xxxxxxxx",
   identitySecret: "aabbccdd11223344aabbccdd11223344aabbccdd11223344aabbccdd11223344",
   allowedOrigins: ["https://shop.example"],
-  label: null,
   isActive: true,
+  settings: null,
   createdAt: new Date(),
   updatedAt: new Date(),
 };

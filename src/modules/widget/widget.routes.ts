@@ -16,6 +16,8 @@ import {
   widgetReplySchema,
   widgetIdParamSchema
 } from "./widgetAuth.validation";
+import type { z } from "zod";
+import type { widgetSettingsSchema } from "./widgetAuth.validation";
 import { AppError } from "@middlewares/errorHandler.middleware";
 import { generateIdentitySecret } from "./services/widgetIdentity.service";
 
@@ -43,7 +45,7 @@ widgetRoutes.post(
   validate(widgetInstallSchema),
   async (req: Request, res: Response) => {
     const userId = (req as any).user.id as number;
-    const { businessProfileId, allowedOrigins, label } = req.body;
+    const { businessProfileId, allowedOrigins, settings } = req.body;
 
     const origins = parseAllowedOrigins(allowedOrigins);
     if (origins.length === 0) {
@@ -61,7 +63,7 @@ widgetRoutes.post(
         publicSiteKey: newPublicSiteKey(),
         identitySecret: generateIdentitySecret(),
         allowedOrigins: origins,
-        label: label || null,
+        settings: settings ?? undefined,
       },
     });
 
@@ -140,7 +142,7 @@ widgetRoutes.patch(
       throw new AppError("Install not found", 404);
     }
 
-    const { businessProfileId, allowedOrigins, label, isActive } = req.body;
+    const { businessProfileId, allowedOrigins, isActive, settings } = req.body;
     const data: any = {};
 
     if (businessProfileId !== undefined) {
@@ -156,11 +158,12 @@ widgetRoutes.patch(
       }
       data.allowedOrigins = origins;
     }
-    if (label !== undefined) {
-      data.label = label || null;
-    }
     if (isActive !== undefined) {
       data.isActive = Boolean(isActive);
+    }
+    if (settings !== undefined) {
+      // null = clear settings (revert to brand kit), object = merge
+      data.settings = settings === null ? null : settings;
     }
 
     const updated = await prisma.widgetInstall.update({

@@ -239,50 +239,64 @@ widgetPublicRoutes.get(
       previousVisitorId?: string;
     };
 
+    const pageId = `widget:${install.id}`;
     let convId: number | undefined;
+
     if (qConvId) {
       convId = parseInt(qConvId, 10);
+
+      // Check if this conversation belongs to the previous anonymous visitor
+      if (convId && previousVisitorId && previousVisitorId !== visitorId) {
+        const anonConv = await prisma.conversation.findFirst({
+          where: { id: convId, pageId, senderId: previousVisitorId },
+          select: { id: true },
+        });
+        if (anonConv) {
+          await prisma.$transaction([
+            prisma.conversation.update({
+              where: { id: convId },
+              data: { senderId: visitorId },
+            }),
+          ]);
+          logger.info("widget.history.conversation_migrated", {
+            conversationId: convId,
+            from: previousVisitorId.slice(0, 16),
+            to: visitorId.slice(0, 16),
+          });
+        }
+      }
     } else {
       // Automatic discovery: find latest conversation for this visitor on this site
       const latest = await prisma.conversation.findFirst({
-        where: {
-          senderId: visitorId,
-          pageId: `widget:${install.id}`,
-          channel: "web",
-        },
+        where: { senderId: visitorId, pageId, channel: "web" },
         orderBy: { updatedAt: "desc" },
         select: { id: true },
       });
       if (latest) {
         convId = latest.id;
       }
-    }
 
-    // Migration: if no conversation found for current visitorId, check for anonymous one
-    if (!convId && previousVisitorId && previousVisitorId !== visitorId) {
-      const anonConversation = await prisma.conversation.findFirst({
-        where: {
-          senderId: previousVisitorId,
-          pageId: `widget:${install.id}`,
-          channel: "web",
-        },
-        orderBy: { updatedAt: "desc" },
-        select: { id: true },
-      });
-      if (anonConversation) {
-        // Atomic migration: update senderId in a transaction
-        await prisma.$transaction([
-          prisma.conversation.update({
-            where: { id: anonConversation.id },
-            data: { senderId: visitorId },
-          }),
-        ]);
-        convId = anonConversation.id;
-        logger.info("widget.history.conversation_migrated", {
-          conversationId: convId,
-          from: previousVisitorId.slice(0, 16),
-          to: visitorId.slice(0, 16),
+      // Migration: if no conversation found for current visitorId, check for anonymous one
+      if (!convId && previousVisitorId && previousVisitorId !== visitorId) {
+        const anonConversation = await prisma.conversation.findFirst({
+          where: { senderId: previousVisitorId, pageId, channel: "web" },
+          orderBy: { updatedAt: "desc" },
+          select: { id: true },
         });
+        if (anonConversation) {
+          await prisma.$transaction([
+            prisma.conversation.update({
+              where: { id: anonConversation.id },
+              data: { senderId: visitorId },
+            }),
+          ]);
+          convId = anonConversation.id;
+          logger.info("widget.history.conversation_migrated", {
+            conversationId: convId,
+            from: previousVisitorId.slice(0, 16),
+            to: visitorId.slice(0, 16),
+          });
+        }
       }
     }
 

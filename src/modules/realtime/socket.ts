@@ -13,6 +13,7 @@ import {
   parseWidgetUser,
   verifyWidgetUserIdentity,
   syncVerifiedUserEmail,
+  syncVerifiedUserProfile,
   type VerifiedWidgetUser,
 } from "@modules/widget/services/widgetIdentity.service";
 
@@ -328,7 +329,7 @@ export function initSocket(server: HTTPServer): SocketIOServer {
       logger.info("socket.join_room", { socketId: socket.id, room });
     });
 
-    socket.on("send_message", async (data: { visitorId: string; message: string; conversationId?: number }) => {
+    socket.on("send_message", async (data: { visitorId: string; message: string; conversationId?: number; previousVisitorId?: string }) => {
       const widgetIdentity = socket.data.identity?.widget;
       if (!widgetIdentity) return;
 
@@ -339,21 +340,41 @@ export function initSocket(server: HTTPServer): SocketIOServer {
         if (!install) return;
 
         const pageId = `widget:${install.id}`;
-        const conv = await getOrCreateConversation(
-          pageId,
-          data.visitorId,
-          install.businessProfileId,
-          {
-            channel: "web",
-            customerName: widgetIdentity.verifiedUser?.name,
-            customerPhone: widgetIdentity.verifiedUser?.phone,
-            customerAvatar: widgetIdentity.verifiedUser?.avatar,
-          },
-        );
+
+        // Migration: claim anonymous conversation if previousVisitorId provided
+        let conv: any = null;
+        if (data.previousVisitorId && data.previousVisitorId !== data.visitorId) {
+          const anonConv = await prisma.conversation.findFirst({
+            where: { pageId, senderId: data.previousVisitorId, channel: "web" },
+            orderBy: { updatedAt: "desc" },
+          });
+          if (anonConv) {
+            await prisma.conversation.update({
+              where: { id: anonConv.id },
+              data: { senderId: data.visitorId },
+            });
+            conv = await prisma.conversation.findUnique({ where: { id: anonConv.id } });
+          }
+        }
+
+        if (!conv) {
+          conv = await getOrCreateConversation(
+            pageId,
+            data.visitorId,
+            install.businessProfileId,
+            {
+              channel: "web",
+              customerName: widgetIdentity.verifiedUser?.name,
+              customerPhone: widgetIdentity.verifiedUser?.phone,
+              customerAvatar: widgetIdentity.verifiedUser?.avatar,
+            },
+          );
+        }
+
         socket.join(`conversation:${conv.id}`);
 
-        if (widgetIdentity.verifiedUser?.email && conv.customerId) {
-          await syncVerifiedUserEmail(conv.customerId, widgetIdentity.verifiedUser.email);
+        if (widgetIdentity.verifiedUser && conv.customerId) {
+          await syncVerifiedUserProfile(conv.customerId, widgetIdentity.verifiedUser);
         }
 
         const result = await processWidgetChatMessage({

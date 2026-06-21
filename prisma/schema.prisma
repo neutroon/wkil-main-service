@@ -219,8 +219,8 @@ model WidgetInstall {
   publicSiteKey     String          @unique
   identitySecret    String          @unique
   allowedOrigins    Json
-  label             String?
   isActive          Boolean         @default(true)
+  settings          Json?
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 

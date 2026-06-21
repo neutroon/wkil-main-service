@@ -329,7 +329,7 @@ export function initSocket(server: HTTPServer): SocketIOServer {
       logger.info("socket.join_room", { socketId: socket.id, room });
     });
 
-    socket.on("send_message", async (data: { visitorId: string; message: string; conversationId?: number; previousVisitorId?: string }) => {
+    socket.on("send_message", async (data: { visitorId: string; message: string; conversationId?: number }) => {
       const widgetIdentity = socket.data.identity?.widget;
       if (!widgetIdentity) return;
 
@@ -340,37 +340,17 @@ export function initSocket(server: HTTPServer): SocketIOServer {
         if (!install) return;
 
         const pageId = `widget:${install.id}`;
-
-        // Migration: claim anonymous conversation if previousVisitorId provided
-        let conv: any = null;
-        if (data.previousVisitorId && data.previousVisitorId !== data.visitorId) {
-          const anonConv = await prisma.conversation.findFirst({
-            where: { pageId, senderId: data.previousVisitorId, channel: "web" },
-            orderBy: { updatedAt: "desc" },
-          });
-          if (anonConv) {
-            await prisma.conversation.update({
-              where: { id: anonConv.id },
-              data: { senderId: data.visitorId },
-            });
-            conv = await prisma.conversation.findUnique({ where: { id: anonConv.id } });
-          }
-        }
-
-        if (!conv) {
-          conv = await getOrCreateConversation(
-            pageId,
-            data.visitorId,
-            install.businessProfileId,
-            {
-              channel: "web",
-              customerName: widgetIdentity.verifiedUser?.name,
-              customerPhone: widgetIdentity.verifiedUser?.phone,
-              customerAvatar: widgetIdentity.verifiedUser?.avatar,
-            },
-          );
-        }
-
+        const conv = await getOrCreateConversation(
+          pageId,
+          data.visitorId,
+          install.businessProfileId,
+          {
+            channel: "web",
+            customerName: widgetIdentity.verifiedUser?.name,
+            customerPhone: widgetIdentity.verifiedUser?.phone,
+            customerAvatar: widgetIdentity.verifiedUser?.avatar,
+          },
+        );
         socket.join(`conversation:${conv.id}`);
 
         if (widgetIdentity.verifiedUser && conv.customerId) {

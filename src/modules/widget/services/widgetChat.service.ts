@@ -49,7 +49,6 @@ export async function processWidgetChatMessage(params: {
   conversationId?: number;
   media?: WidgetInboundMedia;
   verifiedUser?: VerifiedWidgetUser;
-  previousVisitorId?: string;
 }): Promise<{
   reply: string;
   conversationId: number;
@@ -297,9 +296,8 @@ async function setupWidgetChat(params: {
   conversationId?: number;
   media?: WidgetInboundMedia;
   verifiedUser?: VerifiedWidgetUser;
-  previousVisitorId?: string;
 }, latency: LatencyTrace) {
-  const { install, visitorId, message, conversationId, media, verifiedUser, previousVisitorId } = params;
+  const { install, visitorId, message, conversationId, media, verifiedUser } = params;
   const pageId = pageIdForWidget(install.id);
 
   let conversation: any;
@@ -347,48 +345,19 @@ async function setupWidgetChat(params: {
       }
     }
   } else {
-    // Migration: if previousVisitorId is provided, try to claim the anonymous conversation
-    if (previousVisitorId && previousVisitorId !== visitorId) {
-      const anonConversation = await latency.measure("conversationSetupMs", () =>
-        prisma.conversation.findFirst({
-          where: { pageId, senderId: previousVisitorId, channel: "web" },
-          orderBy: { updatedAt: "desc" },
-        }),
-      );
-      if (anonConversation) {
-        await latency.measure("conversationSetupMs", () =>
-          prisma.conversation.update({
-            where: { id: anonConversation.id },
-            data: { senderId: visitorId },
-          }),
-        );
-        logger.info("widget.conversation_migrated", {
-          conversationId: anonConversation.id,
-          from: previousVisitorId.slice(0, 16),
-          to: visitorId.slice(0, 16),
-        });
-        // Reload as the new conversation
-        conversation = await latency.measure("conversationSetupMs", () =>
-          prisma.conversation.findUnique({ where: { id: anonConversation.id } }),
-        );
-      }
-    }
-
-    if (!conversation) {
-      conversation = await latency.measure("conversationSetupMs", () =>
-        getOrCreateConversation(
-          pageId,
-          visitorId,
-          install.businessProfileId,
-          {
-            channel: "web",
-            customerName: verifiedUser?.name,
-            customerPhone: verifiedUser?.phone,
-            customerAvatar: verifiedUser?.avatar,
-          },
-        ),
-      );
-    }
+    conversation = await latency.measure("conversationSetupMs", () =>
+      getOrCreateConversation(
+        pageId,
+        visitorId,
+        install.businessProfileId,
+        {
+          channel: "web",
+          customerName: verifiedUser?.name,
+          customerPhone: verifiedUser?.phone,
+          customerAvatar: verifiedUser?.avatar,
+        },
+      ),
+    );
 
     if (verifiedUser && conversation.customerId) {
       await syncVerifiedUserProfile(conversation.customerId, verifiedUser);

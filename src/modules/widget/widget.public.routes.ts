@@ -106,7 +106,7 @@ widgetPublicRoutes.post(
       throw new AppError("Widget context missing", 500);
     }
 
-    const { visitorId, message, conversationId, stream, user, previousVisitorId } = req.body;
+    const { visitorId, message, conversationId, stream, user } = req.body;
     const normalizedMessage = normalizeWidgetText(message);
     if (!normalizedMessage) {
       throw new AppError("message is required", 400);
@@ -124,7 +124,6 @@ widgetPublicRoutes.post(
         message: normalizedMessage,
         conversationId,
         verifiedUser: verifiedUser ?? undefined,
-        previousVisitorId: previousVisitorId?.trim(),
       });
 
     if (stream === true) {
@@ -234,9 +233,10 @@ widgetPublicRoutes.get(
       throw new AppError("Widget context missing", 500);
     }
 
-    const { visitorId, conversationId: qConvId } = req.query as {
+    const { visitorId, conversationId: qConvId, previousVisitorId } = req.query as {
       visitorId: string;
       conversationId?: string;
+      previousVisitorId?: string;
     };
 
     let convId: number | undefined;
@@ -255,6 +255,34 @@ widgetPublicRoutes.get(
       });
       if (latest) {
         convId = latest.id;
+      }
+    }
+
+    // Migration: if no conversation found for current visitorId, check for anonymous one
+    if (!convId && previousVisitorId && previousVisitorId !== visitorId) {
+      const anonConversation = await prisma.conversation.findFirst({
+        where: {
+          senderId: previousVisitorId,
+          pageId: `widget:${install.id}`,
+          channel: "web",
+        },
+        orderBy: { updatedAt: "desc" },
+        select: { id: true },
+      });
+      if (anonConversation) {
+        // Atomic migration: update senderId in a transaction
+        await prisma.$transaction([
+          prisma.conversation.update({
+            where: { id: anonConversation.id },
+            data: { senderId: visitorId },
+          }),
+        ]);
+        convId = anonConversation.id;
+        logger.info("widget.history.conversation_migrated", {
+          conversationId: convId,
+          from: previousVisitorId.slice(0, 16),
+          to: visitorId.slice(0, 16),
+        });
       }
     }
 

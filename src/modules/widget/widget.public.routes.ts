@@ -95,6 +95,7 @@ widgetPublicRoutes.get(
         welcomeMessage: s?.welcomeMessage ?? null,
         launcherStyle: s?.launcherStyle ?? "rounded",
         greetingDelayMs: s?.greetingDelayMs ?? 5000,
+        showBranding: s?.showBranding !== false,
         aesthetic: profile.visualAesthetic,
         artStyle: profile.artStyle,
       },

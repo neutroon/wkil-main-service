@@ -24,6 +24,7 @@ export const widgetSettingsSchema = z
     welcomeMessage: z.string().max(300).nullable().optional(),
     launcherStyle: z.enum(["round", "rounded", "square"]).optional(),
     greetingDelayMs: z.number().int().min(0).max(30000).optional(),
+    showBranding: z.boolean().optional(),
   })
   .strict();
 

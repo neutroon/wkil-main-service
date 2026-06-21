@@ -2,6 +2,7 @@ import { Router, Response } from "express";
 import multer from "multer";
 import prisma from "@config/prisma";
 import { processWidgetChatMessage } from "./services/widgetChat.service";
+import { mergeVisitorConversations } from "./services/widgetMigration.service";
 import { listConversationMessages } from "@modules/meta/core/conversation.service";
 import type { WidgetRequest } from "@modules/widget/widgetInstall.middleware";
 import { widgetInstallAndCors } from "@modules/widget/widgetInstall.middleware";
@@ -240,33 +241,27 @@ widgetPublicRoutes.get(
     };
 
     const pageId = `widget:${install.id}`;
+
+    // Step 1: Handle identity migration/merge BEFORE looking up conversations
+    let migratedConvId: number | undefined;
+    if (previousVisitorId && previousVisitorId !== visitorId) {
+      migratedConvId = await mergeVisitorConversations(
+        pageId,
+        visitorId,
+        previousVisitorId,
+      );
+    }
+
+    // Step 2: Resolve the conversation ID
     let convId: number | undefined;
 
-    if (qConvId) {
+    if (migratedConvId) {
+      // Migration happened — use the surviving conversation
+      convId = migratedConvId;
+    } else if (qConvId) {
       convId = parseInt(qConvId, 10);
-
-      // Check if this conversation belongs to the previous anonymous visitor
-      if (convId && previousVisitorId && previousVisitorId !== visitorId) {
-        const anonConv = await prisma.conversation.findFirst({
-          where: { id: convId, pageId, senderId: previousVisitorId },
-          select: { id: true },
-        });
-        if (anonConv) {
-          await prisma.$transaction([
-            prisma.conversation.update({
-              where: { id: convId },
-              data: { senderId: visitorId },
-            }),
-          ]);
-          logger.info("widget.history.conversation_migrated", {
-            conversationId: convId,
-            from: previousVisitorId.slice(0, 16),
-            to: visitorId.slice(0, 16),
-          });
-        }
-      }
     } else {
-      // Automatic discovery: find latest conversation for this visitor on this site
+      // Automatic discovery: find latest conversation for this visitor
       const latest = await prisma.conversation.findFirst({
         where: { senderId: visitorId, pageId, channel: "web" },
         orderBy: { updatedAt: "desc" },
@@ -274,29 +269,6 @@ widgetPublicRoutes.get(
       });
       if (latest) {
         convId = latest.id;
-      }
-
-      // Migration: if no conversation found for current visitorId, check for anonymous one
-      if (!convId && previousVisitorId && previousVisitorId !== visitorId) {
-        const anonConversation = await prisma.conversation.findFirst({
-          where: { senderId: previousVisitorId, pageId, channel: "web" },
-          orderBy: { updatedAt: "desc" },
-          select: { id: true },
-        });
-        if (anonConversation) {
-          await prisma.$transaction([
-            prisma.conversation.update({
-              where: { id: anonConversation.id },
-              data: { senderId: visitorId },
-            }),
-          ]);
-          convId = anonConversation.id;
-          logger.info("widget.history.conversation_migrated", {
-            conversationId: convId,
-            from: previousVisitorId.slice(0, 16),
-            to: visitorId.slice(0, 16),
-          });
-        }
       }
     }
 
@@ -307,11 +279,7 @@ widgetPublicRoutes.get(
 
     // Verify ownership (important for security)
     const conversation = await prisma.conversation.findFirst({
-      where: {
-        id: convId,
-        pageId: `widget:${install.id}`,
-        senderId: visitorId,
-      },
+      where: { id: convId, pageId, senderId: visitorId },
     });
 
     if (!conversation) {

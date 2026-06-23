@@ -86,21 +86,18 @@ const gracefulShutdown = async (signal: string) => {
 process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
-// Handle unhandled rejections and uncaught exceptions
 process.on("unhandledRejection", (err: any) => {
   logger.error("UNHANDLED REJECTION! 💥", {
-    error: err.message,
-    stack: err.stack,
+    error: err?.message,
+    stack: err?.stack,
   });
-  gracefulShutdown("UNHANDLED_REJECTION");
 });
 
 process.on("uncaughtException", (err: any) => {
   logger.error("UNCAUGHT EXCEPTION! 💥", {
-    error: err.message,
-    stack: err.stack,
+    error: err?.message,
+    stack: err?.stack,
   });
-  gracefulShutdown("UNCAUGHT_EXCEPTION");
 });
 
 

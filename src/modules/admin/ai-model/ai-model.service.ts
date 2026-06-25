@@ -146,9 +146,30 @@ export async function listAiModels(filters?: {
   if (filters?.provider) where.provider = filters.provider;
   if (typeof filters?.isActive === "boolean") where.isActive = filters.isActive;
 
-  return prisma.aiModel.findMany({
+  const rows = await prisma.aiModel.findMany({
     where,
-    orderBy: [{ category: "asc" }, { isDefault: "desc" }, { tierOrder: "asc" }, { id: "asc" }],
+    orderBy: [
+      { category: "asc" },
+      { isDefault: "desc" },
+      { tierOrder: "asc" },
+      { id: "asc" },
+    ],
+  });
+
+  // Annotate each row with its 1-based runtime position within its category.
+  // Position 1 is always the active default; ties on tierOrder break by id,
+  // matching getActiveChatTiers(). The UI surfaces this so admins can see
+  // the resolved order, not just the raw tier value.
+  let lastCategory: string | null = null;
+  let position = 0;
+  return rows.map((row) => {
+    if (row.category !== lastCategory) {
+      lastCategory = row.category;
+      position = 1;
+    } else {
+      position += 1;
+    }
+    return { ...row, runtimePosition: position };
   });
 }
 

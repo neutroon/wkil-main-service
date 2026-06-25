@@ -45,6 +45,8 @@ import prisma from "@config/prisma";
 import { logger } from "@utils/logger";
 import missionControlRouter from "@modules/admin/mission-control/missionControl.routes";
 import { generateCsrfToken, validateCsrfToken } from "@middlewares/csrf.middleware";
+import { authenticateToken, requireAdmin, requireVerified } from "@modules/auth/core/auth.middleware";
+import { runHealthChecks, allCriticalOk } from "@utils/healthChecks";
 
 const app = express();
 
@@ -108,8 +110,6 @@ app.use(
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
-import { authenticateToken, requireVerified } from "@modules/auth/core/auth.middleware";
-
 // ── Routes ───────────────────────────────────────────────────────────────────
 app.use("/v1/auth", authRoutes);
 
@@ -121,30 +121,64 @@ app.use("/v1/leads", publicLeadRoutes);
 // API contract and interactive documentation
 app.use("/", docsRoutes);
 
-// Health check endpoint (System Vitals Diagnostic)
-app.get("/v1/health", async (_req, res) => {
-  let database = "UP";
+// ── Health probes (public) ──────────────────────────────────────────────────
+// Liveness: process is alive. No dependency checks. Used by K8s liveness probe.
+app.get("/v1/live", (_req, res) => {
+  res.status(200).json({ status: "alive", timestamp: new Date().toISOString() });
+});
+
+// Readiness: critical deps are up. Used by K8s readiness probe / load balancer.
+// Returns 200 with { status: "ready" } when all critical checks pass,
+// 503 with { status: "not_ready", failed: [...] } otherwise.
+// Body intentionally contains no per-dependency details — that lives at /v1/admin/health.
+app.get("/v1/ready", async (_req, res) => {
   try {
-    await prisma.$queryRaw`SELECT 1`;
-  } catch (err) {
-    database = "DOWN";
-    logger.error("Health check: Database connection failed", { error: err });
+    const report = await runHealthChecks();
+    const failed = report.checks.filter((c) => c.critical && !c.ok).map((c) => c.name);
+    if (allCriticalOk(report)) {
+      res.status(200).json({ status: "ready", timestamp: new Date().toISOString() });
+    } else {
+      res.status(503).json({
+        status: "not_ready",
+        failed,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  } catch (err: any) {
+    logger.error("ready_check.unhandled_error", { error: err?.message });
+    res.status(503).json({ status: "not_ready", error: "health check failed" });
   }
+});
 
-  const status = database === "UP" ? "healthy" : "degraded";
-  const statusCode = database === "UP" ? 200 : 503;
-
-  res.status(statusCode).json({
-    status,
-    database,
-    timestamp: new Date().toISOString(),
-    system: {
-      uptime: process.uptime(),
-      memory: process.memoryUsage(),
-      cpu: os.loadavg(),
-      platform: process.platform,
-    },
-  });
+// Legacy /v1/health endpoint — kept for backward compat, behaves like /v1/ready.
+app.get("/v1/health", async (_req, res) => {
+  try {
+    const report = await runHealthChecks();
+    const failed = report.checks.filter((c) => c.critical && !c.ok).map((c) => c.name);
+    if (allCriticalOk(report)) {
+      res.status(200).json({
+        status: "healthy",
+        database: "UP",
+        timestamp: new Date().toISOString(),
+        system: {
+          uptime: process.uptime(),
+          memory: process.memoryUsage(),
+          cpu: os.loadavg(),
+          platform: process.platform,
+        },
+      });
+    } else {
+      res.status(503).json({
+        status: "degraded",
+        database: failed.includes("postgres") ? "DOWN" : "UP",
+        failed,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  } catch (err: any) {
+    logger.error("health_check.unhandled_error", { error: err?.message });
+    res.status(503).json({ status: "degraded", database: "DOWN" });
+  }
 });
 
 // Protected Enterprise Routes (Require Authentication & Email Verification)
@@ -169,6 +203,36 @@ app.use("/v1/agent-actions", agentActionRoutes);
 app.use("/v1/widget", widgetRoutes);
 app.use("/v1/analytics", aiAnalyticsRoutes);
 app.use("/v1/media", mediaLibraryRoutes);
+
+// Admin-only detailed health (for admin dashboard)
+app.get(
+  "/v1/admin/health",
+  authenticateToken,
+  requireVerified,
+  requireAdmin,
+  async (_req, res) => {
+    try {
+      const report = await runHealthChecks();
+      const healthy = allCriticalOk(report);
+      res.status(healthy ? 200 : 503).json({
+        status: healthy ? "healthy" : "degraded",
+        timestamp: new Date().toISOString(),
+        checks: report.checks,
+        system: {
+          uptime: process.uptime(),
+          memory: process.memoryUsage(),
+          cpu: os.loadavg(),
+          platform: process.platform,
+          nodeVersion: process.version,
+          pid: process.pid,
+        },
+      });
+    } catch (err: any) {
+      logger.error("admin_health_check.unhandled_error", { error: err?.message });
+      res.status(503).json({ status: "degraded", error: "health check failed" });
+    }
+  },
+);
 
 // Sentry Error Handler (must be before custom error handlers)
 Sentry.setupExpressErrorHandler(app);

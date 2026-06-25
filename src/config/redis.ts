@@ -48,7 +48,4 @@ export const bullConnection: ConnectionOptions = {
 };
 
 export const bullQueuePrefix =
-  env.BULLMQ_PREFIX ||
-  (env.NODE_ENV === "development"
-    ? "wkil-development"
-    : "wkil-production");
+  env.NODE_ENV === "production" ? "wkil-production" : "wkil-development";

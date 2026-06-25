@@ -1,5 +1,5 @@
 import prisma from "@config/prisma";
-import { redisClient } from "@config/redis";
+import { redisClient, bullQueuePrefix } from "@config/redis";
 import { env } from "@config/env";
 import { logger } from "@utils/logger";
 
@@ -94,19 +94,13 @@ export const checkRedis = (): Promise<HealthCheck> =>
 
 export const checkBullWorkers = (): Promise<HealthCheck> =>
   runCheck("bullmq", true, async () => {
-    // BullMQ workers share the same Redis URL as the cache client. Checking
-    // that the connection is ready and the prefix is configured is the
-    // best signal we can give from a health endpoint without instrumenting
-    // the workers themselves.
     if (redisClient.status !== "ready") {
       throw new Error(`Redis status: ${redisClient.status}`);
     }
-    if (!env.BULLMQ_PREFIX) {
-      throw new Error("BULLMQ_PREFIX not configured");
-    }
     return {
       redisStatus: redisClient.status,
-      bullmqPrefix: env.BULLMQ_PREFIX,
+      bullmqPrefix: bullQueuePrefix,
+      nodeEnv: env.NODE_ENV,
     };
   }, TIMEOUT_BULLMQ_MS);
 

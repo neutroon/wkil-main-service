@@ -54,16 +54,18 @@ export const createUser = async (
   });
 
   // Send verification email asynchronously
-  sendVerificationEmail(user.email, user.name, verificationToken).catch(
-    (err) => {
-      // We log but don't fail the registration if the email fails (user can resend later)
-      const { logger } = require("@utils/logger");
-      logger.error("Registration email dispatch failed", {
-        userId: user.id,
-        error: err,
-      });
-    },
-  );
+  if (user.email) {
+    sendVerificationEmail(user.email, user.name, verificationToken).catch(
+      (err) => {
+        // We log but don't fail the registration if the email fails (user can resend later)
+        const { logger } = require("@utils/logger");
+        logger.error("Registration email dispatch failed", {
+          userId: user.id,
+          error: err,
+        });
+      },
+    );
+  }
 
   return user;
 };
@@ -136,6 +138,8 @@ export const getUserById = async (
       isEmailVerified: true,
       lastVerificationSentAt: true,
       isBusinessProfileCreated: true,
+      isSocialUser: true,
+      avatar: true,
       monthlyCreditsUsed: true,
       monthlyCreditQuota: true,
       isActive: true,
@@ -180,7 +184,7 @@ export const getUserById = async (
         },
       },
       socialIdentities: {
-        select: { avatarUrl: true },
+        select: { avatarUrl: true, updatedAt: true },
         orderBy: { updatedAt: "desc" },
         take: 1,
       },
@@ -193,9 +197,12 @@ export const getUserById = async (
   if (!user) return null;
 
   const { socialIdentities, ...safeUser } = user;
+  // Prefer the persisted User.avatar; fall back to the most recently-updated social
+  // identity's avatarUrl (e.g. for legacy users that pre-date the User.avatar column).
+  const fallbackAvatar = socialIdentities.find((identity) => identity.avatarUrl)?.avatarUrl;
   return {
     ...safeUser,
-    avatar: socialIdentities.find((identity) => identity.avatarUrl)?.avatarUrl ?? undefined,
+    avatar: safeUser.avatar ?? fallbackAvatar ?? undefined,
   };
 };
 
@@ -214,10 +221,10 @@ export const updateCurrentUserProfile = async (
 
   if (
     input.email !== undefined &&
-    input.email.toLowerCase() !== existing.email.toLowerCase()
+    (existing.email === null || input.email.toLowerCase() !== existing.email.toLowerCase())
   ) {
     throw new AppError(
-      "Email address cannot be changed from this endpoint",
+      "Email address cannot be changed from this endpoint. Use /auth/me/email to add an initial email.",
       400,
       true,
       "EMAIL_CHANGE_DISABLED",
@@ -227,6 +234,10 @@ export const updateCurrentUserProfile = async (
   const data: Prisma.UserUpdateInput = {};
   if (input.name !== undefined) {
     data.name = input.name.trim();
+  }
+  if (input.avatar !== undefined) {
+    const trimmed = input.avatar.trim();
+    data.avatar = trimmed.length > 0 ? trimmed : null;
   }
 
   if (Object.keys(data).length > 0) {
@@ -308,6 +319,141 @@ export const deactivateCurrentUser = async (id: number) => {
       updatedAt: true,
     },
   });
+};
+
+const EMAIL_VERIFICATION_RESEND_COOLDOWN_MS = 60 * 1000;
+
+/**
+ * Attach an email to a no-email social user account. Generates a verification token
+ * and emails it. The user is allowed to use the app immediately; they are NOT
+ * redirected to /auth/verification-pending because isSocialUser=true exempts them.
+ *
+ * Rejects if the user already has an email (use a separate change-email flow for that).
+ * Rejects if the new email is already owned by another active user.
+ */
+export const addEmailToCurrentUser = async (id: number, rawEmail: string) => {
+  const email = rawEmail.trim().toLowerCase();
+
+  const existing = await prisma.user.findFirst({
+    where: { id, isActive: true },
+    select: { id: true, email: true, isSocialUser: true, name: true },
+  });
+  if (!existing) {
+    throw new AppError("User not found", 404, true, "USER_NOT_FOUND");
+  }
+  if (existing.email) {
+    throw new AppError(
+      "Email is already set. Use the change-email flow to update it.",
+      409,
+      true,
+      "EMAIL_ALREADY_SET",
+    );
+  }
+
+  const collision = await prisma.user.findFirst({
+    where: { email, isActive: true, id: { not: id } },
+    select: { id: true },
+  });
+  if (collision) {
+    throw new AppError(
+      "This email is already associated with another account",
+      409,
+      true,
+      "EMAIL_ALREADY_TAKEN",
+    );
+  }
+
+  const verificationToken = generateRandomToken();
+  const hashedToken = hashToken(verificationToken);
+  const now = new Date();
+
+  await prisma.user.update({
+    where: { id },
+    data: {
+      email,
+      isEmailVerified: false,
+      emailVerificationToken: hashedToken,
+      lastVerificationSentAt: now,
+    },
+  });
+
+  // Mirror the email onto all linked SocialIdentity rows for consistency.
+  await prisma.socialIdentity.updateMany({
+    where: { userId: id },
+    data: { email },
+  });
+
+  sendVerificationEmail(email, existing.name, verificationToken).catch((err) => {
+    const { logger } = require("@utils/logger");
+    logger.error("Add-email verification dispatch failed", {
+      userId: id,
+      error: err,
+    });
+  });
+
+  return getUserById(id);
+};
+
+/**
+ * Resend the verification email for the current user's pending email. Enforces a
+ * 60s cooldown (matches the public /resend-verification endpoint).
+ */
+export const resendEmailVerificationForCurrentUser = async (id: number) => {
+  const user = await prisma.user.findFirst({
+    where: { id, isActive: true },
+    select: {
+      id: true,
+      email: true,
+      isEmailVerified: true,
+      lastVerificationSentAt: true,
+      name: true,
+    },
+  });
+  if (!user) {
+    throw new AppError("User not found", 404, true, "USER_NOT_FOUND");
+  }
+  if (!user.email) {
+    throw new AppError(
+      "No email on file. Add an email first.",
+      400,
+      true,
+      "EMAIL_NOT_SET",
+    );
+  }
+  if (user.isEmailVerified) {
+    return { message: "Email is already verified." };
+  }
+
+  const now = new Date();
+  if (
+    user.lastVerificationSentAt &&
+    now.getTime() - user.lastVerificationSentAt.getTime() < EMAIL_VERIFICATION_RESEND_COOLDOWN_MS
+  ) {
+    const remaining = Math.ceil(
+      (EMAIL_VERIFICATION_RESEND_COOLDOWN_MS -
+        (now.getTime() - user.lastVerificationSentAt.getTime())) /
+        1000,
+    );
+    throw new AppError(
+      `Please wait ${remaining} seconds before requesting another email.`,
+      429,
+    );
+  }
+
+  const verificationToken = generateRandomToken();
+  const hashedToken = hashToken(verificationToken);
+
+  await prisma.user.update({
+    where: { id },
+    data: {
+      emailVerificationToken: hashedToken,
+      lastVerificationSentAt: now,
+    },
+  });
+
+  await sendVerificationEmail(user.email, user.name, verificationToken);
+
+  return { message: "Verification email sent." };
 };
 
 export const getAllUsers = async (includeInactive: boolean = false) => {

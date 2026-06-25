@@ -6,6 +6,8 @@ import {
   loginUserController,
   registerUser,
   updateCurrentUser,
+  addEmail,
+  resendEmailVerification,
 } from "../user/user.controller";
 import {
   authenticateToken,
@@ -27,7 +29,8 @@ import {
   resetPasswordSchema,
   verifyEmailSchema,
   updateCurrentUserSchema,
-  changePasswordSchema
+  changePasswordSchema,
+  addEmailSchema,
 } from "../core/auth.validation";
 import * as authController from "./auth.controller";
 
@@ -115,6 +118,25 @@ authRoutes.delete(
   validateCsrfToken,
   securityActionLimiter,
   deleteCurrentUserAccount,
+);
+
+// No-email social users: attach an email to their account and trigger verification.
+authRoutes.post(
+  "/me/email",
+  authenticateToken,
+  validateCsrfToken,
+  securityActionLimiter,
+  validate(addEmailSchema),
+  addEmail,
+);
+
+// Resend the verification email for the current user's pending email.
+authRoutes.post(
+  "/me/email/resend",
+  authenticateToken,
+  validateCsrfToken,
+  securityActionLimiter,
+  resendEmailVerification,
 );
 
 export default authRoutes;

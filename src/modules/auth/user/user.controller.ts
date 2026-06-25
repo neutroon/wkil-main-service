@@ -13,6 +13,8 @@ import {
   deactivateUser,
   reactivateUser,
   permanentlyDeleteUser,
+  addEmailToCurrentUser,
+  resendEmailVerificationForCurrentUser,
 } from "../user/user.service";
 import * as authService from "../core/auth.service";
 import {
@@ -196,6 +198,22 @@ export const deleteCurrentUserAccount = async (
   await deactivateCurrentUser(userId);
   clearAuthCookies(res);
   res.status(200).json({ message: "Account deleted successfully" });
+};
+
+export const addEmail = async (req: Request, res: Response) => {
+  const userId = (req as any).user.id;
+  const { email } = req.body;
+  const user = await addEmailToCurrentUser(userId, email);
+  res.status(200).json({
+    message: "Email added. Please verify it to unlock password reset and notifications.",
+    user,
+  });
+};
+
+export const resendEmailVerification = async (req: Request, res: Response) => {
+  const userId = (req as any).user.id;
+  const result = await resendEmailVerificationForCurrentUser(userId);
+  res.status(200).json(result);
 };
 
 export const getUsers = async (req: Request, res: Response) => {

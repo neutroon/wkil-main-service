@@ -75,3 +75,12 @@ export const changePasswordSchema = z.object({
     newPassword: z.string().min(8, "Password must be at least 8 characters"),
   }),
 });
+
+/**
+ * Add Initial Email (for no-email social users)
+ */
+export const addEmailSchema = z.object({
+  body: z.object({
+    email: z.string().email("Invalid email format"),
+  }),
+});

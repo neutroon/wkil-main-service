@@ -1,8 +1,10 @@
 import bcrypt from "bcrypt";
 import { createVerify, randomBytes } from "crypto";
+import { Prisma } from "@prisma/client";
 import prisma from "@config/prisma";
 import { env } from "@config/env";
 import { AppError } from "@middlewares/errorHandler.middleware";
+import { logger } from "@utils/logger";
 
 export type SocialProvider = "google" | "facebook";
 
@@ -50,6 +52,8 @@ const userSelect = {
   isEmailVerified: true,
   lastVerificationSentAt: true,
   isBusinessProfileCreated: true,
+  isSocialUser: true,
+  avatar: true,
 } as const;
 
 const normalizeEmail = (email: string) => email.trim().toLowerCase();
@@ -74,117 +78,200 @@ export const authenticateSocialUser = async (
   if (!profile.providerUserId) {
     throw new AppError("Social provider user id is required", 400, true, "SOCIAL_ID_MISSING");
   }
-  if (!profile.email) {
-    throw new AppError("Social provider did not return an email address", 400, true, "SOCIAL_EMAIL_MISSING");
-  }
-  if (!profile.emailVerified) {
-    throw new AppError("Social provider email is not verified", 400, true, "SOCIAL_EMAIL_UNVERIFIED");
-  }
 
-  const email = normalizeEmail(profile.email);
+  // Email is OPTIONAL. If a provider returns no email (or an unverified email for Google),
+  // we proceed with a null email. The user will be prompted to add one post-login.
+  const email =
+    profile.email && profile.emailVerified ? normalizeEmail(profile.email) : null;
 
-  const existingIdentity = await prisma.socialIdentity.findUnique({
-    where: {
-      provider_providerUserId: {
-        provider,
-        providerUserId: profile.providerUserId,
-      },
-    },
-    include: {
-      user: {
-        select: {
-          ...userSelect,
-          isActive: true,
+  // Step A — find an existing identity for this (provider, providerUserId).
+  // Handles a race where a concurrent login just created the identity.
+  const findIdentity = async () =>
+    prisma.socialIdentity.findUnique({
+      where: {
+        provider_providerUserId: {
+          provider,
+          providerUserId: profile.providerUserId,
         },
       },
-    },
-  });
+      include: {
+        user: {
+          select: {
+            ...userSelect,
+            isActive: true,
+          },
+        },
+      },
+    });
+
+  let existingIdentity = await findIdentity();
 
   if (existingIdentity) {
     assertActiveUser(existingIdentity.user);
 
+    // Update identity with the freshest data from the provider. Preserve old fields
+    // when the new profile doesn't supply them.
+    const identityUpdate: Prisma.SocialIdentityUpdateInput = {
+      name: profile.name || existingIdentity.name,
+      avatarUrl: profile.avatarUrl || existingIdentity.avatarUrl,
+    };
+    if (email !== null) {
+      identityUpdate.email = email;
+    }
+
     await prisma.socialIdentity.update({
       where: { id: existingIdentity.id },
-      data: {
-        email,
-        name: profile.name || existingIdentity.name,
-        avatarUrl: profile.avatarUrl || existingIdentity.avatarUrl,
-      },
+      data: identityUpdate,
     });
+
+    // Backfill: if the user was created without an email (e.g. user previously denied
+    // FB email permission) and the provider now returns a verified email, attach it
+    // to the User — but only if no other user already owns that email.
+    if (email && existingIdentity.user.email === null) {
+      const emailOwner = await prisma.user.findUnique({
+        where: { email },
+        select: { id: true },
+      });
+      if (!emailOwner) {
+        await prisma.user.update({
+          where: { id: existingIdentity.user.id },
+          data: { email, isEmailVerified: true, emailVerificationToken: null },
+        });
+        existingIdentity.user.email = email;
+        existingIdentity.user.isEmailVerified = true;
+      } else {
+        logger.warn(
+          "Skipping email backfill on existing social identity: email already taken by another user",
+          { userId: existingIdentity.user.id, email },
+        );
+      }
+    }
+
+    // Seed User.avatar from the social identity if it has not been set yet.
+    if (!existingIdentity.user.avatar && profile.avatarUrl) {
+      await prisma.user.update({
+        where: { id: existingIdentity.user.id },
+        data: { avatar: profile.avatarUrl },
+      });
+      existingIdentity.user.avatar = profile.avatarUrl;
+    }
 
     const { isActive: _isActive, ...user } = existingIdentity.user;
     return user;
   }
 
-  const existingUser = await prisma.user.findUnique({
-    where: { email },
-    select: {
-      ...userSelect,
-      isActive: true,
-    },
-  });
-
-  assertActiveUser(existingUser);
-
-  if (existingUser) {
-    await prisma.socialIdentity.create({
-      data: {
-        provider,
-        providerUserId: profile.providerUserId,
-        email,
-        name: profile.name,
-        avatarUrl: profile.avatarUrl,
-        userId: existingUser.id,
+  // Step B — link to an existing user by email (only possible when we have a verified email).
+  if (email) {
+    const existingUser = await prisma.user.findUnique({
+      where: { email },
+      select: {
+        ...userSelect,
+        isActive: true,
       },
     });
 
-    if (!existingUser.isEmailVerified) {
-      await prisma.user.update({
-        where: { id: existingUser.id },
-        data: {
-          isEmailVerified: true,
-          emailVerificationToken: null,
-        },
-      });
-    }
+    assertActiveUser(existingUser);
 
-    const { isActive: _isActive, ...user } = {
-      ...existingUser,
-      isEmailVerified: true,
-    };
-    return user;
+    if (existingUser) {
+      try {
+        await prisma.socialIdentity.create({
+          data: {
+            provider,
+            providerUserId: profile.providerUserId,
+            email,
+            name: profile.name,
+            avatarUrl: profile.avatarUrl,
+            userId: existingUser.id,
+          },
+        });
+      } catch (err) {
+        // Race: a concurrent request created the same (provider, providerUserId) identity
+        // between our findIdentity and create. Re-fetch and return that user.
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+          const raced = await findIdentity();
+          if (raced) {
+            assertActiveUser(raced.user);
+            const { isActive: _isActive2, ...user } = raced.user;
+            return user;
+          }
+        }
+        throw err;
+      }
+
+      // Promote the existing user to social-user if they registered via email/password
+      // but are now also authenticated via a verified social identity.
+      const userUpdates: Prisma.UserUpdateInput = {};
+      if (!existingUser.isEmailVerified) {
+        userUpdates.isEmailVerified = true;
+        userUpdates.emailVerificationToken = null;
+      }
+      if (!existingUser.isSocialUser) {
+        userUpdates.isSocialUser = true;
+      }
+      if (!existingUser.avatar && profile.avatarUrl) {
+        userUpdates.avatar = profile.avatarUrl;
+      }
+      if (Object.keys(userUpdates).length > 0) {
+        await prisma.user.update({
+          where: { id: existingUser.id },
+          data: userUpdates,
+        });
+      }
+
+      const { isActive: _isActive, ...user } = {
+        ...existingUser,
+        isEmailVerified: true,
+      };
+      return user;
+    }
   }
 
+  // Step C — create a new user (and identity) for this social login.
   const randomPassword = randomBytes(48).toString("hex");
   const password = await bcrypt.hash(randomPassword, 10);
-  const displayName = profile.name?.trim() || email.split("@")[0] || "Wkil User";
+  const displayName = profile.name?.trim() || (email ? email.split("@")[0] : "") || "Wkil User";
 
-  return prisma.$transaction(async (tx) => {
-    const user = await tx.user.create({
-      data: {
-        name: displayName,
-        email,
-        password,
-        role: "user",
-        isEmailVerified: true,
-        emailVerificationToken: null,
-      },
-      select: userSelect,
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const user = await tx.user.create({
+        data: {
+          name: displayName,
+          email,
+          password,
+          role: "user",
+          isEmailVerified: email !== null, // Social provider verified the email; null email stays unverified
+          isSocialUser: true,
+          avatar: profile.avatarUrl ?? null,
+          emailVerificationToken: null,
+        },
+        select: userSelect,
+      });
+
+      await tx.socialIdentity.create({
+        data: {
+          provider,
+          providerUserId: profile.providerUserId,
+          email,
+          name: profile.name,
+          avatarUrl: profile.avatarUrl,
+          userId: user.id,
+        },
+      });
+
+      return user;
     });
-
-    await tx.socialIdentity.create({
-      data: {
-        provider,
-        providerUserId: profile.providerUserId,
-        email,
-        name: profile.name,
-        avatarUrl: profile.avatarUrl,
-        userId: user.id,
-      },
-    });
-
-    return user;
-  });
+  } catch (err) {
+    // Race: a concurrent login just created the identity. Re-fetch and return that user.
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+      const raced = await findIdentity();
+      if (raced) {
+        assertActiveUser(raced.user);
+        const { isActive: _isActive, ...user } = raced.user;
+        return user;
+      }
+    }
+    throw err;
+  }
 };
 
 export const verifyGoogleIdToken = async (idToken: string): Promise<SocialProfile> => {

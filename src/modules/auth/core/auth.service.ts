@@ -99,7 +99,9 @@ export const forgotPassword = async (email: string) => {
   });
 
   try {
-    await sendPasswordResetEmail(user.email, user.name, resetToken);
+    if (user.email) {
+      await sendPasswordResetEmail(user.email, user.name, resetToken);
+    }
   } catch (error) {
     // Keep the public response enumeration-safe. The mailer logs provider details.
     logger.warn("Password reset email dispatch failed after token was issued", {
@@ -149,7 +151,7 @@ export const resetPassword = async (token: string, newPassword: string) => {
 type SessionUser = {
   id: number;
   name: string;
-  email: string;
+  email: string | null;
   role: string;
 };
 
@@ -218,7 +220,9 @@ export const resendVerification = async (email: string) => {
     },
   });
 
-  await sendVerificationEmail(user.email, user.name, verificationToken);
+  if (user.email) {
+    await sendVerificationEmail(user.email, user.name, verificationToken);
+  }
 
   return { message: "If the account is unverified, a new link has been sent." };
 };

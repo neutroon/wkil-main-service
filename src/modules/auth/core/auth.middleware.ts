@@ -14,7 +14,7 @@ interface AuthRequest extends Request {
   user?: {
     id: number;
     name: string;
-    email: string;
+    email: string | null;
     role: "super_admin" | "admin" | "manager" | "user";
     isEmailVerified: boolean;
   };
@@ -24,7 +24,7 @@ interface AuthRequest extends Request {
 export const generateAccessToken = (payload: {
   id: number;
   name: string;
-  email: string;
+  email: string | null;
   role: string;
 }) => {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: ACCESS_TOKEN_EXPIRES_IN });
@@ -34,7 +34,7 @@ export const generateAccessToken = (payload: {
 export const generateRefreshToken = (payload: {
   id: number;
   name: string;
-  email: string;
+  email: string | null;
   role: string;
 }) => {
   return jwt.sign(payload, JWT_REFRESH_SECRET, {

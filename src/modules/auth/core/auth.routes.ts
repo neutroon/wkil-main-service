@@ -1,4 +1,5 @@
 import { Router } from "express";
+import multer from "multer";
 import {
   changeCurrentUserPassword,
   deleteCurrentUserAccount,
@@ -8,6 +9,8 @@ import {
   updateCurrentUser,
   addEmail,
   resendEmailVerification,
+  uploadCurrentUserAvatar,
+  deleteCurrentUserAvatar,
 } from "../user/user.controller";
 import {
   authenticateToken,
@@ -31,8 +34,14 @@ import {
   updateCurrentUserSchema,
   changePasswordSchema,
   addEmailSchema,
+  uploadAvatarSchema,
 } from "../core/auth.validation";
 import * as authController from "./auth.controller";
+
+const avatarUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB
+});
 
 const authRoutes = Router();
 
@@ -137,6 +146,24 @@ authRoutes.post(
   validateCsrfToken,
   securityActionLimiter,
   resendEmailVerification,
+);
+
+// Avatar upload (multipart, single image under "file") + remove.
+authRoutes.post(
+  "/me/avatar",
+  authenticateToken,
+  validateCsrfToken,
+  securityActionLimiter,
+  avatarUpload.single("file"),
+  validate(uploadAvatarSchema),
+  uploadCurrentUserAvatar,
+);
+authRoutes.delete(
+  "/me/avatar",
+  authenticateToken,
+  validateCsrfToken,
+  securityActionLimiter,
+  deleteCurrentUserAvatar,
 );
 
 export default authRoutes;

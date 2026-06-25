@@ -10,13 +10,14 @@ const { JWT_SECRET, JWT_REFRESH_SECRET } = env;
 const ACCESS_TOKEN_EXPIRES_IN = "15m"; // Short-lived — rotated every 14 min via silent refresh
 const REFRESH_TOKEN_EXPIRES_IN = "7d";
 
-interface AuthRequest extends Request {
+export interface AuthRequest extends Request {
   user?: {
     id: number;
     name: string;
     email: string | null;
     role: "super_admin" | "admin" | "manager" | "user";
     isEmailVerified: boolean;
+    isSocialUser?: boolean;
   };
 }
 
@@ -26,6 +27,7 @@ export const generateAccessToken = (payload: {
   name: string;
   email: string | null;
   role: string;
+  isSocialUser?: boolean;
 }) => {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: ACCESS_TOKEN_EXPIRES_IN });
 };
@@ -36,6 +38,7 @@ export const generateRefreshToken = (payload: {
   name: string;
   email: string | null;
   role: string;
+  isSocialUser?: boolean;
 }) => {
   return jwt.sign(payload, JWT_REFRESH_SECRET, {
     expiresIn: REFRESH_TOKEN_EXPIRES_IN,
@@ -157,6 +160,7 @@ export const authenticateToken = async (
         email: true,
         role: true,
         isEmailVerified: true,
+        isSocialUser: true,
       },
     });
 
@@ -175,6 +179,7 @@ export const authenticateToken = async (
       email: user.email,
       role: user.role as "user" | "admin",
       isEmailVerified: user.isEmailVerified,
+      isSocialUser: user.isSocialUser,
     };
 
     next();
@@ -215,6 +220,7 @@ export const refreshToken = async (
         name: true,
         email: true,
         role: true,
+        isSocialUser: true,
         refreshTokenHash: true,
         previousRefreshTokenHash: true,
         rotatedAt: true,
@@ -275,6 +281,7 @@ export const refreshToken = async (
       name: user.name,
       email: user.email,
       role: user.role,
+      isSocialUser: user.isSocialUser,
     };
 
     const newAccessToken = generateAccessToken(userData);
@@ -475,6 +482,11 @@ export const requireUser = (
 /**
  * Middleware to enforce email verification.
  * Blocks access to protected routes if the user's email is not verified.
+ *
+ * Social users (isSocialUser: true) are exempt: they are allowed into the app
+ * and reminded to add an email via the in-app banner. Blocking them here would
+ * redirect them to /auth/verification-pending, which makes no sense for users
+ * who have no email yet.
  */
 export const requireVerified = (
   req: AuthRequest,
@@ -483,6 +495,12 @@ export const requireVerified = (
 ) => {
   if (!req.user) {
     throw new AppError("Authentication required", 401, true, "AUTH_REQUIRED");
+  }
+
+  if (req.user.isSocialUser) {
+    // Social users are exempt from the verification gate. They get the in-app
+    // banner and the /auth/complete-profile flow to attach an email.
+    return next();
   }
 
   if (!req.user.isEmailVerified) {

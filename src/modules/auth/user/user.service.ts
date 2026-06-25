@@ -81,6 +81,7 @@ export const loginUser = async (email: string, password: string) => {
       password: true,
       role: true,
       isEmailVerified: true,
+      isSocialUser: true,
       lastVerificationSentAt: true,
       isBusinessProfileCreated: true,
     },
@@ -101,6 +102,7 @@ export const loginUser = async (email: string, password: string) => {
     name: user.name,
     email: user.email,
     role: user.role,
+    isSocialUser: user.isSocialUser,
   });
 
   const refreshToken = generateRefreshToken({
@@ -108,6 +110,7 @@ export const loginUser = async (email: string, password: string) => {
     name: user.name,
     email: user.email,
     role: user.role,
+    isSocialUser: user.isSocialUser,
   });
 
   return {

@@ -84,3 +84,11 @@ export const addEmailSchema = z.object({
     email: z.string().email("Invalid email format"),
   }),
 });
+
+/**
+ * Avatar Upload (multipart — file handled by multer, this schema is for
+ * any future form fields; currently empty).
+ */
+export const uploadAvatarSchema = z.object({
+  body: z.object({}).passthrough(),
+});

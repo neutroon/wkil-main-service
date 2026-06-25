@@ -153,6 +153,7 @@ type SessionUser = {
   name: string;
   email: string | null;
   role: string;
+  isSocialUser?: boolean;
 };
 
 export const issueAuthSession = async (res: Response, user: SessionUser) => {
@@ -161,6 +162,7 @@ export const issueAuthSession = async (res: Response, user: SessionUser) => {
     name: user.name,
     email: user.email,
     role: user.role,
+    isSocialUser: user.isSocialUser,
   });
 
   const refreshToken = generateRefreshToken({
@@ -168,6 +170,7 @@ export const issueAuthSession = async (res: Response, user: SessionUser) => {
     name: user.name,
     email: user.email,
     role: user.role,
+    isSocialUser: user.isSocialUser,
   });
 
   const salt = await bcrypt.genSalt(10);

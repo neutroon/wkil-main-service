@@ -174,12 +174,36 @@ export function getChatModelTiers(): string[] {
   return configured.length > 0 ? configured : DEFAULT_MODEL_TIERS;
 }
 
+/**
+ * Resolves the live chat model tiers from the admin-managed AiModel registry
+ * (DB), falling back to env (`AI_CHAT_MODEL_TIERS`) then to hardcoded defaults
+ * when the registry is empty or the DB is unreachable. The DB layer is cached
+ * (5-min TTL) inside the registry service; on failure it degrades gracefully
+ * so a chat message is never blocked by a settings outage.
+ */
+async function resolveChatModelTiers(): Promise<string[]> {
+  try {
+    // Dynamic import avoids a circular dependency at module load:
+    // ai-model.service imports prisma/config, modelRuntime is imported widely.
+    const { getActiveChatTiers } = await import(
+      "@modules/admin/ai-model/ai-model.service"
+    );
+    const tiers = await getActiveChatTiers();
+    if (tiers.length > 0) return tiers;
+  } catch (error: any) {
+    logger.warn("ai.model_runtime.registry_resolve_failed", {
+      error: error?.message,
+    });
+  }
+  return getChatModelTiers();
+}
+
 async function executeWithModelFallback<T>(
   operation: (model: string, abortSignal: AbortSignal) => Promise<T>,
   context: string,
   timeoutMs = MODEL_TIMEOUT_MS,
 ): Promise<{ result: T; model: string }> {
-  const modelTiers = getChatModelTiers();
+  const modelTiers = await resolveChatModelTiers();
   let lastError: any;
 
   for (let tierIndex = 0; tierIndex < modelTiers.length; tierIndex++) {

@@ -26,6 +26,7 @@ import {
 import {
   authenticateToken,
   requireAdmin,
+  requireSuperAdmin,
 } from "@modules/auth/core/auth.middleware";
 import { validate } from "@middlewares/validate.middleware";
 import { 
@@ -34,6 +35,21 @@ import {
   updateBusinessUsageSchema,
   adminBusinessIdParamSchema
 } from "../core/admin.validation";
+import {
+  createAiModelSchema,
+  updateAiModelSchema,
+  aiModelIdParamSchema,
+  aiModelListQuerySchema,
+} from "../ai-model/ai-model.validation";
+import {
+  listAiModelsController,
+  getActiveChatTiersController,
+  getAiModelController,
+  createAiModelController,
+  updateAiModelController,
+  deleteAiModelController,
+  setDefaultChatModelController,
+} from "../ai-model/ai-model.controller";
 import { 
   registerUserSchema, 
   updateUserSchema, 
@@ -99,6 +115,17 @@ adminRoutes.delete("/users/:id", adminLimiter, validate(userIdParamSchema), perm
 // Admin Settings management
 adminRoutes.get("/settings/billing", adminLimiter, getBillingSettings);
 adminRoutes.post("/settings/billing", adminLimiter, validate(updateBillingSettingsSchema), updateBillingSettings);
+
+// AI Model Registry management
+// Read access (list/active/get) is available to admin + super_admin (requireAdmin, applied router-wide).
+// Mutations (create/update/delete/set-default) are restricted to super_admin only.
+adminRoutes.get("/ai-models", adminLimiter, validate(aiModelListQuerySchema), listAiModelsController);
+adminRoutes.get("/ai-models/active/chat", adminLimiter, getActiveChatTiersController);
+adminRoutes.get("/ai-models/:id", adminLimiter, validate(aiModelIdParamSchema), getAiModelController);
+adminRoutes.post("/ai-models", adminLimiter, requireSuperAdmin, validate(createAiModelSchema), createAiModelController);
+adminRoutes.put("/ai-models/:id", adminLimiter, requireSuperAdmin, validate(updateAiModelSchema), updateAiModelController);
+adminRoutes.delete("/ai-models/:id", adminLimiter, requireSuperAdmin, validate(aiModelIdParamSchema), deleteAiModelController);
+adminRoutes.patch("/ai-models/:id/default", adminLimiter, requireSuperAdmin, validate(aiModelIdParamSchema), setDefaultChatModelController);
 
 // Business Profile Billing Management
 adminRoutes.post("/billing/profiles/:id/reset", adminLimiter, validate(adminBusinessIdParamSchema), resetBusinessUsage);

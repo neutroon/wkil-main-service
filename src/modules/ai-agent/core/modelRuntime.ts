@@ -17,7 +17,10 @@ import type { AiRoutingDecision } from "./aiEngine.utils";
 import { repairAndParseAiResponse } from "./aiEngine.utils";
 
 const MODEL_TIMEOUT_MS = 60_000;
-const DEFAULT_MODEL_TIERS = [
+// Hardcoded fallback tier order, applied only when both the admin-managed
+// AiModel registry and `env.AI_CHAT_MODEL_TIERS` are unavailable. Exported
+// so the order can be pinned by the unit test.
+export const DEFAULT_MODEL_TIERS = [
   "gemini-3.1-flash-lite-preview",
   "gemini-3-flash-preview",
   "gemini-2.5-flash",
@@ -166,14 +169,6 @@ async function withTimeout<T>(
   }
 }
 
-export function getChatModelTiers(): string[] {
-  const configured = env.AI_CHAT_MODEL_TIERS.split(",")
-    .map((model) => model.trim())
-    .filter(Boolean);
-
-  return configured.length > 0 ? configured : DEFAULT_MODEL_TIERS;
-}
-
 /**
  * Resolves the live chat model tiers from the admin-managed AiModel registry
  * (DB), falling back to env (`AI_CHAT_MODEL_TIERS`) then to hardcoded defaults
@@ -195,7 +190,12 @@ async function resolveChatModelTiers(): Promise<string[]> {
       error: error?.message,
     });
   }
-  return getChatModelTiers();
+  // Fallback chain: env (comma-separated) → hardcoded DEFAULT_MODEL_TIERS.
+  const envTiers = (env.AI_CHAT_MODEL_TIERS || "")
+    .split(",")
+    .map((m) => m.trim())
+    .filter(Boolean);
+  return envTiers.length > 0 ? envTiers : DEFAULT_MODEL_TIERS;
 }
 
 async function executeWithModelFallback<T>(

@@ -124,21 +124,13 @@ export async function getActiveChatTiers(): Promise<string[]> {
  * The active default chat modelId, if one is configured. Useful for display
  * and for seeding agent state. Returns null when none is set (runtime then
  * uses the first tier from getActiveChatTiers()).
+ *
+ * `getActiveChatTiers()` orders by `isDefault DESC, tierOrder ASC`, so the
+ * first element is always the default when one exists. Sharing the same
+ * cache avoids a second DB read on hot paths.
  */
 export async function getDefaultChatModel(): Promise<string | null> {
   const tiers = await getActiveChatTiers();
-  try {
-    const defaultRow = await prisma.aiModel.findFirst({
-      where: { category: CHAT_CATEGORY, isActive: true, isDefault: true },
-      select: { modelId: true },
-      orderBy: { tierOrder: "asc" },
-    });
-    if (defaultRow?.modelId && tiers.includes(defaultRow.modelId)) {
-      return defaultRow.modelId;
-    }
-  } catch (error: any) {
-    logger.error("ai_model.resolve_default_failed", { error: error?.message });
-  }
   return tiers[0] ?? null;
 }
 
@@ -222,12 +214,26 @@ export async function updateAiModel(
     throw new AppError("AI model not found", 404, true, "AI_MODEL_NOT_FOUND");
   }
 
+  // Coerce the final values up front so every check below sees the same
+  // picture (invariant: "default ⇒ active" and "isDefault only on chat").
+  const targetCategory = data.category ?? existing.category;
+  const desiredIsDefault =
+    data.isDefault === undefined
+      ? existing.isDefault
+      : targetCategory === CHAT_CATEGORY
+        ? data.isDefault
+        : false; // image/embedding/multimodal rows can never be the chat default
+  const desiredIsActive =
+    desiredIsDefault && targetCategory === CHAT_CATEGORY
+      ? true // auto-activate: a default chat model must be active to be reachable
+      : data.isActive === undefined
+        ? existing.isActive
+        : data.isActive;
+
   // Prevent removing the last active chat model
-  const nextCategory = data.category ?? existing.category;
-  const nextIsActive = data.isActive ?? existing.isActive;
   if (
-    nextCategory === CHAT_CATEGORY &&
-    nextIsActive === false &&
+    targetCategory === CHAT_CATEGORY &&
+    desiredIsActive === false &&
     existing.category === CHAT_CATEGORY &&
     existing.isActive === true
   ) {
@@ -246,30 +252,72 @@ export async function updateAiModel(
 
   try {
     const updated = await prisma.$transaction(async (tx) => {
-      const targetCategory = data.category ?? existing.category;
-      // Setting a new default clears other defaults in the same chat category
-      if (data.isDefault === true && targetCategory === CHAT_CATEGORY) {
+      const becomingDefault =
+        targetCategory === CHAT_CATEGORY &&
+        desiredIsDefault === true &&
+        !existing.isDefault;
+      const deactivatingDefault =
+        targetCategory === CHAT_CATEGORY &&
+        existing.isActive &&
+        desiredIsActive === false &&
+        existing.isDefault;
+
+      // Becoming the default: clear other chat defaults first so we always
+      // end up with exactly one.
+      if (becomingDefault) {
         await tx.aiModel.updateMany({
           where: { category: CHAT_CATEGORY, isDefault: true, id: { not: id } },
           data: { isDefault: false },
         });
       }
 
-      // Build only provided fields
+      // Build only the fields that actually change.
       const updateData: Prisma.AiModelUpdateInput = {};
-      if (data.modelId !== undefined) updateData.modelId = data.modelId;
-      if (data.displayName !== undefined) updateData.displayName = data.displayName;
-      if (data.provider !== undefined) updateData.provider = data.provider;
-      if (data.category !== undefined) updateData.category = data.category;
-      if (data.tierOrder !== undefined) updateData.tierOrder = data.tierOrder;
-      if (data.isActive !== undefined) updateData.isActive = data.isActive;
-      if (data.isDefault !== undefined) updateData.isDefault = data.isDefault;
+      if (data.modelId !== undefined && data.modelId !== existing.modelId)
+        updateData.modelId = data.modelId;
+      if (data.displayName !== undefined && data.displayName !== existing.displayName)
+        updateData.displayName = data.displayName;
+      if (data.provider !== undefined && data.provider !== existing.provider)
+        updateData.provider = data.provider;
+      if (data.category !== undefined && data.category !== existing.category)
+        updateData.category = data.category;
+      if (data.tierOrder !== undefined && data.tierOrder !== existing.tierOrder)
+        updateData.tierOrder = data.tierOrder;
+      if (desiredIsActive !== existing.isActive) updateData.isActive = desiredIsActive;
+      if (desiredIsDefault !== existing.isDefault) updateData.isDefault = desiredIsDefault;
       if (data.inputPrice !== undefined) updateData.inputPrice = data.inputPrice;
       if (data.outputPrice !== undefined) updateData.outputPrice = data.outputPrice;
-      if (data.maxOutputTokens !== undefined) updateData.maxOutputTokens = data.maxOutputTokens;
+      if (
+        data.maxOutputTokens !== undefined &&
+        data.maxOutputTokens !== existing.maxOutputTokens
+      )
+        updateData.maxOutputTokens = data.maxOutputTokens;
       if (data.metadata !== undefined) updateData.metadata = data.metadata;
 
-      return tx.aiModel.update({ where: { id }, data: updateData });
+      const updatedRow = await tx.aiModel.update({ where: { id }, data: updateData });
+
+      // Deactivating the current chat default: mirror the delete policy and
+      // promote the next active chat model so we never sit with "no default".
+      if (deactivatingDefault) {
+        const replacement = await tx.aiModel.findFirst({
+          where: { category: CHAT_CATEGORY, isActive: true, id: { not: id } },
+          orderBy: [{ tierOrder: "asc" }, { id: "asc" }],
+          select: { id: true },
+        });
+        if (replacement) {
+          await tx.aiModel.update({
+            where: { id: replacement.id },
+            data: { isDefault: true },
+          });
+          logger.info("ai_model.default_promoted", {
+            actorId,
+            promotedId: replacement.id,
+            deactivatedId: id,
+          });
+        }
+      }
+
+      return updatedRow;
     });
 
     clearAiModelCache();

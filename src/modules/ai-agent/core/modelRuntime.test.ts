@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildDecisionOrToolSystemInstruction,
   buildToolChoiceSystemInstruction,
-  getChatModelTiers,
+  DEFAULT_MODEL_TIERS,
 } from "./modelRuntime";
 
 describe("buildToolChoiceSystemInstruction", () => {
@@ -55,9 +55,9 @@ describe("buildDecisionOrToolSystemInstruction", () => {
   });
 });
 
-describe("getChatModelTiers", () => {
-  it("defaults chat to the low-latency tier before quality fallbacks", () => {
-    expect(getChatModelTiers()).toEqual([
+describe("DEFAULT_MODEL_TIERS", () => {
+  it("prefers the low-latency tier before quality fallbacks", () => {
+    expect(DEFAULT_MODEL_TIERS).toEqual([
       "gemini-3.1-flash-lite-preview",
       "gemini-3-flash-preview",
       "gemini-2.5-flash",

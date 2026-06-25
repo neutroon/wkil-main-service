@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Prisma } from "@prisma/client";
 
 vi.mock("@config/env", () => ({
   env: {
@@ -44,6 +45,8 @@ const baseUser = {
   isEmailVerified: true,
   lastVerificationSentAt: null,
   isBusinessProfileCreated: false,
+  isSocialUser: false,
+  avatar: null,
 };
 
 describe("social auth service", () => {
@@ -158,10 +161,10 @@ describe("social auth service", () => {
     expect(user.isEmailVerified).toBe(true);
     expect(mockedPrisma.user.update).toHaveBeenCalledWith({
       where: { id: 7 },
-      data: {
+      data: expect.objectContaining({
         isEmailVerified: true,
         emailVerificationToken: null,
-      },
+      }),
     });
     expect(mockedPrisma.socialIdentity.create).toHaveBeenCalled();
   });
@@ -181,22 +184,153 @@ describe("social auth service", () => {
     ).rejects.toMatchObject({ code: "ACCOUNT_INACTIVE" });
   });
 
-  it("rejects missing or unverified provider email", async () => {
-    await expect(
-      authenticateSocialUser("google", {
-        providerUserId: "google-789",
-        email: "",
-        emailVerified: true,
-      }),
-    ).rejects.toMatchObject({ code: "SOCIAL_EMAIL_MISSING" });
+  it("creates a no-email social user when Facebook returns no email", async () => {
+    mockedPrisma.user.create.mockResolvedValue({
+      ...baseUser,
+      email: null,
+      isEmailVerified: false,
+      isSocialUser: true,
+    });
+    mockedPrisma.socialIdentity.create.mockResolvedValue({ id: 1 });
 
-    await expect(
-      authenticateSocialUser("google", {
-        providerUserId: "google-789",
-        email: "user@example.com",
-        emailVerified: false,
+    const user = await authenticateSocialUser("facebook", {
+      providerUserId: "facebook-noemail",
+      email: "",
+      emailVerified: false,
+      name: "No Email User",
+      avatarUrl: "https://example.com/avatar.png",
+    });
+
+    expect(user.email).toBeNull();
+    expect(user.isEmailVerified).toBe(false);
+    expect(user.isSocialUser).toBe(true);
+    expect(mockedPrisma.user.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          email: null,
+          isEmailVerified: false,
+          isSocialUser: true,
+          avatar: "https://example.com/avatar.png",
+        }),
       }),
-    ).rejects.toMatchObject({ code: "SOCIAL_EMAIL_UNVERIFIED" });
+    );
+    expect(mockedPrisma.socialIdentity.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          provider: "facebook",
+          providerUserId: "facebook-noemail",
+          email: null,
+        }),
+      }),
+    );
+  });
+
+  it("treats unverified Google email as no email", async () => {
+    mockedPrisma.user.create.mockResolvedValue({
+      ...baseUser,
+      email: null,
+      isEmailVerified: false,
+      isSocialUser: true,
+    });
+    mockedPrisma.socialIdentity.create.mockResolvedValue({ id: 1 });
+
+    const user = await authenticateSocialUser("google", {
+      providerUserId: "google-unverified",
+      email: "user@example.com",
+      emailVerified: false,
+    });
+
+    expect(user.email).toBeNull();
+    expect(user.isEmailVerified).toBe(false);
+  });
+
+  it("backfills User.email when a no-email social login later returns an email", async () => {
+    mockedPrisma.socialIdentity.findUnique.mockResolvedValue({
+      id: 11,
+      provider: "facebook",
+      providerUserId: "facebook-later",
+      email: null,
+      name: null,
+      avatarUrl: "https://example.com/avatar.png",
+      user: { ...baseUser, isActive: true, email: null, isEmailVerified: false, isSocialUser: true, avatar: null },
+    });
+    mockedPrisma.user.findUnique.mockResolvedValueOnce(null); // email owner check
+
+    const user = await authenticateSocialUser("facebook", {
+      providerUserId: "facebook-later",
+      email: "later@example.com",
+      emailVerified: true,
+    });
+
+    expect(user.email).toBe("later@example.com");
+    expect(user.isEmailVerified).toBe(true);
+    expect(mockedPrisma.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 7 },
+        data: expect.objectContaining({
+          email: "later@example.com",
+          isEmailVerified: true,
+          emailVerificationToken: null,
+        }),
+      }),
+    );
+  });
+
+  it("seeds User.avatar from the first social identity when missing", async () => {
+    mockedPrisma.socialIdentity.findUnique.mockResolvedValue({
+      id: 12,
+      provider: "google",
+      providerUserId: "google-avatar",
+      email: "u@example.com",
+      name: null,
+      avatarUrl: "https://example.com/new-avatar.png",
+      user: { ...baseUser, isActive: true, avatar: null },
+    });
+
+    await authenticateSocialUser("google", {
+      providerUserId: "google-avatar",
+      email: "u@example.com",
+      emailVerified: true,
+      avatarUrl: "https://example.com/new-avatar.png",
+    });
+
+    expect(mockedPrisma.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 7 },
+        data: expect.objectContaining({
+          avatar: "https://example.com/new-avatar.png",
+        }),
+      }),
+    );
+  });
+
+  it("recovers from a P2002 race on (provider, providerUserId) and returns the existing user", async () => {
+    const p2002 = new Prisma.PrismaClientKnownRequestError(
+      "Unique constraint failed",
+      { code: "P2002", clientVersion: "test" },
+    );
+    // First findIdentity returns null, then a concurrent insert happens, then the
+    // catch handler calls findIdentity again and we return the now-existing user.
+    mockedPrisma.socialIdentity.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: 99,
+        provider: "facebook",
+        providerUserId: "facebook-race",
+        email: "race@example.com",
+        name: null,
+        avatarUrl: null,
+        user: { ...baseUser, isActive: true, email: "race@example.com" },
+      });
+    mockedPrisma.user.create.mockRejectedValue(p2002);
+
+    const user = await authenticateSocialUser("facebook", {
+      providerUserId: "facebook-race",
+      email: "race@example.com",
+      emailVerified: true,
+    });
+
+    expect(user.email).toBe("race@example.com");
   });
 
   it("rejects malformed Google tokens", async () => {

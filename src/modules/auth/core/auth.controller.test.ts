@@ -26,6 +26,8 @@ const user = {
   isEmailVerified: true,
   lastVerificationSentAt: null,
   isBusinessProfileCreated: false,
+  isSocialUser: false,
+  avatar: null,
 };
 
 const createResponse = () => {

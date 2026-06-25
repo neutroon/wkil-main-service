@@ -413,6 +413,36 @@ export function getIO(): SocketIOServer {
   return io;
 }
 
+export interface RealtimeStats {
+  totalConnected: number;
+  perNamespace: Record<string, number>;
+  source: "global" | "local";
+}
+
+export async function getRealtimeStats(): Promise<RealtimeStats> {
+  const ioInstance = getIO();
+
+  const perNamespace: Record<string, number> = {};
+  for (const [name, nsp] of ioInstance._nsps) {
+    perNamespace[name] = nsp.sockets.size;
+  }
+
+  try {
+    const allSockets = await ioInstance.fetchSockets();
+    return {
+      totalConnected: allSockets.length,
+      perNamespace,
+      source: "global",
+    };
+  } catch {
+    return {
+      totalConnected: ioInstance.engine.clientsCount,
+      perNamespace,
+      source: "local",
+    };
+  }
+}
+
 /**
  * Utility to emit a message to a specific conversation room.
  * This will notify the visitor (web widget).

@@ -42,7 +42,17 @@ const envSchema = z.object({
   FB_TOKEN_ENCRYPTION_KEY: z.string().optional(),
   
   // ── AI Engine & ML Services ────────────────────────────────────────────────
+  // Google / Gemini — required. All chat models in the registry currently
+  // route through this key. When the runtime grows a multi-provider dispatch,
+  // this stays the Google key.
   GEMINI_API_KEY: z.string().min(1),
+  // Future provider keys — optional so the app boots even when only Google is
+  // in use. The AiModel registry treats rows with an unconfigured provider
+  // as "dormant" (excluded from runtime tiers, surfaced in the admin UI with
+  // a "key not configured" badge). NEVER store these in the AiModel table —
+  // env/vault is the only home for credentials.
+  OPENAI_API_KEY: z.string().optional(),
+  ANTHROPIC_API_KEY: z.string().optional(),
   REPLICATE_API_TOKEN: z.string().optional(),
   ML_SERVICE_URL: z.string().url().optional(),
   ML_API_KEY: z.string().optional(),
@@ -50,10 +60,18 @@ const envSchema = z.object({
   AI_CHAT_RESPONSE_DEADLINE_MS: z.coerce.number().int().min(1000).max(60000).default(60000),
   AI_CHAT_RAG_TIMEOUT_MS: z.coerce.number().int().min(250).max(10000).default(10000),
   AI_CHAT_PREP_LOOKUP_TIMEOUT_MS: z.coerce.number().int().min(100).max(5000).default(5000),
-  AI_CHAT_MODEL_TIERS: z
+  // Fallback tier list used ONLY when the admin-managed AiModel registry has
+  // zero active chat rows or the DB is unreachable. Comma-separated model
+  // IDs, tried in order (first is the default). The DB registry is the
+  // primary source of truth; this exists for boot-time and disaster-recovery.
+  AI_CHAT_FALLBACK_MODEL_TIERS: z
     .string()
     .default("gemini-3.1-flash-lite-preview,gemini-3-flash-preview,gemini-2.5-flash"),
-  AI_CHAT_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(256).max(4096).default(1024),
+  // Fallback per-call output cap used ONLY when the admin-managed AiModel
+  // registry is unavailable (DB down or empty). The registry's per-row
+  // `maxOutputTokens` (on the default chat model) takes precedence when
+  // present; this is the last safety net before LangChain's own default.
+  AI_CHAT_FALLBACK_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(256).max(65536).default(8192),
   
   // ── Google Cloud / Vertex AI ───────────────────────────────────────────────
   GOOGLE_CLOUD_PROJECT_ID: z.string().optional(),

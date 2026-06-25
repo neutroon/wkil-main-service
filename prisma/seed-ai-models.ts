@@ -35,7 +35,7 @@ const SEED_MODELS: SeedModel[] = [
     isDefault: true,
     inputPrice: 0.018,
     outputPrice: 0.072,
-    maxOutputTokens: 1024,
+    maxOutputTokens: 8192,
   },
   {
     modelId: "gemini-3-flash-preview",
@@ -44,7 +44,7 @@ const SEED_MODELS: SeedModel[] = [
     tierOrder: 1,
     inputPrice: 0.075,
     outputPrice: 0.3,
-    maxOutputTokens: 1024,
+    maxOutputTokens: 8192,
   },
   {
     modelId: "gemini-2.5-flash",
@@ -53,7 +53,7 @@ const SEED_MODELS: SeedModel[] = [
     tierOrder: 2,
     inputPrice: 0.075,
     outputPrice: 0.3,
-    maxOutputTokens: 1024,
+    maxOutputTokens: 8192,
   },
   {
     modelId: "gemini-3.1-flash-image-preview",

@@ -30,13 +30,38 @@ const FALLBACK_CHAT_TIERS = [
 ];
 const CHAT_CATEGORY = "chat";
 
+/**
+ * Returns true when the env has the API key for this provider. The runtime
+ * only dispatches to providers whose key is configured, so models with an
+ * unconfigured provider are treated as dormant (excluded from chat tiers,
+ * flagged in the admin UI). This is the only credential gatekeeper — keys
+ * are never stored in the AiModel table.
+ */
+function isProviderConfigured(provider: string): boolean {
+  switch (provider) {
+    case "google":
+      return Boolean(env.GEMINI_API_KEY);
+    case "openai":
+      return Boolean(env.OPENAI_API_KEY);
+    case "anthropic":
+      return Boolean(env.ANTHROPIC_API_KEY);
+    default:
+      return false;
+  }
+}
+
 // ── In-memory cache (per-process) ────────────────────────────────────────────
-type ChatTierCache = { tiers: string[]; expiresAt: number };
-let chatTierCache: ChatTierCache | null = null;
+type ChatConfigCache = {
+  tiers: string[];
+  defaultModelId: string | null;
+  defaultMaxOutputTokens: number | null;
+  expiresAt: number;
+};
+let chatConfigCache: ChatConfigCache | null = null;
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 export function clearAiModelCache(): void {
-  chatTierCache = null;
+  chatConfigCache = null;
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -78,46 +103,94 @@ export interface AiModelUpdate {
  *
  * Resolution chain (never throws):
  *   1. Active chat models from the DB (default first, then by tierOrder)
- *   2. `AI_CHAT_MODEL_TIERS` env var (comma-separated)
+ *   2. `AI_CHAT_FALLBACK_MODEL_TIERS` env var (comma-separated)
  *   3. Hardcoded FALLBACK_CHAT_TIERS
  */
 export async function getActiveChatTiers(): Promise<string[]> {
-  const cached = chatTierCache;
+  return (await getChatRuntimeConfig()).tiers;
+}
+
+/**
+ * Returns the full chat runtime config: ordered tier list + the default
+ * model's per-row `maxOutputTokens` (null if not configured).
+ *
+ * Single shared cache so the chat runtime pays one DB hit per 5 minutes even
+ * when callers ask for both pieces. Per-call `maxOutputTokens` overrides
+ * still take precedence in the runtime.
+ */
+export async function getChatRuntimeConfig(): Promise<{
+  tiers: string[];
+  defaultModelId: string | null;
+  defaultMaxOutputTokens: number | null;
+}> {
+  const cached = chatConfigCache;
   if (cached && cached.expiresAt > Date.now()) {
-    return cached.tiers;
+    return {
+      tiers: cached.tiers,
+      defaultModelId: cached.defaultModelId,
+      defaultMaxOutputTokens: cached.defaultMaxOutputTokens,
+    };
   }
 
   let tiers: string[] = [];
+  let defaultModelId: string | null = null;
+  let defaultMaxOutputTokens: number | null = null;
 
   try {
     const rows = await prisma.aiModel.findMany({
       where: { category: CHAT_CATEGORY, isActive: true },
       orderBy: [{ isDefault: "desc" }, { tierOrder: "asc" }, { id: "asc" }],
-      select: { modelId: true, isDefault: true },
+      select: {
+        modelId: true,
+        isDefault: true,
+        maxOutputTokens: true,
+        provider: true,
+      },
     });
-    tiers = rows.map((r) => r.modelId).filter(Boolean);
+    // Exclude models whose provider has no API key configured. They are
+    // dormant — the runtime can only dispatch to providers that have a key
+    // loaded in env. Per-model credentials are intentionally not supported.
+    const eligible = rows.filter((r) => isProviderConfigured(r.provider));
+    tiers = eligible.map((r) => r.modelId).filter(Boolean);
+    const def = eligible.find((r) => r.isDefault);
+    if (def) {
+      defaultModelId = def.modelId;
+      defaultMaxOutputTokens =
+        def.maxOutputTokens !== null && def.maxOutputTokens !== undefined
+          ? Number(def.maxOutputTokens)
+          : null;
+    }
   } catch (error: any) {
-    logger.error("ai_model.resolve_chat_tiers_failed", {
+    logger.error("ai_model.resolve_chat_config_failed", {
       error: error?.message,
     });
   }
 
   // Fallback 1: env-configured tiers
   if (tiers.length === 0) {
-    const envTiers = (env.AI_CHAT_MODEL_TIERS || "")
+    const envTiers = (env.AI_CHAT_FALLBACK_MODEL_TIERS || "")
       .split(",")
       .map((m) => m.trim())
       .filter(Boolean);
-    if (envTiers.length > 0) tiers = envTiers;
+    if (envTiers.length > 0) {
+      tiers = envTiers;
+      defaultModelId = envTiers[0] ?? null;
+    }
   }
 
   // Fallback 2: hardcoded defaults
   if (tiers.length === 0) {
     tiers = FALLBACK_CHAT_TIERS;
+    defaultModelId = FALLBACK_CHAT_TIERS[0] ?? null;
   }
 
-  chatTierCache = { tiers, expiresAt: Date.now() + CACHE_TTL_MS };
-  return tiers;
+  chatConfigCache = {
+    tiers,
+    defaultModelId,
+    defaultMaxOutputTokens,
+    expiresAt: Date.now() + CACHE_TTL_MS,
+  };
+  return { tiers, defaultModelId, defaultMaxOutputTokens };
 }
 
 /**
@@ -156,10 +229,10 @@ export async function listAiModels(filters?: {
     ],
   });
 
-  // Annotate each row with its 1-based runtime position within its category.
-  // Position 1 is always the active default; ties on tierOrder break by id,
-  // matching getActiveChatTiers(). The UI surfaces this so admins can see
-  // the resolved order, not just the raw tier value.
+  // Annotate each row with its 1-based runtime position within its category
+  // and a `providerConfigured` flag so the UI can surface dormant rows whose
+  // provider has no API key loaded in env. The runtime tiers already filter
+  // these out (see getChatRuntimeConfig); this lets the admin see them.
   let lastCategory: string | null = null;
   let position = 0;
   return rows.map((row) => {
@@ -169,7 +242,11 @@ export async function listAiModels(filters?: {
     } else {
       position += 1;
     }
-    return { ...row, runtimePosition: position };
+    return {
+      ...row,
+      runtimePosition: position,
+      providerConfigured: isProviderConfigured(row.provider),
+    };
   });
 }
 

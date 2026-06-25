@@ -18,8 +18,8 @@ import { repairAndParseAiResponse } from "./aiEngine.utils";
 
 const MODEL_TIMEOUT_MS = 60_000;
 // Hardcoded fallback tier order, applied only when both the admin-managed
-// AiModel registry and `env.AI_CHAT_MODEL_TIERS` are unavailable. Exported
-// so the order can be pinned by the unit test.
+// AiModel registry AND `env.AI_CHAT_FALLBACK_MODEL_TIERS` are unavailable.
+// Exported so the order can be pinned by the unit test.
 export const DEFAULT_MODEL_TIERS = [
   "gemini-3.1-flash-lite-preview",
   "gemini-3-flash-preview",
@@ -170,40 +170,66 @@ async function withTimeout<T>(
 }
 
 /**
- * Resolves the live chat model tiers from the admin-managed AiModel registry
- * (DB), falling back to env (`AI_CHAT_MODEL_TIERS`) then to hardcoded defaults
- * when the registry is empty or the DB is unreachable. The DB layer is cached
- * (5-min TTL) inside the registry service; on failure it degrades gracefully
- * so a chat message is never blocked by a settings outage.
+ * Per-call context for the chat runtime: the resolved tier list (in
+ * fallback order) and the default chat model's per-row `maxOutputTokens`
+ * (null if the admin hasn't configured one). Both come from a single
+ * cached read of the AiModel registry inside `getChatRuntimeConfig`.
  */
-async function resolveChatModelTiers(): Promise<string[]> {
+type ChatRuntimeContext = {
+  tiers: string[];
+  defaultMaxOutputTokens: number | null;
+};
+
+/**
+ * Resolves the live chat runtime config (tiers + default maxOutputTokens)
+ * from the admin-managed AiModel registry (DB), falling back to env then
+ * hardcoded defaults when the registry is empty or the DB is unreachable.
+ * The DB layer is cached (5-min TTL) inside the registry service; on failure
+ * it degrades gracefully so a chat message is never blocked by a settings
+ * outage.
+ */
+async function resolveChatRuntimeConfig(): Promise<ChatRuntimeContext> {
   try {
     // Dynamic import avoids a circular dependency at module load:
     // ai-model.service imports prisma/config, modelRuntime is imported widely.
-    const { getActiveChatTiers } = await import(
+    const { getChatRuntimeConfig } = await import(
       "@modules/admin/ai-model/ai-model.service"
     );
-    const tiers = await getActiveChatTiers();
-    if (tiers.length > 0) return tiers;
+    const config = await getChatRuntimeConfig();
+    if (config.tiers.length > 0) {
+      return {
+        tiers: config.tiers,
+        defaultMaxOutputTokens: config.defaultMaxOutputTokens,
+      };
+    }
   } catch (error: any) {
     logger.warn("ai.model_runtime.registry_resolve_failed", {
       error: error?.message,
     });
   }
   // Fallback chain: env (comma-separated) → hardcoded DEFAULT_MODEL_TIERS.
-  const envTiers = (env.AI_CHAT_MODEL_TIERS || "")
+  // No per-model maxOutputTokens in this branch — env is the only override.
+  const envTiers = (env.AI_CHAT_FALLBACK_MODEL_TIERS || "")
     .split(",")
     .map((m) => m.trim())
     .filter(Boolean);
-  return envTiers.length > 0 ? envTiers : DEFAULT_MODEL_TIERS;
+  return {
+    tiers: envTiers.length > 0 ? envTiers : DEFAULT_MODEL_TIERS,
+    defaultMaxOutputTokens: null,
+  };
 }
 
 async function executeWithModelFallback<T>(
-  operation: (model: string, abortSignal: AbortSignal) => Promise<T>,
+  operation: (
+    model: string,
+    abortSignal: AbortSignal,
+    ctx: ChatRuntimeContext,
+  ) => Promise<T>,
   context: string,
   timeoutMs = MODEL_TIMEOUT_MS,
 ): Promise<{ result: T; model: string }> {
-  const modelTiers = await resolveChatModelTiers();
+  const ctx = await resolveChatRuntimeConfig();
+  const modelTiers = ctx.tiers;
   let lastError: any;
 
   for (let tierIndex = 0; tierIndex < modelTiers.length; tierIndex++) {
@@ -214,7 +240,7 @@ async function executeWithModelFallback<T>(
       const abortController = new AbortController();
       try {
         const result = await withTimeout(
-          operation(model, abortController.signal),
+          operation(model, abortController.signal, ctx),
           timeoutMs,
           abortController,
         );
@@ -271,7 +297,7 @@ function createChatModel(params: {
     model: params.model,
     apiKey: env.GEMINI_API_KEY,
     temperature: params.temperature ?? 0.4,
-    maxOutputTokens: params.maxOutputTokens ?? env.AI_CHAT_MAX_OUTPUT_TOKENS,
+    maxOutputTokens: params.maxOutputTokens ?? env.AI_CHAT_FALLBACK_MAX_OUTPUT_TOKENS,
   });
 }
 
@@ -426,10 +452,11 @@ export async function invokeToolChoice(params: {
   );
 
   const { result: message, model } = await executeWithModelFallback<any>(
-    (currentModel, abortSignal) => {
+    (currentModel, abortSignal, ctx) => {
       const llm = createChatModel({
         model: currentModel,
         temperature: params.temperature ?? 0.4,
+        maxOutputTokens: ctx.defaultMaxOutputTokens ?? undefined,
       }).bindTools(params.tools as any);
       return llm.invoke(messages, { signal: abortSignal } as any);
     },
@@ -459,10 +486,11 @@ export async function invokeDecisionOrTool(params: {
   );
 
   const { result: message, model } = await executeWithModelFallback<any>(
-    (currentModel, abortSignal) => {
+    (currentModel, abortSignal, ctx) => {
       const llm = createChatModel({
         model: currentModel,
         temperature: params.temperature ?? 0.4,
+        maxOutputTokens: ctx.defaultMaxOutputTokens ?? undefined,
       }).bindTools(params.tools as any);
       return llm.invoke(messages, { signal: abortSignal } as any);
     },
@@ -534,10 +562,11 @@ export async function invokeDecision(params: {
   const decisionSchema = getAiRoutingDecisionSchemaForChannel(params.channel);
 
   const { result, model } = await executeWithModelFallback<any>(
-    async (currentModel, abortSignal) => {
+    async (currentModel, abortSignal, ctx) => {
       const llm = createChatModel({
         model: currentModel,
         temperature: params.temperature ?? 0.4,
+        maxOutputTokens: ctx.defaultMaxOutputTokens ?? undefined,
       });
       const structured = llm.withStructuredOutput(decisionSchema, {
         name: "AiRoutingDecision",
@@ -589,11 +618,12 @@ export async function invokeText(params: {
   const messages = [new HumanMessage(params.prompt)];
 
   const { result: message, model } = await executeWithModelFallback<any>(
-    (currentModel, abortSignal) => {
+    (currentModel, abortSignal, ctx) => {
       const llm = createChatModel({
         model: currentModel,
         temperature: params.temperature ?? 0.4,
-        maxOutputTokens: params.maxOutputTokens,
+        maxOutputTokens:
+          params.maxOutputTokens ?? ctx.defaultMaxOutputTokens ?? undefined,
       });
       return llm.invoke(messages, { signal: abortSignal } as any);
     },
@@ -631,6 +661,9 @@ export async function invokeMediaUnderstanding(params: {
 
   const { result: message, model } = await executeWithModelFallback<any>(
     (currentModel, abortSignal) => {
+      // Media understanding uses a small fixed ceiling (512) on purpose —
+      // it's not a chat reply, so the chat default model's maxOutputTokens
+      // does not apply here.
       const llm = createChatModel({
         model: currentModel,
         temperature: params.temperature ?? 0.1,
@@ -658,6 +691,8 @@ export async function invokeExternalToolRecoveryRoute(params: {
 
   const { result, model } = await executeWithModelFallback<any>(
     async (currentModel, abortSignal) => {
+      // Classifier with a tight fixed ceiling — chat default's maxOutputTokens
+      // does not apply.
       const llm = createChatModel({
         model: currentModel,
         temperature: 0,

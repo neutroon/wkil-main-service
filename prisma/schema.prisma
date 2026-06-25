@@ -757,6 +757,30 @@ model SystemSetting {
   updatedAt DateTime @updatedAt
 }
 
+/// Admin-managed AI model registry.
+/// Multi-provider ready: provider field lets future OpenAI/Anthropic entries coexist,
+/// but only Google models are wired into the runtime today.
+/// API keys are NEVER stored here — they stay in env/vault (GEMINI_API_KEY, etc.).
+model AiModel {
+  id              Int      @id @default(autoincrement())
+  modelId         String   @unique // Provider model identifier, e.g. "gemini-3-flash-preview"
+  displayName     String // Human-friendly label shown in the admin UI
+  provider        String   @default("google") // "google" | "openai" | "anthropic"
+  category        String   @default("chat") // "chat" | "embedding" | "image" | "multimodal"
+  tierOrder       Int      @default(0) // Fallback ordering within a category (lower = tried first after default)
+  isDefault       Boolean  @default(false) // Primary model for its category
+  isActive        Boolean  @default(true) // Soft-disable: excluded from runtime tiers when false
+  inputPrice      Decimal? @db.Decimal(12, 6) // Optional USD per 1M input tokens (display/billing)
+  outputPrice     Decimal? @db.Decimal(12, 6) // Optional USD per 1M output tokens
+  maxOutputTokens Int? // Optional max output tokens hint
+  metadata        Json? // Extensible capability flags / notes
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([provider, category])
+  @@index([isActive, category])
+}
+
 model ContentAudit {
   id                         Int      @id @default(autoincrement())
   businessProfileId          Int

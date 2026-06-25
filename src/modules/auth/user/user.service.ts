@@ -383,7 +383,7 @@ export const addEmailToCurrentUser = async (id: number, rawEmail: string) => {
     data: { email },
   });
 
-  sendVerificationEmail(email, existing.name, verificationToken).catch((err) => {
+  sendVerificationEmail(email, existing.name, verificationToken, "add-email").catch((err) => {
     const { logger } = require("@utils/logger");
     logger.error("Add-email verification dispatch failed", {
       userId: id,
@@ -451,7 +451,7 @@ export const resendEmailVerificationForCurrentUser = async (id: number) => {
     },
   });
 
-  await sendVerificationEmail(user.email, user.name, verificationToken);
+  await sendVerificationEmail(user.email, user.name, verificationToken, "add-email");
 
   return { message: "Verification email sent." };
 };

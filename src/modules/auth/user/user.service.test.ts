@@ -83,6 +83,7 @@ describe("user service add-email flow", () => {
       "new@example.com",
       "No Email User",
       expect.any(String),
+      "add-email",
     );
   });
 
@@ -163,6 +164,7 @@ describe("user service resend-email-verification flow", () => {
       "u@example.com",
       "U",
       expect.any(String),
+      "add-email",
     );
   });
 

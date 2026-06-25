@@ -16,10 +16,22 @@ export const securityHeaders = helmet({
       objectSrc: ["'none'"],
       mediaSrc: ["'self'", "https:", "http:", "*"],
       frameSrc: ["'none'"],
+      frameAncestors: [
+        "'self'",
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://localhost:8080",
+        "https://wkil.app",
+        "https://www.wkil.app",
+        "https://go.wkil.app",
+        "https://app.wkil.app",
+        "https://*.wkil.app",
+      ],
     },
   },
   crossOriginEmbedderPolicy: false,
   crossOriginResourcePolicy: { policy: "cross-origin" }, // CRITICAL: Allow images/media across subdomains
+  xFrameOptions: false, // Rely on CSP frame-ancestors (set above) instead
   hsts: {
     maxAge: 31536000,
     includeSubDomains: true,
@@ -144,30 +156,6 @@ export const requestSizeLimit = (
     });
   }
 
-  next();
-};
-
-// Allow Mission Control (Bull Board) to be embedded in the admin frontend iframe.
-// Helmet's global config sets X-Frame-Options: SAMEORIGIN and a CSP without
-// frame-ancestors, which blocks cross-origin framing. This middleware overrides
-// both on the /v1/admin/mission-control route only.
-export const missionControlFrameHeaders = (
-  _req: Request,
-  res: Response,
-  next: NextFunction,
-) => {
-  res.removeHeader("X-Frame-Options");
-  res.appendHeader(
-    "Content-Security-Policy",
-    [
-      "frame-ancestors 'self'",
-      "http://localhost:3000",
-      "http://localhost:3001",
-      "http://localhost:8080",
-      "https://go.wkil.app",
-      "https://*.wkil.app",
-    ].join(" "),
-  );
   next();
 };
 

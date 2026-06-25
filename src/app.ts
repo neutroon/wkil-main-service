@@ -17,7 +17,6 @@ import {
   corsOptions,
   sanitizeRequest,
   requestSizeLimit,
-  missionControlFrameHeaders,
 } from "@middlewares/security.middleware";
 import {
   generalLimiter,
@@ -161,7 +160,7 @@ app.use("/v1/meta/conversations", conversationsRoutes);
 app.use("/v1/leads", leadRoutes);
 app.use("/v1/customers", customerRoutes);
 app.use("/v1/admin", adminRoutes);
-app.use("/v1/admin/mission-control", missionControlFrameHeaders, missionControlRouter);
+app.use("/v1/admin/mission-control", missionControlRouter);
 app.use("/v1/manager", managerRoutes);
 app.use("/v1/dashboard", dashboardRoutes);
 app.use("/v1/scrape", scrapeRoutes);

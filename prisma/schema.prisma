@@ -57,7 +57,7 @@ enum AgentActionType {
 model User {
   id                  Int       @id @default(autoincrement())
   name                String
-  email               String    @unique
+  email               String?   @unique
   password            String
   facebookUserId      String?   @unique
   facebookAccessToken String?
@@ -73,6 +73,10 @@ model User {
   passwordResetToken     String?   @unique
   passwordResetExpires   DateTime?
   lastVerificationSentAt DateTime?
+
+  // Social Identity Hardening
+  isSocialUser Boolean @default(false) // True if account was originally created via social login (may have null email)
+  avatar       String? // Persisted avatar (seeded from first social identity, editable by user)
 
   // Management relationships
   managedUsers  UserManagement[] @relation("ManagerRelations")
@@ -120,7 +124,7 @@ model SocialIdentity {
   user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   provider       String
   providerUserId String
-  email          String
+  email          String?
   name           String?
   avatarUrl      String?
   createdAt      DateTime @default(now())

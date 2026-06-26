@@ -20,15 +20,15 @@ const mobileAuthRoutes = Router();
 
 // POST /v1/mobile/auth/login
 // Body: { email, password } → { user, accessToken, refreshToken, expiresIn }
-mobileAuthRoutes.post("/login", authLimiter, validate(loginSchema), mobileLogin);
+mobileAuthRoutes.post("/auth/login", authLimiter, validate(loginSchema), mobileLogin);
 
 // POST /v1/mobile/auth/refresh
 // Header: `Authorization: Bearer <refreshToken>` (preferred)
 // OR body: { refreshToken } → { accessToken, refreshToken?, expiresIn }
-mobileAuthRoutes.post("/refresh", authLimiter, mobileRefresh);
+mobileAuthRoutes.post("/auth/refresh", authLimiter, mobileRefresh);
 
 // POST /v1/mobile/auth/logout
 // Header / body: refresh token → revokes in DB
-mobileAuthRoutes.post("/logout", mobileLogout);
+mobileAuthRoutes.post("/auth/logout", mobileLogout);
 
 export default mobileAuthRoutes;

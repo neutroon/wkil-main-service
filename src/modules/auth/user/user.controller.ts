@@ -82,45 +82,42 @@ export const registerUser = async (req: Request, res: Response) => {
 
 export const loginUserController = async (req: Request, res: Response) => {
   const { email, password } = req.body;
-  const result = await loginUser(email, password);
+  const user = await loginUser(email, password);
+  if (!user) {
+    // Same enumeration-safe message the mobile path uses.
+    throw new authService.AppError(
+      "Invalid email or password",
+      401,
+      true,
+      "INVALID_CREDENTIALS",
+    );
+  }
 
-  // Identity Lifecycle: Proactively trigger verification email if unverified
-  if (!result.isEmailVerified) {
+  // Identity Lifecycle: Proactively trigger verification email if
+  // unverified. Best-effort — never blocks the login.
+  if (!user.isEmailVerified) {
     authService.resendVerification(email).catch((err) => {
-      logger.info("Auto-verification email suppressed or failed on login", {
+      logger.info("auto_verification_email.failed", {
         email,
         reason: err.message,
       });
     });
   }
 
-  // Refresh Token Rotation: Store hash in DB
-  const salt = await bcrypt.genSalt(10);
-  const hash = await bcrypt.hash(result.refreshToken, salt);
-  await prisma.user.update({
-    where: { id: result.id },
-    data: { 
-      refreshTokenHash: hash,
-      previousRefreshTokenHash: null,
-      refreshTokenExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-      rotatedAt: new Date()
-    }
-  });
-
-  // Set HTTP-only cookies
-  setAuthCookies(res, result.accessToken, result.refreshToken);
+  await authService.issueAuthSession(
+    {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      isSocialUser: user.isSocialUser,
+    },
+    { setCookies: res },
+  );
 
   res.status(200).json({
     message: "User Login successful",
-    user: {
-      id: result.id,
-      email: result.email,
-      name: result.name,
-      role: result.role,
-      isEmailVerified: result.isEmailVerified,
-      lastVerificationSentAt: result.lastVerificationSentAt,
-      isBusinessProfileCreated: result.isBusinessProfileCreated,
-    },
+    user: authService.publicUserShape(user),
   });
 };
 

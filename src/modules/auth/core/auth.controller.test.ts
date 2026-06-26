@@ -46,6 +46,7 @@ describe("social auth controller", () => {
     vi.mocked(authService.issueAuthSession).mockResolvedValue({
       accessToken: "access",
       refreshToken: "refresh",
+      expiresIn: 900,
     });
   });
 
@@ -63,7 +64,9 @@ describe("social auth controller", () => {
 
     expect(verifyGoogleIdToken).toHaveBeenCalledWith("google-token");
     expect(authenticateSocialUser).toHaveBeenCalledWith("google", profile);
-    expect(authService.issueAuthSession).toHaveBeenCalledWith(res, user);
+    expect(authService.issueAuthSession).toHaveBeenCalledWith(user, {
+      setCookies: res,
+    });
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith({
       message: "Social authentication successful",
@@ -85,7 +88,9 @@ describe("social auth controller", () => {
 
     expect(verifyFacebookAccessToken).toHaveBeenCalledWith("facebook-token");
     expect(authenticateSocialUser).toHaveBeenCalledWith("facebook", profile);
-    expect(authService.issueAuthSession).toHaveBeenCalledWith(res, user);
+    expect(authService.issueAuthSession).toHaveBeenCalledWith(user, {
+      setCookies: res,
+    });
     expect(res.status).toHaveBeenCalledWith(200);
   });
 });

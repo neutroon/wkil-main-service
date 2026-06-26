@@ -25,6 +25,8 @@ import {
   widgetChatLimiter,
 } from "@middlewares/rateLimit.middleware";
 import authRoutes from "@modules/auth/core/auth.routes";
+import mobileAuthRoutes from "@modules/auth/mobile/mobileAuth.routes";
+import { mobileCorsOptions } from "@middlewares/mobileCors.middleware";
 import dashboardRoutes from "@modules/analytics/dashboard/dashboard.routes";
 import os from "os";
 import scrapeRoutes from "@modules/scraping/scrape";
@@ -109,6 +111,17 @@ app.use(
 // ── JSON / URL-encoded body parser (all other routes) ────────────────────────
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+
+// ── Mobile sub-app ────────────────────────────────────────────────────────
+// Dedicated Express sub-app with its own narrow CORS policy (allows
+// only no-origin / "null" origin / configured web origins) + the
+// public mobile auth routes. Mounted BEFORE the global CORS so the
+// global dashboard policy does not apply to it.
+const mobileApp = express.Router();
+mobileApp.use(cors(mobileCorsOptions));
+mobileApp.use(express.json({ limit: "10mb" }));
+mobileApp.use(mobileAuthRoutes);
+app.use("/v1/mobile", mobileApp);
 
 // ── Routes ───────────────────────────────────────────────────────────────────
 app.use("/v1/auth", authRoutes);

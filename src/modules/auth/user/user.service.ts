@@ -1,15 +1,12 @@
 import bcrypt from "bcrypt";
 import { Prisma } from "@prisma/client";
 import prisma from "@config/prisma";
-import {
-  generateAccessToken,
-  generateRefreshToken,
-} from "@modules/auth/core/auth.middleware";
 import { getBillingMultiplier } from "@modules/settings/settings.service";
 import { clearQuotaCache } from "@modules/billing/billing.service";
 import { generateRandomToken, hashToken } from "@modules/auth/core/tokenCrypto";
 import { sendVerificationEmail } from "@modules/mail/mail.service";
 import { AppError } from "@middlewares/errorHandler.middleware";
+import { verifyCredentials } from "@modules/auth/core/auth.service";
 
 export const createUser = async (
   name: string,
@@ -70,61 +67,20 @@ export const createUser = async (
   return user;
 };
 
+/**
+ * Verify email + password against the DB (uses the shared helper so
+ * web and mobile get the same `isActive: true` check and the same
+ * null-on-failure contract). Returns the LoginUser or null.
+ *
+ * Token issuance and the proactive "send verification email" side
+ * effect are the controller's responsibility — not part of the
+ * service contract — so the same helper can be used by web, mobile,
+ * and future flows without duplication.
+ */
 export const loginUser = async (email: string, password: string) => {
-  const normalizedEmail = email.toLowerCase();
-  const user = await prisma.user.findUnique({
-    where: { email: normalizedEmail },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      password: true,
-      role: true,
-      isEmailVerified: true,
-      isSocialUser: true,
-      lastVerificationSentAt: true,
-      isBusinessProfileCreated: true,
-    },
-  });
-
-  if (!user) {
-    throw new AppError("User not found", 404);
-  }
-
-  const valid = await bcrypt.compare(password, user.password);
-  if (!valid) {
-    throw new AppError("Invalid credentials", 401);
-  }
-
-  // Generate tokens
-  const accessToken = generateAccessToken({
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    role: user.role,
-    isSocialUser: user.isSocialUser,
-  });
-
-  const refreshToken = generateRefreshToken({
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    role: user.role,
-    isSocialUser: user.isSocialUser,
-  });
-
-  return {
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    role: user.role,
-    isEmailVerified: user.isEmailVerified,
-    lastVerificationSentAt: user.lastVerificationSentAt,
-    isBusinessProfileCreated: user.isBusinessProfileCreated,
-    accessToken,
-    refreshToken,
-  };
+  return verifyCredentials(email, password);
 };
+
 
 export const getUserById = async (
   id: number,

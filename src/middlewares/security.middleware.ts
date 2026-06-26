@@ -48,8 +48,11 @@ export const corsOptions = {
     // Debug logging for CORS issues
     logger.debug("CORS Check", { origin, nodeEnv: env.NODE_ENV });
 
-    // Allow requests with no origin (like mobile apps or curl requests)
-    // Also allow any origin in development to bypass CORS issues during testing
+    // Allow requests with no origin (mobile apps, curl, server-to-server).
+    // The literal "null" origin is intentionally NOT accepted here —
+    // mobile clients connect to the dedicated `/v1/mobile/*` sub-app
+    // below, which has its own narrow CORS policy that allows it.
+    // Also allow any origin in development to bypass CORS issues during testing.
     if (!origin || env.NODE_ENV === "development") {
       return callback(null, true);
     }

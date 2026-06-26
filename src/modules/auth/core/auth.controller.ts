@@ -66,7 +66,7 @@ const sendSocialAuthResponse = async (req: Request, res: Response, provider: "go
       : await verifyFacebookAccessToken(token);
 
   const user = await authenticateSocialUser(provider, profile);
-  await authService.issueAuthSession(res, user);
+  await authService.issueAuthSession(user, { setCookies: res });
 
   res.status(200).json({
     message: "Social authentication successful",

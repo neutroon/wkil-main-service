@@ -89,6 +89,9 @@ function normalizeOrigin(value: string | undefined): string {
 
 function isDashboardOriginAllowed(origin: string | undefined): boolean {
   if (isLocalOrigin(origin)) return true;
+  // Mobile clients connect to the `/mobile` namespace below and never
+  // hit this check; dashboard (web) clients must present a real Origin
+  // that matches the allowlist.
   if (!origin) return env.NODE_ENV !== "production";
 
   const normalizedOrigin = normalizeOrigin(origin);
@@ -128,6 +131,31 @@ async function authenticateDashboardSocket(socket: Socket): Promise<SocketUser |
   const authToken = stringFromHandshakeValue(socket.handshake.auth?.token);
   const cookies = parseCookies(socket.handshake.headers.cookie);
   const token = authToken || cookies.accessToken;
+  if (!token || token === "undefined" || token === "null") return null;
+
+  try {
+    const decoded = jwt.verify(token, env.JWT_SECRET) as { id?: unknown };
+    const userId = parsePositiveInt(decoded.id);
+    if (!userId) return null;
+
+    const user = await prisma.user.findFirst({
+      where: { id: userId, isActive: true },
+      select: { id: true, role: true },
+    });
+
+    return user ? { id: user.id, role: user.role } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Authenticate a mobile client connecting to the `/mobile` namespace.
+ * Mobile clients never use cookies and have no meaningful Origin header,
+ * so the JWT in `auth.token` is the sole credential.
+ */
+async function authenticateMobileSocket(socket: Socket): Promise<SocketUser | null> {
+  const token = stringFromHandshakeValue(socket.handshake.auth?.token);
   if (!token || token === "undefined" || token === "null") return null;
 
   try {
@@ -312,98 +340,106 @@ export function initSocket(server: HTTPServer): SocketIOServer {
       .catch(next);
   });
 
-  io.on("connection", (socket: AppSocket) => {
-    logger.info("socket.connected", { id: socket.id });
+  io.on("connection", (socket) => {
+    logger.info("socket.connected", { id: socket.id, namespace: "/" });
+    attachConnectionHandlers(socket as AppSocket);
+  });
 
-    socket.on("join_conversation", async (conversationId: string | number) => {
-      const id = parsePositiveInt(conversationId);
-      if (!id || !(await authorizeConversationRoomJoin(socket.data.identity, id))) {
-        logger.warn("socket.join_conversation_denied", {
-          socketId: socket.id,
-          conversationId,
-        });
-        return;
-      }
-      const room = `conversation:${id}`;
-      socket.join(room);
-      logger.info("socket.join_room", { socketId: socket.id, room });
-    });
-
-    socket.on("send_message", async (data: { visitorId: string; message: string; conversationId?: number }) => {
-      const widgetIdentity = socket.data.identity?.widget;
-      if (!widgetIdentity) return;
-
-      try {
-        const install = await prisma.widgetInstall.findFirst({
-          where: { id: widgetIdentity.installId, isActive: true },
-        });
-        if (!install) return;
-
-        const pageId = `widget:${install.id}`;
-        const conv = await getOrCreateConversation(
-          pageId,
-          data.visitorId,
-          install.businessProfileId,
-          {
-            channel: "web",
-            customerName: widgetIdentity.verifiedUser?.name,
-            customerPhone: widgetIdentity.verifiedUser?.phone,
-            customerAvatar: widgetIdentity.verifiedUser?.avatar,
-          },
-        );
-        socket.join(`conversation:${conv.id}`);
-
-        if (widgetIdentity.verifiedUser && conv.customerId) {
-          await syncVerifiedUserProfile(conv.customerId, widgetIdentity.verifiedUser);
-        }
-
-        const result = await processWidgetChatMessage({
-          install,
-          visitorId: data.visitorId,
-          message: data.message,
-          conversationId: conv.id,
-          verifiedUser: widgetIdentity.verifiedUser,
-        });
-
-        logger.info("widget.send_message.complete", {
-          conversationId: result.conversationId,
-        });
-      } catch (error) {
-        logger.error("widget.send_message.failed", {
-          error: error instanceof Error ? error.message : String(error),
-        });
-        socket.emit("message_error", { error: "Unable to process your message." });
-      }
-    });
-
-    socket.on("leave_conversation", (conversationId: string | number) => {
-      const id = parsePositiveInt(conversationId);
-      if (!id) return;
-      const room = `conversation:${id}`;
-      socket.leave(room);
-      logger.info("socket.leave_room", { socketId: socket.id, room });
-    });
-
-    socket.on("join_business", async (businessProfileId: string | number) => {
-      const id = parsePositiveInt(businessProfileId);
-      if (!id || !(await authorizeBusinessRoomJoin(socket.data.identity, id))) {
-        logger.warn("socket.join_business_denied", {
-          socketId: socket.id,
-          businessProfileId,
-        });
-        return;
-      }
-      const room = `business:${id}`;
-      socket.join(room);
-      logger.info("socket.join_room", { socketId: socket.id, room });
-    });
-
-    socket.on("disconnect", (reason) => {
-      logger.info("socket.disconnected", { id: socket.id, reason });
-    });
+  // Mobile namespace: native clients authenticate with a JWT in
+  // `auth.token`. No origin check (mobile is always mobile), no cookie
+  // fallback, and no widget `send_message` flow (mobile sends via the
+  // REST API). The room model is identical to the dashboard namespace.
+  const mobileNsp = io.of("/mobile");
+  mobileNsp.use(async (socket, next) => {
+    const user = await authenticateMobileSocket(socket);
+    if (!user) return next(new Error("Unauthorized mobile socket"));
+    (socket as AppSocket).data.identity = { user };
+    next();
+  });
+  mobileNsp.on("connection", (socket) => {
+    logger.info("socket.connected", { id: socket.id, namespace: "/mobile" });
+    attachConnectionHandlers(socket as AppSocket);
   });
 
   return io;
+}
+
+/**
+ * Wire up the connection event handlers shared by the default
+ * namespace (dashboard + widget) and the `/mobile` namespace.
+ * `send_message` is only meaningful for widget visitors — it
+ * early-returns when the socket has no widget identity.
+ */
+function attachConnectionHandlers(socket: AppSocket): void {
+  socket.on("join_conversation", async (conversationId: string | number) => {
+    const id = parsePositiveInt(conversationId);
+    if (!id || !(await authorizeConversationRoomJoin(socket.data.identity, id))) {
+      logger.warn("socket.join_conversation_denied", { socketId: socket.id, conversationId });
+      return;
+    }
+    const room = `conversation:${id}`;
+    socket.join(room);
+    logger.info("socket.join_room", { socketId: socket.id, room });
+  });
+
+  socket.on("leave_conversation", (conversationId: string | number) => {
+    const id = parsePositiveInt(conversationId);
+    if (!id) return;
+    const room = `conversation:${id}`;
+    socket.leave(room);
+    logger.info("socket.leave_room", { socketId: socket.id, room });
+  });
+
+  socket.on("join_business", async (businessProfileId: string | number) => {
+    const id = parsePositiveInt(businessProfileId);
+    if (!id || !(await authorizeBusinessRoomJoin(socket.data.identity, id))) {
+      logger.warn("socket.join_business_denied", { socketId: socket.id, businessProfileId });
+      return;
+    }
+    const room = `business:${id}`;
+    socket.join(room);
+    logger.info("socket.join_room", { socketId: socket.id, room });
+  });
+
+  socket.on("send_message", async (data: { visitorId: string; message: string; conversationId?: number }) => {
+    const widgetIdentity = socket.data.identity?.widget;
+    if (!widgetIdentity) return;
+    try {
+      const install = await prisma.widgetInstall.findFirst({ where: { id: widgetIdentity.installId, isActive: true } });
+      if (!install) return;
+      const pageId = `widget:${install.id}`;
+      const conv = await getOrCreateConversation(
+        pageId,
+        data.visitorId,
+        install.businessProfileId,
+        {
+          channel: "web",
+          customerName: widgetIdentity.verifiedUser?.name,
+          customerPhone: widgetIdentity.verifiedUser?.phone,
+          customerAvatar: widgetIdentity.verifiedUser?.avatar,
+        },
+      );
+      socket.join(`conversation:${conv.id}`);
+      if (widgetIdentity.verifiedUser && conv.customerId) {
+        await syncVerifiedUserProfile(conv.customerId, widgetIdentity.verifiedUser);
+      }
+      const result = await processWidgetChatMessage({
+        install,
+        visitorId: data.visitorId,
+        message: data.message,
+        conversationId: conv.id,
+        verifiedUser: widgetIdentity.verifiedUser,
+      });
+      logger.info("widget.send_message.complete", { conversationId: result.conversationId });
+    } catch (error) {
+      logger.error("widget.send_message.failed", { error: error instanceof Error ? error.message : String(error) });
+      socket.emit("message_error", { error: "Unable to process your message." });
+    }
+  });
+
+  socket.on("disconnect", (reason) => {
+    logger.info("socket.disconnected", { id: socket.id, reason });
+  });
 }
 
 export function getIO(): SocketIOServer {

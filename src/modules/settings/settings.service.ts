@@ -33,6 +33,23 @@ export const getSystemSetting = async (key: string, defaultValue: string): Promi
   }
 };
 
+/** Clears the entire settings cache (this process) and broadcasts an
+ *  invalidation so other instances clear theirs too. Fixes cross-instance
+ *  staleness for admin-edited settings like the billing multiplier. */
+export function clearSettingsCache(): void {
+  clearSettingsCacheLocal();
+  // Best-effort cross-instance invalidation. Lazy import to avoid load cycles.
+  void import("@config/cache-bus")
+    .then(({ publishCacheInvalidation }) => publishCacheInvalidation("settings"))
+    .catch(() => {});
+}
+
+/** Local-only invalidation. Used by the cache-bus subscriber (no publish —
+ *  the bus is the delivery mechanism, so re-publishing would loop). */
+export function clearSettingsCacheLocal(): void {
+  for (const k of Object.keys(SETTINGS_CACHE)) delete SETTINGS_CACHE[k];
+}
+
 export const updateSystemSetting = async (key: string, value: string): Promise<void> => {
   try {
     await prisma.systemSetting.upsert({
@@ -41,11 +58,9 @@ export const updateSystemSetting = async (key: string, value: string): Promise<v
       create: { key, value }
     });
 
-    // Update cache with TTL
-    SETTINGS_CACHE[key] = {
-      value,
-      expiresAt: Date.now() + CACHE_TTL_MS
-    };
+    // Clear + broadcast instead of local-only overwrite, so every instance
+    // picks up the new value within the cache-bus propagation window.
+    clearSettingsCache();
     logger.info(`System setting updated: ${key}=${value}`);
   } catch (error: any) {
     logger.error(`Failed to update system setting: ${key}`, { error: error.message });

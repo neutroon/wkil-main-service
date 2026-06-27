@@ -96,6 +96,18 @@ let pipelineCache: PipelineCache | null = null;
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 export function clearPipelineCache(): void {
+  clearPipelineCacheLocal();
+  // Best-effort cross-instance invalidation. Lazy import to avoid load cycles.
+  void import("@config/cache-bus")
+    .then(({ publishCacheInvalidation }) =>
+      publishCacheInvalidation("ai_pipelines"),
+    )
+    .catch(() => {});
+}
+
+/** Local-only invalidation. Used by the cache-bus subscriber (no publish —
+ *  the bus is the delivery mechanism, so re-publishing would loop). */
+export function clearPipelineCacheLocal(): void {
   pipelineCache = null;
 }
 

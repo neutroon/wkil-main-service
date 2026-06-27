@@ -2,6 +2,7 @@ import prisma, { Prisma } from "@config/prisma";
 import { env } from "@config/env";
 import { logger } from "@utils/logger";
 import { AppError } from "@middlewares/errorHandler.middleware";
+import { clearModelPriceCache } from "@modules/billing/billing.service";
 
 /**
  * AI Model Registry Service
@@ -61,7 +62,24 @@ let chatConfigCache: ChatConfigCache | null = null;
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 export function clearAiModelCache(): void {
+  clearAiModelCacheLocal();
+  // Best-effort cross-instance invalidation. Imported lazily to avoid a
+  // config/redis -> logger cycle at module load; publish() never throws.
+  void import("@config/cache-bus")
+    .then(({ publishCacheInvalidation }) => publishCacheInvalidation("ai_models"))
+    .catch(() => {});
+}
+
+/** Local-only invalidation. Used by both the public clear and the cache-bus
+ *  subscriber so an admin AiModel write also clears the per-model price cache
+ *  (inputPrice/outputPrice live on the same row). No publish here — the bus
+ *  subscriber is the one delivering cross-instance, so publishing again would
+ *  create a feedback loop. */
+export function clearAiModelCacheLocal(): void {
   chatConfigCache = null;
+  // AiModel is the data source for both the chat runtime and the billing
+  // price cache; an admin write to either field must invalidate both.
+  clearModelPriceCache();
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────

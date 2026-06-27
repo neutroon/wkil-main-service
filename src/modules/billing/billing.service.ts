@@ -11,31 +11,112 @@ import {
 import { getBillingMultiplier } from "@modules/settings/settings.service";
 import { AppError } from "@middlewares/errorHandler.middleware";
 
+// ── Admin-managed price resolver (DB-first, static-table fallback) ────────────
+// AiModel.inputPrice/outputPrice (USD per 1M tokens) are admin-editable and now
+// drive billing. When a model has no DB price, or the DB is unreachable, we fall
+// back to the static MODEL_PRICING table — so billing never breaks.
+type ModelRates = { prompt: number; completion: number };
+type PriceSource = "db" | "static" | "fallback";
+type CachedPrice = { rates: ModelRates; source: PriceSource; expiresAt: number };
+const PRICE_CACHE: Record<string, CachedPrice> = {};
+const PRICE_CACHE_TTL_MS = 5 * 60 * 1000;
+const FALLBACK_MODEL = "gemini-3-flash" as const;
+
+/** Clears the in-memory price cache. Called on AI model admin writes (via the
+ *  cache-bus) so a price edit takes effect within one TTL window. */
+export function clearModelPriceCache(): void {
+  clearModelPriceCacheLocal();
+  // Best-effort cross-instance invalidation. Lazy import to avoid load cycles.
+  void import("@config/cache-bus")
+    .then(({ publishCacheInvalidation }) =>
+      publishCacheInvalidation("model_prices"),
+    )
+    .catch(() => {});
+}
+
+/** Local-only invalidation. Used by the cache-bus subscriber (no publish —
+ *  the bus is the delivery mechanism, so re-publishing would loop). Also
+ *  called transitively from clearAiModelCacheLocal() so an admin price edit
+ *  on the AiModel page clears the price cache on every instance. */
+export function clearModelPriceCacheLocal(): void {
+  for (const k of Object.keys(PRICE_CACHE)) delete PRICE_CACHE[k];
+}
+
+async function resolveModelRates(
+  modelName: string,
+): Promise<{ rates: ModelRates; source: PriceSource }> {
+  const cached = PRICE_CACHE[modelName];
+  if (cached && cached.expiresAt > Date.now()) {
+    return { rates: cached.rates, source: cached.source };
+  }
+
+  let rates: ModelRates | null = null;
+  let source: PriceSource = "fallback";
+  try {
+    const row = await prisma.aiModel.findUnique({
+      where: { modelId: modelName },
+      select: { inputPrice: true, outputPrice: true },
+    });
+    if (row?.inputPrice != null && row?.outputPrice != null) {
+      // Decimal(12,6) → number. Both are USD per 1M tokens, matching the
+      // static table's units, so the / 1_000_000 divisor in calculateSystemCost
+      // stays valid.
+      rates = {
+        prompt: Number(row.inputPrice),
+        completion: Number(row.outputPrice),
+      };
+      source = "db";
+    }
+  } catch (error: any) {
+    logger.warn("billing.price_resolve_failed", {
+      modelName,
+      error: error?.message,
+    });
+  }
+
+  if (rates == null) {
+    rates = MODEL_PRICING[modelName] ?? MODEL_PRICING[FALLBACK_MODEL];
+    source = MODEL_PRICING[modelName] ? "static" : "fallback";
+  }
+
+  PRICE_CACHE[modelName] = {
+    rates,
+    source,
+    expiresAt: Date.now() + PRICE_CACHE_TTL_MS,
+  };
+  return { rates, source };
+}
+
 /**
  * Calculates YOUR cost to Google (system cost).
+ *
+ * Prices are resolved from the admin-managed AiModel registry first (DB), then
+ * the static MODEL_PRICING table, so a super_admin price edit takes effect live.
+ * Never throws — unknown models and DB failures degrade to the static fallback.
  */
-export function calculateSystemCost(params: {
+export async function calculateSystemCost(params: {
   modelName?: string;
   promptTokens?: number;
   completionTokens?: number;
   embeddingTokens?: number;
   groundingCalls?: number;
   isGroundingFree?: boolean; // New param for free tier logic
-}): number {
+}): Promise<number> {
   let cost = 0;
 
   // 1. Generation Cost (Model specific)
   if (params.modelName && (params.promptTokens || params.completionTokens)) {
-    const rates = MODEL_PRICING[params.modelName];
+    const { rates: activeRates, source } = await resolveModelRates(params.modelName);
 
-    if (!rates) {
+    // Only warn when we had to fall all the way back to the last-resort model.
+    // The source is captured during the same resolve call (no extra DB hit).
+    if (source === "fallback") {
       logger.warn("billing.calculate_cost.missing_model_rates", {
         modelName: params.modelName,
-        fallbackTo: "gemini-3-flash",
+        fallbackTo: FALLBACK_MODEL,
       });
     }
 
-    const activeRates = rates || MODEL_PRICING["gemini-3-flash"];
     cost += (params.promptTokens || 0) * (activeRates.prompt / 1_000_000);
     cost += (params.completionTokens || 0) * (activeRates.completion / 1_000_000);
   }
@@ -64,7 +145,7 @@ export async function calculateCustomerCost(params: {
   groundingCalls?: number;
   isGroundingFree?: boolean;
 }): Promise<{ systemCost: number; customerCost: number; multiplier: number }> {
-  const systemCost = calculateSystemCost(params);
+  const systemCost = await calculateSystemCost(params);
   const multiplier = await getBillingMultiplier();
 
   return {

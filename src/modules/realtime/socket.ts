@@ -481,20 +481,25 @@ export async function getRealtimeStats(): Promise<RealtimeStats> {
 
 /**
  * Utility to emit a message to a specific conversation room.
- * This will notify the visitor (web widget).
+ * Emits to BOTH the default namespace (dashboard/web) and the `/mobile`
+ * namespace, since rooms are per-namespace in Socket.IO v4 — a mobile
+ * client that joined `conversation:123` on `/mobile` is in a different
+ * room than a dashboard client that joined the same name on `/`.
  */
 export function emitToConversation(conversationId: number, event: string, data: any) {
   if (!io) return;
   io.to(`conversation:${conversationId}`).emit(event, data);
+  io.of("/mobile").to(`conversation:${conversationId}`).emit(event, data);
 }
 
 /**
  * Utility to emit a message to a specific business room.
- * This will notify the dashboard admin.
+ * Same dual-namespace emit as emitToConversation — see comment above.
  */
 export function emitToBusiness(businessProfileId: number, event: string, data: any) {
   if (!io) return;
   io.to(`business:${businessProfileId}`).emit(event, data);
+  io.of("/mobile").to(`business:${businessProfileId}`).emit(event, data);
 }
 
 

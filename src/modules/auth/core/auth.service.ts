@@ -253,6 +253,7 @@ export interface LoginUser {
   name: string;
   email: string | null;
   role: string;
+  avatar: string | null;
   isEmailVerified: boolean;
   isSocialUser: boolean;
   isBusinessProfileCreated: boolean;
@@ -280,6 +281,7 @@ export const verifyCredentials = async (
       email: true,
       role: true,
       password: true,
+      avatar: true,
       isEmailVerified: true,
       isSocialUser: true,
       isBusinessProfileCreated: true,
@@ -293,6 +295,7 @@ export const verifyCredentials = async (
     name: user.name,
     email: user.email,
     role: user.role,
+    avatar: user.avatar,
     isEmailVerified: user.isEmailVerified,
     isSocialUser: user.isSocialUser,
     isBusinessProfileCreated: user.isBusinessProfileCreated,
@@ -308,6 +311,7 @@ export const publicUserShape = (u: LoginUser) => ({
   email: u.email,
   name: u.name,
   role: u.role,
+  avatar: u.avatar ?? null,
   isEmailVerified: u.isEmailVerified,
   isSocialUser: u.isSocialUser,
   isBusinessProfileCreated: u.isBusinessProfileCreated,

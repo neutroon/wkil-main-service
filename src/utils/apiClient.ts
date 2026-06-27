@@ -2,6 +2,7 @@ import axios from "axios";
 import axiosRetry from "axios-retry";
 import { mapFacebookGraphError } from "@modules/meta/facebook/facebookGraphError";
 import { AppError } from "@middlewares/errorHandler.middleware";
+import { env } from "@config/env";
 import { logger } from "./logger";
 
 function requestUrl(config: any) {
@@ -23,8 +24,15 @@ function shouldSuppressMetaErrorLog(config: any) {
  * A highly resilient Axios client strictly for Facebook Graph API interactions.
  * Features automated transient error recovery, rate limit backoffs, and
  * transparent error normalization into standard AppErrors.
+ *
+ * The `baseURL` is set to the configured Graph API endpoint so callers can
+ * use relative paths like `/${id}/attachments` (see `metaMedia.service.ts`).
+ * Callers that already have a full URL (e.g. `${FB_API}/debug_token`) work
+ * the same way — axios handles both.
  */
-export const metaClient = axios.create();
+export const metaClient = axios.create({
+  baseURL: env.FB_API_URL,
+});
 
 // Configure Elite-Tier Exponential Backoff for Rate Limits & Transient Errors
 axiosRetry(metaClient, {

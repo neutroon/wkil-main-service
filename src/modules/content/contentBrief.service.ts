@@ -420,7 +420,7 @@ Return only JSON:
   ]
 }`;
 
-  const { text, usage } = await generateContent(prompt, "text/plain", true);
+  const { text, usage } = await generateContent(prompt, "text/plain", true, undefined, undefined, "content_brief");
   recordAiUsage({
     userId: params.profile.userId,
     businessProfileId: params.profile.id,
@@ -479,6 +479,9 @@ Return concise JSON:
         searchPrompt,
         "text/plain",
         true,
+        undefined,
+        undefined,
+        "content_brief",
       );
       recordAiUsage({
         userId: params.userId,
@@ -520,6 +523,9 @@ Return only JSON:
       summaryPrompt,
       "application/json",
       false,
+      undefined,
+      undefined,
+      "content_brief",
     );
     recordAiUsage({
       userId: params.userId,
@@ -836,6 +842,7 @@ export async function* generateContentAuditStream(input: ContentAuditInput) {
       false,
       undefined,
       0.25,
+      "content_brief",
     );
     recordAiUsage({
       userId: input.userId,

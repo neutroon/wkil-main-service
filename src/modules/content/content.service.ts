@@ -63,7 +63,7 @@ export const generatePostContent = async (
   const prompt = buildPostPrompt(request);
 
   // Generate content using Gemini with enhanced error handling
-  const { text: generatedText } = await generateContent(prompt);
+  const { text: generatedText } = await generateContent(prompt, undefined, undefined, undefined, undefined, "content");
 
   // Log usage via new service if you want to track it for individual posts
   // (Assuming you have businessProfileId available if logged in)

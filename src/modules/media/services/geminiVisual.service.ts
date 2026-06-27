@@ -76,7 +76,7 @@ ${isRefine ? "You are performing a high-end photo retouch and asset refinement."
 ${isRefine ? `7. The Evolution: The current asset is "${sourcePrompt}". Apply the surgical refinement: "${userPrompt}" while boosting total visual weight and luxury feel.` : `7. The Narrative: ${userPrompt}`}
 8. Formatting: Return ONLY the optimized, high-density prompt string. No conversational meta-talk.`;
 
-  const { text: enhancedPrompt } = await generateContent(artDirectorPrompt);
+  const { text: enhancedPrompt } = await generateContent(artDirectorPrompt, undefined, undefined, undefined, undefined, "image_gen");
   return (enhancedPrompt || userPrompt).trim();
 }
 

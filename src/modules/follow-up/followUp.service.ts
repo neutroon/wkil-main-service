@@ -161,7 +161,7 @@ async function generateFollowUpText(params: {
 }): Promise<string> {
   const prompt = buildFollowUpPrompt(params);
   const result = await Promise.race([
-    generateContent(prompt, "text/plain", false, undefined, 0.3),
+    generateContent(prompt, "text/plain", false, undefined, 0.3, "follow_up"),
     new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error("FOLLOW_UP_AI_TIMEOUT")), FOLLOW_UP_TIMEOUT_MS),
     ),

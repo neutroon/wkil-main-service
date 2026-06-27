@@ -29,21 +29,34 @@ import { socialWorker } from "@modules/content/social.worker";
 import { startBillingQueue, billingWorker } from "@modules/billing/billing.queue";
 import { logger } from "@utils/logger";
 import prisma from "@config/prisma";
+import { startCacheBusSubscriber, stopCacheBusSubscriber } from "@config/cache-bus";
 
 const { PORT } = env;
 
 const httpServer = createServer(app);
 initSocket(httpServer);
 
-const server = httpServer.listen(PORT, "0.0.0.0", async () => {
-  logger.info(`Server running on port ${PORT}`);
-  
-  // Start the background queue loop for delayed/scheduled jobs
-  startMetaQueue();
-  startBillingQueue();
-  // Daily WhatsApp media ID refresh (expires after 30 days)
-  startMediaRefreshJob();
-});
+// `server` is captured by the IIFE below and by gracefulShutdown. Declared
+// here so the shutdown handler can call server.close().
+let server: ReturnType<typeof httpServer.listen> | undefined;
+
+// Start the cross-instance cache-invalidation subscriber BEFORE accepting
+// traffic — otherwise the first admin write after boot would miss its peers.
+// Best-effort: if Redis is unreachable, the subscriber no-ops and caches
+// expire on their TTL. Chained off an async IIFE so the listener only opens
+// after SUBSCRIBE (tsconfig is CommonJS, so no top-level await).
+void (async () => {
+  await startCacheBusSubscriber();
+  server = httpServer.listen(PORT, "0.0.0.0", () => {
+    logger.info(`Server running on port ${PORT}`);
+
+    // Start the background queue loop for delayed/scheduled jobs
+    startMetaQueue();
+    startBillingQueue();
+    // Daily WhatsApp media ID refresh (expires after 30 days)
+    startMediaRefreshJob();
+  });
+})();
 
 // Graceful shutdown engine
 const gracefulShutdown = async (signal: string) => {
@@ -57,9 +70,11 @@ const gracefulShutdown = async (signal: string) => {
 
   try {
     // 2. Stop accepting new HTTP/Socket requests
-    server.close(() => {
-      logger.info("HTTP & Socket.io server closed.");
-    });
+    if (server) {
+      server.close(() => {
+        logger.info("HTTP & Socket.io server closed.");
+      });
+    }
 
     // 3. Gracefully close BullMQ Workers to prevent job corruption
     const workers = [expressWorker, productionWorker, socialWorker, billingWorker];
@@ -73,6 +88,10 @@ const gracefulShutdown = async (signal: string) => {
     // 4. Final Disconnect: Database
     await prisma.$disconnect();
     logger.info("Database connection closed cleanly.");
+
+    // 5. Stop the cross-instance cache-invalidation subscriber (closes the
+    //    dedicated Redis pub/sub connection so the process can exit cleanly).
+    await stopCacheBusSubscriber();
 
     clearTimeout(forceExitTimeout);
     logger.info("--- Graceful Shutdown Complete ---");

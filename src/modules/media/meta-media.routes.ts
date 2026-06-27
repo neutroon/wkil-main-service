@@ -62,20 +62,47 @@ mediaRoutes.get(
       resolveId = msg.externalId;
     }
 
-    const url = await getMetaMediaUrl(
-      resolveId,
-      accessToken,
-      conversation.channel as any,
-      (msg?.mediaMetadata as any)?.url,
-    );
+    let url: string;
+    try {
+      url = await getMetaMediaUrl(
+        resolveId,
+        accessToken,
+        conversation.channel as any,
+        (msg?.mediaMetadata as any)?.url,
+      );
+    } catch (err: any) {
+      throw new AppError(
+        `Failed to resolve media URL: ${err?.message || "unknown"}`,
+        502,
+      );
+    }
 
-    const response = await fetch(url, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    if (!response.ok)
-      throw new AppError(`Meta binary fetch failed: ${response.status}`, 502);
+    // Guard against malformed/empty URLs from the resolver (e.g.
+    // expired pre-signed Meta CDN URLs, or a missing attachment).
+    // Without this, `fetch("")` / `fetch(relative-path)` throws
+    // `TypeError: Invalid URL` and surfaces to the client as a
+    // confusing 502 instead of a clear 404.
+    if (!url || !/^https?:\/\//i.test(url)) {
+      throw new AppError("Media URL is missing or invalid", 404);
+    }
 
-    const contentType = response.headers.get("content-type");
+    let metaResponse: globalThis.Response;
+    try {
+      metaResponse = await fetch(url, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+    } catch (err: any) {
+      // Network/DNS/parse errors land here (e.g. "Invalid URL",
+      // getaddrinfo ENOTFOUND, TLS handshake failures).
+      throw new AppError(
+        `Media fetch failed: ${err?.message || "network error"}`,
+        502,
+      );
+    }
+    if (!metaResponse.ok)
+      throw new AppError(`Meta binary fetch failed: ${metaResponse.status}`, 502);
+
+    const contentType = metaResponse.headers.get("content-type");
     if (contentType) res.setHeader("Content-Type", contentType);
 
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -84,12 +111,12 @@ mediaRoutes.get(
     res.setHeader("Accept-Ranges", "bytes");
     res.setHeader("Cache-Control", "public, max-age=3600");
 
-    if (response.body) {
-      const readableStream = response.body as any;
+    if (metaResponse.body) {
+      const readableStream = metaResponse.body as any;
       if (typeof readableStream.pipe === "function") {
         readableStream.pipe(res);
       } else {
-        const reader = response.body.getReader();
+        const reader = metaResponse.body.getReader();
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;

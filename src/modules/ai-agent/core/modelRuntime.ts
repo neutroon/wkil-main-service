@@ -188,22 +188,27 @@ type ChatRuntimeContext = {
  * it degrades gracefully so a chat message is never blocked by a settings
  * outage.
  */
-async function resolveChatRuntimeConfig(): Promise<ChatRuntimeContext> {
+async function resolveChatRuntimeConfig(
+  pipeline: string = "chat",
+): Promise<ChatRuntimeContext> {
   try {
-    // Dynamic import avoids a circular dependency at module load:
-    // ai-model.service imports prisma/config, modelRuntime is imported widely.
-    const { getChatRuntimeConfig } = await import(
-      "@modules/admin/ai-model/ai-model.service"
+    // Resolve through the AiPipeline registry (single source of truth). The
+    // "chat" pipeline inherits the AiModel chat tiers; other pipelines (e.g.
+    // media_understanding) can be configured independently by a super_admin.
+    // Dynamic import avoids a circular dependency at module load.
+    const { getPipelineConfig } = await import(
+      "@modules/admin/ai-pipeline/ai-pipeline.service"
     );
-    const config = await getChatRuntimeConfig();
+    const config = await getPipelineConfig(pipeline as any);
     if (config.tiers.length > 0) {
       return {
         tiers: config.tiers,
-        defaultMaxOutputTokens: config.defaultMaxOutputTokens,
+        defaultMaxOutputTokens: config.maxOutputTokens,
       };
     }
   } catch (error: any) {
     logger.warn("ai.model_runtime.registry_resolve_failed", {
+      pipeline,
       error: error?.message,
     });
   }
@@ -227,8 +232,9 @@ async function executeWithModelFallback<T>(
   ) => Promise<T>,
   context: string,
   timeoutMs = MODEL_TIMEOUT_MS,
+  pipeline: string = "chat",
 ): Promise<{ result: T; model: string }> {
-  const ctx = await resolveChatRuntimeConfig();
+  const ctx = await resolveChatRuntimeConfig(pipeline);
   const modelTiers = ctx.tiers;
   let lastError: any;
 
@@ -439,40 +445,6 @@ export function addUsageToSessionStats(
   };
 }
 
-export async function invokeToolChoice(params: {
-  systemInstruction: string;
-  contents: AgentContent[];
-  tools: AgentToolDefinition[];
-  temperature?: number;
-  timeoutMs?: number;
-}): Promise<ToolChoiceResult> {
-  const messages = toLangChainMessages(
-    params.contents,
-    buildToolChoiceSystemInstruction(params.systemInstruction),
-  );
-
-  const { result: message, model } = await executeWithModelFallback<any>(
-    (currentModel, abortSignal, ctx) => {
-      const llm = createChatModel({
-        model: currentModel,
-        temperature: params.temperature ?? 0.4,
-        maxOutputTokens: ctx.defaultMaxOutputTokens ?? undefined,
-      }).bindTools(params.tools as any);
-      return llm.invoke(messages, { signal: abortSignal } as any);
-    },
-    "AgentGraph.callModel.toolChoice",
-    params.timeoutMs,
-  );
-
-  return {
-    toolCalls: readToolCalls(message),
-    rawText: contentToText(message.content),
-    usage: readUsage(message),
-    modelName: model,
-    finishReason: readFinishReason(message),
-  };
-}
-
 export async function invokeDecisionOrTool(params: {
   systemInstruction: string;
   contents: AgentContent[];
@@ -673,6 +645,7 @@ export async function invokeMediaUnderstanding(params: {
     },
     "AgentGraph.mediaUnderstanding",
     params.timeoutMs,
+    "media_understanding",
   );
 
   return {

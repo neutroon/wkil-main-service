@@ -480,26 +480,33 @@ export async function getRealtimeStats(): Promise<RealtimeStats> {
 }
 
 /**
- * Utility to emit a message to a specific conversation room.
- * Emits to BOTH the default namespace (dashboard/web) and the `/mobile`
- * namespace, since rooms are per-namespace in Socket.IO v4 — a mobile
- * client that joined `conversation:123` on `/mobile` is in a different
- * room than a dashboard client that joined the same name on `/`.
+ * Emit an event to every client in a given room, on BOTH the default
+ * namespace (dashboard/web) and the `/mobile` namespace. Rooms are
+ * per-namespace in Socket.IO v4 — a mobile client that joined
+ * `conversation:123` on `/mobile` is in a different room than a
+ * dashboard client that joined the same name on `/`. Both must
+ * receive the event.
  */
-export function emitToConversation(conversationId: number, event: string, data: any) {
+function emitToRoom(room: string, event: string, data: unknown): void {
   if (!io) return;
-  io.to(`conversation:${conversationId}`).emit(event, data);
-  io.of("/mobile").to(`conversation:${conversationId}`).emit(event, data);
+  io.to(room).emit(event, data);
+  io.of("/mobile").to(room).emit(event, data);
 }
 
 /**
- * Utility to emit a message to a specific business room.
- * Same dual-namespace emit as emitToConversation — see comment above.
+ * Emit a message to a specific conversation room. Convenience over
+ * `emitToRoom` for the common case.
  */
-export function emitToBusiness(businessProfileId: number, event: string, data: any) {
-  if (!io) return;
-  io.to(`business:${businessProfileId}`).emit(event, data);
-  io.of("/mobile").to(`business:${businessProfileId}`).emit(event, data);
+export function emitToConversation(conversationId: number, event: string, data: unknown) {
+  emitToRoom(`conversation:${conversationId}`, event, data);
+}
+
+/**
+ * Emit a message to a specific business room. Convenience over
+ * `emitToRoom` for the common case.
+ */
+export function emitToBusiness(businessProfileId: number, event: string, data: unknown) {
+  emitToRoom(`business:${businessProfileId}`, event, data);
 }
 
 

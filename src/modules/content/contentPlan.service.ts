@@ -203,6 +203,9 @@ Instructions:
       researchPrompt,
       "text/plain",
       true,
+      undefined,
+      undefined,
+      "content_plan",
     );
     for await (const chunk of result) {
       const chunkText = chunk.text || "";
@@ -298,6 +301,9 @@ Schema:
     strategyPrompt,
     "application/json",
     false,
+    undefined,
+    undefined,
+    "content_plan",
   );
 
   // Log strategic generation usage
@@ -438,6 +444,9 @@ Provide the research summary in plain text.`;
       researchPrompt,
       "text/plain",
       true,
+      undefined,
+      undefined,
+      "content_plan",
     );
 
     // Log research usage (heavy grounding)
@@ -513,6 +522,9 @@ Schema:
     strategyPrompt,
     "application/json",
     false,
+    undefined,
+    undefined,
+    "content_plan",
   );
 
   // Log strategy usage
@@ -720,6 +732,9 @@ ${schemaInstruct}
     prompt,
     "application/json",
     false,
+    undefined,
+    undefined,
+    "content_plan",
   );
 
   // Log post execution usage

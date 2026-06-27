@@ -50,6 +50,16 @@ import {
   deleteAiModelController,
   setDefaultChatModelController,
 } from "../ai-model/ai-model.controller";
+import {
+  listPipelinesController,
+  getPipelineController,
+  updatePipelineController,
+  getResolvedPipelinesController,
+} from "../ai-pipeline/ai-pipeline.controller";
+import {
+  updatePipelineSchema,
+  pipelineKeySchema,
+} from "../ai-pipeline/ai-pipeline.validation";
 import { 
   registerUserSchema, 
   updateUserSchema, 
@@ -126,6 +136,14 @@ adminRoutes.post("/ai-models", adminLimiter, requireSuperAdmin, validate(createA
 adminRoutes.put("/ai-models/:id", adminLimiter, requireSuperAdmin, validate(updateAiModelSchema), updateAiModelController);
 adminRoutes.delete("/ai-models/:id", adminLimiter, requireSuperAdmin, validate(aiModelIdParamSchema), deleteAiModelController);
 adminRoutes.patch("/ai-models/:id/default", adminLimiter, requireSuperAdmin, validate(aiModelIdParamSchema), setDefaultChatModelController);
+
+// AI Pipeline Registry management.
+// Read access (list/resolved/get) is available to admin + super_admin (requireAdmin, applied router-wide).
+// Mutations (update) are restricted to super_admin only. Pipelines are seeded, not created/deleted.
+adminRoutes.get("/ai-pipelines", adminLimiter, listPipelinesController);
+adminRoutes.get("/ai-pipelines/resolved", adminLimiter, getResolvedPipelinesController);
+adminRoutes.get("/ai-pipelines/:key", adminLimiter, validate(pipelineKeySchema), getPipelineController);
+adminRoutes.put("/ai-pipelines/:key", adminLimiter, requireSuperAdmin, validate(updatePipelineSchema), updatePipelineController);
 
 // Business Profile Billing Management
 adminRoutes.post("/billing/profiles/:id/reset", adminLimiter, validate(adminBusinessIdParamSchema), resetBusinessUsage);

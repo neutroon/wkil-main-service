@@ -43,8 +43,8 @@ export function buildTruthfulnessPolicyForVoice(
 
 export function buildNotIngestedReply(voice: string): string {
   if (resolveFallbackLocale(voice) === "ar-EG") {
-    return "لسه بنجهز المساعد لهذا الملف. هحوّلك لفريقنا عشان يساعدك في الوقت الحالي.";
+    return "لسه بنجهز قاعدة معرفة البزنس. هحوّلك لفريقنا عشان يساعدك في الوقت الحالي.";
   }
 
-  return "We’re still setting up this assistant. I’ll connect you with the team so they can help for now.";
+  return "We're still setting up the business knowledge base. I'll connect you with the team so they can help for now.";
 }

@@ -41,7 +41,7 @@ async function discoverStrategicLinks(
   `;
 
   try {
-    const { text: result, usage } = await generateContent(prompt, "application/json");
+    const { text: result, usage } = await generateContent(prompt, "application/json", undefined, undefined, undefined, "business_analysis");
 
     if (!result) {
       logger.warn("ai.discoverStrategicLinks.empty_result", { baseUrl });
@@ -119,7 +119,7 @@ async function extractBusinessIdentity(
   `;
 
   try {
-    const { text: result, usage } = await generateContent(prompt, "application/json");
+    const { text: result, usage } = await generateContent(prompt, "application/json", undefined, undefined, undefined, "business_analysis");
 
     if (!result) {
       logger.error("ai.extractBusinessIdentity.empty_result");

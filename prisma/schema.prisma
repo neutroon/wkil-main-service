@@ -781,6 +781,37 @@ model AiModel {
   @@index([isActive, category])
 }
 
+/// Per-pipeline AI configuration override. A pipeline = one AI surface
+/// (chat, follow_up, content, image_gen, embeddings, ...).
+///
+/// When `inheritsChatDefault = true` the pipeline resolves to the chat
+/// pipeline's model selection (the "use the same model as chat" option) and
+/// ignores its own `modelIds`. When false, it uses its own `modelIds` tier
+/// list — letting admins run a cheaper model on high-volume surfaces like
+/// follow-ups while keeping a smarter model for live chat.
+///
+/// `modelClass` gates which AiModel categories are selectable for this
+/// pipeline ("text" -> chat/multimodal, "embedding" -> embedding,
+/// "image" -> image) so e.g. an embedding pipeline can't be pointed at a
+/// chat model (which would break the 768-dim pgvector index).
+model AiPipeline {
+  id                  Int      @id @default(autoincrement())
+  key                 String   @unique // "chat" | "follow_up" | "content" | ...
+  displayName         String // "Chat Agent"
+  description         String? // Short explanation shown in the admin UI
+  modelClass          String   @default("text") // "text" | "embedding" | "image"
+  modelIds            String[] @default([]) // Ordered model tier list (default first)
+  temperature         Float? // null = use caller's runtime default
+  maxOutputTokens     Int? // null = use caller's runtime default
+  timeoutMs           Int? // null = use caller's runtime default (bounded by chat deadline)
+  inheritsChatDefault Boolean  @default(false) // true = follow chat model selection
+  isActive            Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([modelClass])
+}
+
 model ContentAudit {
   id                         Int      @id @default(autoincrement())
   businessProfileId          Int

@@ -5,14 +5,12 @@ const {
   buildImmediateSystemRecoveryDecisionMock,
   invokeDecisionMock,
   invokeDecisionOrToolMock,
-  invokeToolChoiceMock,
   repairStructuredDecisionOutputMock,
 } = vi.hoisted(() => ({
   buildAiRecoveryDecisionMock: vi.fn(),
   buildImmediateSystemRecoveryDecisionMock: vi.fn(),
   invokeDecisionMock: vi.fn(),
   invokeDecisionOrToolMock: vi.fn(),
-  invokeToolChoiceMock: vi.fn(),
   repairStructuredDecisionOutputMock: vi.fn(),
 }));
 
@@ -40,7 +38,6 @@ vi.mock("../core/modelRuntime", () => ({
   })),
   invokeDecision: invokeDecisionMock,
   invokeDecisionOrTool: invokeDecisionOrToolMock,
-  invokeToolChoice: invokeToolChoiceMock,
   isModelStructuredOutputError: vi.fn(() => false),
   isRetryableProviderError: vi.fn(() => false),
 }));

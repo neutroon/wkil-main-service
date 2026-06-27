@@ -160,6 +160,7 @@ async function extractCustomerMemoryWithAi(
       false,
       undefined,
       0,
+      "memory_capture",
     );
     return parseExtractionResult(text);
   } catch (error: any) {

@@ -60,6 +60,39 @@ const MODELS = {
 };
 
 /**
+ * Final hardcoded fallback for the text-generation runtime. Used only when the
+ * admin-managed AiPipeline registry, the AiModel registry, AND the env fallback
+ * tiers are all empty or unreachable. Kept in sync with FALLBACK_CHAT_TIERS in
+ * ai-model.service.ts and the seed (prisma/seed-ai-models.ts).
+ */
+const HARDCODED_TEXT_TIERS = [MODELS.PRIMARY, MODELS.RESERVE, MODELS.STABLE];
+
+/**
+ * Resolves the model tiers for a given pipeline from the admin-managed
+ * AiPipeline registry (cached, never throws). Each AI surface passes its own
+ * `pipeline` key so the admin can configure them independently — or set
+ * `inheritsChatDefault` to make a surface follow the chat model selection.
+ * Defaults to the "chat" pipeline when called without a key.
+ */
+async function resolveTextTiers(
+  pipeline: string = "chat",
+): Promise<string[]> {
+  try {
+    const { getPipelineConfig } = await import(
+      "@modules/admin/ai-pipeline/ai-pipeline.service"
+    );
+    const config = await getPipelineConfig(pipeline as any);
+    if (config.tiers.length > 0) return config.tiers;
+  } catch (error: any) {
+    logger.warn("gemini.text_tiers.registry_resolve_failed", {
+      pipeline,
+      error: error?.message,
+    });
+  }
+  return HARDCODED_TEXT_TIERS;
+}
+
+/**
  * Robust execution wrapper with exponential backoff and model failover.
  */
 function parseGeminiErrorMessage(error: any): string {
@@ -159,8 +192,15 @@ export async function executeWithFallback<T>(
   customTiers?: string[],
   abortSignal?: AbortSignal,
   timeoutMs?: number,
+  pipeline?: string,
 ): Promise<{ result: T; model: string }> {
-  const tiers = customTiers || [MODELS.PRIMARY, MODELS.RESERVE, MODELS.STABLE];
+  // When the caller pins specific models (embeddings, image generation) we use
+  // them verbatim. Otherwise resolve from the admin-managed AiPipeline registry
+  // so every surface (follow-ups, content, analysis, ...) honours the
+  // super_admin-configured model for its own pipeline — or inherits chat when
+  // `inheritsChatDefault` is set. The resolver is cached and never throws, so
+  // the non-pinned path stays resilient even if the registry/DB is unreachable.
+  const tiers = customTiers ?? (await resolveTextTiers(pipeline));
   const deadlineAt = timeoutMs ? Date.now() + timeoutMs : undefined;
   let lastError: any;
 
@@ -266,6 +306,7 @@ async function generateContentStream(
   enableSearch?: boolean,
   onRetry?: (msg: string) => void,
   temperature: number = 0.4,
+  pipeline?: string,
 ) {
   const config = buildRequestConfig({
     temperature,
@@ -283,6 +324,10 @@ async function generateContentStream(
     },
     "StrategyStream",
     onRetry,
+    undefined,
+    undefined,
+    undefined,
+    pipeline,
   );
 }
 
@@ -292,6 +337,7 @@ async function generateContent(
   enableSearch?: boolean,
   onRetry?: (msg: string) => void,
   temperature: number = 0.4,
+  pipeline?: string,
 ): Promise<{ text: string; usage: AiUsageMetadata }> {
   const config = buildRequestConfig({
     temperature,
@@ -309,6 +355,10 @@ async function generateContent(
     },
     "StrategyPlanning",
     onRetry,
+    undefined,
+    undefined,
+    undefined,
+    pipeline,
   );
 
   const usage = response.usageMetadata;
@@ -347,6 +397,9 @@ async function embedTexts(
       "EmbedTexts",
       undefined,
       ["gemini-embedding-001"],
+      undefined,
+      undefined,
+      "embeddings",
     );
 
     return {
@@ -391,6 +444,7 @@ async function embedQuery(
     ["gemini-embedding-001"],
     undefined,
     options.timeoutMs,
+    "embeddings",
   );
 
   return {
@@ -407,6 +461,7 @@ export async function generateVisualContent(params: {
   brandLogoMimeType?: string;
   onRetry?: (msg: string) => void;
   aspectRatio?: string;
+  pipeline?: string;
 }): Promise<{ imageBuffer: Buffer; usage: AiUsageMetadata }> {
   const parts: GeminiPart[] = [{ text: params.prompt }];
 
@@ -428,6 +483,22 @@ export async function generateVisualContent(params: {
     });
   }
 
+  // Resolve image tiers from the "image_gen" pipeline (admin-configurable);
+  // fall back to the fixed image-capable pair if the registry is unavailable.
+  let imageTiers: string[];
+  try {
+    const { getPipelineConfig } = await import(
+      "@modules/admin/ai-pipeline/ai-pipeline.service"
+    );
+    const config = await getPipelineConfig(
+      (params.pipeline as any) ?? "image_gen",
+    );
+    imageTiers = config.tiers.length > 0 ? config.tiers : [MODELS.IMAGE_GEN, MODELS.PRIMARY];
+  } catch (error: any) {
+    logger.warn("gemini.image_tiers.resolve_failed", { error: error?.message });
+    imageTiers = [MODELS.IMAGE_GEN, MODELS.PRIMARY];
+  }
+
   const { result: response, model } = await executeWithFallback(
     async (model) => {
       return await genAI.models.generateContent({
@@ -441,7 +512,7 @@ export async function generateVisualContent(params: {
     },
     "VisualGeneration",
     params.onRetry,
-    [MODELS.IMAGE_GEN, MODELS.PRIMARY],
+    imageTiers,
   );
 
   const usage = response.usageMetadata;

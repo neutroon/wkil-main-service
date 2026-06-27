@@ -12,14 +12,13 @@ export type CustomerStatus = (typeof CUSTOMER_STATUSES)[number];
 
 // Special token values used only on the list endpoint's `status`
 // query param. They map to computed filters (not stored values).
-export const CUSTOMER_STATUS_FILTERS = [
+const CUSTOMER_STATUS_FILTERS = [
   ...CUSTOMER_STATUSES,
   "captured", // computed: customer has any capturedFields
   "handoff", // computed: last message has handoffCategory
   "needs-follow-up", // computed: stored status === NEEDS_FOLLOW_UP
   "all", // sentinel: no status filter
 ] as const;
-export type CustomerStatusFilter = (typeof CUSTOMER_STATUS_FILTERS)[number];
 
 export const listCustomersSchema = z.object({
   query: z.object({

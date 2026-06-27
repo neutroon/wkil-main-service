@@ -345,7 +345,9 @@ model Customer {
   externalIds        Json?
   capturedFields     Json?
   metadata           Json?
-  status             String          @default("ACTIVE")
+  status             String          @default("ACTIVE") // ACTIVE | NEEDS_FOLLOW_UP | RESOLVED | ARCHIVED
+  resolvedAt         DateTime?
+  resolvedByUserId   Int?
   notes              String?         @db.Text
   lastInteractionAt  DateTime        @default(now())
   createdAt          DateTime        @default(now())
@@ -358,6 +360,7 @@ model Customer {
   @@unique([businessProfileId, normalizedEmail])
   @@index([businessProfileId, lastInteractionAt])
   @@index([businessProfileId, status])
+  @@index([businessProfileId, resolvedAt])
 }
 
 model CustomerExternalIdentity {

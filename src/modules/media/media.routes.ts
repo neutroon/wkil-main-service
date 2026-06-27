@@ -28,10 +28,11 @@ import { AppError } from "@middlewares/errorHandler.middleware";
 
 const router = Router();
 
-// Use memory storage — we stream directly to R2, no local disk needed
+// Use memory storage — we stream directly to R2, no local disk needed.
+// 16MB cap matches Meta's WhatsApp Cloud API audio upload limit.
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 25 * 1024 * 1024 }, // 25MB
+  limits: { fileSize: 16 * 1024 * 1024 }, // 16MB
   fileFilter: (req, file, cb) => {
     const allowed = [
       "image/jpeg",
@@ -45,6 +46,13 @@ const upload = multer({
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       "video/mp4",
       "video/quicktime",
+      "audio/mpeg",
+      "audio/mp4",
+      "audio/x-m4a",
+      "audio/ogg",
+      "audio/wav",
+      "audio/aac",
+      "audio/webm",
     ];
     if (!allowed.includes(file.mimetype)) {
       return cb(new Error(`Unsupported file type: ${file.mimetype}`));

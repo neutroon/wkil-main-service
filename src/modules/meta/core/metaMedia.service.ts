@@ -43,6 +43,9 @@ export async function getMetaMediaUrl(
           } else if (att?.video_data?.url) {
             url = att.video_data.url;
             pathUsed = "video_data";
+          } else if (att?.audio_data?.url) {
+            url = att.audio_data.url;
+            pathUsed = "audio_data";
           } else if (att?.payload?.url) {
             url = att.payload.url;
             pathUsed = "payload";

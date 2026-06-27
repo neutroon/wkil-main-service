@@ -13,7 +13,10 @@ import { syncMediaStatus } from "@modules/realtime/socketSync.service";
 import { AppError } from "@middlewares/errorHandler.middleware";
 
 // Allowed MIME types and their media type classifications
-const MIME_TO_MEDIA_TYPE: Record<string, "image" | "document" | "video"> = {
+const MIME_TO_MEDIA_TYPE: Record<
+  string,
+  "image" | "document" | "video" | "audio"
+> = {
   "image/jpeg": "image",
   "image/png": "image",
   "image/gif": "image",
@@ -30,9 +33,17 @@ const MIME_TO_MEDIA_TYPE: Record<string, "image" | "document" | "video"> = {
     "document",
   "video/mp4": "video",
   "video/quicktime": "video",
+  "audio/mpeg": "audio",
+  "audio/mp4": "audio",
+  "audio/x-m4a": "audio",
+  "audio/ogg": "audio",
+  "audio/wav": "audio",
+  "audio/aac": "audio",
+  "audio/webm": "audio",
 };
 
-const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
+// 16MB aligns with Meta's WhatsApp Cloud API audio upload limit.
+const MAX_FILE_SIZE = 16 * 1024 * 1024;
 export type MediaUsageScope = "CHAT_ATTACHMENT" | "CONTENT_ASSET";
 
 /**
@@ -73,7 +84,7 @@ export async function createMediaAsset(params: {
   // 3. Validate file size
   if (fileBuffer.length > MAX_FILE_SIZE) {
     throw new AppError(
-      `File exceeds maximum size of 25MB (received ${Math.round(fileBuffer.length / 1024 / 1024)}MB)`,
+      `File exceeds maximum size of 16MB (received ${Math.round(fileBuffer.length / 1024 / 1024)}MB)`,
       400
     );
   }

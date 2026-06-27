@@ -1,9 +1,10 @@
 import prisma, { Prisma } from "@config/prisma";
 import { AppError } from "@middlewares/errorHandler.middleware";
 import { getAccessibleProfileIds } from "@modules/auth/user/user.service";
+import { type CustomerStatus } from "./customer.validation";
 
-const DEFAULT_STATUS = "ACTIVE";
-const FOLLOW_UP_STATUS = "NEEDS_FOLLOW_UP";
+const DEFAULT_STATUS: CustomerStatus = "ACTIVE";
+const FOLLOW_UP_STATUS: CustomerStatus = "NEEDS_FOLLOW_UP";
 
 const customerMemorySelect = {
   id: true,
@@ -55,6 +56,13 @@ function isPhoneLikeFieldKey(key: string) {
     /\b(phone|mobile|whatsapp|telephone|tel|cell)\b/.test(spacedKey) ||
     /هاتف|موبايل|جوال|واتساب|تليفون/.test(key)
   );
+}
+
+function buildStatusFields(status: CustomerStatus, userId: number) {
+  if (status === "RESOLVED") {
+    return { resolvedAt: new Date(), resolvedByUserId: userId };
+  }
+  return { resolvedAt: null, resolvedByUserId: null };
 }
 
 function extractPhoneFromDetails(details: Record<string, unknown>) {
@@ -580,7 +588,7 @@ export async function updateCustomerForUser(
     displayName?: string;
     phone?: string | null;
     email?: string | null;
-    status?: string;
+    status?: CustomerStatus;
     notes?: string | null;
     capturedFieldUpdates?: Record<string, string | number | boolean | null>;
   },
@@ -598,6 +606,10 @@ export async function updateCustomerForUser(
     existing.capturedFields,
     data.capturedFieldUpdates,
   );
+  const statusFields =
+    data.status !== undefined
+      ? buildStatusFields(data.status, userId)
+      : {};
   const updated = await prisma.customer.update({
     where: { id: existing.id },
     data: {
@@ -609,9 +621,118 @@ export async function updateCustomerForUser(
       status: data.status,
       notes: data.notes,
       capturedFields,
+      ...statusFields,
     },
   });
   return getCustomerForUser(userId, updated.id);
+}
+
+/**
+ * Transition a customer to a new status, writing the RESOLVED audit
+ * fields when relevant, and bulk-syncing the linked conversations so
+ * the customers page and the inbox stay coherent in both directions.
+ *
+ *   customer → RESOLVED   →  every OPEN conversation becomes RESOLVED
+ *   customer → ACTIVE     →  every RESOLVED conversation becomes OPEN
+ *   customer → NEEDS_FOLLOW_UP / ARCHIVED  →  no conversation change
+ *
+ * Used by `updateCustomerForUser` (the customers page PATCH) and by
+ * the conversation-resolve hook (the inbox action). ARCHIVED is
+ * preserved on both sides — only the OPEN ↔ RESOLVED pair is
+ * auto-synced.
+ */
+export async function setCustomerStatus(
+  userId: number,
+  customerId: number,
+  status: CustomerStatus,
+) {
+  const existing = await getCustomerForUser(userId, customerId);
+  if (existing.status === status) {
+    return existing;
+  }
+  await prisma.customer.update({
+    where: { id: existing.id },
+    data: {
+      status,
+      ...buildStatusFields(status, userId),
+    },
+  });
+  await syncConversationsToCustomerStatus(existing.id, status);
+  return getCustomerForUser(userId, existing.id);
+}
+
+/**
+ * Bulk-move the customer's conversations to match a new customer
+ * status. Only `RESOLVED` and `ACTIVE` are propagated to conversations;
+ * manual states (`NEEDS_FOLLOW_UP`, `ARCHIVED`) don't touch the
+ * inbox. ARCHIVED conversations are always left alone.
+ */
+async function syncConversationsToCustomerStatus(
+  customerId: number,
+  status: CustomerStatus,
+) {
+  if (status === "RESOLVED") {
+    await prisma.conversation.updateMany({
+      where: { customerId, status: { not: "ARCHIVED" } },
+      data: { status: "RESOLVED" },
+    });
+    return;
+  }
+  if (status === "ACTIVE") {
+    await prisma.conversation.updateMany({
+      where: { customerId, status: "RESOLVED" },
+      data: { status: "OPEN" },
+    });
+    return;
+  }
+  // NEEDS_FOLLOW_UP, ARCHIVED — no conversation sync.
+}
+
+/**
+ * Keep the customer's status in sync with the aggregate state of its
+ * conversations. Runs on every conversation status change so the
+ * customer and the conversations are always in sync:
+ *
+ *   - All conversations RESOLVED  →  customer = RESOLVED
+ *   - Any conversation OPEN        →  customer = ACTIVE
+ *
+ * The aggregate is binary; the customer is either "all done" or
+ * "has at least one open conversation". Manual states set on the
+ * customers page (`NEEDS_FOLLOW_UP`, `ARCHIVED`) are preserved — this
+ * hook only transitions between `RESOLVED` and `ACTIVE`, so a sales
+ * rep's manual status isn't silently overwritten by a single
+ * conversation change.
+ *
+ * Gated by `CUSTOMER_STATUS_AUTO_FROM_CONVERSATIONS` so we can roll
+ * back without redeploying.
+ */
+export async function reconcileCustomerStatusFromConversations(
+  userId: number,
+  customerId: number,
+) {
+  if (process.env.CUSTOMER_STATUS_AUTO_FROM_CONVERSATIONS === "false") {
+    return null;
+  }
+  const detail = await getCustomerForUser(userId, customerId);
+  const conversations = detail.conversations;
+  if (conversations.length === 0) {
+    return null;
+  }
+
+  const allResolved = conversations.every(
+    (c: { status: string }) => c.status === "RESOLVED",
+  );
+  const desired: CustomerStatus = allResolved ? "RESOLVED" : "ACTIVE";
+
+  // Manual states (NEEDS_FOLLOW_UP, ARCHIVED) win over the
+  // aggregate. Only auto-flip between the two aggregate states.
+  if (detail.status !== "RESOLVED" && detail.status !== "ACTIVE") {
+    return null;
+  }
+  if (detail.status === desired) {
+    return null;
+  }
+  return setCustomerStatus(userId, detail.id, desired);
 }
 
 export async function listCustomerConversations(userId: number, customerId: number) {
@@ -657,6 +778,7 @@ function serializeCustomerSummary(customer: any) {
     avatarUrl: customer.avatarUrl,
     primaryChannel: customer.primaryChannel,
     status: customer.status,
+    resolvedAt: customer.resolvedAt,
     notes: customer.notes,
     capturedFields: customer.capturedFields || {},
     externalIdentities: customer.externalIdentities || [],

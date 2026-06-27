@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getCustomerForUser,
   listCustomers,
+  reconcileCustomerStatusFromConversations,
+  setCustomerStatus,
   updateCustomerForUser,
   updateCustomerFromSavedDetails,
   upsertCustomerFromConversation,
@@ -20,6 +22,7 @@ vi.mock("@config/prisma", () => ({
       count: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
       findUnique: vi.fn(),
       findMany: vi.fn(),
       findFirst: vi.fn(),
@@ -27,7 +30,12 @@ vi.mock("@config/prisma", () => ({
     },
     conversation: {
       findFirst: vi.fn(),
+      findMany: vi.fn(),
+      update: vi.fn(),
       updateMany: vi.fn(),
+    },
+    businessProfile: {
+      findUnique: vi.fn(),
     },
     $transaction: vi.fn(),
   },
@@ -519,5 +527,505 @@ describe("customer service", () => {
         capturedFields: null,
       }),
     });
+  });
+
+  it("writes resolvedAt when the customer is moved to RESOLVED", async () => {
+    const baseCustomer = {
+      id: 40,
+      businessProfileId: 1,
+      displayName: "Layla",
+      phone: null,
+      email: null,
+      avatarUrl: null,
+      primaryChannel: "web",
+      status: "ACTIVE",
+      resolvedAt: null,
+      notes: null,
+      capturedFields: {},
+      externalIdentities: [],
+      lastInteractionAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      businessProfile: {
+        id: 1,
+        name: "Wkil",
+        customerMemoryFields: [],
+      },
+      conversations: [],
+      _count: { conversations: 0 },
+    };
+    mockedPrisma.customer.findFirst
+      .mockResolvedValueOnce(baseCustomer as never)
+      .mockResolvedValueOnce({
+        ...baseCustomer,
+        status: "RESOLVED",
+        resolvedAt: new Date("2026-06-27T12:00:00Z"),
+      } as never);
+    mockedPrisma.customer.update.mockResolvedValue({
+      ...baseCustomer,
+      status: "RESOLVED",
+      resolvedAt: new Date("2026-06-27T12:00:00Z"),
+    } as never);
+
+    await updateCustomerForUser(5, 40, { status: "RESOLVED" });
+
+    expect(mockedPrisma.customer.update).toHaveBeenCalledWith({
+      where: { id: 40 },
+      data: expect.objectContaining({
+        status: "RESOLVED",
+        resolvedAt: expect.any(Date),
+        resolvedByUserId: 5,
+      }),
+    });
+  });
+
+  it("clears resolvedAt when the customer leaves RESOLVED", async () => {
+    const baseCustomer = {
+      id: 41,
+      businessProfileId: 1,
+      displayName: "Layla",
+      phone: null,
+      email: null,
+      avatarUrl: null,
+      primaryChannel: "web",
+      status: "RESOLVED",
+      resolvedAt: new Date("2026-06-27T12:00:00Z"),
+      notes: null,
+      capturedFields: {},
+      externalIdentities: [],
+      lastInteractionAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      businessProfile: {
+        id: 1,
+        name: "Wkil",
+        customerMemoryFields: [],
+      },
+      conversations: [],
+      _count: { conversations: 0 },
+    };
+    mockedPrisma.customer.findFirst
+      .mockResolvedValueOnce(baseCustomer as never)
+      .mockResolvedValueOnce({
+        ...baseCustomer,
+        status: "ACTIVE",
+        resolvedAt: null,
+      } as never);
+    mockedPrisma.customer.update.mockResolvedValue({
+      ...baseCustomer,
+      status: "ACTIVE",
+      resolvedAt: null,
+    } as never);
+
+    await updateCustomerForUser(5, 41, { status: "ACTIVE" });
+
+    expect(mockedPrisma.customer.update).toHaveBeenCalledWith({
+      where: { id: 41 },
+      data: expect.objectContaining({
+        status: "ACTIVE",
+        resolvedAt: null,
+        resolvedByUserId: null,
+      }),
+    });
+  });
+
+  it("reconciles a customer to RESOLVED when every conversation is RESOLVED", async () => {
+    const baseCustomer = {
+      id: 50,
+      businessProfileId: 1,
+      displayName: "Hala",
+      phone: null,
+      email: null,
+      avatarUrl: null,
+      primaryChannel: "web",
+      status: "ACTIVE",
+      resolvedAt: null,
+      notes: null,
+      capturedFields: {},
+      externalIdentities: [],
+      lastInteractionAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      businessProfile: {
+        id: 1,
+        name: "Wkil",
+        customerMemoryFields: [],
+      },
+      conversations: [
+        { id: 10, status: "RESOLVED" },
+        { id: 11, status: "RESOLVED" },
+      ],
+      _count: { conversations: 2 },
+    };
+    const updatedCustomer = {
+      ...baseCustomer,
+      status: "RESOLVED",
+      resolvedAt: new Date(),
+    };
+    mockedPrisma.customer.findFirst
+      .mockResolvedValueOnce(baseCustomer as never) // reconcile -> getCustomerForUser
+      .mockResolvedValueOnce(baseCustomer as never) // setCustomerStatus -> getCustomerForUser (check current)
+      .mockResolvedValueOnce(updatedCustomer as never); // setCustomerStatus -> getCustomerForUser (re-fetch after update)
+    mockedPrisma.customer.update.mockResolvedValue({} as never);
+
+    const result = await reconcileCustomerStatusFromConversations(5, 50);
+
+    expect(mockedPrisma.customer.update).toHaveBeenCalledWith({
+      where: { id: 50 },
+      data: expect.objectContaining({
+        status: "RESOLVED",
+        resolvedAt: expect.any(Date),
+        resolvedByUserId: 5,
+      }),
+    });
+    expect(result).not.toBeNull();
+  });
+
+  it("reconciles a RESOLVED customer back to ACTIVE when a conversation reopens", async () => {
+    const baseCustomer = {
+      id: 51,
+      businessProfileId: 1,
+      displayName: "Hala",
+      phone: null,
+      email: null,
+      avatarUrl: null,
+      primaryChannel: "web",
+      status: "RESOLVED",
+      resolvedAt: new Date(),
+      notes: null,
+      capturedFields: {},
+      externalIdentities: [],
+      lastInteractionAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      businessProfile: {
+        id: 1,
+        name: "Wkil",
+        customerMemoryFields: [],
+      },
+      conversations: [
+        { id: 10, status: "RESOLVED" },
+        { id: 11, status: "OPEN" },
+      ],
+      _count: { conversations: 2 },
+    };
+    const updatedCustomer = {
+      ...baseCustomer,
+      status: "ACTIVE",
+      resolvedAt: null,
+    };
+    mockedPrisma.customer.findFirst
+      .mockResolvedValueOnce(baseCustomer as never) // reconcile -> getCustomerForUser
+      .mockResolvedValueOnce(baseCustomer as never) // setCustomerStatus -> getCustomerForUser (check current)
+      .mockResolvedValueOnce(updatedCustomer as never); // setCustomerStatus -> getCustomerForUser (re-fetch after update)
+    mockedPrisma.customer.update.mockResolvedValue({} as never);
+
+    await reconcileCustomerStatusFromConversations(5, 51);
+
+    expect(mockedPrisma.customer.update).toHaveBeenCalledWith({
+      where: { id: 51 },
+      data: expect.objectContaining({
+        status: "ACTIVE",
+        resolvedAt: null,
+        resolvedByUserId: null,
+      }),
+    });
+  });
+
+  it("does not reconcile when the feature flag is off", async () => {
+    const original = process.env.CUSTOMER_STATUS_AUTO_FROM_CONVERSATIONS;
+    process.env.CUSTOMER_STATUS_AUTO_FROM_CONVERSATIONS = "false";
+    try {
+      const result = await reconcileCustomerStatusFromConversations(5, 99);
+      expect(result).toBeNull();
+      expect(mockedPrisma.customer.findFirst).not.toHaveBeenCalled();
+    } finally {
+      if (original === undefined) {
+        delete process.env.CUSTOMER_STATUS_AUTO_FROM_CONVERSATIONS;
+      } else {
+        process.env.CUSTOMER_STATUS_AUTO_FROM_CONVERSATIONS = original;
+      }
+    }
+  });
+
+  it("keeps the customer ACTIVE when some conversations are still open", async () => {
+    const baseCustomer = {
+      id: 52,
+      businessProfileId: 1,
+      displayName: "Hala",
+      phone: null,
+      email: null,
+      avatarUrl: null,
+      primaryChannel: "web",
+      status: "ACTIVE",
+      resolvedAt: null,
+      notes: null,
+      capturedFields: {},
+      externalIdentities: [],
+      lastInteractionAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      businessProfile: {
+        id: 1,
+        name: "Wkil",
+        customerMemoryFields: [],
+      },
+      conversations: [
+        { id: 10, status: "RESOLVED" },
+        { id: 11, status: "OPEN" },
+      ],
+      _count: { conversations: 2 },
+    };
+    mockedPrisma.customer.findFirst.mockResolvedValue(baseCustomer as never);
+
+    const result = await reconcileCustomerStatusFromConversations(5, 52);
+
+    // Aggregate is ACTIVE (one open conversation) and the customer is
+    // already ACTIVE — no change.
+    expect(result).toBeNull();
+    expect(mockedPrisma.customer.update).not.toHaveBeenCalled();
+  });
+
+  it("preserves a manual NEEDS_FOLLOW_UP even when all conversations are RESOLVED", async () => {
+    const baseCustomer = {
+      id: 54,
+      businessProfileId: 1,
+      displayName: "Hala",
+      phone: null,
+      email: null,
+      avatarUrl: null,
+      primaryChannel: "web",
+      status: "NEEDS_FOLLOW_UP",
+      resolvedAt: null,
+      notes: null,
+      capturedFields: {},
+      externalIdentities: [],
+      lastInteractionAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      businessProfile: {
+        id: 1,
+        name: "Wkil",
+        customerMemoryFields: [],
+      },
+      conversations: [
+        { id: 10, status: "RESOLVED" },
+        { id: 11, status: "RESOLVED" },
+      ],
+      _count: { conversations: 2 },
+    };
+    mockedPrisma.customer.findFirst.mockResolvedValue(baseCustomer as never);
+
+    const result = await reconcileCustomerStatusFromConversations(5, 54);
+
+    // Aggregate would be RESOLVED, but the customer was manually set
+    // to NEEDS_FOLLOW_UP — manual state wins.
+    expect(result).toBeNull();
+    expect(mockedPrisma.customer.update).not.toHaveBeenCalled();
+  });
+
+  it("preserves a manual ARCHIVED even when a conversation reopens", async () => {
+    const baseCustomer = {
+      id: 55,
+      businessProfileId: 1,
+      displayName: "Hala",
+      phone: null,
+      email: null,
+      avatarUrl: null,
+      primaryChannel: "web",
+      status: "ARCHIVED",
+      resolvedAt: null,
+      notes: null,
+      capturedFields: {},
+      externalIdentities: [],
+      lastInteractionAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      businessProfile: {
+        id: 1,
+        name: "Wkil",
+        customerMemoryFields: [],
+      },
+      conversations: [{ id: 10, status: "OPEN" }],
+      _count: { conversations: 1 },
+    };
+    mockedPrisma.customer.findFirst.mockResolvedValue(baseCustomer as never);
+
+    const result = await reconcileCustomerStatusFromConversations(5, 55);
+
+    // Aggregate would be ACTIVE, but the customer is ARCHIVED — manual
+    // state wins.
+    expect(result).toBeNull();
+    expect(mockedPrisma.customer.update).not.toHaveBeenCalled();
+  });
+
+  it("setCustomerStatus is a no-op when the new status matches the current one", async () => {
+    const baseCustomer = {
+      id: 53,
+      businessProfileId: 1,
+      displayName: "Hala",
+      phone: null,
+      email: null,
+      avatarUrl: null,
+      primaryChannel: "web",
+      status: "ACTIVE",
+      resolvedAt: null,
+      notes: null,
+      capturedFields: {},
+      externalIdentities: [],
+      lastInteractionAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      businessProfile: {
+        id: 1,
+        name: "Wkil",
+        customerMemoryFields: [],
+      },
+      conversations: [],
+      _count: { conversations: 0 },
+    };
+    mockedPrisma.customer.findFirst.mockResolvedValue(baseCustomer as never);
+
+    const result = await setCustomerStatus(5, 53, "ACTIVE");
+
+    expect(mockedPrisma.customer.update).not.toHaveBeenCalled();
+    expect(result.status).toBe("ACTIVE");
+  });
+
+  it("bulk-resolves all conversations when the customer flips to RESOLVED", async () => {
+    const baseCustomer = {
+      id: 60,
+      businessProfileId: 1,
+      displayName: "Hala",
+      phone: null,
+      email: null,
+      avatarUrl: null,
+      primaryChannel: "web",
+      status: "ACTIVE",
+      resolvedAt: null,
+      notes: null,
+      capturedFields: {},
+      externalIdentities: [],
+      lastInteractionAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      businessProfile: {
+        id: 1,
+        name: "Wkil",
+        customerMemoryFields: [],
+      },
+      conversations: [
+        { id: 1, status: "OPEN" },
+        { id: 2, status: "RESOLVED" },
+        { id: 3, status: "ARCHIVED" },
+      ],
+      _count: { conversations: 3 },
+    };
+    mockedPrisma.customer.findFirst
+      .mockResolvedValueOnce(baseCustomer as never) // setCustomerStatus -> getCustomerForUser
+      .mockResolvedValueOnce({
+        ...baseCustomer,
+        status: "RESOLVED",
+        resolvedAt: new Date(),
+      } as never);
+    mockedPrisma.customer.update.mockResolvedValue({} as never);
+    mockedPrisma.conversation.updateMany.mockResolvedValue({ count: 2 } as never);
+
+    await setCustomerStatus(5, 60, "RESOLVED");
+
+    // OPEN and RESOLVED conversations both flip to RESOLVED; ARCHIVED
+    // is left alone.
+    expect(mockedPrisma.conversation.updateMany).toHaveBeenCalledWith({
+      where: { customerId: 60, status: { not: "ARCHIVED" } },
+      data: { status: "RESOLVED" },
+    });
+  });
+
+  it("bulk-reopens all RESOLVED conversations when the customer flips to ACTIVE", async () => {
+    const baseCustomer = {
+      id: 61,
+      businessProfileId: 1,
+      displayName: "Hala",
+      phone: null,
+      email: null,
+      avatarUrl: null,
+      primaryChannel: "web",
+      status: "RESOLVED",
+      resolvedAt: new Date(),
+      notes: null,
+      capturedFields: {},
+      externalIdentities: [],
+      lastInteractionAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      businessProfile: {
+        id: 1,
+        name: "Wkil",
+        customerMemoryFields: [],
+      },
+      conversations: [
+        { id: 1, status: "RESOLVED" },
+        { id: 2, status: "ARCHIVED" },
+      ],
+      _count: { conversations: 2 },
+    };
+    mockedPrisma.customer.findFirst
+      .mockResolvedValueOnce(baseCustomer as never)
+      .mockResolvedValueOnce({
+        ...baseCustomer,
+        status: "ACTIVE",
+        resolvedAt: null,
+      } as never);
+    mockedPrisma.customer.update.mockResolvedValue({} as never);
+    mockedPrisma.conversation.updateMany.mockResolvedValue({ count: 1 } as never);
+
+    await setCustomerStatus(5, 61, "ACTIVE");
+
+    // Only RESOLVED conversations reopen; ARCHIVED is left alone.
+    expect(mockedPrisma.conversation.updateMany).toHaveBeenCalledWith({
+      where: { customerId: 61, status: "RESOLVED" },
+      data: { status: "OPEN" },
+    });
+  });
+
+  it("does not touch conversations when the customer flips to a manual state", async () => {
+    const baseCustomer = {
+      id: 62,
+      businessProfileId: 1,
+      displayName: "Hala",
+      phone: null,
+      email: null,
+      avatarUrl: null,
+      primaryChannel: "web",
+      status: "ACTIVE",
+      resolvedAt: null,
+      notes: null,
+      capturedFields: {},
+      externalIdentities: [],
+      lastInteractionAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      businessProfile: {
+        id: 1,
+        name: "Wkil",
+        customerMemoryFields: [],
+      },
+      conversations: [
+        { id: 1, status: "OPEN" },
+        { id: 2, status: "RESOLVED" },
+      ],
+      _count: { conversations: 2 },
+    };
+    mockedPrisma.customer.findFirst
+      .mockResolvedValueOnce(baseCustomer as never)
+      .mockResolvedValueOnce({
+        ...baseCustomer,
+        status: "NEEDS_FOLLOW_UP",
+      } as never);
+    mockedPrisma.customer.update.mockResolvedValue({} as never);
+
+    await setCustomerStatus(5, 62, "NEEDS_FOLLOW_UP");
+
+    expect(mockedPrisma.conversation.updateMany).not.toHaveBeenCalled();
   });
 });

@@ -4,6 +4,7 @@ import { logger } from "@utils/logger";
 import { decryptFacebookSecret } from "@modules/auth/core/tokenCrypto";
 import { listConversationMessages } from "@modules/meta/core/conversation.service";
 import { sendMessengerAction } from "@modules/meta/messenger/messenger.service";
+import { reconcileCustomerStatusFromConversations } from "@modules/business/customer/customer.service";
 import { AppError } from "@middlewares/errorHandler.middleware";
 
 export class ConversationsController {
@@ -173,12 +174,26 @@ export class ConversationsController {
     const { id: conversationId } = req.params as any;
     const { status } = req.body;
 
-    await this.getAuthorizedConversation(userId, conversationId);
+    const conversation = await this.getAuthorizedConversation(
+      userId,
+      conversationId,
+    );
 
     const updated = await prisma.conversation.update({
       where: { id: conversationId },
       data: { status },
     });
+
+    // When a conversation moves to / from RESOLVED, re-derive the
+    // owning customer's status (all-resolved → RESOLVED, any-reopen
+    // → ACTIVE). No-op if the feature flag is off or the customer
+    // has no conversations to consider.
+    if (conversation.customerId && (status === "RESOLVED" || status === "OPEN")) {
+      await reconcileCustomerStatusFromConversations(
+        userId,
+        conversation.customerId,
+      );
+    }
 
     return res.json({ data: updated });
   }

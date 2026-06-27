@@ -2,7 +2,10 @@ import prisma from "@config/prisma";
 import type { ConversationMessageStatus } from "@prisma/client";
 import { AppError } from "@middlewares/errorHandler.middleware";
 import { getAccessibleProfileIds } from "@modules/auth/user/user.service";
-import { upsertCustomerFromConversation } from "@modules/business/customer/customer.service";
+import {
+  reconcileCustomerStatusFromConversations,
+  upsertCustomerFromConversation,
+} from "@modules/business/customer/customer.service";
 import { runOutsideDbQueryTrace } from "@utils/dbQueryTrace";
 import { logger } from "@utils/logger";
 
@@ -95,6 +98,7 @@ export async function getOrCreateConversation(
     }
 
     // WAKE UP: Automatically reopen conversation if it was resolved/snoozed
+    const wasResolved = existing.status === "RESOLVED";
     if (existing.status !== "OPEN") {
       updateData.status = "OPEN";
     }
@@ -104,7 +108,15 @@ export async function getOrCreateConversation(
         where: { id: existing.id },
         data: { ...updateData, updatedAt: new Date() },
       });
-      return attachCustomerMemory(updated, opts);
+      const withCustomer = await attachCustomerMemory(updated, opts);
+      // Customer sent a new message on a RESOLVED thread — flip the
+      // owning customer back to ACTIVE so the sales view reflects
+      // the new open conversation immediately. Fire-and-forget so we
+      // never block the message-write path on a slow reconcile.
+      if (wasResolved && withCustomer.customerId) {
+        void reconcileOnWake(withCustomer.businessProfileId, withCustomer.customerId);
+      }
+      return withCustomer;
     }
     return attachCustomerMemory(existing, opts);
   }
@@ -571,4 +583,34 @@ export async function listMessengerConversations(
       totalPages: Math.ceil(total / limit),
     },
   };
+}
+
+/**
+ * When a customer message auto-reopens a conversation, re-derive the
+ * owning customer's status (RESOLVED → ACTIVE if this was the last
+ * RESOLVED thread). Best-effort: any failure is logged, never thrown,
+ * because the customer message has already been persisted by the time
+ * we get here.
+ */
+async function reconcileOnWake(
+  businessProfileId: number,
+  customerId: number,
+): Promise<void> {
+  try {
+    const profile = await prisma.businessProfile.findUnique({
+      where: { id: businessProfileId },
+      select: { userId: true },
+    });
+    if (!profile) return;
+    await reconcileCustomerStatusFromConversations(
+      profile.userId,
+      customerId,
+    );
+  } catch (err) {
+    logger.warn("customer_status.wake_reconcile_failed", {
+      businessProfileId,
+      customerId,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
 }

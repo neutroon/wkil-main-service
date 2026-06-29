@@ -116,6 +116,31 @@ model User {
   refreshTokenExpiresAt    DateTime?
   previousRefreshTokenHash String?   @unique
   rotatedAt               DateTime?
+
+  // Mobile push notification device tokens (FCM)
+  deviceTokens DeviceToken[]
+}
+
+/// One row per mobile app install that has registered for push
+/// notifications. Multiple devices per user are supported (phone + tablet).
+/// The token is the FCM registration token; `lastSeenAt` is refreshed
+/// every time the device comes online so stale rows can be garbage-collected.
+model DeviceToken {
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token      String   @unique
+  platform   DevicePlatform
+  lastSeenAt DateTime @updatedAt
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+  @@index([userId, platform])
+}
+
+enum DevicePlatform {
+  ios
+  android
 }
 
 model SocialIdentity {

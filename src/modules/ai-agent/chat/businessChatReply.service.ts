@@ -79,13 +79,15 @@ const CHAT_RESPONSE_DEADLINE_BUFFER_MS = 250;
 
 function ragTimeoutForChat(responseDeadlineAt?: number): number {
   if (!responseDeadlineAt) return env.AI_CHAT_RAG_TIMEOUT_MS;
-  const remainingMs = responseDeadlineAt - Date.now() - CHAT_RESPONSE_DEADLINE_BUFFER_MS;
+  const remainingMs =
+    responseDeadlineAt - Date.now() - CHAT_RESPONSE_DEADLINE_BUFFER_MS;
   return Math.max(1, Math.min(env.AI_CHAT_RAG_TIMEOUT_MS, remainingMs));
 }
 
 function prepLookupTimeoutForChat(responseDeadlineAt?: number): number {
   if (!responseDeadlineAt) return env.AI_CHAT_PREP_LOOKUP_TIMEOUT_MS;
-  const remainingMs = responseDeadlineAt - Date.now() - CHAT_RESPONSE_DEADLINE_BUFFER_MS;
+  const remainingMs =
+    responseDeadlineAt - Date.now() - CHAT_RESPONSE_DEADLINE_BUFFER_MS;
   return Math.max(1, Math.min(env.AI_CHAT_PREP_LOOKUP_TIMEOUT_MS, remainingMs));
 }
 
@@ -162,7 +164,8 @@ async function notIngestedReply(params: {
 
   return {
     action: params.handoffEnabled === false ? "REPLY_AUTO" : "HANDOFF_TO_HUMAN",
-    handoffCategory: params.handoffEnabled === false ? null : "MISSING_KNOWLEDGE",
+    handoffCategory:
+      params.handoffEnabled === false ? null : "MISSING_KNOWLEDGE",
     reasoning: "Business profile knowledge base (RAG) is not yet ingested.",
     content,
   };
@@ -238,7 +241,9 @@ export async function prepareAgentParams(params: {
     : customerModelMessage;
 
   const ragTimeoutMs = ragTimeoutForChat(params.responseDeadlineAt);
-  const prepLookupTimeoutMs = prepLookupTimeoutForChat(params.responseDeadlineAt);
+  const prepLookupTimeoutMs = prepLookupTimeoutForChat(
+    params.responseDeadlineAt,
+  );
   const retrievalResult = await timed(() =>
     retrieveRelevantChunksWithEmbedding(
       businessProfile.id,
@@ -296,30 +301,30 @@ export async function prepareAgentParams(params: {
   }
 
   const workflowStartSourceIds = activeWorkflowSourceIds(activeWorkflows);
-  const activeAgentActionSources = (businessProfile.agentActionSources || []).filter(
-    (source) => {
-      if (!source.isActive || (source as any).trigger !== "CHAT_REQUESTED") {
-        return false;
-      }
-      if (allowedActionSourceIds) {
-        return allowedActionSourceIds.includes(source.id);
-      }
-      if (completedExternalLookup) {
-        return false;
-      }
-      if (workflowStartSourceIds.size === 0) {
-        return true;
-      }
-      if (workflowStartSourceIds.has(source.id)) {
-        return true;
-      }
-      return !activeWorkflows.some(
-        (workflow) =>
-          workflow.mutationSourceId === source.id &&
-          workflow.lookupSourceId !== null,
-      );
-    },
-  );
+  const activeAgentActionSources = (
+    businessProfile.agentActionSources || []
+  ).filter((source) => {
+    if (!source.isActive || (source as any).trigger !== "CHAT_REQUESTED") {
+      return false;
+    }
+    if (allowedActionSourceIds) {
+      return allowedActionSourceIds.includes(source.id);
+    }
+    if (completedExternalLookup) {
+      return false;
+    }
+    if (workflowStartSourceIds.size === 0) {
+      return true;
+    }
+    if (workflowStartSourceIds.has(source.id)) {
+      return true;
+    }
+    return !activeWorkflows.some(
+      (workflow) =>
+        workflow.mutationSourceId === source.id &&
+        workflow.lookupSourceId !== null,
+    );
+  });
   const eligibleExternalSources = activeAgentActionSources;
   const finalTools = buildAgentActionTools(eligibleExternalSources);
   const externalSourceFailureBehaviors = Object.fromEntries(
@@ -362,7 +367,8 @@ export async function prepareAgentParams(params: {
     const serializedLookup = stringifyForPrompt(
       completedActionEnvelopeForPrompt(completedExternalLookup),
     );
-    const actionChainInstruction = allowedActionSourceIds && allowedActionSourceIds.length > 0
+    const actionChainInstruction =
+      allowedActionSourceIds && allowedActionSourceIds.length > 0
         ? "This verified lookup/helper result may support one different exposed follow-up business action if the original customer request still requires that action. Do not call another lookup/helper action."
         : "Do not call any other action for this completed-action result turn.";
     finalSystemInstruction += `\n\n<completed_integration_action>\nThis action already ran after the previous chat turn. Do not call the same action again for this answer. Use this payload as evidence only when success is true and verification is "verified". If it failed, do not confirm completion, booking, submission, delivery, or saving.\n${actionChainInstruction}\nTool: ${completedExternalLookup.toolName}\nSource: ${completedExternalLookup.sourceName || "External action"}\nPayload JSON:\n${serializedLookup}\n</completed_integration_action>\n\nWhen your customer-facing answer relies on a verified action result, include "external_tool" in usedChunkTypes.`;
@@ -374,7 +380,7 @@ export async function prepareAgentParams(params: {
     const catalog = mediaAssets
       .map((a) => `- "${a.name}" (${a.mediaType}): ${a.instructions}`)
       .join("\n");
-    finalSystemInstruction += `\n\n<media_catalog>\nYou may send one file per response using the attachment field.\nAvailable assets:\n${catalog}\n\nRules:\n1. Only reference exact names from the list above.\n2. Never invent an asset name.\n3. Never send attachments to public Facebook comments.\n4. Only attach a file when it is genuinely relevant to the customer's request.\n5. Always include a short explanatory message in content when sending a file. Never send a file alone.\n</media_catalog>`;
+    finalSystemInstruction += `\n\n<media_catalog>\nYou may send one file per response using the attachment field.\nAvailable assets:\n${catalog}\n\nRules:\n1. Only reference exact names from the list above.\n2. Never invent an asset name.\n3. Never send attachments to public Facebook comments.\n4. Only attach a file when it is genuinely relevant to the customer's request.\n5. Always include a short explanatory message in content when sending a file. Never send a file alone.\n6. When you set the attachment field, the file is delivered to the customer in this same response. Do not ask the user to send — you are already sending it. Keep content and attachment consistent.\n</media_catalog>`;
   }
   const promptMs = Date.now() - promptStartedAt;
   const prepTimings: AgentPrepTimings = {
@@ -391,7 +397,9 @@ export async function prepareAgentParams(params: {
     channel,
     customerDetailsToolExposed: false,
     activeActionSourceCount: activeAgentActionSources.length,
-    eligibleExternalSourceIds: eligibleExternalSources.map((source) => source.id),
+    eligibleExternalSourceIds: eligibleExternalSources.map(
+      (source) => source.id,
+    ),
     toolNames: finalTools.map((tool) => tool.name),
     ...prepTimings,
   });
@@ -443,9 +451,13 @@ function parseIntegrationActionSourceId(toolName: string): number | null {
   return Number.isInteger(sourceId) ? sourceId : null;
 }
 
-function isVerifiedCompletedAction(completed: CompletedExternalLookup): boolean {
-  return completed.envelope.success === true &&
-    completed.envelope.verification === "verified";
+function isVerifiedCompletedAction(
+  completed: CompletedExternalLookup,
+): boolean {
+  return (
+    completed.envelope.success === true &&
+    completed.envelope.verification === "verified"
+  );
 }
 
 function isLookupActionSource(source: unknown): boolean {
@@ -460,7 +472,10 @@ function canExposeFollowUpActionsAfterCompletedAction(
   completed: CompletedExternalLookup,
   completedSource: unknown,
 ): boolean {
-  return isVerifiedCompletedAction(completed) && isLookupActionSource(completedSource);
+  return (
+    isVerifiedCompletedAction(completed) &&
+    isLookupActionSource(completedSource)
+  );
 }
 
 function completedActionEnvelopeForPrompt(
@@ -499,10 +514,10 @@ function completedActionFailureCode(reason?: string): string {
 
 function customerSafeCompletedActionError(error?: string): string | undefined {
   if (!error) return undefined;
-  if (/^External API returned status \d+$/i.test(error.trim())) return undefined;
+  if (/^External API returned status \d+$/i.test(error.trim()))
+    return undefined;
   return error.slice(0, 500);
 }
-
 
 /**
  * Standard (non-streaming) AI loop execution.
@@ -567,7 +582,9 @@ export async function computeBusinessChatReply(params: {
       conversationId: params.conversationId,
       inputMessageId: params.latestUserMessageId ?? null,
       channel: params.channel,
-      mode: params.completedExternalLookup ? "ACTION_RESULT" : "CUSTOMER_MESSAGE",
+      mode: params.completedExternalLookup
+        ? "ACTION_RESULT"
+        : "CUSTOMER_MESSAGE",
       customerText: params.messageText,
       parentActionRunId:
         params.parentActionRunId ?? continuation?.parentActionRunId ?? null,
@@ -615,7 +632,10 @@ async function findPendingMutationCorrectionContext(params: {
   allowedActionSourceIds?: number[];
 }): Promise<WorkflowContinuationContext | null> {
   if (!params.conversationId || params.completedExternalLookup) return null;
-  if (params.allowedActionSourceIds && params.allowedActionSourceIds.length > 0) {
+  if (
+    params.allowedActionSourceIds &&
+    params.allowedActionSourceIds.length > 0
+  ) {
     return null;
   }
 

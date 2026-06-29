@@ -374,7 +374,7 @@ export async function prepareAgentParams(params: {
     const catalog = mediaAssets
       .map((a) => `- "${a.name}" (${a.mediaType}): ${a.instructions}`)
       .join("\n");
-    finalSystemInstruction += `\n\n<media_catalog>\nYou may send one file per response using the attachment field.\nAvailable assets:\n${catalog}\n\nRules:\n1. Only reference exact names from the list above.\n2. Never invent an asset name.\n3. Never send attachments to public Facebook comments.\n4. Only attach a file when it is genuinely relevant to the customer's request.\n</media_catalog>`;
+    finalSystemInstruction += `\n\n<media_catalog>\nYou may send one file per response using the attachment field.\nAvailable assets:\n${catalog}\n\nRules:\n1. Only reference exact names from the list above.\n2. Never invent an asset name.\n3. Never send attachments to public Facebook comments.\n4. Only attach a file when it is genuinely relevant to the customer's request.\n5. Always include a short explanatory message in content when sending a file. Never send a file alone.\n</media_catalog>`;
   }
   const promptMs = Date.now() - promptStartedAt;
   const prepTimings: AgentPrepTimings = {

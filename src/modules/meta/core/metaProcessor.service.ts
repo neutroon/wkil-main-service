@@ -987,6 +987,13 @@ export async function processMetaMessage(
           if (aiMediaAsset && (syncedMediaId || aiMediaAsset.publicUrl)) {
             res = await sendWhatsAppMedia(senderId, syncedMediaId || null, aiMediaAsset.mediaType, identifier, accessToken, mainContent.length > 0 ? mainContent : undefined, aiMediaAsset.name, aiMediaAsset.publicUrl);
             logger.info("meta.processor.whatsapp_media_success", { wamid: res?.messages?.[0]?.id });
+
+            // WhatsApp does not allow captions on audio messages, so the
+            // body text passed above is silently dropped for audio. Send
+            // it as a follow-up text message so the customer receives it.
+            if (aiMediaAsset.mediaType === "audio") {
+              res = await sendWhatsAppReply(senderId, mainContent, identifier, accessToken);
+            }
           } else {
             res = await sendWhatsAppReply(senderId, mainContent, identifier, accessToken);
           }

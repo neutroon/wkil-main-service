@@ -14,6 +14,12 @@ type ReplySideEffectInput = {
     AiRoutingDecision,
     "action" | "handoffCategory" | "reasoning"
   > & Partial<Pick<AiRoutingDecision, "replyType" | "missingInfo">>;
+  /**
+   * Best-effort locale to render the push notification in. Defaults
+   * to English. Mobile clients pass this from the request locale; the
+   * widget doesn't and falls back to English.
+   */
+  pushLocale?: "en" | "ar";
 };
 
 export async function notifySavedModelReplySideEffects(
@@ -27,6 +33,19 @@ export async function notifySavedModelReplySideEffects(
       businessProfileId: params.businessProfileId,
       conversationId: params.conversationId,
       message: params.message,
+    });
+
+    // Mobile push fan-out for handoffs. Imports are inlined so the
+    // notifications module stays out of the synchronous boot path
+    // (matches the pattern used for the socket module).
+    const { sendHandoffPush } = await import(
+      "@modules/notifications/handoffPush.service"
+    );
+    await sendHandoffPush({
+      businessProfileId: params.businessProfileId,
+      conversationId: params.conversationId,
+      handoffCategory: params.reply.handoffCategory ?? "GENERAL_HANDOFF",
+      locale: params.pushLocale ?? "en",
     });
   }
 

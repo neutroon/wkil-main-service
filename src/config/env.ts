@@ -78,6 +78,21 @@ const envSchema = z.object({
   GOOGLE_CLOUD_LOCATION: z.string().optional(),
   GOOGLE_APPLICATION_CREDENTIALS: z.string().optional(),
 
+  // ── Firebase Cloud Messaging (mobile push) ─────────────────────────────────
+  // The service account is delivered as a base64-encoded JSON blob via
+  // Fly secrets / Codemagic. We decode to a tempfile at boot and use
+  // GOOGLE_APPLICATION_CREDENTIALS so firebase-admin picks it up via ADC.
+  // FCM_ENABLED is false in environments where Firebase isn't provisioned
+  // (CI, unit tests) — push calls become no-ops and the rest of the
+  // handoff pipeline keeps working.
+  FIREBASE_SERVICE_ACCOUNT_BASE64: z.string().optional(),
+  FIREBASE_PROJECT_ID: z.string().optional(),
+  FCM_ENABLED: z
+    .string()
+    .optional()
+    .default("false")
+    .transform((v) => v === "true" || v === "1"),
+
   // ── Microservices ──────────────────────────────────────────────────────────
   SCRAPING_SERVICE_URL: z.string().url().optional(),
   BACKEND_URL: z.string().url().optional(),

@@ -18,6 +18,7 @@ import { env } from "@config/env";
 import { createServer } from "http";
 import app from "./app";
 import { initSocket } from "@modules/realtime/socket";
+import { initFcm, shutdownFcm } from "@modules/notifications/fcm.service";
 
 import { 
   startMetaQueue, 
@@ -46,6 +47,11 @@ let server: ReturnType<typeof httpServer.listen> | undefined;
 // expire on their TTL. Chained off an async IIFE so the listener only opens
 // after SUBSCRIBE (tsconfig is CommonJS, so no top-level await).
 void (async () => {
+  // Initialize Firebase Cloud Messaging (mobile push). This is async
+  // because firebase-admin loads lazily; doing it here (not in
+  // app.ts) keeps the test server boot path free of the import.
+  await initFcm();
+
   await startCacheBusSubscriber();
   server = httpServer.listen(PORT, "0.0.0.0", () => {
     logger.info(`Server running on port ${PORT}`);
@@ -92,6 +98,9 @@ const gracefulShutdown = async (signal: string) => {
     // 5. Stop the cross-instance cache-invalidation subscriber (closes the
     //    dedicated Redis pub/sub connection so the process can exit cleanly).
     await stopCacheBusSubscriber();
+
+    // 6. Best-effort cleanup of the FCM service-account tempfile.
+    shutdownFcm();
 
     clearTimeout(forceExitTimeout);
     logger.info("--- Graceful Shutdown Complete ---");

@@ -124,15 +124,39 @@ export async function initFcm(): Promise<boolean> {
     return false;
   }
 
-  // Prefer the base64 path; fall back to whatever
-  // GOOGLE_APPLICATION_CREDENTIALS already points at (dev convenience).
-  if (!env.GOOGLE_APPLICATION_CREDENTIALS) {
+  // Credential resolution order (matters in production!):
+  //   1. FIREBASE_SERVICE_ACCOUNT_BASE64 — the operator-provided
+  //      base64 blob. ALWAYS preferred on serverless/container
+  //      deployments because the production container won't have
+  //      the developer's local JSON file. The Dockerfile doesn't
+  //      ship secrets; they come in via Fly secrets / env vars.
+  //   2. GOOGLE_APPLICATION_CREDENTIALS — a path to a JSON file
+  //      on disk. Useful for local dev (`gcloud auth
+  //      application-default login` writes one to a known path).
+  //      NOT preferred for serverless because the file path
+  //      configured in one env (e.g. Vertex AI's
+  //      `google-cloud-key.json`) almost certainly won't exist
+  //      in the container.
+  //
+  // The base64 path is preferred even if GOOGLE_APPLICATION_CREDENTIALS
+  // is also set. Otherwise a leftover local-dev path silently
+  // shadows the real secret and the resulting
+  // `app/invalid-credential` error is hard to diagnose from the
+  // handoff pipeline's logs.
+  if (env.FIREBASE_SERVICE_ACCOUNT_BASE64) {
     const tmp = materializeCredentialFile();
     if (tmp) {
       tmpCredentialPath = tmp;
+      // Override whatever GOOGLE_APPLICATION_CREDENTIALS pointed at.
+      // firebase-admin's `applicationDefault()` looks at this env var
+      // and we want it to read the freshly-materialized file, not
+      // the stale local path.
       process.env.GOOGLE_APPLICATION_CREDENTIALS = tmp;
     }
   }
+  // If FIREBASE_SERVICE_ACCOUNT_BASE64 is not set, leave
+  // GOOGLE_APPLICATION_CREDENTIALS untouched and let
+  // firebase-admin use whatever's there (typical in local dev).
 
   if (!env.FIREBASE_PROJECT_ID && !process.env.GOOGLE_CLOUD_PROJECT_ID) {
     logger.error("fcm.init_failed", {
@@ -261,16 +285,30 @@ function buildMessage(
       body: params.notification.body,
     },
     data: params.data,
+    // Field names MUST match the FCM HTTP v1 API spec at
+    // https://firebase.google.com/docs/reference/fcm/rest/v1/projects.messages
+    // The firebase-admin SDK accepts camelCase but only for fields that
+    // exist in the v1 spec under those names. The `defaultVibrateTimers`
+    // and `category` fields some old blog posts recommend DO NOT EXIST
+    // in v1 and cause `messaging/invalid-argument` rejections.
     android: {
       priority: (params.android?.priority ?? "high").toUpperCase(),
       notification: {
+        // `channelId` (camelCase) maps to `channel_id` in v1. The
+        // SDK handles the conversion for known fields.
         channelId: params.android?.channelId ?? "handoff_requests",
+        // `visibility` is a v1 enum: PUBLIC | PRIVATE | SECRET.
         visibility: (params.android?.visibility ?? "public").toUpperCase(),
+        // `default_sound` in v1 — a boolean. Tells FCM to use the
+        // channel's default sound instead of an override.
         defaultSound: true,
-        defaultVibrateTimers: true,
-        // Category 'message' gives Android Messaging-style grouping on
-        // supported OEMs (Samsung, Pixel).
-        category: "message",
+        // `default_vibrate_timings` in v1 — a boolean. Tells FCM
+        // to use the channel's default vibration pattern.
+        defaultVibrateTimings: true,
+        // No `category` here — Android notification categorization
+        // is done on the channel, not per-message. The channel
+        // `handoff_requests` is already set to Importance.max
+        // which gives it messaging-style heads-up behavior.
       },
     },
     apns: {
@@ -285,6 +323,8 @@ function buildMessage(
             body: params.notification.body,
           },
           sound: params.apns?.sound ?? "default",
+          // `category` is valid on `aps` for iOS notification
+          // actions. Reserved for v2 handoff action buttons.
           ...(params.apns?.category
             ? { category: params.apns.category }
             : {}),

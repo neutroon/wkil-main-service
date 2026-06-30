@@ -48,7 +48,12 @@ vi.mock("path", () => ({
 }));
 
 import { sendMulticast, __setMessagingForTests } from "./fcm.service";
-import type { AdminMessaging } from "./fcm.service";
+// Narrow local type for the fake messaging client. `AdminMessaging`
+// is intentionally not exported from fcm.service (it's a private
+// shape used to keep firebase-admin's massive type surface out of
+// the public API). The fake below matches the two methods we use.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AdminMessaging = any;
 
 /**
  * Two production bugs were caught by hand-running `node -e` against

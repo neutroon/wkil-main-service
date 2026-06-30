@@ -6,16 +6,31 @@ import { env } from "@config/env";
  * CSRF Protection — Hardened Double-Submit Cookie Pattern.
  *
  * How it works (Production-Grade):
- * 1. `getCsrfToken`: The frontend "bootstraps" by calling this endpoint. 
- *    The backend returns a random token in the JSON body AND sets it in a 
+ * 1. `getCsrfToken`: The frontend "bootstraps" by calling this endpoint.
+ *    The backend returns a random token in the JSON body AND sets it in a
  *    Secure, HttpOnly cookie.
- * 2. `validateCsrfToken`: On every state-mutating request, the frontend sends 
- *    the token in the `X-CSRF-Token` header. The backend compares it 
+ * 2. `validateCsrfToken`: On every state-mutating request, the frontend sends
+ *    the token in the `X-CSRF-Token` header. The backend compares it
  *    to the HttpOnly cookie.
  *
- * Security Benefit: Even if an attacker succeeds with XSS, they cannot 
- * read the HttpOnly cookie, making it significantly harder to forge 
+ * Security Benefit: Even if an attacker succeeds with XSS, they cannot
+ * read the HttpOnly cookie, making it significantly harder to forge
  * valid CSRF-protected requests.
+ *
+ * Bearer-token exemption:
+ * ─────────────────────
+ * Requests authenticated via `Authorization: Bearer <token>` (the
+ * wkil mobile app, server-to-server integrations) are NOT subject to
+ * CSRF. The CSRF attack model assumes the browser auto-attaches
+ * session cookies to cross-origin requests; Bearer tokens cannot be
+ * silently attached by the browser, so the attack vector doesn't
+ * exist. Skipping CSRF for these requests also lets the mobile app
+ * call our shared API surface (`/v1/inbox/*`, `/v1/notifications/*`)
+ * without managing a separate CSRF token.
+ *
+ * This matches the default behavior of every major web framework:
+ * Django REST Framework, Spring Security, Rails, and Express CSRF
+ * middleware all skip CSRF for `Authorization: Bearer` requests.
  */
 
 const CSRF_COOKIE_NAME = "csrfToken";
@@ -70,6 +85,15 @@ export const validateCsrfToken = (
 ) => {
   // Skip safe methods — they should never mutate state
   if (SAFE_METHODS.has(req.method)) {
+    return next();
+  }
+
+  // Skip Bearer-authenticated requests. See the file-level comment
+  // for the security rationale (CSRF only applies to credential
+  // schemes the browser auto-attaches, e.g. cookies). Detect the
+  // scheme prefix case-insensitively per RFC 7235.
+  const authHeader = req.headers.authorization;
+  if (typeof authHeader === "string" && /^bearer\s+/i.test(authHeader.trim())) {
     return next();
   }
 

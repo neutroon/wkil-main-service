@@ -103,7 +103,7 @@ describe("fcm.service.buildMessage (via sendMulticast)", () => {
       tokens: ["t1"],
       notification: { title: "x", body: "y" },
       data: { type: "test" },
-      android: { channelId: "handoff_requests", priority: "high" },
+      android: { channelId: "handoff_requests_v2", priority: "high" },
       apns: { pushType: "alert" },
     });
 
@@ -155,7 +155,7 @@ describe("fcm.service.buildMessage (via sendMulticast)", () => {
       tokens: ["t1"],
       notification: { title: "x", body: "y" },
       data: { type: "test" },
-      android: { channelId: "handoff_requests", priority: "high" },
+      android: { channelId: "handoff_requests_v2", priority: "high" },
       apns: { pushType: "alert" },
     });
 
@@ -174,7 +174,7 @@ describe("fcm.service.buildMessage (via sendMulticast)", () => {
       tokens: ["t1"],
       notification: { title: "x", body: "y" },
       data: { type: "test" },
-      android: { channelId: "handoff_requests", priority: "high" },
+      android: { channelId: "handoff_requests_v2", priority: "high" },
       apns: { pushType: "alert" },
     });
 
@@ -189,7 +189,7 @@ describe("fcm.service.buildMessage (via sendMulticast)", () => {
       tokens: ["t1"],
       notification: { title: "x", body: "y" },
       data: { type: "test" },
-      android: { channelId: "handoff_requests", priority: "high" },
+      android: { channelId: "handoff_requests_v2", priority: "high" },
       apns: { pushType: "alert" },
     });
 
@@ -204,7 +204,7 @@ describe("fcm.service.buildMessage (via sendMulticast)", () => {
       tokens: ["t1"],
       notification: { title: "x", body: "y" },
       data: { type: "test" },
-      android: { channelId: "handoff_requests", priority: "high" },
+      android: { channelId: "handoff_requests_v2", priority: "high" },
       apns: { pushType: "alert" },
     });
 
@@ -215,7 +215,7 @@ describe("fcm.service.buildMessage (via sendMulticast)", () => {
     expect(message.apns.headers["apns-priority"]).toBe("10");
   });
 
-  it("default channel id is 'handoff_requests' when caller doesn't specify one", async () => {
+  it("default channel id is 'handoff_requests_v2' when caller doesn't specify one", async () => {
     await sendMulticast({
       tokens: ["t1"],
       notification: { title: "x", body: "y" },
@@ -227,6 +227,9 @@ describe("fcm.service.buildMessage (via sendMulticast)", () => {
     const message = capturedMessage as {
       android: { notification: { channelId: string } };
     };
-    expect(message.android.notification.channelId).toBe("handoff_requests");
+    expect(message.android.notification.channelId).toBe("handoff_requests_v2");
   });
 });
+
+
+

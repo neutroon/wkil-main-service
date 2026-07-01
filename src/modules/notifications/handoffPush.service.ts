@@ -104,7 +104,7 @@ export async function sendHandoffPush(params: {
       },
       data,
       android: {
-        channelId: "handoff_requests",
+        channelId: "handoff_requests_v2",
         priority: "high",
         visibility: "public",
       },

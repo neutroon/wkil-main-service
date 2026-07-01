@@ -109,7 +109,7 @@ describe("sendHandoffPush", () => {
       handoff_category: "SALES",
       locale: "ar",
     });
-    expect(msg.android.channelId).toBe("handoff_requests");
+    expect(msg.android.channelId).toBe("handoff_requests_v2");
     expect(msg.android.priority).toBe("high");
     expect(msg.apns.pushType).toBe("alert");
   });

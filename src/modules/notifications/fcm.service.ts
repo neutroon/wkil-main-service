@@ -296,7 +296,7 @@ function buildMessage(
       notification: {
         // `channelId` (camelCase) maps to `channel_id` in v1. The
         // SDK handles the conversion for known fields.
-        channelId: params.android?.channelId ?? "handoff_requests",
+        channelId: params.android?.channelId ?? "handoff_requests_v2",
         // `visibility` is a v1 enum: PUBLIC | PRIVATE | SECRET.
         visibility: (params.android?.visibility ?? "public").toUpperCase(),
         // `default_sound` in v1 — a boolean. Tells FCM to use the

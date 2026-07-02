@@ -1,5 +1,8 @@
 import { AIMessage, HumanMessage, SystemMessage, ToolMessage } from "@langchain/core/messages";
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
+import { ChatOpenAI } from "@langchain/openai";
+import { ChatAnthropic } from "@langchain/anthropic";
+import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { env } from "@config/env";
 import { AppError } from "@middlewares/errorHandler.middleware";
 import { logger } from "@utils/logger";
@@ -15,15 +18,18 @@ import type {
 } from "./agentState";
 import type { AiRoutingDecision } from "./aiEngine.utils";
 import { repairAndParseAiResponse } from "./aiEngine.utils";
+import type { ChatTier, AiModelProvider } from "@modules/admin/ai-model/ai-model.service";
 
 const MODEL_TIMEOUT_MS = 60_000;
 // Hardcoded fallback tier order, applied only when both the admin-managed
 // AiModel registry AND `env.AI_CHAT_FALLBACK_MODEL_TIERS` are unavailable.
-// Exported so the order can be pinned by the unit test.
-export const DEFAULT_MODEL_TIERS = [
-  "gemini-3.1-flash-lite-preview",
-  "gemini-3-flash-preview",
-  "gemini-2.5-flash",
+// Exported so the order can be pinned by the unit test. Google-only by
+// design — the env var and this constant are disaster-recovery knobs; the
+// AiModel DB registry is the only source of non-google models.
+export const DEFAULT_MODEL_TIERS: ChatTier[] = [
+  { modelId: "gemini-3.1-flash-lite-preview", provider: "google" },
+  { modelId: "gemini-3-flash-preview", provider: "google" },
+  { modelId: "gemini-2.5-flash", provider: "google" },
 ];
 
 export type ModelUsage = {
@@ -176,7 +182,7 @@ async function withTimeout<T>(
  * cached read of the AiModel registry inside `getChatRuntimeConfig`.
  */
 type ChatRuntimeContext = {
-  tiers: string[];
+  tiers: ChatTier[];
   defaultMaxOutputTokens: number | null;
 };
 
@@ -212,21 +218,26 @@ async function resolveChatRuntimeConfig(
       error: error?.message,
     });
   }
-  // Fallback chain: env (comma-separated) → hardcoded DEFAULT_MODEL_TIERS.
-  // No per-model maxOutputTokens in this branch — env is the only override.
+  // Fallback chain: env (comma-separated, google-only) → hardcoded
+  // DEFAULT_MODEL_TIERS (google-only). No per-model maxOutputTokens in this
+  // branch — env is the only override.
   const envTiers = (env.AI_CHAT_FALLBACK_MODEL_TIERS || "")
     .split(",")
     .map((m) => m.trim())
     .filter(Boolean);
+  const fallbackTiers: ChatTier[] =
+    envTiers.length > 0
+      ? envTiers.map((modelId) => ({ modelId, provider: "google" }))
+      : DEFAULT_MODEL_TIERS;
   return {
-    tiers: envTiers.length > 0 ? envTiers : DEFAULT_MODEL_TIERS,
+    tiers: fallbackTiers,
     defaultMaxOutputTokens: null,
   };
 }
 
 async function executeWithModelFallback<T>(
   operation: (
-    model: string,
+    tier: ChatTier,
     abortSignal: AbortSignal,
     ctx: ChatRuntimeContext,
   ) => Promise<T>,
@@ -239,14 +250,15 @@ async function executeWithModelFallback<T>(
   let lastError: any;
 
   for (let tierIndex = 0; tierIndex < modelTiers.length; tierIndex++) {
-    const model = modelTiers[tierIndex];
+    const tier = modelTiers[tierIndex];
+    const model = tier.modelId;
     let attempt = 0;
 
     while (attempt < 2) {
       const abortController = new AbortController();
       try {
         const result = await withTimeout(
-          operation(model, abortController.signal, ctx),
+          operation(tier, abortController.signal, ctx),
           timeoutMs,
           abortController,
         );
@@ -262,6 +274,7 @@ async function executeWithModelFallback<T>(
           logger.warn("ai.model_runtime.retrying", {
             context,
             model,
+            provider: tier.provider,
             delayMs: Math.round(delay),
             error: parseProviderErrorMessage(error),
           });
@@ -273,7 +286,9 @@ async function executeWithModelFallback<T>(
           logger.warn("ai.model_runtime.fallback_model", {
             context,
             model,
-            nextModel: modelTiers[tierIndex + 1],
+            provider: tier.provider,
+            nextModel: modelTiers[tierIndex + 1].modelId,
+            nextProvider: modelTiers[tierIndex + 1].provider,
             retryable,
             error: parseProviderErrorMessage(error),
           });
@@ -284,6 +299,7 @@ async function executeWithModelFallback<T>(
         logger.error("ai.model_runtime.final_failure", {
           context,
           model,
+          provider: tier.provider,
           error: message,
         });
         throw new AppError(message, 502);
@@ -294,17 +310,90 @@ async function executeWithModelFallback<T>(
   throw lastError;
 }
 
+/**
+ * Returns the env API key for a provider, or null if not configured. The
+ * tier resolver in ai-model.service.ts already filters out unconfigured
+ * providers, so reaching this with a missing key is a configuration drift
+ * (cache stale, env rotated) — we surface it as a clear AppError instead
+ * of letting the SDK send an undefined key and produce a confusing 401.
+ */
+function apiKeyForProvider(provider: AiModelProvider): string | null {
+  switch (provider) {
+    case "google":
+      return env.GEMINI_API_KEY || null;
+    case "openai":
+      return env.OPENAI_API_KEY || null;
+    case "anthropic":
+      return env.ANTHROPIC_API_KEY || null;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Build a LangChain chat model for a given provider. Each provider's SDK
+ * uses a different parameter name for the output ceiling:
+ *   - Gemini  : maxOutputTokens
+ *   - OpenAI  : maxTokens (ChatOpenAI also handles the o1/o3/gpt-5 family
+ *               automatically by mapping to maxCompletionTokens)
+ *   - Anthropic: maxTokens
+ * We normalise the per-call ceiling to `maxOutputTokens` in our API and
+ * rename per provider here so the rest of the runtime can stay provider-
+ * agnostic.
+ */
 function createChatModel(params: {
-  model: string;
+  tier: ChatTier;
   temperature?: number;
   maxOutputTokens?: number;
-}) {
-  return new ChatGoogleGenerativeAI({
-    model: params.model,
-    apiKey: env.GEMINI_API_KEY,
-    temperature: params.temperature ?? 0.4,
-    maxOutputTokens: params.maxOutputTokens ?? env.AI_CHAT_FALLBACK_MAX_OUTPUT_TOKENS,
-  });
+}): BaseChatModel {
+  const { tier } = params;
+  const apiKey = apiKeyForProvider(tier.provider);
+  if (!apiKey) {
+    throw new AppError(
+      `Provider ${tier.provider} is not configured (missing ${tier.provider.toUpperCase()}_API_KEY in env) for model ${tier.modelId}`,
+      500,
+      true,
+      "AI_PROVIDER_NOT_CONFIGURED",
+    );
+  }
+
+  const temperature = params.temperature ?? 0.4;
+  const ceiling = params.maxOutputTokens ?? env.AI_CHAT_FALLBACK_MAX_OUTPUT_TOKENS;
+
+  switch (tier.provider) {
+    case "google":
+      return new ChatGoogleGenerativeAI({
+        model: tier.modelId,
+        apiKey,
+        temperature,
+        maxOutputTokens: ceiling,
+      });
+    case "openai":
+      return new ChatOpenAI({
+        model: tier.modelId,
+        apiKey,
+        temperature,
+        maxTokens: ceiling,
+      });
+    case "anthropic":
+      return new ChatAnthropic({
+        model: tier.modelId,
+        apiKey,
+        temperature,
+        maxTokens: ceiling,
+      });
+    default: {
+      // Exhaustiveness guard — if a new provider is added to the enum this
+      // fails to compile, prompting an update here too.
+      const _exhaustive: never = tier.provider;
+      throw new AppError(
+        `Unsupported AI provider: ${String(_exhaustive)}`,
+        500,
+        true,
+        "AI_PROVIDER_UNSUPPORTED",
+      );
+    }
+  }
 }
 
 function toLangChainMessages(contents: AgentContent[], systemInstruction?: string) {
@@ -458,13 +547,13 @@ export async function invokeDecisionOrTool(params: {
   );
 
   const { result: message, model } = await executeWithModelFallback<any>(
-    (currentModel, abortSignal, ctx) => {
+    (tier, abortSignal, ctx) => {
       const llm = createChatModel({
-        model: currentModel,
+        tier,
         temperature: params.temperature ?? 0.4,
         maxOutputTokens: ctx.defaultMaxOutputTokens ?? undefined,
-      }).bindTools(params.tools as any);
-      return llm.invoke(messages, { signal: abortSignal } as any);
+      }) as any;
+      return llm.bindTools(params.tools as any).invoke(messages, { signal: abortSignal } as any);
     },
     "AgentGraph.callModel.decisionOrTool",
     params.timeoutMs,
@@ -534,9 +623,9 @@ export async function invokeDecision(params: {
   const decisionSchema = getAiRoutingDecisionSchemaForChannel(params.channel);
 
   const { result, model } = await executeWithModelFallback<any>(
-    async (currentModel, abortSignal, ctx) => {
+    async (tier, abortSignal, ctx) => {
       const llm = createChatModel({
-        model: currentModel,
+        tier,
         temperature: params.temperature ?? 0.4,
         maxOutputTokens: ctx.defaultMaxOutputTokens ?? undefined,
       });
@@ -590,9 +679,9 @@ export async function invokeText(params: {
   const messages = [new HumanMessage(params.prompt)];
 
   const { result: message, model } = await executeWithModelFallback<any>(
-    (currentModel, abortSignal, ctx) => {
+    (tier, abortSignal, ctx) => {
       const llm = createChatModel({
-        model: currentModel,
+        tier,
         temperature: params.temperature ?? 0.4,
         maxOutputTokens:
           params.maxOutputTokens ?? ctx.defaultMaxOutputTokens ?? undefined,
@@ -632,12 +721,12 @@ export async function invokeMediaUnderstanding(params: {
   const messages = toLangChainMessages(contents);
 
   const { result: message, model } = await executeWithModelFallback<any>(
-    (currentModel, abortSignal) => {
+    (tier, abortSignal) => {
       // Media understanding uses a small fixed ceiling (512) on purpose —
       // it's not a chat reply, so the chat default model's maxOutputTokens
       // does not apply here.
       const llm = createChatModel({
-        model: currentModel,
+        tier,
         temperature: params.temperature ?? 0.1,
         maxOutputTokens: params.maxOutputTokens ?? 512,
       });
@@ -663,11 +752,11 @@ export async function invokeExternalToolRecoveryRoute(params: {
   const messages = [new HumanMessage(params.prompt)];
 
   const { result, model } = await executeWithModelFallback<any>(
-    async (currentModel, abortSignal) => {
+    async (tier, abortSignal) => {
       // Classifier with a tight fixed ceiling — chat default's maxOutputTokens
       // does not apply.
       const llm = createChatModel({
-        model: currentModel,
+        tier,
         temperature: 0,
         maxOutputTokens: 256,
       });

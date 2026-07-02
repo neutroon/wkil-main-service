@@ -23,11 +23,14 @@ import { clearModelPriceCache } from "@modules/billing/billing.service";
 
 // ── Runtime fallback tiers ───────────────────────────────────────────────────
 // Kept in sync with the seed (prisma/seed-ai-models.ts) and the legacy
-// DEFAULT_MODEL_TIERS in src/modules/ai-agent/core/modelRuntime.ts.
-const FALLBACK_CHAT_TIERS = [
-  "gemini-3.1-flash-lite-preview",
-  "gemini-3-flash-preview",
-  "gemini-2.5-flash",
+// DEFAULT_MODEL_TIERS in src/modules/ai-agent/core/modelRuntime.ts. The env
+// fallback and these hardcoded tiers are google-only by design — adding a
+// non-google tier requires a DB row, which is the only source of truth for
+// provider keys.
+const FALLBACK_CHAT_TIERS: ChatTier[] = [
+  { modelId: "gemini-3.1-flash-lite-preview", provider: "google" },
+  { modelId: "gemini-3-flash-preview", provider: "google" },
+  { modelId: "gemini-2.5-flash", provider: "google" },
 ];
 const CHAT_CATEGORY = "chat";
 
@@ -53,7 +56,7 @@ function isProviderConfigured(provider: string): boolean {
 
 // ── In-memory cache (per-process) ────────────────────────────────────────────
 type ChatConfigCache = {
-  tiers: string[];
+  tiers: ChatTier[];
   defaultModelId: string | null;
   defaultMaxOutputTokens: number | null;
   expiresAt: number;
@@ -86,6 +89,17 @@ export function clearAiModelCacheLocal(): void {
 export type AiModelCategory = "chat" | "embedding" | "image" | "multimodal";
 export type AiModelProvider = "google" | "openai" | "anthropic";
 
+/**
+ * A single runtime tier: the model id + the provider that should serve it.
+ * The runtime uses `provider` to pick the correct LangChain chat class and
+ * the matching env API key. Model ids are unique per row in the AiModel
+ * table, so a given id always has a single provider.
+ */
+export type ChatTier = {
+  modelId: string;
+  provider: AiModelProvider;
+};
+
 export interface AiModelInput {
   modelId: string;
   displayName: string;
@@ -117,14 +131,16 @@ export interface AiModelUpdate {
 // ── Runtime resolution (used by the chat agent) ──────────────────────────────
 
 /**
- * Returns the ordered list of active chat modelIds to try, default first.
+ * Returns the ordered list of active chat tiers (default first). Each tier
+ * carries the provider that should serve it, so the chat runtime can pick
+ * the right LangChain class and API key.
  *
  * Resolution chain (never throws):
  *   1. Active chat models from the DB (default first, then by tierOrder)
- *   2. `AI_CHAT_FALLBACK_MODEL_TIERS` env var (comma-separated)
- *   3. Hardcoded FALLBACK_CHAT_TIERS
+ *   2. `AI_CHAT_FALLBACK_MODEL_TIERS` env var (comma-separated, google-only)
+ *   3. Hardcoded FALLBACK_CHAT_TIERS (google-only)
  */
-export async function getActiveChatTiers(): Promise<string[]> {
+export async function getActiveChatTiers(): Promise<ChatTier[]> {
   return (await getChatRuntimeConfig()).tiers;
 }
 
@@ -137,7 +153,7 @@ export async function getActiveChatTiers(): Promise<string[]> {
  * still take precedence in the runtime.
  */
 export async function getChatRuntimeConfig(): Promise<{
-  tiers: string[];
+  tiers: ChatTier[];
   defaultModelId: string | null;
   defaultMaxOutputTokens: number | null;
 }> {
@@ -150,7 +166,7 @@ export async function getChatRuntimeConfig(): Promise<{
     };
   }
 
-  let tiers: string[] = [];
+  let tiers: ChatTier[] = [];
   let defaultModelId: string | null = null;
   let defaultMaxOutputTokens: number | null = null;
 
@@ -169,7 +185,9 @@ export async function getChatRuntimeConfig(): Promise<{
     // dormant — the runtime can only dispatch to providers that have a key
     // loaded in env. Per-model credentials are intentionally not supported.
     const eligible = rows.filter((r) => isProviderConfigured(r.provider));
-    tiers = eligible.map((r) => r.modelId).filter(Boolean);
+    tiers = eligible
+      .filter((r) => typeof r.modelId === "string" && r.modelId.length > 0)
+      .map((r) => ({ modelId: r.modelId, provider: r.provider as AiModelProvider }));
     const def = eligible.find((r) => r.isDefault);
     if (def) {
       defaultModelId = def.modelId;
@@ -184,14 +202,15 @@ export async function getChatRuntimeConfig(): Promise<{
     });
   }
 
-  // Fallback 1: env-configured tiers
+  // Fallback 1: env-configured tiers (google-only by design — the env var
+  // is a disaster-recovery knob, not a model registry).
   if (tiers.length === 0) {
     const envTiers = (env.AI_CHAT_FALLBACK_MODEL_TIERS || "")
       .split(",")
       .map((m) => m.trim())
       .filter(Boolean);
     if (envTiers.length > 0) {
-      tiers = envTiers;
+      tiers = envTiers.map((modelId) => ({ modelId, provider: "google" }));
       defaultModelId = envTiers[0] ?? null;
     }
   }
@@ -199,7 +218,7 @@ export async function getChatRuntimeConfig(): Promise<{
   // Fallback 2: hardcoded defaults
   if (tiers.length === 0) {
     tiers = FALLBACK_CHAT_TIERS;
-    defaultModelId = FALLBACK_CHAT_TIERS[0] ?? null;
+    defaultModelId = FALLBACK_CHAT_TIERS[0]?.modelId ?? null;
   }
 
   chatConfigCache = {
@@ -222,7 +241,7 @@ export async function getChatRuntimeConfig(): Promise<{
  */
 export async function getDefaultChatModel(): Promise<string | null> {
   const tiers = await getActiveChatTiers();
-  return tiers[0] ?? null;
+  return tiers[0]?.modelId ?? null;
 }
 
 // ── CRUD ─────────────────────────────────────────────────────────────────────

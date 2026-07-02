@@ -40,7 +40,15 @@ export const getActiveChatTiersController = async (
   res: Response,
 ) => {
   const tiers = await getActiveChatTiers();
-  res.status(200).json({ data: { tiers } });
+  // Surface both the modelId-only view (for backwards compat with the mobile
+  // admin UI) and the rich view (modelId + provider) so super admins can see
+  // which provider serves each tier.
+  res.status(200).json({
+    data: {
+      tiers: tiers.map((t) => t.modelId),
+      tierDetails: tiers,
+    },
+  });
 };
 
 // GET /v1/admin/ai-models/:id

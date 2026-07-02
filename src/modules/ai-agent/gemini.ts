@@ -63,7 +63,8 @@ const MODELS = {
  * Final hardcoded fallback for the text-generation runtime. Used only when the
  * admin-managed AiPipeline registry, the AiModel registry, AND the env fallback
  * tiers are all empty or unreachable. Kept in sync with FALLBACK_CHAT_TIERS in
- * ai-model.service.ts and the seed (prisma/seed-ai-models.ts).
+ * ai-model.service.ts and the seed (prisma/seed-ai-models.ts). Gemini-only by
+ * design — this module always talks to the Google GenAI SDK.
  */
 const HARDCODED_TEXT_TIERS = [MODELS.PRIMARY, MODELS.RESERVE, MODELS.STABLE];
 
@@ -73,6 +74,10 @@ const HARDCODED_TEXT_TIERS = [MODELS.PRIMARY, MODELS.RESERVE, MODELS.STABLE];
  * `pipeline` key so the admin can configure them independently — or set
  * `inheritsChatDefault` to make a surface follow the chat model selection.
  * Defaults to the "chat" pipeline when called without a key.
+ *
+ * Returns modelId-only strings — the Google GenAI SDK used in this module
+ * is provider-locked (Google only), so we project away the provider field
+ * from the registry. Multi-provider dispatch lives in modelRuntime.ts.
  */
 async function resolveTextTiers(
   pipeline: string = "chat",
@@ -82,7 +87,9 @@ async function resolveTextTiers(
       "@modules/admin/ai-pipeline/ai-pipeline.service"
     );
     const config = await getPipelineConfig(pipeline as any);
-    if (config.tiers.length > 0) return config.tiers;
+    if (config.tiers.length > 0) {
+      return config.tiers.map((t) => t.modelId);
+    }
   } catch (error: any) {
     logger.warn("gemini.text_tiers.registry_resolve_failed", {
       pipeline,
@@ -485,6 +492,8 @@ export async function generateVisualContent(params: {
 
   // Resolve image tiers from the "image_gen" pipeline (admin-configurable);
   // fall back to the fixed image-capable pair if the registry is unavailable.
+  // Project the rich ChatTier[] down to modelId-only strings — this module
+  // only talks to the Google GenAI SDK.
   let imageTiers: string[];
   try {
     const { getPipelineConfig } = await import(
@@ -493,7 +502,9 @@ export async function generateVisualContent(params: {
     const config = await getPipelineConfig(
       (params.pipeline as any) ?? "image_gen",
     );
-    imageTiers = config.tiers.length > 0 ? config.tiers : [MODELS.IMAGE_GEN, MODELS.PRIMARY];
+    imageTiers = config.tiers.length > 0
+      ? config.tiers.map((t) => t.modelId)
+      : [MODELS.IMAGE_GEN, MODELS.PRIMARY];
   } catch (error: any) {
     logger.warn("gemini.image_tiers.resolve_failed", { error: error?.message });
     imageTiers = [MODELS.IMAGE_GEN, MODELS.PRIMARY];

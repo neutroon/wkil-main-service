@@ -58,9 +58,9 @@ describe("buildDecisionOrToolSystemInstruction", () => {
 describe("DEFAULT_MODEL_TIERS", () => {
   it("prefers the low-latency tier before quality fallbacks", () => {
     expect(DEFAULT_MODEL_TIERS).toEqual([
-      "gemini-3.1-flash-lite-preview",
-      "gemini-3-flash-preview",
-      "gemini-2.5-flash",
+      { modelId: "gemini-3.1-flash-lite-preview", provider: "google" },
+      { modelId: "gemini-3-flash-preview", provider: "google" },
+      { modelId: "gemini-2.5-flash", provider: "google" },
     ]);
   });
 });

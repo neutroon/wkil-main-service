@@ -2,7 +2,10 @@ import prisma, { Prisma } from "@config/prisma";
 import { env } from "@config/env";
 import { logger } from "@utils/logger";
 import { AppError } from "@middlewares/errorHandler.middleware";
-import { getChatRuntimeConfig } from "@modules/admin/ai-model/ai-model.service";
+import {
+  getChatRuntimeConfig,
+  type ChatTier,
+} from "@modules/admin/ai-model/ai-model.service";
 
 /**
  * AI Pipeline Registry Service
@@ -57,15 +60,15 @@ const FIXED_EMBEDDING_TIERS = ["gemini-embedding-001"];
 
 // Final hardcoded text fallback, kept in sync with FALLBACK_CHAT_TIERS in
 // ai-model.service.ts and the seed scripts.
-const HARDCODED_TEXT_TIERS = [
-  "gemini-3.1-flash-lite-preview",
-  "gemini-3-flash-preview",
-  "gemini-2.5-flash",
+const HARDCODED_TEXT_TIERS: ChatTier[] = [
+  { modelId: "gemini-3.1-flash-lite-preview", provider: "google" },
+  { modelId: "gemini-3-flash-preview", provider: "google" },
+  { modelId: "gemini-2.5-flash", provider: "google" },
 ];
 
 // ── Types ────────────────────────────────────────────────────────────────────
 export interface PipelineRuntimeConfig {
-  tiers: string[]; // ordered model IDs to try (default first)
+  tiers: ChatTier[]; // ordered model+provider tiers to try (default first)
   temperature: number | null; // null = caller's runtime default
   maxOutputTokens: number | null; // null = caller's runtime default
   timeoutMs: number | null; // null = caller's runtime default
@@ -152,12 +155,34 @@ async function selectableModelIdsForClass(modelClass: ModelClass): Promise<Set<s
 }
 
 /**
+ * Same as selectableModelIdsForClass but returns the full ChatTier so a
+ * standalone pipeline's own modelIds can be rehydrated with their provider.
+ */
+async function selectableTiersForClass(modelClass: ModelClass): Promise<ChatTier[]> {
+  const categories: string[] =
+    modelClass === "text"
+      ? ["chat", "multimodal"]
+      : modelClass === "embedding"
+        ? ["embedding"]
+        : ["image"];
+
+  const rows = await prisma.aiModel.findMany({
+    where: { category: { in: categories }, isActive: true },
+    select: { modelId: true, provider: true },
+  });
+  return rows
+    .filter((r) => isProviderConfigured(r.provider))
+    .filter((r) => typeof r.modelId === "string" && r.modelId.length > 0)
+    .map((r) => ({ modelId: r.modelId, provider: r.provider as ChatTier["provider"] }));
+}
+
+/**
  * Resolve the chat-tier base (used when a pipeline inherits chat default, and
  * as the fallback for standalone text pipelines). Wraps getChatRuntimeConfig
  * so this service is the only thing importing it.
  */
 async function chatTiersBase(): Promise<{
-  tiers: string[];
+  tiers: ChatTier[];
   maxOutputTokens: number | null;
 }> {
   try {
@@ -172,10 +197,13 @@ async function chatTiersBase(): Promise<{
     .split(",")
     .map((m) => m.trim())
     .filter(Boolean);
-  return {
-    tiers: envTiers.length > 0 ? envTiers : HARDCODED_TEXT_TIERS,
-    maxOutputTokens: null,
-  };
+  if (envTiers.length > 0) {
+    return {
+      tiers: envTiers.map((modelId) => ({ modelId, provider: "google" })),
+      maxOutputTokens: null,
+    };
+  }
+  return { tiers: HARDCODED_TEXT_TIERS, maxOutputTokens: null };
 }
 
 // ── Cache loading ────────────────────────────────────────────────────────────
@@ -219,9 +247,14 @@ async function buildConfig(row: PrismaAiPipelineRow): Promise<PipelineRuntimeCon
     timeoutMs: row.timeoutMs,
   };
 
-  // Embeddings: always the fixed 768-dim model.
+  // Embeddings: always the fixed 768-dim model. Embeddings are google-only
+  // by design (the pgvector column is vector(768) and pinned to the Gemini
+  // embedding model), so we synthesise a google ChatTier here.
   if (row.key === EMBEDDINGS_KEY) {
-    return { tiers: [...FIXED_EMBEDDING_TIERS], ...basePerf };
+    return {
+      tiers: FIXED_EMBEDDING_TIERS.map((modelId) => ({ modelId, provider: "google" })),
+      ...basePerf,
+    };
   }
 
   // chat, or any text pipeline inheriting chat default.
@@ -231,11 +264,17 @@ async function buildConfig(row: PrismaAiPipelineRow): Promise<PipelineRuntimeCon
   }
 
   // Standalone pipeline with its own modelIds. Filter to eligible, active,
-  // configured-provider models for the class. If nothing remains, degrade to
-  // the chat base so the surface still runs.
+  // configured-provider models for the class, and rehydrate with the
+  // provider each id belongs to. If nothing remains, degrade to the chat
+  // base so the surface still runs.
   if (row.modelIds.length > 0) {
-    const eligible = await selectableModelIdsForClass(row.modelClass as ModelClass);
-    const tiers = row.modelIds.filter((id) => eligible.has(id));
+    const eligible = await selectableTiersForClass(row.modelClass as ModelClass);
+    const eligibleById = new Map(eligible.map((t) => [t.modelId, t] as const));
+    const tiers: ChatTier[] = [];
+    for (const id of row.modelIds) {
+      const tier = eligibleById.get(id);
+      if (tier) tiers.push(tier);
+    }
     if (tiers.length > 0) {
       return { tiers, ...basePerf };
     }
@@ -288,9 +327,23 @@ export async function getAllPipelineConfigs(): Promise<
     const entry = cache.byKey.get(key);
     out[key] = entry
       ? entry.config
-      : { tiers: HARDCODED_TEXT_TIERS, temperature: null, maxOutputTokens: null, timeoutMs: null };
+      : {
+          tiers: HARDCODED_TEXT_TIERS,
+          temperature: null,
+          maxOutputTokens: null,
+          timeoutMs: null,
+        };
   }
   return out;
+}
+
+/**
+ * Project a PipelineRuntimeConfig down to the modelId-only view the admin
+ * UI surfaces. Callers that need provider info should use `resolvedTiers`
+ * (rich) and `resolvedTierDetails` separately.
+ */
+function tierModelIds(tiers: ChatTier[]): string[] {
+  return tiers.map((t) => t.modelId);
 }
 
 // ── CRUD ─────────────────────────────────────────────────────────────────────
@@ -301,11 +354,17 @@ export async function listPipelines() {
   });
   // Annotate with the live-resolved tiers so the UI can show what each
   // pipeline will actually use without a second round-trip from the client.
+  // `resolvedTiers` stays as a modelId-only string[] for the mobile admin
+  // UI; `resolvedTierDetails` exposes provider info to super admins.
   const configs = await getAllPipelineConfigs();
-  return rows.map((row) => ({
-    ...row,
-    resolvedTiers: configs[row.key]?.tiers ?? [],
-  }));
+  return rows.map((row) => {
+    const tiers = configs[row.key]?.tiers ?? [];
+    return {
+      ...row,
+      resolvedTiers: tierModelIds(tiers),
+      resolvedTierDetails: tiers,
+    };
+  });
 }
 
 export async function getPipeline(key: PipelineKey) {
@@ -314,7 +373,11 @@ export async function getPipeline(key: PipelineKey) {
     throw new AppError("Pipeline not found", 404, true, "PIPELINE_NOT_FOUND");
   }
   const config = await getPipelineConfig(key);
-  return { ...row, resolvedTiers: config.tiers };
+  return {
+    ...row,
+    resolvedTiers: tierModelIds(config.tiers),
+    resolvedTierDetails: config.tiers,
+  };
 }
 
 export async function updatePipeline(
@@ -382,5 +445,9 @@ export async function updatePipeline(
   clearPipelineCache();
   logger.info("ai_pipeline.updated", { actorId, key });
   const config = await getPipelineConfig(key);
-  return { ...updated, resolvedTiers: config.tiers };
+  return {
+    ...updated,
+    resolvedTiers: tierModelIds(config.tiers),
+    resolvedTierDetails: config.tiers,
+  };
 }

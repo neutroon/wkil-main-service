@@ -629,6 +629,11 @@ export async function invokeDecision(params: {
         temperature: params.temperature ?? 0.4,
         maxOutputTokens: ctx.defaultMaxOutputTokens ?? undefined,
       });
+      // Each provider uses its optimal structured-output path. The Zod
+      // schema is OpenAI strict-mode compliant (see
+      // agentDecision.schema.ts), so OpenAI's default jsonSchema/strict
+      // path works without a method override. Gemini and Anthropic pick
+      // their respective defaults.
       const structured = llm.withStructuredOutput(decisionSchema, {
         name: "AiRoutingDecision",
         includeRaw: true,

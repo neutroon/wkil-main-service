@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { processCustomerMemoryCaptureJob } from "./customerMemoryCapture.job";
-import { generateContent } from "@modules/ai-agent/gemini";
+import { invokePipelineStructured } from "@modules/ai-agent/core/pipelineRuntime";
 import { updateCustomerFromSavedDetails } from "./customer.service";
 
 vi.mock("@config/prisma", () => ({
@@ -14,8 +14,13 @@ vi.mock("@config/prisma", () => ({
   },
 }));
 
-vi.mock("@modules/ai-agent/gemini", () => ({
-  generateContent: vi.fn(),
+vi.mock("@modules/ai-agent/core/pipelineRuntime", () => ({
+  invokePipelineStructured: vi.fn(),
+  invokePipelineText: vi.fn(),
+  invokePipelineTextStream: vi.fn(),
+  invokePipelineEmbedding: vi.fn(),
+  invokePipelineEmbeddingQuery: vi.fn(),
+  invokePipelineImageGen: vi.fn(),
 }));
 
 vi.mock("./customer.service", () => ({
@@ -74,18 +79,20 @@ describe("customer memory capture job", () => {
   });
 
   it("extracts memory with AI and saves the structured result locally", async () => {
-    vi.mocked(generateContent).mockResolvedValue({
-      text: JSON.stringify({
-        profileUpdates: { name: "Hesham" },
+    vi.mocked(invokePipelineStructured).mockResolvedValue({
+      result: {
+        profileUpdates: { name: "Hesham", phone: null, email: null },
         fieldUpdates: { requested_program: "Life coaching" },
         notes: "Customer wants registration details.",
-      }),
+      },
+      raw: "",
       usage: {
         promptTokens: 10,
         completionTokens: 5,
         totalTokens: 15,
         groundingCalls: 0,
         model: "test",
+        provider: "google",
       },
     });
 
@@ -96,9 +103,10 @@ describe("customer memory capture job", () => {
       recentTurns: [],
     });
 
-    const prompt = vi.mocked(generateContent).mock.calls[0][0];
-    expect(prompt).toContain("message 12");
-    expect(prompt).toContain("requested_program");
+    const call = vi.mocked(invokePipelineStructured).mock.calls[0][0];
+    expect(call.pipeline).toBe("memory_capture");
+    expect(call.prompt).toContain("message 12");
+    expect(call.prompt).toContain("requested_program");
     expect(updateCustomerFromSavedDetails).toHaveBeenCalledWith({
       businessProfileId: 10,
       conversationId: 45,
@@ -111,7 +119,7 @@ describe("customer memory capture job", () => {
   });
 
   it("skips saving when the AI extractor fails", async () => {
-    vi.mocked(generateContent).mockRejectedValue(new Error("timeout"));
+    vi.mocked(invokePipelineStructured).mockRejectedValue(new Error("timeout"));
 
     await processCustomerMemoryCaptureJob({
       businessProfileId: 10,

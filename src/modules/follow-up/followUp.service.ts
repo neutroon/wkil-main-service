@@ -1,6 +1,6 @@
 import prisma from "@config/prisma";
 import { logger } from "@utils/logger";
-import { generateContent } from "@modules/ai-agent/gemini";
+import { invokePipelineText } from "@modules/ai-agent/core/pipelineRuntime";
 import { metaExpressQueue } from "@modules/meta/core/meta.queue";
 import { saveMessage } from "@modules/meta/core/conversation.service";
 import { decryptFacebookSecret } from "@modules/auth/core/tokenCrypto";
@@ -161,7 +161,12 @@ async function generateFollowUpText(params: {
 }): Promise<string> {
   const prompt = buildFollowUpPrompt(params);
   const result = await Promise.race([
-    generateContent(prompt, "text/plain", false, undefined, 0.3, "follow_up"),
+    invokePipelineText({
+      pipeline: "follow_up",
+      prompt,
+      temperature: 0.3,
+      timeoutMs: FOLLOW_UP_TIMEOUT_MS,
+    }),
     new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error("FOLLOW_UP_AI_TIMEOUT")), FOLLOW_UP_TIMEOUT_MS),
     ),

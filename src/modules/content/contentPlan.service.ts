@@ -1,4 +1,7 @@
-import { generateContent, generateContentStream } from "@modules/ai-agent/gemini";
+import {
+  invokePipelineText,
+  invokePipelineTextStream,
+} from "@modules/ai-agent/core/pipelineRuntime";
 import { recordAiUsage, assertQuotaAvailable } from "../billing/billing.service";
 import { logger } from "@utils/logger";
 import { retrieveRelevantChunks } from "../ai-agent/rag/rag.service";
@@ -199,42 +202,35 @@ Instructions:
 
   let streamUsage: any = null;
   try {
-    const { result, model } = await generateContentStream(
-      researchPrompt,
-      "text/plain",
-      true,
-      undefined,
-      undefined,
-      "content_plan",
-    );
-    for await (const chunk of result) {
+    const stream = invokePipelineTextStream({
+      pipeline: "content_plan",
+      prompt: researchPrompt,
+      enableSearch: true,
+    });
+    for await (const chunk of stream) {
+      if (chunk.done) {
+        streamUsage = chunk.usage;
+        continue;
+      }
       const chunkText = chunk.text || "";
       researchSummary += chunkText;
-
-      // Capture exact usage from the final chunk (Gemini best practice)
-      if (chunk.usageMetadata) {
-        streamUsage = chunk.usageMetadata;
-      }
-
       yield { type: "research_chunk", text: chunkText };
     }
 
     const usage = streamUsage;
-    const grounding = (result as any).candidates?.[0]?.groundingMetadata
-      ?.searchEntryPoint;
+    const groundingCalls = usage?.groundingCalls ?? 0;
 
     recordAiUsage({
       userId: profile.userId,
       businessProfileId: profile.id,
-      promptTokens: usage?.promptTokenCount || usage?.promptTokens || 0,
-      completionTokens:
-        usage?.candidatesTokenCount || usage?.completionTokens || 0,
-      groundingCalls: grounding ? 1 : 0,
-      modelName: model,
+      promptTokens: usage?.promptTokens || 0,
+      completionTokens: usage?.completionTokens || 0,
+      groundingCalls,
+      modelName: usage?.model || "unknown",
       operation: "content_plan_research",
     }).catch(console.error);
 
-    isGrounded = true;
+    isGrounded = groundingCalls > 0;
     yield {
       type: "status",
       message: "Live research complete. Building your strategy map...",
@@ -296,15 +292,11 @@ Schema:
   }
 ]`;
 
-  // We now capture usage from generateContent
-  const { text: responseText, usage } = await generateContent(
-    strategyPrompt,
-    "application/json",
-    false,
-    undefined,
-    undefined,
-    "content_plan",
-  );
+  // We now capture usage from invokePipelineText
+  const { text: responseText, usage } = await invokePipelineText({
+    pipeline: "content_plan",
+    prompt: strategyPrompt,
+  });
 
   // Log strategic generation usage
   recordAiUsage({
@@ -440,14 +432,11 @@ Provide the research summary in plain text.`;
   let isGrounded = false;
 
   try {
-    const { text, usage } = await generateContent(
-      researchPrompt,
-      "text/plain",
-      true,
-      undefined,
-      undefined,
-      "content_plan",
-    );
+    const { text, usage } = await invokePipelineText({
+      pipeline: "content_plan",
+      prompt: researchPrompt,
+      enableSearch: true,
+    });
 
     // Log research usage (heavy grounding)
     recordAiUsage({
@@ -518,14 +507,10 @@ Schema:
 ]`;
 
   // We use structured JSON mode here (Search is already done, so no conflict)
-  const { text: responseText, usage } = await generateContent(
-    strategyPrompt,
-    "application/json",
-    false,
-    undefined,
-    undefined,
-    "content_plan",
-  );
+  const { text: responseText, usage } = await invokePipelineText({
+    pipeline: "content_plan",
+    prompt: strategyPrompt,
+  });
 
   // Log strategy usage
   recordAiUsage({
@@ -728,14 +713,10 @@ ${schemaInstruct}
     `[ContentPlanService] Generating Post Execution for Post ${postId} (${post.format})...`,
   );
 
-  const { text: responseText, usage } = await generateContent(
+  const { text: responseText, usage } = await invokePipelineText({
+    pipeline: "content_plan",
     prompt,
-    "application/json",
-    false,
-    undefined,
-    undefined,
-    "content_plan",
-  );
+  });
 
   // Log post execution usage
   recordAiUsage({

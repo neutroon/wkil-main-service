@@ -1,4 +1,7 @@
-import { generateVisualContent, generateContent } from "../../ai-agent/gemini";
+import {
+  invokePipelineText,
+  invokePipelineImageGen,
+} from "@modules/ai-agent/core/pipelineRuntime";
 import { createMediaAsset } from "./mediaLibrary.service";
 import { recordAiUsage, assertQuotaAvailable } from "../../billing/billing.service";
 import { applyWatermark, WatermarkPosition } from "./watermark.service";
@@ -76,7 +79,14 @@ ${isRefine ? "You are performing a high-end photo retouch and asset refinement."
 ${isRefine ? `7. The Evolution: The current asset is "${sourcePrompt}". Apply the surgical refinement: "${userPrompt}" while boosting total visual weight and luxury feel.` : `7. The Narrative: ${userPrompt}`}
 8. Formatting: Return ONLY the optimized, high-density prompt string. No conversational meta-talk.`;
 
-  const { text: enhancedPrompt } = await generateContent(artDirectorPrompt, undefined, undefined, undefined, undefined, "image_gen");
+  // The art-director prompt is a text-only call. We deliberately route it
+  // through the chat pipeline (the most capable text model the admin has
+  // configured) rather than the image pipeline, because the image-gen
+  // tier is reserved for actual image synthesis.
+  const { text: enhancedPrompt } = await invokePipelineText({
+    pipeline: "chat",
+    prompt: artDirectorPrompt,
+  });
   return (enhancedPrompt || userPrompt).trim();
 }
 
@@ -133,8 +143,12 @@ export async function createGeminiVisual(params: {
       }
     }
 
-    // 5. Execution - Generate the Branded Pixels
-    const { imageBuffer, usage } = await generateVisualContent({
+    // 5. Execution - Generate the Branded Pixels via the multi-provider
+    // image-gen pipeline. Google Imagen is the default; OpenAI DALL-E 3
+    // works too but does not support brand-logo multimodal injection,
+    // so the OpenAI tier naturally drops `brandLogoBuffer`.
+    const { imageBuffer, usage } = await invokePipelineImageGen({
+      pipeline: "image_gen",
       prompt: finalPrompt,
       brandLogoBuffer,
       brandLogoMimeType: "image/png",
@@ -265,7 +279,8 @@ export async function refineGeminiVisual(params: {
     }
 
     // 5. Command the pixels
-    const { imageBuffer: refinedBuffer, usage } = await generateVisualContent({
+    const { imageBuffer: refinedBuffer, usage } = await invokePipelineImageGen({
+      pipeline: "image_gen",
       prompt: finalPrompt,
       imageBuffer,
       brandLogoBuffer,

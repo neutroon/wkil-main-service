@@ -37,8 +37,13 @@ vi.mock("../billing/billing.service", () => ({
   recordAiUsage: vi.fn(),
 }));
 
-vi.mock("@modules/ai-agent/gemini", () => ({
-  generateContent: vi.fn(),
+vi.mock("@modules/ai-agent/core/pipelineRuntime", () => ({
+  invokePipelineText: vi.fn(),
+  invokePipelineTextStream: vi.fn(),
+  invokePipelineStructured: vi.fn(),
+  invokePipelineEmbedding: vi.fn(),
+  invokePipelineEmbeddingQuery: vi.fn(),
+  invokePipelineImageGen: vi.fn(),
 }));
 
 vi.mock("@utils/apiClient", () => ({

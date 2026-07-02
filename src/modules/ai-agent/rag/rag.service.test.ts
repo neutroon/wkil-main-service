@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { embedQuery } from "../gemini";
+import { invokePipelineEmbeddingQuery } from "@modules/ai-agent/core/pipelineRuntime";
 import {
   assertQuotaAvailable,
   recordAiUsage,
@@ -7,9 +7,13 @@ import {
 import prisma from "@config/prisma";
 import { retrieveRelevantChunksWithEmbedding } from "./rag.service";
 
-vi.mock("../gemini", () => ({
-  embedQuery: vi.fn(),
-  embedTexts: vi.fn(),
+vi.mock("@modules/ai-agent/core/pipelineRuntime", () => ({
+  invokePipelineText: vi.fn(),
+  invokePipelineTextStream: vi.fn(),
+  invokePipelineStructured: vi.fn(),
+  invokePipelineEmbedding: vi.fn(),
+  invokePipelineEmbeddingQuery: vi.fn(),
+  invokePipelineImageGen: vi.fn(),
 }));
 
 vi.mock("@modules/billing/billing.service", () => ({
@@ -71,7 +75,7 @@ describe("retrieveRelevantChunksWithEmbedding", () => {
       { userId: 20, timeoutMs: 50 },
     );
 
-    expect(embedQuery).not.toHaveBeenCalled();
+    expect(invokePipelineEmbeddingQuery).not.toHaveBeenCalled();
     expect(assertQuotaAvailable).toHaveBeenCalledWith(20, 10);
     expect(recordAiUsage).not.toHaveBeenCalled();
     expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
@@ -83,7 +87,7 @@ describe("retrieveRelevantChunksWithEmbedding", () => {
   });
 
   it("falls back to available lexical and core context when embedding times out", async () => {
-    vi.mocked(embedQuery).mockRejectedValueOnce(new Error("GEMINI_TIMEOUT"));
+    vi.mocked(invokePipelineEmbeddingQuery).mockRejectedValueOnce(new Error("GEMINI_TIMEOUT"));
     vi.mocked(prisma.$queryRaw).mockResolvedValueOnce([] as any);
     vi.mocked(prisma.businessProfileChunk.findMany)
       .mockResolvedValueOnce([
@@ -101,11 +105,16 @@ describe("retrieveRelevantChunksWithEmbedding", () => {
       { userId: 20, timeoutMs: 50 },
     );
 
-    expect(embedQuery).toHaveBeenCalledWith(
-      "semantic wording with no exact match",
-      { timeoutMs: expect.any(Number) },
+    expect(invokePipelineEmbeddingQuery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pipeline: "embeddings",
+        text: "semantic wording with no exact match",
+        timeoutMs: expect.any(Number),
+      }),
     );
-    expect(vi.mocked(embedQuery).mock.calls[0]?.[1]?.timeoutMs).toBeLessThanOrEqual(50);
+    const calls = vi.mocked(invokePipelineEmbeddingQuery).mock.calls;
+    const lastCall = calls[calls.length - 1];
+    expect(lastCall?.[0]?.timeoutMs).toBeLessThanOrEqual(50);
     expect(assertQuotaAvailable).toHaveBeenCalledWith(20, 10);
     expect(recordAiUsage).not.toHaveBeenCalled();
     expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
@@ -132,7 +141,7 @@ describe("retrieveRelevantChunksWithEmbedding", () => {
       { userId: 20, timeoutMs: 50 },
     );
 
-    expect(embedQuery).not.toHaveBeenCalled();
+    expect(invokePipelineEmbeddingQuery).not.toHaveBeenCalled();
     expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
     expect(result.queryEmbedding).toBeNull();
     expect(result.chunks).toEqual([
@@ -141,9 +150,16 @@ describe("retrieveRelevantChunksWithEmbedding", () => {
   });
 
   it("does not let slow vector search exceed the RAG retrieval budget", async () => {
-    vi.mocked(embedQuery).mockResolvedValueOnce({
+    vi.mocked(invokePipelineEmbeddingQuery).mockResolvedValueOnce({
       vector: [0.1, 0.2, 0.3],
-      totalTokens: 7,
+      usage: {
+        promptTokens: 7,
+        completionTokens: 0,
+        totalTokens: 7,
+        groundingCalls: 0,
+        model: "gemini-embedding-001",
+        provider: "google",
+      },
     });
     vi.mocked(prisma.$queryRaw).mockResolvedValueOnce([
       {

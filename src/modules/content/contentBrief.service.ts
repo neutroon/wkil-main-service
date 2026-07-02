@@ -3,7 +3,14 @@ import { env } from "@config/env";
 import { internalClient } from "@utils/apiClient";
 import { logger } from "@utils/logger";
 import { AppError } from "@middlewares/errorHandler.middleware";
-import { generateContent } from "@modules/ai-agent/gemini";
+import {
+  invokePipelineStructured,
+  invokePipelineText,
+} from "@modules/ai-agent/core/pipelineRuntime";
+import {
+  competitorDiscoverySchema,
+  type CompetitorDiscoveryResult,
+} from "./contentBrief.schemas";
 import { assertQuotaAvailable, recordAiUsage } from "../billing/billing.service";
 import {
   getPagePosts,
@@ -420,7 +427,13 @@ Return only JSON:
   ]
 }`;
 
-  const { text, usage } = await generateContent(prompt, "text/plain", true, undefined, undefined, "content_brief");
+  const { result, usage } = await invokePipelineStructured<CompetitorDiscoveryResult>({
+    pipeline: "content_brief",
+    schema: competitorDiscoverySchema,
+    schemaName: "CompetitorDiscovery",
+    prompt,
+    enableSearch: true,
+  });
   recordAiUsage({
     userId: params.profile.userId,
     businessProfileId: params.profile.id,
@@ -429,8 +442,7 @@ Return only JSON:
     operation: "content_audit_competitor_discovery",
   }).catch(console.error);
 
-  const parsed = parseJsonObject(text || "{}");
-  return uniqueCompetitors(asArray(parsed.competitors));
+  return uniqueCompetitors(result.competitors);
 }
 
 async function summarizeCompetitor(params: {
@@ -475,14 +487,11 @@ Return concise JSON:
   "contentAngles": ["Content angles they appear to use"],
   "opportunities": ["Gaps our business can exploit"]
 }`;
-      const { text, usage } = await generateContent(
-        searchPrompt,
-        "text/plain",
-        true,
-        undefined,
-        undefined,
-        "content_brief",
-      );
+      const { text, usage } = await invokePipelineText({
+        pipeline: "content_brief",
+        prompt: searchPrompt,
+        enableSearch: true,
+      });
       recordAiUsage({
         userId: params.userId,
         businessProfileId: params.businessProfileId,
@@ -519,14 +528,10 @@ Return only JSON:
   "confidence": 0.0
 }`;
 
-    const { text, usage } = await generateContent(
-      summaryPrompt,
-      "application/json",
-      false,
-      undefined,
-      undefined,
-      "content_brief",
-    );
+    const { text, usage } = await invokePipelineText({
+      pipeline: "content_brief",
+      prompt: summaryPrompt,
+    });
     recordAiUsage({
       userId: params.userId,
       businessProfileId: params.businessProfileId,
@@ -836,14 +841,11 @@ export async function* generateContentAuditStream(input: ContentAuditInput) {
       firstParty,
       competitorSources,
     });
-    const { text, usage } = await generateContent(
+    const { text, usage } = await invokePipelineText({
+      pipeline: "content_brief",
       prompt,
-      "application/json",
-      false,
-      undefined,
-      0.25,
-      "content_brief",
-    );
+      temperature: 0.25,
+    });
     recordAiUsage({
       userId: input.userId,
       businessProfileId: input.businessProfileId,

@@ -3,7 +3,7 @@ import {
   processFollowUpJob,
   scheduleConversationFollowUps,
 } from "./followUp.service";
-import { generateContent } from "@modules/ai-agent/gemini";
+import { invokePipelineText } from "@modules/ai-agent/core/pipelineRuntime";
 import { metaExpressQueue } from "@modules/meta/core/meta.queue";
 import { saveMessage } from "@modules/meta/core/conversation.service";
 
@@ -28,8 +28,13 @@ vi.mock("@config/prisma", () => ({
   },
 }));
 
-vi.mock("@modules/ai-agent/gemini", () => ({
-  generateContent: vi.fn(),
+vi.mock("@modules/ai-agent/core/pipelineRuntime", () => ({
+  invokePipelineText: vi.fn(),
+  invokePipelineTextStream: vi.fn(),
+  invokePipelineStructured: vi.fn(),
+  invokePipelineEmbedding: vi.fn(),
+  invokePipelineEmbeddingQuery: vi.fn(),
+  invokePipelineImageGen: vi.fn(),
 }));
 
 vi.mock("@modules/meta/core/meta.queue", () => ({
@@ -101,7 +106,7 @@ describe("follow-up service", () => {
     });
     mockedPrisma.conversationMessage.count.mockResolvedValue(0);
     mockedPrisma.conversationMessage.findMany.mockResolvedValue([]);
-    vi.mocked(generateContent).mockResolvedValue({
+    vi.mocked(invokePipelineText).mockResolvedValue({
       text: "لسه معاك يا فندم لو تحب نكمل التفاصيل.",
       usage: {
         promptTokens: 10,
@@ -109,6 +114,7 @@ describe("follow-up service", () => {
         totalTokens: 15,
         groundingCalls: 0,
         model: "test",
+        provider: "google",
       },
     });
     vi.mocked(saveMessage).mockResolvedValue({ id: 202 } as any);
@@ -164,7 +170,7 @@ describe("follow-up service", () => {
       delayIndex: 0,
     });
 
-    expect(generateContent).toHaveBeenCalled();
+    expect(invokePipelineText).toHaveBeenCalled();
     expect(saveMessage).toHaveBeenCalledWith(
       45,
       "model",

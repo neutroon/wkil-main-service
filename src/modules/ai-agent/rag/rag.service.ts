@@ -1,4 +1,7 @@
-import { embedQuery, embedTexts } from "../gemini";
+import {
+  invokePipelineEmbedding,
+  invokePipelineEmbeddingQuery,
+} from "@modules/ai-agent/core/pipelineRuntime";
 import { recordAiUsage, assertQuotaAvailable } from "@modules/billing/billing.service";
 import prisma, { Prisma } from "@config/prisma";
 import { logger } from "@utils/logger";
@@ -214,7 +217,11 @@ export async function ingestBusinessProfile(businessProfileId: number) {
   await assertQuotaAvailable(profile.userId, businessProfileId);
 
   const chunks = chunkBusinessProfile(profile);
-  const { embeddings, totalTokens } = await embedTexts(chunks.map((c) => c.content));
+  const { embeddings, usage: embedUsage } = await invokePipelineEmbedding({
+    pipeline: "embeddings",
+    texts: chunks.map((c) => c.content),
+  });
+  const totalTokens = embedUsage.totalTokens;
 
   // Log embedding usage
   recordAiUsage({
@@ -269,7 +276,11 @@ export async function partialReIngestBusinessProfile(
     affectedChunkTypes.includes(c.chunkType),
   );
 
-  const { embeddings, totalTokens } = await embedTexts(chunksToUpdate.map((c) => c.content));
+  const { embeddings, usage: embedUsage } = await invokePipelineEmbedding({
+    pipeline: "embeddings",
+    texts: chunksToUpdate.map((c) => c.content),
+  });
+  const totalTokens = embedUsage.totalTokens;
 
   // Log embedding usage
   recordAiUsage({
@@ -440,7 +451,9 @@ export async function retrieveRelevantChunksWithEmbedding(
 
   if (shouldUseVectorSearch) {
     const embeddingResult = await withRagDeadline({
-      operation: () => embedQuery(query, {
+      operation: () => invokePipelineEmbeddingQuery({
+        pipeline: "embeddings",
+        text: query,
         timeoutMs: remainingDeadlineMs(deadlineAt) ?? options?.timeoutMs,
       })
         .then((result) => ({ ok: true as const, result }))
@@ -463,7 +476,7 @@ export async function retrieveRelevantChunksWithEmbedding(
         queryPreview: query.slice(0, 80),
       });
     } else {
-      const { vector: embeddedQuery, totalTokens } = embeddingResult.result;
+      const { vector: embeddedQuery, usage: embedUsage } = embeddingResult.result;
       queryEmbedding = embeddedQuery;
       const vector = `[${queryEmbedding.join(",")}]`;
 
@@ -471,8 +484,8 @@ export async function retrieveRelevantChunksWithEmbedding(
       recordAiUsage({
         userId: profile.userId,
         businessProfileId,
-        embeddingTokens: totalTokens,
-        modelName: "gemini-embedding-001",
+        embeddingTokens: embedUsage.totalTokens,
+        modelName: embedUsage.model,
         operation: "rag_retrieve",
       }).catch(console.error);
 

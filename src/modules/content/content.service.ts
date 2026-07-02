@@ -1,4 +1,4 @@
-import { generateContent } from "@modules/ai-agent/gemini";
+import { invokePipelineText } from "@modules/ai-agent/core/pipelineRuntime";
 import { imageModel } from "@modules/ai-agent/vertexai.config";
 import cloudinary from "@modules/media/cloudinary.config";
 import { AppError } from "@middlewares/errorHandler.middleware";
@@ -62,8 +62,15 @@ export const generatePostContent = async (
   // Build the prompt for Gemini
   const prompt = buildPostPrompt(request);
 
-  // Generate content using Gemini with enhanced error handling
-  const { text: generatedText } = await generateContent(prompt, undefined, undefined, undefined, undefined, "content");
+  // Generate content via the multi-provider pipeline runtime. The
+  // configured tier list (DB → env → hardcoded fallback) decides which
+  // provider serves this call; for content, the admin typically leaves
+  // the chat default in place but can pin a specific model via the
+  // `content` pipeline row in the admin UI.
+  const { text: generatedText } = await invokePipelineText({
+    pipeline: "content",
+    prompt,
+  });
 
   // Log usage via new service if you want to track it for individual posts
   // (Assuming you have businessProfileId available if logged in)

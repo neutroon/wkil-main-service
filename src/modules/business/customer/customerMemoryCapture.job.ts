@@ -1,7 +1,11 @@
 import prisma from "@config/prisma";
-import { generateContent } from "@modules/ai-agent/gemini";
+import { invokePipelineStructured } from "@modules/ai-agent/core/pipelineRuntime";
 import { logger } from "@utils/logger";
 import { updateCustomerFromSavedDetails } from "./customer.service";
+import {
+  memoryExtractionSchema,
+  type MemoryExtractionResult,
+} from "./customerMemoryCapture.schemas";
 import type { CustomerMemoryCaptureJob } from "@modules/meta/core/meta.queue";
 
 const MEMORY_CONTEXT_LIMIT = 20;
@@ -11,16 +15,6 @@ type CustomerMemoryField = {
   key?: string;
   label?: string;
   description?: string;
-};
-
-type MemoryExtractionResult = {
-  profileUpdates?: {
-    name?: string;
-    phone?: string;
-    email?: string;
-  };
-  fieldUpdates?: Record<string, string | number | boolean>;
-  notes?: string | null;
 };
 
 export async function processCustomerMemoryCaptureJob(
@@ -154,15 +148,14 @@ async function extractCustomerMemoryWithAi(
   const prompt = buildExtractionPrompt(job, context, fields);
 
   try {
-    const { text } = await generateContent(
+    const { result } = await invokePipelineStructured<MemoryExtractionResult>({
+      pipeline: "memory_capture",
+      schema: memoryExtractionSchema,
+      schemaName: "MemoryExtraction",
       prompt,
-      "application/json",
-      false,
-      undefined,
-      0,
-      "memory_capture",
-    );
-    return parseExtractionResult(text);
+      temperature: 0,
+    });
+    return result;
   } catch (error: any) {
     logger.warn("customer.memory_capture.ai_failed", {
       businessProfileId: job.businessProfileId,
@@ -220,27 +213,9 @@ function buildExtractionPrompt(
   ].join("\n");
 }
 
-function parseExtractionResult(text: string): MemoryExtractionResult | null {
-  const cleaned = stripJsonFence(text).trim();
-  if (!cleaned) return null;
-
-  try {
-    const parsed = JSON.parse(cleaned);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return null;
-    }
-    return parsed as MemoryExtractionResult;
-  } catch (error: any) {
-    logger.warn("customer.memory_capture.invalid_ai_json", {
-      error: error?.message || String(error),
-    });
-    return null;
-  }
-}
-
 function normalizeExtractedDetails(result: MemoryExtractionResult) {
   const details: Record<string, unknown> = {};
-  const profile = result.profileUpdates || {};
+  const profile = result.profileUpdates ?? { name: null, phone: null, email: null };
 
   const name = cleanString(profile.name);
   const phone = cleanString(profile.phone);
@@ -290,12 +265,6 @@ function normalizeMemoryFields(value: unknown): CustomerMemoryField[] {
       return { key, label, description: description || undefined };
     })
     .filter(Boolean) as CustomerMemoryField[];
-}
-
-function stripJsonFence(text: string): string {
-  return text
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/\s*```$/i, "");
 }
 
 function stringifyForPrompt(value: unknown, maxChars: number): string {

@@ -292,6 +292,10 @@ function buildMessage(
     // and `category` fields some old blog posts recommend DO NOT EXIST
     // in v1 and cause `messaging/invalid-argument` rejections.
     android: {
+      // `priority` here is on `AndroidConfig` — controls FCM
+      // *delivery* priority (high/normal). Different from
+      // `notification.priority` below, which controls the v1
+      // *display* priority (heads-up banner) on the device.
       priority: (params.android?.priority ?? "high").toUpperCase(),
       notification: {
         // `channelId` (camelCase) maps to `channel_id` in v1. The
@@ -305,6 +309,17 @@ function buildMessage(
         // `default_vibrate_timings` in v1 — a boolean. Tells FCM
         // to use the channel's default vibration pattern.
         defaultVibrateTimings: true,
+        // `priority` here is on `AndroidNotification` — controls the
+        // v1 *display* priority (heads-up banner). The channel's
+        // `Importance.max` already drives heads-up on stock Android,
+        // but on Samsung / MIUI / ColorOS (Oppo F9 etc.) the channel
+        // importance is silently downgraded by the OEM notification
+        // manager. Setting `priority: PRIORITY_HIGH` on the
+        // notification itself makes the heads-up fire even on those
+        // OEMs — the most common production escape hatch for
+        // "channel is at max but push is still silent" on Oppo /
+        // Xiaomi / Vivo devices.
+        priority: "PRIORITY_HIGH",
         // No `category` here — Android notification categorization
         // is done on the channel, not per-message. The channel
         // `handoff_requests` is already set to Importance.max

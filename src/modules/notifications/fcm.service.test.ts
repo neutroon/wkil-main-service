@@ -229,6 +229,32 @@ describe("fcm.service.buildMessage (via sendMulticast)", () => {
     };
     expect(message.android.notification.channelId).toBe("handoff_requests_v2");
   });
+
+  // Pin the AndroidNotification.priority field. This is the v1
+  // *display* priority enum (different from AndroidConfig.priority
+  // which controls delivery). Setting it is the most common
+  // production escape hatch for "channel is at max importance but
+  // the heads-up is silent" on OEM devices (Oppo F9 / Xiaomi /
+  // Vivo) whose notification manager downgrades the channel
+  // importance after the app is installed. Without this field,
+  // those OEMs swallow the notification visually even though
+  // Android's APIs say everything is at max. If a future refactor
+  // removes the priority field, this test fails with a clear
+  // message so we don't silently regress to "silent on Oppo".
+  it("notification priority is set to PRIORITY_HIGH for OEM head-up safety", async () => {
+    await sendMulticast({
+      tokens: ["t1"],
+      notification: { title: "x", body: "y" },
+      data: { type: "test" },
+      android: { channelId: "handoff_requests_v2", priority: "high" },
+      apns: { pushType: "alert" },
+    });
+
+    const message = capturedMessage as {
+      android: { notification: { priority: string } };
+    };
+    expect(message.android.notification.priority).toBe("PRIORITY_HIGH");
+  });
 });
 
 

@@ -19,6 +19,18 @@ import type {
 import type { AiRoutingDecision } from "./aiEngine.utils";
 import { repairAndParseAiResponse } from "./aiEngine.utils";
 import type { ChatTier, AiModelProvider } from "@modules/admin/ai-model/ai-model.service";
+import {
+  apiKeyForProvider,
+  executeWithTierFallback,
+  isRetryableProviderError,
+  parseProviderErrorMessage,
+  throwIfAborted,
+  waitWithAbort,
+  withTimeout,
+} from "./aiAgent.runtime";
+
+// Re-export for callers that imported these from this module.
+export { isRetryableProviderError, parseProviderErrorMessage };
 
 const MODEL_TIMEOUT_MS = 60_000;
 // Hardcoded fallback tier order, applied only when both the admin-managed
@@ -93,88 +105,6 @@ export function isModelStructuredOutputError(
   return error instanceof ModelStructuredOutputError;
 }
 
-function parseProviderErrorMessage(error: any): string {
-  let message = error?.message || String(error);
-
-  for (let i = 0; i < 2; i++) {
-    try {
-      const parsed = JSON.parse(message);
-      const next = parsed?.error?.message || parsed?.message;
-      if (!next || next === message) break;
-      message = next;
-    } catch {
-      break;
-    }
-  }
-
-  return message;
-}
-
-export function isRetryableProviderError(error: any): boolean {
-  const message = parseProviderErrorMessage(error).toLowerCase();
-  const status = Number(error?.status ?? error?.code);
-
-  return (
-    status === 503 ||
-    status === 429 ||
-    message.includes("high demand") ||
-    message.includes("unavailable") ||
-    message.includes("service unavailable") ||
-    message.includes("deadline") ||
-    message.includes("timeout") ||
-    message.includes("timed out") ||
-    message.includes("rate limit") ||
-    message.includes("too many requests")
-  );
-}
-
-function throwIfAborted(abortSignal?: AbortSignal) {
-  if (abortSignal?.aborted) throw new Error("MODEL_TIMEOUT");
-}
-
-function waitWithAbort(ms: number, abortSignal?: AbortSignal) {
-  if (!abortSignal) return new Promise((resolve) => setTimeout(resolve, ms));
-  const signal = abortSignal;
-  if (signal.aborted) return Promise.reject(new Error("MODEL_TIMEOUT"));
-
-  return new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(cleanupAndResolve, ms);
-
-    function cleanupAndResolve() {
-      signal.removeEventListener("abort", cleanupAndReject);
-      resolve();
-    }
-
-    function cleanupAndReject() {
-      clearTimeout(timeout);
-      signal.removeEventListener("abort", cleanupAndReject);
-      reject(new Error("MODEL_TIMEOUT"));
-    }
-
-    signal.addEventListener("abort", cleanupAndReject, { once: true });
-  });
-}
-
-async function withTimeout<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  abortController: AbortController,
-): Promise<T> {
-  let timeout: NodeJS.Timeout | undefined;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeout = setTimeout(() => {
-      abortController.abort("MODEL_TIMEOUT");
-      reject(new Error("MODEL_TIMEOUT"));
-    }, timeoutMs);
-  });
-
-  try {
-    return await Promise.race([promise, timeoutPromise]);
-  } finally {
-    if (timeout) clearTimeout(timeout);
-  }
-}
-
 /**
  * Per-call context for the chat runtime: the resolved tier list (in
  * fallback order) and the default chat model's per-row `maxOutputTokens`
@@ -246,88 +176,15 @@ async function executeWithModelFallback<T>(
   pipeline: string = "chat",
 ): Promise<{ result: T; model: string }> {
   const ctx = await resolveChatRuntimeConfig(pipeline);
-  const modelTiers = ctx.tiers;
-  let lastError: any;
-
-  for (let tierIndex = 0; tierIndex < modelTiers.length; tierIndex++) {
-    const tier = modelTiers[tierIndex];
-    const model = tier.modelId;
-    let attempt = 0;
-
-    while (attempt < 2) {
-      const abortController = new AbortController();
-      try {
-        const result = await withTimeout(
-          operation(tier, abortController.signal, ctx),
-          timeoutMs,
-          abortController,
-        );
-        return { result, model };
-      } catch (error: any) {
-        lastError = error;
-        throwIfAborted(abortController.signal);
-        const retryable = isRetryableProviderError(error);
-
-        if (retryable && attempt === 0) {
-          attempt++;
-          const delay = 400 + Math.random() * 300;
-          logger.warn("ai.model_runtime.retrying", {
-            context,
-            model,
-            provider: tier.provider,
-            delayMs: Math.round(delay),
-            error: parseProviderErrorMessage(error),
-          });
-          await waitWithAbort(delay, abortController.signal);
-          continue;
-        }
-
-        if (tierIndex < modelTiers.length - 1) {
-          logger.warn("ai.model_runtime.fallback_model", {
-            context,
-            model,
-            provider: tier.provider,
-            nextModel: modelTiers[tierIndex + 1].modelId,
-            nextProvider: modelTiers[tierIndex + 1].provider,
-            retryable,
-            error: parseProviderErrorMessage(error),
-          });
-          break;
-        }
-
-        const message = parseProviderErrorMessage(error);
-        logger.error("ai.model_runtime.final_failure", {
-          context,
-          model,
-          provider: tier.provider,
-          error: message,
-        });
-        throw new AppError(message, 502);
-      }
-    }
-  }
-
-  throw lastError;
-}
-
-/**
- * Returns the env API key for a provider, or null if not configured. The
- * tier resolver in ai-model.service.ts already filters out unconfigured
- * providers, so reaching this with a missing key is a configuration drift
- * (cache stale, env rotated) — we surface it as a clear AppError instead
- * of letting the SDK send an undefined key and produce a confusing 401.
- */
-function apiKeyForProvider(provider: AiModelProvider): string | null {
-  switch (provider) {
-    case "google":
-      return env.GEMINI_API_KEY || null;
-    case "openai":
-      return env.OPENAI_API_KEY || null;
-    case "anthropic":
-      return env.ANTHROPIC_API_KEY || null;
-    default:
-      return null;
-  }
+  const { result, tier } = await executeWithTierFallback<{ value: T }>({
+    tiers: ctx.tiers,
+    invoke: (t, signal) =>
+      operation(t, signal, ctx).then((value) => ({ result: { value }, model: t.modelId })),
+    timeoutMs,
+    context: { operationName: context, logScope: "context", pipelineKey: pipeline },
+    throwOnTimeout: true,
+  });
+  return { result: result.value, model: tier.modelId };
 }
 
 /**

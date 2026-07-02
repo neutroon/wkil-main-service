@@ -10,12 +10,16 @@ import { logger } from "@utils/logger";
 import {
   getPipelineConfig,
   type PipelineKey,
-  type PipelineRuntimeConfig,
 } from "@modules/admin/ai-pipeline/ai-pipeline.service";
 import type {
   ChatTier,
   AiModelProvider,
 } from "@modules/admin/ai-model/ai-model.service";
+import {
+  apiKeyForProvider,
+  executeWithTierFallback,
+  parseProviderErrorMessage,
+} from "./aiAgent.runtime";
 
 /**
  * Unified AI pipeline runtime.
@@ -66,7 +70,7 @@ type TierExecutionContext = {
 };
 
 async function resolveContext(pipeline: PipelineKey): Promise<TierExecutionContext> {
-  const config: PipelineRuntimeConfig = await getPipelineConfig(pipeline);
+  const config = await getPipelineConfig(pipeline);
   return {
     tiers: config.tiers,
     defaultMaxOutputTokens: config.maxOutputTokens,
@@ -74,137 +78,11 @@ async function resolveContext(pipeline: PipelineKey): Promise<TierExecutionConte
   };
 }
 
-function isRetryable(error: any): boolean {
-  const message = String(error?.message || error || "").toLowerCase();
-  const status = Number(error?.status ?? error?.code);
-  return (
-    status === 503 ||
-    status === 429 ||
-    message.includes("high demand") ||
-    message.includes("unavailable") ||
-    message.includes("service unavailable") ||
-    message.includes("deadline") ||
-    message.includes("timeout") ||
-    message.includes("timed out") ||
-    message.includes("rate limit") ||
-    message.includes("too many requests")
-  );
-}
-
-function parseProviderError(error: any): string {
-  let message = error?.message || String(error);
-  for (let i = 0; i < 2; i++) {
-    try {
-      const parsed = JSON.parse(message);
-      const next = parsed?.error?.message || parsed?.message;
-      if (!next || next === message) break;
-      message = next;
-    } catch {
-      break;
-    }
-  }
-  return message;
-}
-
-async function executeWithTierFallback<T>(params: {
-  ctx: TierExecutionContext;
-  operationName: string;
-  supportsProvider: (provider: AiModelProvider, modelId: string) => boolean;
-  invoke: (tier: ChatTier) => Promise<{ result: T; model: string }>;
-  timeoutMs: number;
-}): Promise<{ result: T; tier: ChatTier }> {
-  const eligibleTiers = params.ctx.tiers.filter((t) =>
-    params.supportsProvider(t.provider, t.modelId),
-  );
-  if (eligibleTiers.length === 0) {
-    throw new AppError(
-      `No configured AI model for pipeline "${params.ctx.pipelineKey}" supports this operation (all tiers are dormant, have no API key, or don't support the operation).`,
-      500,
-      true,
-      "AI_NO_ELIGIBLE_TIER",
-    );
-  }
-
-  let lastError: any;
-  for (let i = 0; i < eligibleTiers.length; i++) {
-    const tier = eligibleTiers[i];
-    let attempt = 0;
-    while (attempt < 2) {
-      const controller = new AbortController();
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => {
-          controller.abort("MODEL_TIMEOUT");
-          reject(new Error("MODEL_TIMEOUT"));
-        }, params.timeoutMs);
-      });
-      try {
-        const { result, model } = await Promise.race([
-          params.invoke(tier),
-          timeoutPromise,
-        ]);
-        return { result, tier: { ...tier, modelId: model } };
-      } catch (error: any) {
-        lastError = error;
-        if (controller.signal.aborted) throw new AppError("AI call timed out", 504);
-        const retryable = isRetryable(error);
-        if (retryable && attempt === 0) {
-          attempt++;
-          const delay = 400 + Math.random() * 300;
-          logger.warn("ai.pipeline.retrying", {
-            pipeline: params.ctx.pipelineKey,
-            model: tier.modelId,
-            provider: tier.provider,
-            delayMs: Math.round(delay),
-            error: parseProviderError(error),
-          });
-          await new Promise((r) => setTimeout(r, delay));
-          continue;
-        }
-        if (i < eligibleTiers.length - 1) {
-          logger.warn("ai.pipeline.fallback", {
-            pipeline: params.ctx.pipelineKey,
-            model: tier.modelId,
-            provider: tier.provider,
-            nextModel: eligibleTiers[i + 1].modelId,
-            nextProvider: eligibleTiers[i + 1].provider,
-            retryable,
-            error: parseProviderError(error),
-          });
-          break;
-        }
-        const message = parseProviderError(error);
-        logger.error("ai.pipeline.final_failure", {
-          pipeline: params.ctx.pipelineKey,
-          model: tier.modelId,
-          provider: tier.provider,
-          error: message,
-        });
-        throw new AppError(message, 502);
-      }
-    }
-  }
-  throw lastError;
-}
-
-// ── LangChain chat-model factory (shared with modelRuntime) ──────────────────
-function apiKeyFor(provider: AiModelProvider): string | null {
-  switch (provider) {
-    case "google":
-      return env.GEMINI_API_KEY || null;
-    case "openai":
-      return env.OPENAI_API_KEY || null;
-    case "anthropic":
-      return env.ANTHROPIC_API_KEY || null;
-    default:
-      return null;
-  }
-}
-
 function buildChatModel(tier: ChatTier, opts: {
   temperature?: number;
   maxOutputTokens?: number;
 }): BaseChatModel {
-  const key = apiKeyFor(tier.provider);
+  const key = apiKeyForProvider(tier.provider);
   if (!key) {
     throw new AppError(
       `Provider ${tier.provider} is not configured (missing ${tier.provider.toUpperCase()}_API_KEY)`,
@@ -291,16 +169,16 @@ export async function invokePipelineText(
 ): Promise<{ text: string; usage: PipelineUsage }> {
   const ctx = await resolveContext(params.pipeline);
   const { result } = await executeWithTierFallback({
-    ctx,
-    operationName: `pipeline.${params.pipeline}.text`,
+    tiers: ctx.tiers,
     timeoutMs: params.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     supportsProvider: (p) => p === "google" || p === "openai" || p === "anthropic",
-    invoke: async (tier) => {
+    context: { operationName: `pipeline.${params.pipeline}.text`, logScope: "pipeline", pipelineKey: params.pipeline },
+    invoke: async (tier, signal) => {
       if (tier.provider === "google") {
         // Use the Google GenAI SDK directly to honour grounding
         // (`tools: [{ googleSearch: {} }]`) which LangChain's Gemini wrapper
         // does not expose yet.
-        const key = apiKeyFor("google");
+        const key = apiKeyForProvider("google");
         if (!key) throw new AppError("GEMINI_API_KEY missing", 500, true);
         const genai = new GoogleGenAI({ apiKey: key });
         const result = await genai.models.generateContent({
@@ -379,7 +257,7 @@ export async function* invokePipelineTextStream(
     const tier = tiers[i];
     try {
       if (tier.provider === "google") {
-        const key = apiKeyFor("google");
+        const key = apiKeyForProvider("google");
         if (!key) throw new AppError("GEMINI_API_KEY missing", 500, true);
         const genai = new GoogleGenAI({ apiKey: key });
         const stream = await genai.models.generateContentStream({
@@ -410,7 +288,12 @@ export async function* invokePipelineTextStream(
           buffer += text;
           yield { text, done: false };
         }
-        const finalUsage = (stream as any).response?.usageMetadata;
+        // Use the model version the provider actually responded with —
+        // a future aliasing layer or admin rename could otherwise record
+        // the wrong name for billing.
+        const finalResponse = (stream as any).response;
+        const actualModel = finalResponse?.modelVersion || tier.modelId;
+        const finalUsage = finalResponse?.usageMetadata;
         yield {
           text: "",
           usage: {
@@ -418,7 +301,7 @@ export async function* invokePipelineTextStream(
             completionTokens: finalUsage?.candidatesTokenCount || 0,
             totalTokens: finalUsage?.totalTokenCount || 0,
             groundingCalls: 0,
-            model: tier.modelId,
+            model: actualModel,
             provider: "google",
           },
           done: true,
@@ -462,11 +345,11 @@ export async function* invokePipelineTextStream(
           model: tier.modelId,
           provider: tier.provider,
           nextModel: tiers[i + 1].modelId,
-          error: parseProviderError(error),
+          error: parseProviderErrorMessage(error),
         });
         continue;
       }
-      throw new AppError(parseProviderError(error), 502);
+      throw new AppError(parseProviderErrorMessage(error), 502);
     }
   }
   throw lastError;
@@ -490,11 +373,11 @@ export async function invokePipelineStructured<T>(
 ): Promise<{ result: T; usage: PipelineUsage; raw: string }> {
   const ctx = await resolveContext(params.pipeline);
   const { result } = await executeWithTierFallback({
-    ctx,
-    operationName: `pipeline.${params.pipeline}.structured.${params.schemaName}`,
+    tiers: ctx.tiers,
     timeoutMs: params.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     supportsProvider: (p) => p === "google" || p === "openai" || p === "anthropic",
-    invoke: async (tier) => {
+    context: { operationName: `pipeline.${params.pipeline}.structured.${params.schemaName}`, logScope: "pipeline", pipelineKey: params.pipeline },
+    invoke: async (tier, signal) => {
       const llm = buildChatModel(tier, {
         temperature: params.temperature,
         maxOutputTokens: params.maxOutputTokens ?? ctx.defaultMaxOutputTokens ?? undefined,
@@ -578,7 +461,7 @@ export async function invokePipelineEmbedding(
     const tier = eligible[i];
     try {
       if (tier.provider === "google") {
-        const key = apiKeyFor("google");
+        const key = apiKeyForProvider("google");
         if (!key) throw new AppError("GEMINI_API_KEY missing", 500, true);
         const genai = new GoogleGenAI({ apiKey: key });
         const embeddings: number[][] = [];
@@ -605,7 +488,7 @@ export async function invokePipelineEmbedding(
         };
       }
       // OpenAI
-      const key = apiKeyFor("openai");
+      const key = apiKeyForProvider("openai");
       if (!key) throw new AppError("OPENAI_API_KEY missing", 500, true);
       const res: any = await fetch("https://api.openai.com/v1/embeddings", {
         method: "POST",
@@ -644,11 +527,11 @@ export async function invokePipelineEmbedding(
           model: tier.modelId,
           provider: tier.provider,
           nextModel: eligible[i + 1].modelId,
-          error: parseProviderError(error),
+          error: parseProviderErrorMessage(error),
         });
         continue;
       }
-      throw new AppError(parseProviderError(error), 502);
+      throw new AppError(parseProviderErrorMessage(error), 502);
     }
   }
   throw lastError;
@@ -702,7 +585,7 @@ export async function invokePipelineImageGen(
     const tier = eligible[i];
     try {
       if (tier.provider === "google") {
-        const key = apiKeyFor("google");
+        const key = apiKeyForProvider("google");
         if (!key) throw new AppError("GEMINI_API_KEY missing", 500, true);
         const genai = new GoogleGenAI({ apiKey: key });
         const parts: any[] = [{ text: params.prompt }];
@@ -736,7 +619,7 @@ export async function invokePipelineImageGen(
       }
       // OpenAI DALL-E 3 — does not support editing / brand logos, only
       // text-to-image. Drop the buffers and synthesise the prompt.
-      const key = apiKeyFor("openai");
+      const key = apiKeyForProvider("openai");
       if (!key) throw new AppError("OPENAI_API_KEY missing", 500, true);
       const body: any = {
         model: tier.modelId, // e.g. dall-e-3
@@ -776,11 +659,11 @@ export async function invokePipelineImageGen(
           model: tier.modelId,
           provider: tier.provider,
           nextModel: eligible[i + 1].modelId,
-          error: parseProviderError(error),
+          error: parseProviderErrorMessage(error),
         });
         continue;
       }
-      throw new AppError(parseProviderError(error), 502);
+      throw new AppError(parseProviderErrorMessage(error), 502);
     }
   }
   throw lastError;

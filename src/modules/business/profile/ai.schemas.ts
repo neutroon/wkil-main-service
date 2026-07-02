@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { toJsonSchema } from "@langchain/core/utils/json_schema";
 
 /**
  * OpenAI strict-mode compatible schemas used by the business profile AI
@@ -14,7 +15,8 @@ import { z } from "zod";
  *     `required` and OpenAI's strict `response_format` would 400.
  *
  * The `assertOpenAIStrictCompliant` helper in
- * `agentDecision.schema.test.ts` documents the test contract.
+ * `aiAgent.zodStrict.ts` documents the test contract and is asserted
+ * for every schema in this file by `ai.schemas.test.ts`.
  */
 export const strategicLinksSchema = z.object({
   urls: z.array(z.string()),
@@ -44,3 +46,10 @@ export const businessIdentitySchema = z.object({
 });
 
 export type BusinessIdentityResult = z.infer<typeof businessIdentitySchema>;
+
+// JSON Schema view of the same Zod definitions, computed via the same
+// `toJsonSchema` helper LangChain uses internally when building the
+// OpenAI `response_format` payload. The strict-mode contract test
+// asserts against this exact output.
+export const strategicLinksJsonSchema = toJsonSchema(strategicLinksSchema);
+export const businessIdentityJsonSchema = toJsonSchema(businessIdentitySchema);

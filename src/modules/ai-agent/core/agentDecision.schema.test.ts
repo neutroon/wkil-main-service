@@ -3,6 +3,7 @@ import {
   getAiRoutingDecisionSchemaForChannel,
   getAiRoutingDecisionJsonSchemaForChannel,
 } from "./agentDecision.schema";
+import { assertOpenAIStrictCompliant } from "@modules/ai-agent/aiAgent.zodStrict";
 
 const baseDecision = {
   action: "REPLY_AUTO",
@@ -60,48 +61,6 @@ describe("getAiRoutingDecisionSchemaForChannel", () => {
  * in production.
  */
 describe("getAiRoutingDecisionJsonSchemaForChannel (OpenAI strict-mode contract)", () => {
-  function assertOpenAIStrictCompliant(
-    node: unknown,
-    path: string,
-  ): void {
-    if (!node || typeof node !== "object") return;
-    const obj = node as Record<string, unknown>;
-
-    if (obj.type === "object" && obj.properties) {
-      expect(
-        obj.additionalProperties,
-        `additionalProperties must be false at ${path}`,
-      ).toBe(false);
-      const required = Array.isArray(obj.required) ? obj.required : [];
-      const propertyKeys = Object.keys(obj.properties as object);
-      for (const key of propertyKeys) {
-        expect(
-          required,
-          `${path}.required must include "${key}"`,
-        ).toContain(key);
-      }
-    }
-
-    if (obj.properties && typeof obj.properties === "object") {
-      for (const [key, child] of Object.entries(obj.properties)) {
-        assertOpenAIStrictCompliant(child, `${path}.properties.${key}`);
-      }
-    }
-    if (obj.items) {
-      assertOpenAIStrictCompliant(obj.items, `${path}.items`);
-    }
-    if (Array.isArray(obj.anyOf)) {
-      for (let i = 0; i < obj.anyOf.length; i++) {
-        assertOpenAIStrictCompliant(obj.anyOf[i], `${path}.anyOf[${i}]`);
-      }
-    }
-    if (Array.isArray(obj.oneOf)) {
-      for (let i = 0; i < obj.oneOf.length; i++) {
-        assertOpenAIStrictCompliant(obj.oneOf[i], `${path}.oneOf[${i}]`);
-      }
-    }
-  }
-
   it("direct-chat schema is OpenAI strict-mode compliant", () => {
     const jsonSchema = getAiRoutingDecisionJsonSchemaForChannel("messenger");
     assertOpenAIStrictCompliant(jsonSchema, "$");

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { toJsonSchema } from "@langchain/core/utils/json_schema";
 
 /**
  * OpenAI strict-mode compatible schema used by the customer memory
@@ -7,7 +8,7 @@ import { z } from "zod";
  * The model is told to return `{}` when nothing useful is in scope, so
  * every field is nullable and present in `required` — that is the
  * OpenAI strict-mode contract (see `ai.schemas.ts` and
- * `agentDecision.schema.test.ts` for the test).
+ * `aiAgent.zodStrict.ts` for the test).
  */
 export const memoryExtractionSchema = z.object({
   profileUpdates: z
@@ -24,3 +25,5 @@ export const memoryExtractionSchema = z.object({
 });
 
 export type MemoryExtractionResult = z.infer<typeof memoryExtractionSchema>;
+
+export const memoryExtractionJsonSchema = toJsonSchema(memoryExtractionSchema);

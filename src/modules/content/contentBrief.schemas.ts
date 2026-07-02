@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { toJsonSchema } from "@langchain/core/utils/json_schema";
 
 /**
  * OpenAI strict-mode compatible schema used by the content brief audit
@@ -16,3 +17,5 @@ export const competitorDiscoverySchema = z.object({
 });
 
 export type CompetitorDiscoveryResult = z.infer<typeof competitorDiscoverySchema>;
+
+export const competitorDiscoveryJsonSchema = toJsonSchema(competitorDiscoverySchema);

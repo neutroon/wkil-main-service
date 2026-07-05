@@ -27,6 +27,35 @@ import {
   type ConversationAiRun,
 } from "@modules/ai-agent/chat/conversationRunGuard";
 import { createLatencyTrace } from "@utils/latencyTrace";
+import { mediaAnalysisText } from "@modules/ai-agent/chat/messageSignals";
+
+function buildTurnTextWithTranscript(params: {
+  turnContextText: string;
+  originalText: string;
+  type?: string;
+  mediaMetadata?: unknown;
+}): string {
+  const type = String(params.type || "").toLowerCase();
+  const isVoice = type === "audio" || type === "voice";
+  if (!isVoice) {
+    return params.turnContextText || params.originalText || "";
+  }
+
+  const metadata = params.mediaMetadata && typeof params.mediaMetadata === "object"
+    ? (params.mediaMetadata as Record<string, any>)
+    : {};
+  const analysis = metadata.analysis;
+  if (!analysis || typeof analysis !== "object") {
+    return params.turnContextText || params.originalText || "";
+  }
+
+  const transcript = (analysis as any).transcript || (analysis as any).text;
+  if (typeof transcript === "string" && transcript.trim()) {
+    return `Customer voice message transcript: ${transcript.trim()}`;
+  }
+
+  return params.turnContextText || params.originalText || "";
+}
 
 export type MetaPlatform = "messenger" | "whatsapp" | "visual_production" | "visual_refine" | "media_sync" | "facebook" | "instagram" | "linkedin";
 
@@ -717,7 +746,12 @@ export async function processMetaMessage(
         }),
       );
     }
-    const effectiveTurnText = turnContext.messageText || messageText || "";
+    const effectiveTurnText = buildTurnTextWithTranscript({
+      turnContextText: turnContext.messageText,
+      originalText: messageText,
+      type,
+      mediaMetadata: enrichedMediaMetadata,
+    });
     const agentTurn = await latency.measure("agentTurnMs", () =>
       createAgentTurn({
         businessProfileId,

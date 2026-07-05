@@ -302,8 +302,8 @@ function userContentForLangChain(turn: AgentContent): any {
     });
   } else if (turn.inlineData.mimeType.startsWith("audio/")) {
     parts.push({
-      type: "audio_url",
-      audio_url: `data:${turn.inlineData.mimeType};base64,${turn.inlineData.data}`,
+      type: turn.inlineData.mimeType,
+      data: turn.inlineData.data,
     });
   } else {
     parts.push({

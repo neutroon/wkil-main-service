@@ -138,14 +138,18 @@ export async function understandInboundMedia(params: {
       };
     }
 
-    if (media.mimeType.startsWith("audio/") || AUDIO_MIME_TYPES.has(media.mimeType)) {
+    if (isAudioType(type, media.mimeType)) {
+      const audioMimeType = media.mimeType.startsWith("audio/")
+        ? media.mimeType
+        : (declaredMimeType || "audio/ogg");
+
       const result = await invokeMediaUnderstanding({
         prompt: [
           "Transcribe this customer voice message exactly as spoken.",
           "Return only the transcription text, nothing else.",
           "If the audio is unclear or contains no speech, return an empty response.",
         ].join("\n"),
-        mimeType: media.mimeType,
+        mimeType: audioMimeType,
         base64Data: media.buffer.toString("base64"),
         maxOutputTokens: 1024,
         timeoutMs: 30_000,
@@ -157,7 +161,7 @@ export async function understandInboundMedia(params: {
           status: "completed",
           text: "",
           transcript: "",
-          mimeType: media.mimeType,
+          mimeType: audioMimeType,
           modelName: result.modelName,
           finishReason: result.finishReason,
         };
@@ -167,7 +171,7 @@ export async function understandInboundMedia(params: {
         status: "completed",
         text: transcript,
         transcript,
-        mimeType: media.mimeType,
+        mimeType: audioMimeType,
         modelName: result.modelName,
         finishReason: result.finishReason,
       };

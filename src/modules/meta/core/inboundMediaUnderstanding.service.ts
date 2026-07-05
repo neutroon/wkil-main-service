@@ -156,21 +156,19 @@ export async function understandInboundMedia(params: {
       });
 
       const transcript = result.text.trim();
-      if (!transcript) {
-        return {
-          status: "completed",
-          text: "",
-          transcript: "",
-          mimeType: audioMimeType,
-          modelName: result.modelName,
-          finishReason: result.finishReason,
-        };
-      }
+
+      logger.info("meta.voice.transcribed", {
+        platform: params.platform,
+        mimeType: audioMimeType,
+        transcriptLength: transcript.length,
+        modelName: result.modelName,
+        finishReason: result.finishReason,
+      });
 
       return {
         status: "completed",
         text: transcript,
-        transcript,
+        transcript: transcript || undefined,
         mimeType: audioMimeType,
         modelName: result.modelName,
         finishReason: result.finishReason,

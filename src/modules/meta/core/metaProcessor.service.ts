@@ -17,7 +17,6 @@ import {
   getFacebookUserProfile,
   likeComment,
 } from "../facebook/facebook.service";
-import { classifyInboundMessageSignal } from "@modules/ai-agent/chat/messageSignals";
 import { understandInboundMedia } from "./inboundMediaUnderstanding.service";
 import { buildUnansweredUserTurnContext } from "@modules/ai-agent/chat/conversationTurnContext";
 import {
@@ -27,35 +26,7 @@ import {
   type ConversationAiRun,
 } from "@modules/ai-agent/chat/conversationRunGuard";
 import { createLatencyTrace } from "@utils/latencyTrace";
-import { mediaAnalysisText } from "@modules/ai-agent/chat/messageSignals";
-
-function buildTurnTextWithTranscript(params: {
-  turnContextText: string;
-  originalText: string;
-  type?: string;
-  mediaMetadata?: unknown;
-}): string {
-  const type = String(params.type || "").toLowerCase();
-  const isVoice = type === "audio" || type === "voice";
-  if (!isVoice) {
-    return params.turnContextText || params.originalText || "";
-  }
-
-  const metadata = params.mediaMetadata && typeof params.mediaMetadata === "object"
-    ? (params.mediaMetadata as Record<string, any>)
-    : {};
-  const analysis = metadata.analysis;
-  if (!analysis || typeof analysis !== "object") {
-    return params.turnContextText || params.originalText || "";
-  }
-
-  const transcript = (analysis as any).transcript || (analysis as any).text;
-  if (typeof transcript === "string" && transcript.trim()) {
-    return `Customer voice message transcript: ${transcript.trim()}`;
-  }
-
-  return params.turnContextText || params.originalText || "";
-}
+import { classifyInboundMessageSignal, buildTurnTextWithTranscript } from "@modules/ai-agent/chat/messageSignals";
 
 export type MetaPlatform = "messenger" | "whatsapp" | "visual_production" | "visual_refine" | "media_sync" | "facebook" | "instagram" | "linkedin";
 

@@ -11,6 +11,7 @@ export type InboundMessageSignal = {
 };
 
 const PASSIVE_MEDIA_TYPES = new Set(["reaction", "like", "sticker"]);
+const MAX_TRANSCRIPT_CHARS = 500;
 
 function metadataObject(value: unknown): Record<string, any> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -189,4 +190,42 @@ export function customerMessageForModel(params: {
   }
 
   return text;
+}
+
+function truncateTranscript(transcript: string): string {
+  if (transcript.length <= MAX_TRANSCRIPT_CHARS) return transcript;
+  return transcript.slice(0, MAX_TRANSCRIPT_CHARS) + "...";
+}
+
+export function buildTurnTextWithTranscript(params: {
+  turnContextText: string;
+  originalText: string;
+  type?: string;
+  mediaMetadata?: unknown;
+}): string {
+  const type = String(params.type || "").toLowerCase();
+  const isVoice = type === "audio" || type === "voice";
+  if (!isVoice) {
+    return params.turnContextText || params.originalText || "";
+  }
+
+  const metadata = params.mediaMetadata && typeof params.mediaMetadata === "object"
+    ? (params.mediaMetadata as Record<string, any>)
+    : {};
+  const analysis = metadata.analysis;
+  if (!analysis || typeof analysis !== "object") {
+    return params.turnContextText || params.originalText || "";
+  }
+
+  const transcript = (analysis as any).transcript || (analysis as any).text;
+  if (typeof transcript === "string" && transcript.trim()) {
+    return `Customer voice message transcript: ${truncateTranscript(transcript.trim())}`;
+  }
+
+  const status = String((analysis as any).status || "").trim();
+  if (status === "failed" || status === "unsupported") {
+    return params.turnContextText || params.originalText || "";
+  }
+
+  return params.turnContextText || params.originalText || "";
 }

@@ -4,9 +4,22 @@ import { getMetaMediaUrl } from "./metaMedia.service";
 
 const MAX_MEDIA_BYTES = 8 * 1024 * 1024;
 
+const AUDIO_MIME_TYPES = new Set([
+  "audio/mpeg",
+  "audio/mp4",
+  "audio/x-m4a",
+  "audio/ogg",
+  "audio/wav",
+  "audio/aac",
+  "audio/webm",
+  "audio/x-wav",
+  "audio/wave",
+]);
+
 export type MediaUnderstandingResult = {
   status: "completed" | "unsupported" | "failed";
   text?: string;
+  transcript?: string;
   mimeType?: string;
   modelName?: string;
   finishReason?: string | null;
@@ -17,6 +30,13 @@ function metadataObject(value: unknown): Record<string, any> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, any>)
     : {};
+}
+
+function isAudioType(type: string, mimeType: string): boolean {
+  if (type === "audio" || type === "voice") return true;
+  if (AUDIO_MIME_TYPES.has(mimeType)) return true;
+  if (mimeType.startsWith("audio/")) return true;
+  return false;
 }
 
 function headerObject(platform: "messenger" | "whatsapp", accessToken: string) {
@@ -77,8 +97,9 @@ export async function understandInboundMedia(params: {
   const metadata = metadataObject(params.mediaMetadata);
   const declaredMimeType = String(metadata.mimeType || "");
   const isImage = type === "image" || declaredMimeType.startsWith("image/");
+  const isAudio = isAudioType(type, declaredMimeType);
 
-  if (!isImage) {
+  if (!isImage && !isAudio) {
     return {
       status: "unsupported",
       mimeType: declaredMimeType || undefined,
@@ -94,33 +115,68 @@ export async function understandInboundMedia(params: {
       fallbackUrl: typeof metadata.url === "string" ? metadata.url : undefined,
     });
 
-    if (!media.mimeType.startsWith("image/")) {
-      return {
-        status: "unsupported",
+    if (media.mimeType.startsWith("image/")) {
+      const result = await invokeMediaUnderstanding({
+        prompt: [
+          "Describe this customer-sent image for a customer support agent.",
+          "Use one or two concise sentences.",
+          "If the image contains readable text, include the important text.",
+          "Do not invent prices, policies, availability, or contact details.",
+        ].join("\n"),
         mimeType: media.mimeType,
-        errorCode: "unsupported_media_type",
+        base64Data: media.buffer.toString("base64"),
+        maxOutputTokens: 512,
+        timeoutMs: 45_000,
+      });
+
+      return {
+        status: "completed",
+        text: result.text.trim(),
+        mimeType: media.mimeType,
+        modelName: result.modelName,
+        finishReason: result.finishReason,
       };
     }
 
-    const result = await invokeMediaUnderstanding({
-      prompt: [
-        "Describe this customer-sent image for a customer support agent.",
-        "Use one or two concise sentences.",
-        "If the image contains readable text, include the important text.",
-        "Do not invent prices, policies, availability, or contact details.",
-      ].join("\n"),
-      mimeType: media.mimeType,
-      base64Data: media.buffer.toString("base64"),
-      maxOutputTokens: 512,
-      timeoutMs: 45_000,
-    });
+    if (media.mimeType.startsWith("audio/") || AUDIO_MIME_TYPES.has(media.mimeType)) {
+      const result = await invokeMediaUnderstanding({
+        prompt: [
+          "Transcribe this customer voice message exactly as spoken.",
+          "Return only the transcription text, nothing else.",
+          "If the audio is unclear or contains no speech, return an empty response.",
+        ].join("\n"),
+        mimeType: media.mimeType,
+        base64Data: media.buffer.toString("base64"),
+        maxOutputTokens: 1024,
+        timeoutMs: 30_000,
+      });
+
+      const transcript = result.text.trim();
+      if (!transcript) {
+        return {
+          status: "completed",
+          text: "",
+          transcript: "",
+          mimeType: media.mimeType,
+          modelName: result.modelName,
+          finishReason: result.finishReason,
+        };
+      }
+
+      return {
+        status: "completed",
+        text: transcript,
+        transcript,
+        mimeType: media.mimeType,
+        modelName: result.modelName,
+        finishReason: result.finishReason,
+      };
+    }
 
     return {
-      status: "completed",
-      text: result.text.trim(),
+      status: "unsupported",
       mimeType: media.mimeType,
-      modelName: result.modelName,
-      finishReason: result.finishReason,
+      errorCode: "unsupported_media_type",
     };
   } catch (error: any) {
     logger.warn("meta.media_understanding.failed", {

@@ -300,6 +300,11 @@ function userContentForLangChain(turn: AgentContent): any {
       type: "image_url",
       image_url: `data:${turn.inlineData.mimeType};base64,${turn.inlineData.data}`,
     });
+  } else if (turn.inlineData.mimeType.startsWith("audio/")) {
+    parts.push({
+      type: "audio_url",
+      audio_url: `data:${turn.inlineData.mimeType};base64,${turn.inlineData.data}`,
+    });
   } else {
     parts.push({
       type: "text",

@@ -661,34 +661,19 @@ export async function processMetaMessage(
     );
 
     let enrichedMediaMetadata = mediaMetadata;
-    if (
-      mediaId &&
-      (platform === "messenger" || platform === "whatsapp")
-    ) {
-      const analysis = await latency.measure("mediaUnderstandingMs", () =>
-        understandInboundMedia({
-          platform,
-          accessToken,
-          mediaId,
-          type,
-          mediaMetadata,
-        }),
-      );
-      if (analysis) {
-        enrichedMediaMetadata = {
-          ...(mediaMetadata || {}),
-          analysis,
-        };
-        await latency.measureDb("saveInboundMs", () =>
-          prisma.conversationMessage.update({
-            where: { id: userSaved.id },
-            data: { mediaMetadata: enrichedMediaMetadata },
-          }),
-        );
-      }
-    }
+    const mediaUnderstandingPromise =
+      mediaId && (platform === "messenger" || platform === "whatsapp")
+        ? latency.measure("mediaUnderstandingMs", () =>
+            understandInboundMedia({
+              platform,
+              accessToken,
+              mediaId,
+              type,
+              mediaMetadata,
+            }),
+          )
+        : Promise.resolve(null);
 
-    // 5. AI Reply Generation
     logger.info("meta.processor.computing_reply", { conversationId: conversation.id });
     const turnContextPromise = latency.measureDb("turnContextMs", () =>
       buildUnansweredUserTurnContext({
@@ -712,12 +697,26 @@ export async function processMetaMessage(
       : Promise.resolve(undefined);
     const socketSyncPromise = import("@modules/realtime/socketSync.service");
     const agentTurnModulePromise = import("@modules/ai-agent/core/agentTurn.service");
-    const [turnContext, postContext, { syncTypingStatus }, { createAgentTurn }] = await Promise.all([
+    const [analysis, turnContext, postContext, { syncTypingStatus }, { createAgentTurn }] = await Promise.all([
+      mediaUnderstandingPromise,
       turnContextPromise,
       postContextPromise,
       socketSyncPromise,
       agentTurnModulePromise,
     ]);
+
+    if (analysis) {
+      enrichedMediaMetadata = {
+        ...(mediaMetadata || {}),
+        analysis,
+      };
+      await latency.measureDb("saveInboundMs", () =>
+        prisma.conversationMessage.update({
+          where: { id: userSaved.id },
+          data: { mediaMetadata: enrichedMediaMetadata },
+        }),
+      );
+    }
     const effectiveTurnText = turnContext.messageText || messageText || "";
     const agentTurn = await latency.measure("agentTurnMs", () =>
       createAgentTurn({

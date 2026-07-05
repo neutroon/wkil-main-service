@@ -7,9 +7,7 @@ import {
 import { upsertCustomerFromConversation } from "@modules/business/customer/customer.service";
 import { computeBusinessChatReply } from "@modules/ai-agent/chat/businessChatReply.service";
 import { initialCustomerReplyStatus } from "@modules/ai-agent/chat/deliveryPolicy";
-import {
-  runSavedModelReplySideEffectsInBackground,
-} from "@modules/ai-agent/chat/replySideEffects.service";
+import { runSavedModelReplySideEffectsInBackground } from "@modules/ai-agent/chat/replySideEffects.service";
 import { AiRoutingDecision } from "@modules/ai-agent/core/aiEngine.utils";
 import { buildUnansweredUserTurnContext } from "@modules/ai-agent/chat/conversationTurnContext";
 import {
@@ -19,12 +17,12 @@ import {
 } from "@modules/ai-agent/chat/conversationRunGuard";
 import type { WidgetInstall } from "@prisma/client";
 import { AppError } from "@middlewares/errorHandler.middleware";
-import { generateR2Key, uploadToR2 } from "@modules/media/services/r2Storage.service";
-import { invokeMediaUnderstanding } from "@modules/ai-agent/core/modelRuntime";
 import {
-  createLatencyTrace,
-  type LatencyTrace,
-} from "@utils/latencyTrace";
+  generateR2Key,
+  uploadToR2,
+} from "@modules/media/services/r2Storage.service";
+import { invokeMediaUnderstanding } from "@modules/ai-agent/core/modelRuntime";
+import { createLatencyTrace, type LatencyTrace } from "@utils/latencyTrace";
 import {
   syncVerifiedUserEmail,
   syncVerifiedUserProfile,
@@ -155,7 +153,11 @@ export async function processWidgetChatMessage(params: {
     const status = initialCustomerReplyStatus(reply, "web");
     const replyContent = (reply.content || "").trim();
 
-    if (reply.action === "REPLY_AUTO" && replyContent.length === 0 && !reply.attachment) {
+    if (
+      reply.action === "REPLY_AUTO" &&
+      replyContent.length === 0 &&
+      !reply.attachment
+    ) {
       traceOutcome = "empty_auto_reply";
       logger.info("widget.chat.empty_auto_reply_skipped", {
         widgetInstallId: install.id,
@@ -184,16 +186,11 @@ export async function processWidgetChatMessage(params: {
     }
 
     const botMsg = await latency.measureDb("saveOutboundMs", () =>
-      saveMessage(
-        conversation.id,
-        "model",
-        replyContent,
-        {
-          status,
-          aiReasoning: reply.reasoning,
-          handoffCategory: reply.handoffCategory,
-        },
-      ),
+      saveMessage(conversation.id, "model", replyContent, {
+        status,
+        aiReasoning: reply.reasoning,
+        handoffCategory: reply.handoffCategory,
+      }),
     );
 
     if (reply.handoffCategory === "SYSTEM_ERROR") {
@@ -289,15 +286,19 @@ export async function processWidgetChatMessage(params: {
 /**
  * Common setup logic for widget chat.
  */
-async function setupWidgetChat(params: {
-  install: WidgetInstall;
-  visitorId: string;
-  message: string;
-  conversationId?: number;
-  media?: WidgetInboundMedia;
-  verifiedUser?: VerifiedWidgetUser;
-}, latency: LatencyTrace) {
-  const { install, visitorId, message, conversationId, media, verifiedUser } = params;
+async function setupWidgetChat(
+  params: {
+    install: WidgetInstall;
+    visitorId: string;
+    message: string;
+    conversationId?: number;
+    media?: WidgetInboundMedia;
+    verifiedUser?: VerifiedWidgetUser;
+  },
+  latency: LatencyTrace,
+) {
+  const { install, visitorId, message, conversationId, media, verifiedUser } =
+    params;
   const pageId = pageIdForWidget(install.id);
 
   let conversation: any;
@@ -346,17 +347,12 @@ async function setupWidgetChat(params: {
     }
   } else {
     conversation = await latency.measure("conversationSetupMs", () =>
-      getOrCreateConversation(
-        pageId,
-        visitorId,
-        install.businessProfileId,
-        {
-          channel: "web",
-          customerName: verifiedUser?.name,
-          customerPhone: verifiedUser?.phone,
-          customerAvatar: verifiedUser?.avatar,
-        },
-      ),
+      getOrCreateConversation(pageId, visitorId, install.businessProfileId, {
+        channel: "web",
+        customerName: verifiedUser?.name,
+        customerPhone: verifiedUser?.phone,
+        customerAvatar: verifiedUser?.avatar,
+      }),
     );
 
     if (verifiedUser && conversation.customerId) {
@@ -411,7 +407,10 @@ async function prepareWidgetMediaPayload(params: {
   latency: LatencyTrace;
 }) {
   const type = mediaTypeFromMime(params.media.mimeType);
-  const key = generateR2Key(params.businessProfileId, params.media.originalName);
+  const key = generateR2Key(
+    params.businessProfileId,
+    params.media.originalName,
+  );
   const url = await params.latency.measure("mediaUploadMs", () =>
     uploadToR2(key, params.media.buffer, params.media.mimeType),
   );
@@ -443,7 +442,10 @@ function mediaTypeFromMime(mimeType: string): string {
 async function understandWidgetMedia(
   media: WidgetInboundMedia,
 ): Promise<Record<string, unknown>> {
-  if (!media.mimeType.startsWith("image/")) {
+  const isImage = media.mimeType.startsWith("image/");
+  const isAudio = media.mimeType.startsWith("audio/");
+
+  if (!isImage && !isAudio) {
     return {
       status: "unsupported",
       mimeType: media.mimeType,
@@ -452,6 +454,29 @@ async function understandWidgetMedia(
   }
 
   try {
+    if (isAudio) {
+      const result = await invokeMediaUnderstanding({
+        prompt: [
+          "Transcribe this customer voice message exactly as spoken.",
+          "Return only the transcription text, nothing else.",
+          "If the audio is unclear or contains no speech, return an empty response.",
+        ].join("\n"),
+        mimeType: media.mimeType,
+        base64Data: media.buffer.toString("base64"),
+        maxOutputTokens: 4096,
+        timeoutMs: 30_000,
+      });
+      const transcript = result.text.trim();
+      return {
+        status: "completed",
+        text: transcript,
+        transcript,
+        mimeType: media.mimeType,
+        modelName: result.modelName,
+        finishReason: result.finishReason,
+      };
+    }
+
     const result = await invokeMediaUnderstanding({
       prompt: [
         "Describe this customer-sent image for a customer support agent.",

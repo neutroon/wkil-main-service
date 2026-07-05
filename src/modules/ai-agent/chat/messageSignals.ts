@@ -94,6 +94,22 @@ export function mediaAnalysisText(mediaMetadata?: unknown): string | null {
   const analysis = metadata.analysis;
   if (!analysis || typeof analysis !== "object") return null;
 
+  const type = normalizeMediaType(metadata.type || "");
+
+  if (type === "audio" || type === "voice") {
+    const transcript = (analysis as any).transcript;
+    if (typeof transcript === "string" && transcript.trim()) {
+      return transcript.trim();
+    }
+    const text = (analysis as any).text;
+    if (typeof text === "string" && text.trim()) {
+      return text.trim();
+    }
+    const status = String((analysis as any).status || "").trim();
+    if (status && status !== "completed") return `Media analysis status: ${status}.`;
+    return null;
+  }
+
   const candidates = [
     (analysis as any).text,
     (analysis as any).summary,
@@ -128,13 +144,23 @@ export function mediaTurnPromptText(params: {
     typeof metadata.duration === "number" ? `duration: ${metadata.duration}s` : null,
   ].filter(Boolean);
 
+  const isVoice = type === "audio" || type === "voice";
+
   const lines = [
     caption ? `Customer message/caption: ${caption}` : null,
-    `[Customer sent ${type} attachment${details.length ? ` (${details.join(", ")})` : ""}.]`,
+    !isVoice ? `[Customer sent ${type} attachment${details.length ? ` (${details.join(", ")})` : ""}.]` : null,
   ];
 
   const analysis = mediaAnalysisText(metadata);
-  if (analysis) lines.push(`Media understanding: ${analysis}`);
+  if (analysis) {
+    if (isVoice) {
+      lines.push(`Customer voice message transcript: ${analysis}`);
+    } else {
+      lines.push(`Media understanding: ${analysis}`);
+    }
+  } else if (isVoice) {
+    lines.push(`[Customer sent a voice message${details.length ? ` (${details.join(", ")})` : ""}.]`);
+  }
 
   return lines.filter(Boolean).join("\n");
 }

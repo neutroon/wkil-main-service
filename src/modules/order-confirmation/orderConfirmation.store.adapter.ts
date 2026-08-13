@@ -169,7 +169,7 @@ async function postCallback(
   const timeoutId = setTimeout(() => controller.abort(), CALLBACK_TIMEOUT_MS);
 
   try {
-    return await fetch(url, {
+    const response = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -185,6 +185,18 @@ async function postCallback(
       redirect: "manual",
       signal: controller.signal,
     });
+
+    if (response.body) {
+      try {
+        await response.body.cancel();
+      } catch (error) {
+        logger.warn("order_confirmation.store_sync_response_body_cancel_failed", {
+          error: errorMessage(error),
+        });
+      }
+    }
+
+    return response;
   } finally {
     clearTimeout(timeoutId);
   }
@@ -266,7 +278,6 @@ export async function sendGenericOrderStatusCallback(syncId: number): Promise<vo
   let currentSecret: string;
   try {
     callbackUrl = parseHttpsCallbackUrl(integration.statusCallbackUrl);
-    await assertExternalApiUrlNetworkSafe(callbackUrl);
     if (typeof integration.statusCallbackSecret !== "string" || integration.statusCallbackSecret.length === 0) {
       throw new Error("Missing status callback secret");
     }
@@ -275,11 +286,7 @@ export async function sendGenericOrderStatusCallback(syncId: number): Promise<vo
       throw new Error("Missing status callback secret");
     }
   } catch (error) {
-    await markFailed(sync.id, errorMessage(error));
-    logger.error("order_confirmation.store_sync_configuration_failed", {
-      syncId: sync.id,
-      error: errorMessage(error),
-    });
+    await recordNetworkFailure(sync, attempt, error);
     return;
   }
 
@@ -287,6 +294,7 @@ export async function sendGenericOrderStatusCallback(syncId: number): Promise<vo
   const timestamp = String(Math.floor(Date.now() / 1000));
   let response: Response;
   try {
+    await assertExternalApiUrlNetworkSafe(callbackUrl);
     response = await postCallback(
       callbackUrl,
       body,
@@ -298,6 +306,7 @@ export async function sendGenericOrderStatusCallback(syncId: number): Promise<vo
     if ((response.status === 401 || response.status === 403) && integration.previousStatusCallbackSecret) {
       const previousSecret = decryptFacebookSecret(integration.previousStatusCallbackSecret);
       if (previousSecret.length > 0 && previousSecret !== currentSecret) {
+        await assertExternalApiUrlNetworkSafe(callbackUrl);
         response = await postCallback(
           callbackUrl,
           body,

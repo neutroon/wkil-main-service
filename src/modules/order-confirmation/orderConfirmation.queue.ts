@@ -134,9 +134,28 @@ export function enqueueOrderAction(input: OrderActionInput): Promise<void> {
 }
 
 export function enqueueStoreSync(syncId: number, correlationId: string): Promise<void> {
-  return enqueueOrderConfirmationJob("sync_store", {
+  return enqueueStoreSyncJob(syncId, correlationId);
+}
+
+async function enqueueStoreSyncJob(syncId: number, correlationId: string): Promise<void> {
+  const job = await orderConfirmationQueue.getJob(
+    createOrderConfirmationJobId({ type: "SYNC_STORE", syncId, correlationId }),
+  );
+  if (job) {
+    const state = await job.getState();
+    if (state !== "failed" && state !== "completed") {
+      return;
+    }
+    await job.remove();
+  }
+
+  await enqueueOrderConfirmationJob("sync_store", {
     type: "SYNC_STORE",
     syncId,
     correlationId,
   });
+}
+
+export function enqueueStoreSyncRetry(syncId: number, correlationId: string): Promise<void> {
+  return enqueueStoreSyncJob(syncId, correlationId);
 }

@@ -8,9 +8,14 @@ import {
   findStaleOrderEvents,
   findStaleOrderNotifications,
   findUnattemptedQueuedOrderNotifications,
+  findPendingOrderStoreSyncs,
   markStaleSendingNotificationsFailed,
 } from "./orderConfirmation.repository";
-import { enqueueNotification, enqueueOrderEvent } from "./orderConfirmation.queue";
+import {
+  enqueueNotification,
+  enqueueOrderEvent,
+  enqueueStoreSync,
+} from "./orderConfirmation.queue";
 import {
   processOrderAction,
   processOrderEvent,
@@ -99,10 +104,11 @@ export const orderConfirmationWorker = new Worker<OrderConfirmationJob>(
 
 export async function runOrderConfirmationRecoveryScan(now = new Date()): Promise<void> {
   const cutoff = new Date(now.getTime() - STALE_AFTER_MS);
-  const [events, staleSendingNotifications, queuedNotifications] = await Promise.all([
+  const [events, staleSendingNotifications, queuedNotifications, pendingStoreSyncs] = await Promise.all([
     findStaleOrderEvents(cutoff),
     findStaleOrderNotifications(cutoff),
     findUnattemptedQueuedOrderNotifications(cutoff),
+    findPendingOrderStoreSyncs(cutoff, now),
   ]);
 
   await markStaleSendingNotificationsFailed(cutoff);
@@ -126,6 +132,18 @@ export async function runOrderConfirmationRecoveryScan(now = new Date()): Promis
       logger.error("order_confirmation.recovery_notification_enqueue_failed", {
         correlationId: `order-recovery-notification-${notification.id}`,
         notificationId: notification.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  for (const sync of pendingStoreSyncs) {
+    try {
+      await enqueueStoreSync(sync.id, `order-recovery-sync-${sync.id}`);
+    } catch (error) {
+      logger.error("order_confirmation.recovery_store_sync_enqueue_failed", {
+        correlationId: `order-recovery-sync-${sync.id}`,
+        syncId: sync.id,
         error: error instanceof Error ? error.message : String(error),
       });
     }

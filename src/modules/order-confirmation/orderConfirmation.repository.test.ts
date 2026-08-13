@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   notificationUpdateMany: vi.fn(),
   notificationUpdate: vi.fn(),
   conversationMessageFindUnique: vi.fn(),
+  storeSyncFindMany: vi.fn(),
 }));
 
 vi.mock("@config/prisma", () => ({
@@ -33,6 +34,9 @@ vi.mock("@config/prisma", () => ({
     conversationMessage: {
       findUnique: mocks.conversationMessageFindUnique,
     },
+    orderStoreSync: {
+      findMany: mocks.storeSyncFindMany,
+    },
     $transaction: mocks.transaction,
   },
 }));
@@ -44,6 +48,7 @@ import {
   markNotificationSending,
   markNotificationSent,
   markStaleSendingNotificationsFailed,
+  findPendingOrderStoreSyncs,
 } from "./orderConfirmation.repository";
 import { hashOrderActionToken } from "./orderConfirmation.crypto";
 
@@ -281,5 +286,22 @@ describe("order confirmation repository", () => {
     expect(matches("FAILED", null)).toBe(true);
     expect(matches("FAILED", "Meta unavailable")).toBe(true);
     expect(matches("FAILED", "AMBIGUOUS_PROVIDER_DELIVERY")).toBe(false);
+  });
+
+  it("finds stale pending store syncs whose retry time is due", async () => {
+    const cutoff = new Date("2026-08-13T09:59:00.000Z");
+    const now = new Date("2026-08-13T10:00:00.000Z");
+    mocks.storeSyncFindMany.mockResolvedValue([{ id: 20 }]);
+
+    await expect(findPendingOrderStoreSyncs(cutoff, now)).resolves.toEqual([{ id: 20 }]);
+
+    expect(mocks.storeSyncFindMany).toHaveBeenCalledWith({
+      where: {
+        status: "PENDING",
+        updatedAt: { lt: cutoff },
+        OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }],
+      },
+      select: { id: true },
+    });
   });
 });

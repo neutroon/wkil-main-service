@@ -166,8 +166,8 @@ export async function processOrderAction(input: OrderActionInput): Promise<{
     );
   }
 
-  if (result.applied && result.storeSyncEnabled) {
-    const requestedStatus = result.action === "CONFIRM" ? "CONFIRMED" : "CANCELED";
+  const requestedStatus = result.action === "CONFIRM" ? "CONFIRMED" : "CANCELED";
+  if (result.storeSyncEnabled && result.currentStatus === requestedStatus) {
     const sync = await createPendingStoreSync(
       result.orderId,
       result.businessProfileId,

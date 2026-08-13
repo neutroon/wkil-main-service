@@ -6,9 +6,11 @@ const mocks = vi.hoisted(() => ({
   findStaleOrderEvents: vi.fn(),
   findStaleOrderNotifications: vi.fn(),
   findUnattemptedQueuedOrderNotifications: vi.fn(),
+  findPendingOrderStoreSyncs: vi.fn(),
   markStaleSendingNotificationsFailed: vi.fn(),
   enqueueOrderEvent: vi.fn(),
   enqueueNotification: vi.fn(),
+  enqueueStoreSync: vi.fn(),
   processOrderAction: vi.fn(),
   processOrderEvent: vi.fn(),
   processStoreSync: vi.fn(),
@@ -54,11 +56,13 @@ vi.mock("./orderConfirmation.repository", () => ({
   findStaleOrderEvents: mocks.findStaleOrderEvents,
   findStaleOrderNotifications: mocks.findStaleOrderNotifications,
   findUnattemptedQueuedOrderNotifications: mocks.findUnattemptedQueuedOrderNotifications,
+  findPendingOrderStoreSyncs: mocks.findPendingOrderStoreSyncs,
   markStaleSendingNotificationsFailed: mocks.markStaleSendingNotificationsFailed,
 }));
 vi.mock("./orderConfirmation.queue", () => ({
   enqueueOrderEvent: mocks.enqueueOrderEvent,
   enqueueNotification: mocks.enqueueNotification,
+  enqueueStoreSync: mocks.enqueueStoreSync,
 }));
 vi.mock("./orderConfirmation.service", () => ({
   processOrderAction: mocks.processOrderAction,
@@ -80,13 +84,15 @@ describe("order confirmation recovery lifecycle", () => {
     mocks.findStaleOrderEvents.mockResolvedValue([]);
     mocks.findStaleOrderNotifications.mockResolvedValue([{ id: 7 }]);
     mocks.findUnattemptedQueuedOrderNotifications.mockResolvedValue([{ id: 8 }]);
+    mocks.findPendingOrderStoreSyncs.mockResolvedValue([{ id: 9 }]);
     mocks.markStaleSendingNotificationsFailed.mockResolvedValue(undefined);
     mocks.clearExpiredOrderEventPayloads.mockResolvedValue(undefined);
     mocks.enqueueOrderEvent.mockResolvedValue(undefined);
     mocks.enqueueNotification.mockResolvedValue(undefined);
+    mocks.enqueueStoreSync.mockResolvedValue(undefined);
   });
 
-  it("fails stale SENDING notifications without enqueueing them and recovers only queued work", async () => {
+  it("fails stale SENDING notifications and recovers queued notifications and pending syncs", async () => {
     await runOrderConfirmationRecoveryScan(new Date("2026-08-13T10:00:00.000Z"));
 
     expect(mocks.markStaleSendingNotificationsFailed).toHaveBeenCalledTimes(1);
@@ -99,6 +105,7 @@ describe("order confirmation recovery lifecycle", () => {
       7,
       expect.any(String),
     );
+    expect(mocks.enqueueStoreSync).toHaveBeenCalledWith(9, "order-recovery-sync-9");
   });
 
   it("clears the recovery timer during shutdown", () => {

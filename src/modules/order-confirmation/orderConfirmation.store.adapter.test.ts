@@ -220,6 +220,24 @@ describe("generic signed store status callback", () => {
     });
   });
 
+  it.each([
+    "getaddrinfo EAI_AGAIN store.example.test",
+    "connect ETIMEDOUT store.example.test",
+    "read ECONNRESET store.example.test",
+  ])("keeps transient DNS/network preflight error %s pending", async (message) => {
+    mocks.assertExternalApiUrlNetworkSafe.mockRejectedValue(new Error(message));
+
+    await expect(sendGenericOrderStatusCallback(42)).rejects.toThrow(
+      "Store status callback network request failed",
+    );
+
+    expect(mocks.fetch).not.toHaveBeenCalled();
+    expect(mocks.syncUpdate).toHaveBeenLastCalledWith({
+      where: { id: 42 },
+      data: expect.objectContaining({ status: "PENDING", nextAttemptAt: expect.any(Date) }),
+    });
+  });
+
   it("marks timeout and network failures pending for retry", async () => {
     mocks.fetch.mockRejectedValue(new DOMException("The operation was aborted", "AbortError"));
 
@@ -231,6 +249,15 @@ describe("generic signed store status callback", () => {
       where: { id: 42 },
       data: expect.objectContaining({ status: "PENDING", nextAttemptAt: expect.any(Date) }),
     });
+  });
+
+  it("cancels the callback response body before completing the request", async () => {
+    const cancel = vi.fn().mockResolvedValue(undefined);
+    mocks.fetch.mockResolvedValue({ ...response(204), body: { cancel } } as unknown as Response);
+
+    await sendGenericOrderStatusCallback(42);
+
+    expect(cancel).toHaveBeenCalledTimes(1);
   });
 
   it.each([401, 403, 422])(

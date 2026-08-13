@@ -794,6 +794,20 @@ export async function findUnattemptedQueuedOrderNotifications(
   });
 }
 
+export async function findPendingOrderStoreSyncs(
+  cutoff: Date,
+  now = new Date(),
+): Promise<Array<{ id: number }>> {
+  return prisma.orderStoreSync.findMany({
+    where: {
+      status: "PENDING",
+      updatedAt: { lt: cutoff },
+      OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }],
+    },
+    select: { id: true },
+  });
+}
+
 export async function markStaleSendingNotificationsFailed(cutoff: Date): Promise<void> {
   await prisma.orderNotification.updateMany({
     where: { status: "SENDING", updatedAt: { lt: cutoff } },

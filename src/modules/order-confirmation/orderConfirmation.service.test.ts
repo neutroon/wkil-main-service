@@ -232,6 +232,25 @@ describe("order confirmation workflow", () => {
     expect(mocks.enqueueStoreSync).toHaveBeenCalledWith(20, "corr-1");
   });
 
+  it("re-enqueues an existing sync for an already-applied action without another acknowledgement", async () => {
+    mocks.claimOrderAction.mockResolvedValue({
+      applied: false,
+      orderId: 12,
+      action: "CONFIRM",
+      currentStatus: "CONFIRMED",
+      businessProfileId: 11,
+      storeSyncEnabled: true,
+      acknowledgement: { id: 19, status: "SENT", attemptCount: 1 },
+      shouldEnqueueAcknowledgement: false,
+    });
+
+    await processOrderAction(actionInput);
+
+    expect(mocks.createPendingStoreSync).toHaveBeenCalledWith(12, 11, "CONFIRMED");
+    expect(mocks.enqueueStoreSync).toHaveBeenCalledWith(20, "corr-1");
+    expect(mocks.enqueueNotification).not.toHaveBeenCalled();
+  });
+
   it("re-enqueues an existing acknowledgement after the first enqueue fails", async () => {
     mocks.claimOrderAction
       .mockResolvedValueOnce({

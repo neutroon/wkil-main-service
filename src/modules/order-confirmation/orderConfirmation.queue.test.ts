@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   add: vi.fn(),
+  getJob: vi.fn(),
   queue: vi.fn(),
   loggerInfo: vi.fn(),
 }));
@@ -14,6 +15,10 @@ vi.mock("bullmq", () => ({
 
     add(...args: unknown[]) {
       return mocks.add(...args);
+    }
+
+    getJob(...args: unknown[]) {
+      return mocks.getJob(...args);
     }
   },
 }));
@@ -39,6 +44,7 @@ import {
   enqueueOrderAction,
   enqueueOrderEvent,
   enqueueStoreSync,
+  enqueueStoreSyncRetry,
   orderConfirmationQueue,
 } from "./orderConfirmation.queue";
 import { hashOrderActionToken } from "./orderConfirmation.crypto";
@@ -69,6 +75,8 @@ describe("order confirmation queue", () => {
   beforeEach(() => {
     mocks.add.mockReset();
     mocks.add.mockResolvedValue({ id: "queued-job" });
+    mocks.getJob.mockReset();
+    mocks.getJob.mockResolvedValue(undefined);
     mocks.loggerInfo.mockReset();
   });
 
@@ -186,5 +194,35 @@ describe("order confirmation queue", () => {
       { type: "SYNC_STORE", syncId: 23, correlationId: "corr-3" },
       { jobId: "order-sync-store-23" },
     );
+  });
+
+  it("replaces an exhausted sync job before manually retrying it", async () => {
+    const remove = vi.fn().mockResolvedValue(undefined);
+    const getState = vi.fn().mockResolvedValue("failed");
+    mocks.getJob.mockResolvedValue({ getState, remove });
+
+    await enqueueStoreSyncRetry(23, "manual-sync-retry");
+
+    expect(mocks.getJob).toHaveBeenCalledWith("order-sync-store-23");
+    expect(getState).toHaveBeenCalledTimes(1);
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(mocks.add).toHaveBeenCalledWith(
+      "sync_store",
+      { type: "SYNC_STORE", syncId: 23, correlationId: "manual-sync-retry" },
+      { jobId: "order-sync-store-23" },
+    );
+  });
+
+  it("keeps an active sync job and does not enqueue a duplicate retry", async () => {
+    const remove = vi.fn();
+    mocks.getJob.mockResolvedValue({
+      getState: vi.fn().mockResolvedValue("active"),
+      remove,
+    });
+
+    await enqueueStoreSyncRetry(23, "manual-sync-retry");
+
+    expect(remove).not.toHaveBeenCalled();
+    expect(mocks.add).not.toHaveBeenCalled();
   });
 });

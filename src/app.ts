@@ -21,6 +21,7 @@ import {
 import {
   generalLimiter,
   messengerWebhookLimiter,
+  orderWebhookLimiter,
   whatsappWebhookLimiter,
   widgetChatLimiter,
 } from "@middlewares/rateLimit.middleware";
@@ -50,6 +51,7 @@ import missionControlRouter from "@modules/admin/mission-control/missionControl.
 import { generateCsrfToken, validateCsrfToken } from "@middlewares/csrf.middleware";
 import { authenticateToken, requireAdmin, requireVerified } from "@modules/auth/core/auth.middleware";
 import { runHealthChecks, allCriticalOk } from "@utils/healthChecks";
+import orderConfirmationPublicRoutes from "@modules/order-confirmation/orderConfirmation.public.routes";
 
 const app = express();
 
@@ -108,6 +110,12 @@ app.use(
   whatsappWebhookLimiter,
   express.raw({ type: "application/json" }),
 );
+app.use(
+  "/v1/order-integrations/:integrationKey/events",
+  orderWebhookLimiter,
+  express.raw({ type: "application/json", limit: "256kb" }),
+);
+app.use("/v1/order-integrations", orderConfirmationPublicRoutes);
 
 // ── JSON / URL-encoded body parser (all other routes) ────────────────────────
 app.use(express.json({ limit: "10mb" }));
@@ -256,7 +264,6 @@ Sentry.setupExpressErrorHandler(app);
 app.use(errorHandler);
 
 export default app;
-
 
 
 

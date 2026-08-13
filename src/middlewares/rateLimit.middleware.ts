@@ -140,6 +140,20 @@ export const whatsappWebhookLimiter = rateLimit({
   validate: { trustProxy: false },
 });
 
+/** Public order events may burst, but must remain isolated by source IP. */
+export const orderWebhookLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 2_000,
+  message: {
+    error: "Too many webhook requests",
+    code: "ORDER_WEBHOOK_RATE_LIMIT",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: { trustProxy: false },
+  keyGenerator: (req) => ipKeyGenerator(req.ip || req.socket.remoteAddress || "unknown"),
+});
+
 /** Public web widget chat: keyed by IP + site key (after JSON body is parsed). */
 export const widgetChatLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,

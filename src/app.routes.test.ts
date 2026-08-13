@@ -29,6 +29,24 @@ describe("app route mounts", () => {
     expect(healthRoute).toBeLessThan(protectedMount);
   });
 
+  it("mounts the signed order webhook raw parser and public router before JSON and auth", () => {
+    const rawWebhookMount = appSource.indexOf(
+      '"/v1/order-integrations/:integrationKey/events"',
+    );
+    const jsonParser = appSource.indexOf('app.use(express.json({ limit: "10mb" }))');
+    const publicOrderMount = appSource.indexOf(
+      'app.use("/v1/order-integrations", orderConfirmationPublicRoutes)',
+    );
+    const protectedMount = appSource.indexOf("app.use(authenticateToken)");
+
+    expect(appSource).toContain("orderWebhookLimiter");
+    expect(appSource).toContain('express.raw({ type: "application/json", limit: "256kb" })');
+    expect(rawWebhookMount).toBeGreaterThan(-1);
+    expect(rawWebhookMount).toBeLessThan(jsonParser);
+    expect(publicOrderMount).toBeGreaterThan(-1);
+    expect(publicOrderMount).toBeLessThan(protectedMount);
+  });
+
   // ── Mobile auth contract ───────────────────────────────────
   // The mobile auth routes (`/v1/mobile/auth/*`) MUST be mounted
   // before the global `authenticateToken` wall. Otherwise the

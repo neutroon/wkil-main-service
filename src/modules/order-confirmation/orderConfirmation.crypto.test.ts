@@ -66,6 +66,24 @@ describe("order confirmation crypto", () => {
     ).toBe(false);
   });
 
+  it("accepts uppercase hexadecimal digest letters with a lower-case v1 prefix", () => {
+    const rawBody = Buffer.from("payload", "utf8");
+    const timestamp = "1700000000";
+    const signature = computeOrderWebhookSignature(timestamp, rawBody, "secret");
+    const uppercaseDigest = signature.slice(3).toUpperCase();
+
+    expect(uppercaseDigest).not.toBe(signature.slice(3));
+    expect(
+      verifyOrderWebhookSignature({
+        rawBody,
+        timestamp,
+        signature: `v1=${uppercaseDigest}`,
+        secret: "secret",
+        nowSeconds: 1700000000,
+      }),
+    ).toBe(true);
+  });
+
   it("rejects malformed signature and timestamp headers", () => {
     const rawBody = Buffer.from("payload", "utf8");
     const validTimestamp = "1700000000";

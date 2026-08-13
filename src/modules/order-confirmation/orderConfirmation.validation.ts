@@ -4,7 +4,28 @@ import type { CanonicalOrderEvent } from "./orderConfirmation.types";
 const E164_PHONE_PATTERN = /^\+[1-9]\d{1,14}$/;
 const DECIMAL_STRING_PATTERN = /^\d+(?:\.\d+)?$/;
 const RAW_CURRENCY_PATTERN = /^[A-Za-z]{3}$/;
-const SUPPORTED_ISO_CURRENCIES = ["AED", "EGP", "EUR", "GBP", "SAR", "USD"] as const;
+const ISO_CURRENCY_PATTERN = /^[A-Z]{3}$/;
+const FALLBACK_ISO_CURRENCIES = ["AED", "CAD", "EGP", "EUR", "GBP", "JPY", "SAR", "USD"];
+
+type IntlWithSupportedValuesOf = typeof Intl & {
+  supportedValuesOf?: (key: string) => string[];
+};
+
+function loadSupportedIsoCurrencies(): Set<string> {
+  const supportedValuesOf = (Intl as IntlWithSupportedValuesOf).supportedValuesOf;
+
+  if (typeof supportedValuesOf !== "function") {
+    return new Set(FALLBACK_ISO_CURRENCIES);
+  }
+
+  try {
+    return new Set(supportedValuesOf("currency"));
+  } catch {
+    return new Set(FALLBACK_ISO_CURRENCIES);
+  }
+}
+
+const supportedIsoCurrencies = loadSupportedIsoCurrencies();
 
 const nonBlankString = z.string().refine((value) => value.trim().length > 0, {
   message: "must not be blank",
@@ -13,7 +34,10 @@ const nonBlankString = z.string().refine((value) => value.trim().length > 0, {
 const decimalStringSchema = z.string().regex(DECIMAL_STRING_PATTERN, "must be a decimal string");
 const phoneSchema = z.string().regex(E164_PHONE_PATTERN, "must be an E.164 phone number");
 const localeSchema = z.enum(["ar", "en"]);
-const currencySchema = z.enum(SUPPORTED_ISO_CURRENCIES);
+const currencySchema = z
+  .string()
+  .regex(ISO_CURRENCY_PATTERN, "must be an ISO 4217 currency code")
+  .refine((value) => supportedIsoCurrencies.has(value), "must be an ISO 4217 currency code");
 const rawCurrencySchema = z
   .string()
   .trim()

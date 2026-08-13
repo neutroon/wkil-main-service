@@ -184,4 +184,18 @@ describe("parseCanonicalOrderEvent", () => {
       }),
     ).toThrow();
   });
+
+  it("accepts valid ISO 4217 currencies outside the original MVP subset", () => {
+    for (const currency of ["JPY", "CAD"] as const) {
+      const event = parseCanonicalOrderEvent({
+        ...minimumCanonicalEvent,
+        order: {
+          ...minimumCanonicalEvent.order,
+          currency,
+        },
+      });
+
+      expect(event.order.currency).toBe(currency);
+    }
+  });
 });

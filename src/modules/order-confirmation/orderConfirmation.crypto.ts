@@ -57,7 +57,7 @@ export function verifyOrderWebhookSignature(params: {
     return false;
   }
 
-  const signatureMatch = /^v1=([0-9a-f]{64})$/.exec(signature);
+  const signatureMatch = /^v1=([0-9a-fA-F]{64})$/.exec(signature);
   if (!signatureMatch) {
     return false;
   }

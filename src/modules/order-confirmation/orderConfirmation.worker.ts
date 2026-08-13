@@ -14,6 +14,7 @@ import { enqueueNotification, enqueueOrderEvent } from "./orderConfirmation.queu
 import {
   processOrderAction,
   processOrderEvent,
+  processStoreSync,
   sendOrderNotification,
 } from "./orderConfirmation.service";
 import type { OrderConfirmationJob } from "./orderConfirmation.types";
@@ -54,6 +55,9 @@ export async function processOrderConfirmationJob(
             ? decryptFacebookSecret(job.data.encryptedActionToken)
             : job.data.actionToken,
       });
+      return;
+    case "SYNC_STORE":
+      await processStoreSync(job.data.syncId);
       return;
   }
 }

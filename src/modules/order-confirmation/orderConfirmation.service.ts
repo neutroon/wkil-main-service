@@ -11,11 +11,13 @@ import {
   markOrderEventFailed,
   markOrderEventRecoverable,
   claimOrderAction,
+  createPendingStoreSync,
 } from "./orderConfirmation.repository";
 import { issueOrderActionToken } from "./orderConfirmation.crypto";
 import { normalizeCanonicalOrderEvent } from "./orderConfirmation.normalizer";
 import {
   enqueueNotification,
+  enqueueStoreSync,
 } from "./orderConfirmation.queue";
 import {
   OrderConfirmationGlobalKillSwitchError,
@@ -24,6 +26,7 @@ import {
   sendAcknowledgementNotification,
   sendConfirmationNotification,
 } from "./orderConfirmation.whatsapp.adapter";
+import { sendGenericOrderStatusCallback } from "./orderConfirmation.store.adapter";
 import type { OrderAction, OrderActionInput, OrderStatus } from "./orderConfirmation.types";
 
 function errorMessage(error: unknown): string {
@@ -163,6 +166,16 @@ export async function processOrderAction(input: OrderActionInput): Promise<{
     );
   }
 
+  if (result.applied && result.storeSyncEnabled) {
+    const requestedStatus = result.action === "CONFIRM" ? "CONFIRMED" : "CANCELED";
+    const sync = await createPendingStoreSync(
+      result.orderId,
+      result.businessProfileId,
+      requestedStatus,
+    );
+    await enqueueStoreSync(sync.id, input.correlationId);
+  }
+
   if (!result.applied) {
     return {
       orderId: result.orderId,
@@ -178,4 +191,8 @@ export async function processOrderAction(input: OrderActionInput): Promise<{
     applied: true,
     currentStatus: result.currentStatus as OrderStatus,
   };
+}
+
+export async function processStoreSync(syncId: number): Promise<void> {
+  await sendGenericOrderStatusCallback(syncId);
 }

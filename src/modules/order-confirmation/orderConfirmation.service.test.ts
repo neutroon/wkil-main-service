@@ -16,8 +16,10 @@ const mocks = vi.hoisted(() => ({
   normalizeCanonicalOrderEvent: vi.fn(),
   issueOrderActionToken: vi.fn(),
   enqueueNotification: vi.fn(),
+  enqueueStoreSync: vi.fn(),
   sendConfirmationNotification: vi.fn(),
   sendAcknowledgementNotification: vi.fn(),
+  sendGenericOrderStatusCallback: vi.fn(),
   loggerInfo: vi.fn(),
   loggerWarn: vi.fn(),
   loggerError: vi.fn(),
@@ -48,6 +50,7 @@ vi.mock("./orderConfirmation.crypto", () => ({
 
 vi.mock("./orderConfirmation.queue", () => ({
   enqueueNotification: mocks.enqueueNotification,
+  enqueueStoreSync: mocks.enqueueStoreSync,
 }));
 
 vi.mock("./orderConfirmation.whatsapp.adapter", () => ({
@@ -56,6 +59,10 @@ vi.mock("./orderConfirmation.whatsapp.adapter", () => ({
   OrderConfirmationSuppressedError: class OrderConfirmationSuppressedError extends Error {},
   sendConfirmationNotification: mocks.sendConfirmationNotification,
   sendAcknowledgementNotification: mocks.sendAcknowledgementNotification,
+}));
+
+vi.mock("./orderConfirmation.store.adapter", () => ({
+  sendGenericOrderStatusCallback: mocks.sendGenericOrderStatusCallback,
 }));
 
 vi.mock("@utils/logger", () => ({
@@ -69,6 +76,7 @@ vi.mock("@utils/logger", () => ({
 import {
   processOrderAction,
   processOrderEvent,
+  processStoreSync,
   sendOrderNotification,
 } from "./orderConfirmation.service";
 
@@ -124,6 +132,8 @@ describe("order confirmation workflow", () => {
       notification: { id: 18 },
     });
     mocks.enqueueNotification.mockResolvedValue(undefined);
+    mocks.enqueueStoreSync.mockResolvedValue(undefined);
+    mocks.createPendingStoreSync.mockResolvedValue({ id: 20 });
     mocks.markOrderEventProcessed.mockResolvedValue(undefined);
     mocks.markNotificationSending.mockResolvedValue(true);
     mocks.markNotificationSent.mockResolvedValue(undefined);
@@ -218,7 +228,8 @@ describe("order confirmation workflow", () => {
 
     expect(mocks.enqueueNotification).toHaveBeenCalledTimes(1);
     expect(mocks.createAcknowledgementNotification).not.toHaveBeenCalled();
-    expect(mocks.createPendingStoreSync).not.toHaveBeenCalled();
+    expect(mocks.createPendingStoreSync).toHaveBeenCalledWith(12, 11, "CONFIRMED");
+    expect(mocks.enqueueStoreSync).toHaveBeenCalledWith(20, "corr-1");
   });
 
   it("re-enqueues an existing acknowledgement after the first enqueue fails", async () => {
@@ -289,6 +300,14 @@ describe("order confirmation workflow", () => {
 
     expect(mocks.markNotificationFailed).toHaveBeenCalledWith(18, "Meta unavailable");
     expect(mocks.claimOrderAction).not.toHaveBeenCalled();
+  });
+
+  it("processes a store sync without changing the local order state", async () => {
+    mocks.sendGenericOrderStatusCallback.mockResolvedValue(undefined);
+
+    await processStoreSync(20);
+
+    expect(mocks.sendGenericOrderStatusCallback).toHaveBeenCalledWith(20);
   });
 
   it("does not automatically claim an ambiguous provider delivery", async () => {

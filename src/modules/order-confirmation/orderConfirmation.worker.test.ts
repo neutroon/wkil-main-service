@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   enqueueNotification: vi.fn(),
   processOrderAction: vi.fn(),
   processOrderEvent: vi.fn(),
+  processStoreSync: vi.fn(),
   sendOrderNotification: vi.fn(),
   loggerInfo: vi.fn(),
   loggerWarn: vi.fn(),
@@ -62,6 +63,7 @@ vi.mock("./orderConfirmation.queue", () => ({
 vi.mock("./orderConfirmation.service", () => ({
   processOrderAction: mocks.processOrderAction,
   processOrderEvent: mocks.processOrderEvent,
+  processStoreSync: mocks.processStoreSync,
   sendOrderNotification: mocks.sendOrderNotification,
 }));
 
@@ -132,5 +134,20 @@ describe("order confirmation recovery lifecycle", () => {
       expect.objectContaining({ actionToken: "legacy-raw-token" }),
     );
     expect(JSON.stringify(mocks.loggerInfo.mock.calls)).not.toContain("legacy-raw-token");
+  });
+
+  it("dispatches store-sync jobs to the store-sync service", async () => {
+    const syncJob = {
+      id: "sync-job",
+      data: {
+        type: "SYNC_STORE",
+        syncId: 42,
+        correlationId: "sync-correlation",
+      },
+    } as any;
+
+    await processOrderConfirmationJob(syncJob);
+
+    expect(mocks.processStoreSync).toHaveBeenCalledWith(42);
   });
 });

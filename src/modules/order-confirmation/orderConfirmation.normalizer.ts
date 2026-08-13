@@ -11,6 +11,7 @@ import {
 
 const E164_PHONE_PATTERN = /^\+[1-9]\d{1,14}$/;
 const DECIMAL_INPUT_PATTERN = /^\d+(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
+const MAX_EXPANDED_DECIMAL_LENGTH = 1_000;
 
 export function normalizeE164Phone(phone: string): string {
   if (typeof phone !== "string" || !E164_PHONE_PATTERN.test(phone)) {
@@ -42,6 +43,16 @@ function normalizeDecimal(value: string | number): string {
 function expandExponential(integerPart: string, fractionalPart: string, exponent: number): string {
   const digits = `${integerPart}${fractionalPart}`;
   const decimalPosition = integerPart.length + exponent;
+  const expandedLength =
+    decimalPosition <= 0
+      ? 2 - decimalPosition + digits.length
+      : decimalPosition >= digits.length
+        ? decimalPosition
+        : digits.length + 1;
+
+  if (!Number.isSafeInteger(expandedLength) || expandedLength > MAX_EXPANDED_DECIMAL_LENGTH) {
+    throw new Error("Money and quantity values exceed the maximum decimal length");
+  }
 
   if (decimalPosition <= 0) {
     return `0.${"0".repeat(-decimalPosition)}${digits}`;

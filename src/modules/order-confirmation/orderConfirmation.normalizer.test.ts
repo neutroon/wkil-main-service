@@ -37,8 +37,8 @@ describe("normalizeCanonicalOrderEvent", () => {
           {
             id: "sku_1",
             name: "  Product  ",
-            quantity: 2,
-            unitPrice: 425,
+            quantity: "2",
+            unitPrice: "425",
             total: "850.00",
           },
         ],
@@ -99,6 +99,26 @@ describe("normalizeCanonicalOrderEvent", () => {
     });
 
     expect(result.order.total).toBe("9007199254740993.123456789");
+  });
+
+  it("rejects exponent values that exceed the normalized decimal length limit", () => {
+    expect(() =>
+      normalizeCanonicalOrderEvent({
+        schemaVersion: "1",
+        eventId: "evt_123",
+        eventType: "order.created",
+        occurredAt: "2026-08-13T10:30:00Z",
+        order: {
+          id: "ord_123",
+          number: "#123",
+          currency: "USD",
+          total: "1e1001",
+          customer: {
+            phone: "+14155552671",
+          },
+        },
+      }),
+    ).toThrow("Money and quantity values exceed the maximum decimal length");
   });
 
   it("rejects unsupported events and invalid locales", () => {

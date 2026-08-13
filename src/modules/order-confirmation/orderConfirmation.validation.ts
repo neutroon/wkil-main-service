@@ -3,7 +3,8 @@ import type { CanonicalOrderEvent } from "./orderConfirmation.types";
 
 const E164_PHONE_PATTERN = /^\+[1-9]\d{1,14}$/;
 const DECIMAL_STRING_PATTERN = /^\d+(?:\.\d+)?$/;
-const ISO_CURRENCY_PATTERN = /^[A-Z]{3}$/;
+const RAW_CURRENCY_PATTERN = /^[A-Za-z]{3}$/;
+const SUPPORTED_ISO_CURRENCIES = ["AED", "EGP", "EUR", "GBP", "SAR", "USD"] as const;
 
 const nonBlankString = z.string().refine((value) => value.trim().length > 0, {
   message: "must not be blank",
@@ -12,7 +13,13 @@ const nonBlankString = z.string().refine((value) => value.trim().length > 0, {
 const decimalStringSchema = z.string().regex(DECIMAL_STRING_PATTERN, "must be a decimal string");
 const phoneSchema = z.string().regex(E164_PHONE_PATTERN, "must be an E.164 phone number");
 const localeSchema = z.enum(["ar", "en"]);
-const currencySchema = z.string().regex(ISO_CURRENCY_PATTERN, "must be an ISO 4217 currency code");
+const currencySchema = z.enum(SUPPORTED_ISO_CURRENCIES);
+const rawCurrencySchema = z
+  .string()
+  .trim()
+  .regex(RAW_CURRENCY_PATTERN, "must be an ISO 4217 currency code")
+  .transform((value) => value.toUpperCase())
+  .pipe(currencySchema);
 const occurredAtSchema = z.string().datetime({ offset: true });
 const metadataSchema = z.record(z.string(), z.unknown());
 
@@ -70,7 +77,7 @@ export const canonicalOrderEventSchema = z
   })
   .strict();
 
-const decimalInputSchema = z.union([
+const orderTotalInputSchema = z.union([
   z.string().min(1),
   z.number().refine(Number.isFinite, "must be a finite number"),
 ]);
@@ -85,8 +92,8 @@ const rawOrderEventSchema = z
       .object({
         id: nonBlankString,
         number: nonBlankString,
-        currency: z.string().trim().regex(/^[A-Za-z]{3}$/, "must be an ISO 4217 currency code"),
-        total: decimalInputSchema,
+        currency: rawCurrencySchema,
+        total: orderTotalInputSchema,
         customer: z
           .object({
             name: nonBlankString.optional(),
@@ -100,9 +107,9 @@ const rawOrderEventSchema = z
               .object({
                 id: nonBlankString,
                 name: nonBlankString,
-                quantity: decimalInputSchema,
-                unitPrice: decimalInputSchema,
-                total: decimalInputSchema,
+                quantity: decimalStringSchema,
+                unitPrice: decimalStringSchema,
+                total: decimalStringSchema,
               })
               .strict(),
           )

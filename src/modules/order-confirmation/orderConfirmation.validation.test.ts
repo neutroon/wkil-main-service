@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { parseCanonicalOrderEvent } from "./orderConfirmation.validation";
+import {
+  parseCanonicalOrderEvent,
+  parseRawCanonicalOrderEvent,
+} from "./orderConfirmation.validation";
 
 const minimumCanonicalEvent = {
   schemaVersion: "1",
@@ -52,6 +55,28 @@ describe("parseCanonicalOrderEvent", () => {
     };
 
     expect(parseCanonicalOrderEvent(event)).toEqual(event);
+  });
+
+  it("rejects numeric line-item values at the raw boundary", () => {
+    const item = {
+      id: "sku_1",
+      name: "Product",
+      quantity: "2",
+      unitPrice: "425.00",
+      total: "850.00",
+    };
+
+    for (const field of ["quantity", "unitPrice", "total"] as const) {
+      expect(() =>
+        parseRawCanonicalOrderEvent({
+          ...minimumCanonicalEvent,
+          order: {
+            ...minimumCanonicalEvent.order,
+            items: [{ ...item, [field]: 2 }],
+          },
+        }),
+      ).toThrow();
+    }
   });
 
   it("rejects a missing customer phone", () => {
@@ -146,5 +171,17 @@ describe("parseCanonicalOrderEvent", () => {
     };
 
     expect(() => parseCanonicalOrderEvent(event)).toThrow();
+  });
+
+  it("rejects unsupported currency codes", () => {
+    expect(() =>
+      parseCanonicalOrderEvent({
+        ...minimumCanonicalEvent,
+        order: {
+          ...minimumCanonicalEvent.order,
+          currency: "ZZZ",
+        },
+      }),
+    ).toThrow();
   });
 });

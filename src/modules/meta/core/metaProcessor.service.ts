@@ -27,6 +27,11 @@ import {
 } from "@modules/ai-agent/chat/conversationRunGuard";
 import { createLatencyTrace } from "@utils/latencyTrace";
 import { classifyInboundMessageSignal, buildTurnTextWithTranscript } from "@modules/ai-agent/chat/messageSignals";
+import { enqueueOrderAction } from "@modules/order-confirmation/orderConfirmation.queue";
+import {
+  isWhatsAppOptOut,
+  normalizeOptOutText,
+} from "@modules/order-confirmation/orderConfirmation.whatsapp.parser";
 
 export type MetaPlatform = "messenger" | "whatsapp" | "visual_production" | "visual_refine" | "media_sync" | "facebook" | "instagram" | "linkedin";
 
@@ -39,10 +44,13 @@ export interface MetaMessageJob {
   type?: string;
   pageId?: string;
   phoneNumberId?: string;
+  customerPhone?: string;
   from?: string;
   mediaId?: string;
   mediaMetadata?: any;
   customerName?: string;
+  orderActionId?: string;
+  buttonTitle?: string;
   commentId?: string;
   postId?: string;
   parentId?: string;
@@ -81,6 +89,11 @@ type CachedIdentity = Omit<IdentityResolution, "accessToken">;
 const IDENTITY_CACHE_TTL = 900; // 15 minutes
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function normalizeWhatsAppPhone(phone: string): string {
+  const digits = phone.replace(/\D/g, "");
+  return digits ? `+${digits}` : phone;
+}
 
 async function clearMessengerIdentityCaches(pageId: string) {
   await Promise.all([
@@ -508,6 +521,47 @@ export async function processMetaMessage(
     }
     // --- END BACKGROUND EVENTS BRANCH ---
 
+    if (type === "ORDER_ACTION") {
+      const phoneNumberId = job.phoneNumberId || identifier;
+      const customerPhone = job.customerPhone || senderId;
+      const businessProfileId = job.businessProfileId;
+      if (
+        !job.orderActionId ||
+        typeof businessProfileId !== "number" ||
+        !Number.isInteger(businessProfileId) ||
+        !phoneNumberId ||
+        !customerPhone
+      ) {
+        traceOutcome = "invalid_order_action";
+        logger.warn("meta.processor.order_action_invalid", {
+          platform,
+          identifier,
+          businessProfileId: job.businessProfileId,
+          inboundMessageId: externalId,
+        });
+        return;
+      }
+
+      const correlationId = `meta-order-action-${externalId || "unknown"}`;
+      await enqueueOrderAction({
+        businessProfileId,
+        phoneNumberId,
+        customerPhone: normalizeWhatsAppPhone(customerPhone),
+        actionToken: job.orderActionId,
+        inboundMessageId: externalId,
+        buttonTitle: job.buttonTitle,
+        correlationId,
+      });
+      traceOutcome = "order_action_queued";
+      logger.info("meta.processor.order_action_enqueued", {
+        businessProfileId: job.businessProfileId,
+        phoneNumberId,
+        inboundMessageId: externalId,
+        buttonTitle: job.buttonTitle,
+      });
+      return;
+    }
+
     // 1. Resolve Identity
     logger.info("meta.processor.resolving_identity", {
       platform,
@@ -628,6 +682,43 @@ export async function processMetaMessage(
         isPrivate: platform === "messenger" ? true : (job.isPrivate ?? false),
       }),
     );
+
+    if (
+      platform === "whatsapp" &&
+      !job.isFromBusiness &&
+      (type === "text" || type === undefined) &&
+      isWhatsAppOptOut(messageText || "")
+    ) {
+      const normalizedPhone = normalizeWhatsAppPhone(job.customerPhone || senderId);
+      await prisma.whatsAppSuppression.upsert({
+        where: {
+          businessProfileId_normalizedPhone: {
+            businessProfileId,
+            normalizedPhone,
+          },
+        },
+        update: {
+          reason: "CUSTOMER_OPT_OUT",
+          source: "WHATSAPP",
+          clearedAt: null,
+        },
+        create: {
+          businessProfileId,
+          normalizedPhone,
+          reason: "CUSTOMER_OPT_OUT",
+          source: "WHATSAPP",
+        },
+      });
+      traceOutcome = "whatsapp_opt_out_recorded";
+      logger.info("meta.processor.whatsapp_opt_out_recorded", {
+        businessProfileId,
+        normalizedPhone,
+        conversationId: conversation.id,
+        externalId,
+        normalizedText: normalizeOptOutText(messageText || ""),
+      });
+      return;
+    }
 
     if (job.isFromBusiness || !(conversation as any).aiEnabled) {
       traceOutcome = job.isFromBusiness ? "mirrored_message" : "ai_disabled";

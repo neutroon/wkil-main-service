@@ -32,6 +32,7 @@ import { uploadWhatsAppMedia } from "../core/metaUpload.service";
 import { sendWhatsAppMedia } from "./whatsapp.service";
 import { invalidateWhatsAppAccountCache } from "../core/webhookCache.service";
 import { getAuthorizedConversation } from "../../inbox/inbox.routes";
+import { parseWhatsAppInteractiveReply } from "@modules/order-confirmation/orderConfirmation.whatsapp.parser";
 
 const isDev = env.NODE_ENV !== "production";
 const OAUTH_EXCHANGE_REF_TTL_SEC = 10 * 60; // 10 minutes
@@ -136,6 +137,7 @@ export class WhatsAppController {
             const wamid = msg.id;
             const from = msg.from;
             const type = msg.type;
+            const interactiveReply = parseWhatsAppInteractiveReply(msg);
             
             let messageText = msg.text?.body;
             let mediaId: string | undefined;
@@ -160,14 +162,39 @@ export class WhatsAppController {
             }
 
             if (!wamid || !from) continue;
-            if (type === "text" && !messageText) continue;
-            if (type !== "text" && !mediaId) continue;
-
             const fromDigits = from.replace(/\D/g, "");
             const isFromBusiness = fromDigits === businessDigits;
             const actualCustomerId = isFromBusiness ? msg.to : from;
 
             if (!actualCustomerId) continue;
+
+            if (interactiveReply && !isFromBusiness) {
+              enqueueInboundMetaEvent({
+                platform: "whatsapp",
+                eventId: wamid,
+                payload: {
+                  platform: "whatsapp",
+                  phoneNumberId,
+                  identifier: phoneNumberId,
+                  businessProfileId: account.businessProfileId,
+                  from,
+                  senderId: actualCustomerId,
+                  customerPhone: actualCustomerId,
+                  messageText: "",
+                  wamid,
+                  externalId: wamid,
+                  customerName,
+                  type: "ORDER_ACTION",
+                  orderActionId: interactiveReply.actionToken,
+                  buttonTitle: interactiveReply.buttonTitle,
+                  isFromBusiness: false,
+                } as any,
+              });
+              continue;
+            }
+
+            if (type === "text" && !messageText) continue;
+            if (type !== "text" && !mediaId) continue;
 
             enqueueInboundMetaEvent({
               platform: "whatsapp",
@@ -580,8 +607,6 @@ export class WhatsAppController {
 }
 
 export const whatsappController = new WhatsAppController();
-
-
 
 
 

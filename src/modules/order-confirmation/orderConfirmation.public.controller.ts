@@ -71,8 +71,16 @@ export async function receiveOrderEvent(req: Request, res: Response): Promise<vo
   let signingSecret: string;
   try {
     signingSecret = decryptFacebookSecret(integration.signingSecret);
+    if (typeof signingSecret !== "string" || signingSecret.length === 0) {
+      throw new Error("Missing signing secret");
+    }
   } catch {
-    res.status(401).json({ error: "Invalid signature" });
+    logger.error("order_confirmation.webhook.secret_unavailable", {
+      correlationId,
+      eventId: bodyEventId,
+      integrationId: integration.id,
+    });
+    res.status(500).json({ error: "Unable to accept event" });
     return;
   }
 

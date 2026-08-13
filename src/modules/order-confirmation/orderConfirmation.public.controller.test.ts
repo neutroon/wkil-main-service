@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   insertOrderEventIfNew: vi.fn(),
   enqueueOrderEvent: vi.fn(),
   loggerError: vi.fn(),
+  decryptFacebookSecret: vi.fn(),
 }));
 
 vi.mock("./orderConfirmation.repository", () => ({
@@ -19,7 +20,7 @@ vi.mock("./orderConfirmation.queue", () => ({
 }));
 
 vi.mock("@modules/auth/core/tokenCrypto", () => ({
-  decryptFacebookSecret: vi.fn((value: string) => value),
+  decryptFacebookSecret: mocks.decryptFacebookSecret,
 }));
 
 vi.mock("@utils/logger", () => ({
@@ -117,6 +118,7 @@ describe("POST /:integrationKey/events", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    mocks.decryptFacebookSecret.mockImplementation((value: string) => value);
     mocks.findActiveIntegrationByPublicKey.mockResolvedValue(integration);
     mocks.insertOrderEventIfNew.mockResolvedValue({
       duplicate: false,
@@ -176,6 +178,32 @@ describe("POST /:integrationKey/events", () => {
     expect(mocks.insertOrderEventIfNew).not.toHaveBeenCalled();
   });
 
+  it("returns 500 when the integration secret cannot be decrypted", async () => {
+    mocks.decryptFacebookSecret.mockImplementation(() => {
+      throw new Error("encryption key unavailable");
+    });
+
+    const response = await doRequest(server, {
+      method: "POST",
+      path: "/public-key/events",
+      ...signedRequest(),
+    });
+
+    expect(response.status).toBe(500);
+    expect(mocks.insertOrderEventIfNew).not.toHaveBeenCalled();
+    expect(mocks.loggerError).toHaveBeenCalledWith(
+      "order_confirmation.webhook.secret_unavailable",
+      expect.objectContaining({
+        correlationId: expect.any(String),
+        eventId: "evt_123",
+        integrationId: 7,
+      }),
+    );
+    expect(JSON.stringify(mocks.loggerError.mock.calls)).not.toContain(
+      integration.signingSecret,
+    );
+  });
+
   it("returns 400 when Idempotency-Key is missing or mismatched", async () => {
     const request = signedRequest();
     Reflect.deleteProperty(request.headers, "idempotency-key");
@@ -224,6 +252,21 @@ describe("POST /:integrationKey/events", () => {
     const response = await doRequest(server, {
       method: "POST",
       path: "/unknown/events",
+      ...signedRequest(),
+    });
+
+    expect(response.status).toBe(404);
+    expect(mocks.insertOrderEventIfNew).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 for an inactive integration", async () => {
+    mocks.findActiveIntegrationByPublicKey.mockResolvedValue({
+      ...integration,
+      isActive: false,
+    });
+    const response = await doRequest(server, {
+      method: "POST",
+      path: "/inactive/events",
       ...signedRequest(),
     });
 

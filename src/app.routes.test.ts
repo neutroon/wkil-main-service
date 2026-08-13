@@ -37,13 +37,18 @@ describe("app route mounts", () => {
     const publicOrderMount = appSource.indexOf(
       'app.use("/v1/order-integrations", orderConfirmationPublicRoutes)',
     );
+    const generalLimiterMount = appSource.indexOf("app.use(generalLimiter)");
     const protectedMount = appSource.indexOf("app.use(authenticateToken)");
 
     expect(appSource).toContain("orderWebhookLimiter");
     expect(appSource).toContain('express.raw({ type: "application/json", limit: "256kb" })');
     expect(rawWebhookMount).toBeGreaterThan(-1);
-    expect(rawWebhookMount).toBeLessThan(jsonParser);
     expect(publicOrderMount).toBeGreaterThan(-1);
+    expect(generalLimiterMount).toBeGreaterThan(-1);
+    expect(rawWebhookMount).toBeLessThan(publicOrderMount);
+    expect(publicOrderMount).toBeLessThan(generalLimiterMount);
+    expect(generalLimiterMount).toBeLessThan(jsonParser);
+    expect(publicOrderMount).toBeLessThan(jsonParser);
     expect(publicOrderMount).toBeLessThan(protectedMount);
   });
 

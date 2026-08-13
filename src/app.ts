@@ -95,7 +95,6 @@ app.use(sanitizeRequest);
 app.use(requestSizeLimit);
 app.use(generateCsrfToken); // Set CSRF cookie on every response
 app.use(identifyUserForRateLimit);
-app.use(generalLimiter);
 
 // ── Raw-body paths (declared before express.json()) ──────────────────────────
 // Meta requires HMAC verification against raw bytes, so these webhook paths
@@ -116,6 +115,7 @@ app.use(
   express.raw({ type: "application/json", limit: "256kb" }),
 );
 app.use("/v1/order-integrations", orderConfirmationPublicRoutes);
+app.use(generalLimiter);
 
 // ── JSON / URL-encoded body parser (all other routes) ────────────────────────
 app.use(express.json({ limit: "10mb" }));
@@ -264,7 +264,6 @@ Sentry.setupExpressErrorHandler(app);
 app.use(errorHandler);
 
 export default app;
-
 
 
 

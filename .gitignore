@@ -9,3 +9,4 @@ google-cloud-key.json
 .gcp/
 # Logs
 *.log
+.worktrees/

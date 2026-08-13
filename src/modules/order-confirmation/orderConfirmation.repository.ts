@@ -420,8 +420,14 @@ export async function markNotificationSending(notificationId: number): Promise<b
   const result = await prisma.orderNotification.updateMany({
     where: {
       id: notificationId,
-      status: { in: ["QUEUED", "FAILED"] },
-      NOT: { lastError: "AMBIGUOUS_PROVIDER_DELIVERY" },
+      OR: [
+        { status: "QUEUED" },
+        { status: "FAILED", lastError: null },
+        {
+          status: "FAILED",
+          lastError: { not: "AMBIGUOUS_PROVIDER_DELIVERY" },
+        },
+      ],
     },
     data: {
       status: "SENDING",

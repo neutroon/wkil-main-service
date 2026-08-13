@@ -233,8 +233,14 @@ describe("order confirmation repository", () => {
     expect(mocks.notificationUpdateMany).toHaveBeenLastCalledWith({
       where: {
         id: 18,
-        status: { in: ["QUEUED", "FAILED"] },
-        NOT: { lastError: "AMBIGUOUS_PROVIDER_DELIVERY" },
+        OR: [
+          { status: "QUEUED" },
+          { status: "FAILED", lastError: null },
+          {
+            status: "FAILED",
+            lastError: { not: "AMBIGUOUS_PROVIDER_DELIVERY" },
+          },
+        ],
       },
       data: { status: "SENDING", lastError: null, failedAt: null },
     });
@@ -249,5 +255,31 @@ describe("order confirmation repository", () => {
         lastError: null,
       }),
     });
+  });
+
+  it("keeps queued and nullable/non-ambiguous failures claimable", async () => {
+    await markNotificationSending(18);
+
+    const calls = mocks.notificationUpdateMany.mock.calls;
+    const where = calls[calls.length - 1]?.[0].where as {
+      OR: Array<Record<string, unknown>>;
+    };
+    const matches = (status: string, lastError: string | null) =>
+      where.OR.some((branch) => {
+        if (branch.status === "QUEUED") return status === "QUEUED";
+        if (branch.status !== "FAILED" || status !== "FAILED") return false;
+        if (branch.lastError === null) return lastError === null;
+        return (
+          typeof branch.lastError === "object" &&
+          branch.lastError !== null &&
+          "not" in branch.lastError &&
+          lastError !== (branch.lastError as { not: string }).not
+        );
+      });
+
+    expect(matches("QUEUED", null)).toBe(true);
+    expect(matches("FAILED", null)).toBe(true);
+    expect(matches("FAILED", "Meta unavailable")).toBe(true);
+    expect(matches("FAILED", "AMBIGUOUS_PROVIDER_DELIVERY")).toBe(false);
   });
 });

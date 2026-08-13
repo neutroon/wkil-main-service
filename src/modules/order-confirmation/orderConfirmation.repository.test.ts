@@ -231,7 +231,11 @@ describe("order confirmation repository", () => {
 
     await markNotificationSending(18);
     expect(mocks.notificationUpdateMany).toHaveBeenLastCalledWith({
-      where: { id: 18, status: { in: ["QUEUED", "FAILED"] } },
+      where: {
+        id: 18,
+        status: { in: ["QUEUED", "FAILED"] },
+        NOT: { lastError: "AMBIGUOUS_PROVIDER_DELIVERY" },
+      },
       data: { status: "SENDING", lastError: null, failedAt: null },
     });
 

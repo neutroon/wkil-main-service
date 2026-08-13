@@ -291,6 +291,21 @@ describe("order confirmation workflow", () => {
     expect(mocks.claimOrderAction).not.toHaveBeenCalled();
   });
 
+  it("does not automatically claim an ambiguous provider delivery", async () => {
+    mocks.findNotificationForSending.mockResolvedValue({
+      id: 18,
+      status: "FAILED",
+      lastError: "AMBIGUOUS_PROVIDER_DELIVERY",
+      kind: "CONFIRMATION_REQUEST",
+    });
+    mocks.markNotificationSending.mockResolvedValue(false);
+
+    await sendOrderNotification(18);
+
+    expect(mocks.markNotificationSending).toHaveBeenCalledWith(18);
+    expect(mocks.sendConfirmationNotification).not.toHaveBeenCalled();
+  });
+
   it("records suppression and global kill-switch failures without calling Meta", async () => {
     mocks.findNotificationForSending
       .mockResolvedValueOnce({ id: 18, status: "QUEUED", kind: "CONFIRMATION_REQUEST" })

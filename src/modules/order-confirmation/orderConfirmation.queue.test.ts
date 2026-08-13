@@ -109,6 +109,14 @@ describe("order confirmation queue", () => {
     expect(createOrderConfirmationJobId(actionJob)).toBe(jobId);
   });
 
+  it("keeps legacy action jobs deterministic without putting their raw token in the job ID", () => {
+    const legacyJob = { type: "PROCESS_ACTION", ...actionInput } as const;
+    const jobId = createOrderConfirmationJobId(legacyJob);
+
+    expect(jobId).toContain(hashOrderActionToken(actionInput.actionToken).slice(0, 24));
+    expect(jobId).not.toContain(actionInput.actionToken);
+  });
+
   it("uses the dedicated queue and durable retry defaults", () => {
     expect(mocks.queue).toHaveBeenCalledWith(
       "order-confirmations",

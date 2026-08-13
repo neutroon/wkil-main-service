@@ -17,6 +17,9 @@ const mocks = vi.hoisted(() => ({
   loggerDebug: vi.fn(),
   loggerError: vi.fn(),
   captureException: vi.fn(),
+  decryptFacebookSecret: vi.fn((value: string) =>
+    value.startsWith("enc:") ? value.slice(4) : value,
+  ),
 }));
 
 vi.mock("bullmq", () => ({
@@ -34,6 +37,9 @@ vi.mock("@config/redis", () => ({
   bullQueuePrefix: "test",
 }));
 vi.mock("@sentry/node", () => ({ captureException: mocks.captureException }));
+vi.mock("@modules/auth/core/tokenCrypto", () => ({
+  decryptFacebookSecret: mocks.decryptFacebookSecret,
+}));
 vi.mock("@utils/logger", () => ({
   logger: {
     info: mocks.loggerInfo,
@@ -60,6 +66,7 @@ vi.mock("./orderConfirmation.service", () => ({
 }));
 
 import {
+  processOrderConfirmationJob,
   runOrderConfirmationRecoveryScan,
   startOrderConfirmationQueue,
   stopOrderConfirmationQueue,
@@ -102,5 +109,28 @@ describe("order confirmation recovery lifecycle", () => {
     expect(clearIntervalSpy).toHaveBeenCalled();
     clearIntervalSpy.mockRestore();
     vi.useRealTimers();
+  });
+
+  it("processes a legacy raw-token action job in memory", async () => {
+    const legacyJob = {
+      id: "legacy-job",
+      data: {
+        type: "PROCESS_ACTION",
+        businessProfileId: 11,
+        phoneNumberId: "phone-1",
+        customerPhone: "+12025550123",
+        actionToken: "legacy-raw-token",
+        inboundMessageId: "wamid-legacy",
+        buttonTitle: "Confirm",
+        correlationId: "legacy-correlation",
+      },
+    } as any;
+
+    await processOrderConfirmationJob(legacyJob);
+
+    expect(mocks.processOrderAction).toHaveBeenCalledWith(
+      expect.objectContaining({ actionToken: "legacy-raw-token" }),
+    );
+    expect(JSON.stringify(mocks.loggerInfo.mock.calls)).not.toContain("legacy-raw-token");
   });
 });

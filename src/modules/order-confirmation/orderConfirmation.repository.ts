@@ -421,6 +421,7 @@ export async function markNotificationSending(notificationId: number): Promise<b
     where: {
       id: notificationId,
       status: { in: ["QUEUED", "FAILED"] },
+      NOT: { lastError: "AMBIGUOUS_PROVIDER_DELIVERY" },
     },
     data: {
       status: "SENDING",

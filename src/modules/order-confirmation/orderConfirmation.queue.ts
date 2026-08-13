@@ -44,12 +44,16 @@ export function createOrderConfirmationJobId(job: OrderConfirmationJob): string 
     case "SEND_NOTIFICATION":
       return safeBullMqJobId(`order-send-notification-${job.notificationId}`);
     case "PROCESS_ACTION": {
+      const actionTokenDigest =
+        "actionTokenDigest" in job
+          ? job.actionTokenDigest
+          : hashOrderActionToken(job.actionToken);
       const inboundMessageId =
-        job.inboundMessageId && !job.inboundMessageId.includes(job.actionTokenDigest)
+        job.inboundMessageId && !job.inboundMessageId.includes(actionTokenDigest)
           ? job.inboundMessageId
           : "action";
       return safeBullMqJobId(
-        `order-process-action-${inboundMessageId}-${job.actionTokenDigest.slice(0, 24)}`,
+        `order-process-action-${inboundMessageId}-${actionTokenDigest.slice(0, 24)}`,
       );
     }
     case "SYNC_STORE":

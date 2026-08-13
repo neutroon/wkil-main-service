@@ -70,8 +70,11 @@ export type OrderActionQueueJob = Omit<OrderActionInput, "actionToken"> & {
   actionTokenDigest: string;
 };
 
+export type LegacyOrderActionQueueJob = OrderActionInput;
+
 export type OrderConfirmationJob =
   | { type: "PROCESS_EVENT"; eventId: number; correlationId: string }
   | { type: "SEND_NOTIFICATION"; notificationId: number; correlationId: string }
   | ({ type: "PROCESS_ACTION" } & OrderActionQueueJob)
+  | ({ type: "PROCESS_ACTION" } & LegacyOrderActionQueueJob)
   | { type: "SYNC_STORE"; syncId: number; correlationId: string };

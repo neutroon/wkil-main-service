@@ -31,7 +31,7 @@ function failureCode(error: unknown): string | undefined {
     : undefined;
 }
 
-async function processOrderConfirmationJob(
+export async function processOrderConfirmationJob(
   job: Job<OrderConfirmationJob>,
 ): Promise<void> {
   switch (job.data.type) {
@@ -49,7 +49,10 @@ async function processOrderConfirmationJob(
         inboundMessageId: job.data.inboundMessageId,
         buttonTitle: job.data.buttonTitle,
         correlationId: job.data.correlationId,
-        actionToken: decryptFacebookSecret(job.data.encryptedActionToken),
+        actionToken:
+          "encryptedActionToken" in job.data
+            ? decryptFacebookSecret(job.data.encryptedActionToken)
+            : job.data.actionToken,
       });
       return;
   }

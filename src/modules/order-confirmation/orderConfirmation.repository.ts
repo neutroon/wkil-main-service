@@ -825,3 +825,526 @@ export async function clearExpiredOrderEventPayloads(now = new Date()): Promise<
     data: { rawPayload: Prisma.DbNull },
   });
 }
+
+const integrationPublicSelect = {
+  id: true,
+  businessProfileId: true,
+  whatsappAccountId: true,
+  kind: true,
+  integrationKey: true,
+  statusCallbackUrl: true,
+  isActive: true,
+  storeSyncEnabled: true,
+  defaultLocale: true,
+  createdAt: true,
+  updatedAt: true,
+  businessProfile: { select: { id: true, name: true } },
+  whatsappAccount: {
+    select: {
+      id: true,
+      phoneNumberId: true,
+      displayPhoneNumber: true,
+      wabaId: true,
+      isActive: true,
+    },
+  },
+} as const;
+
+const integrationManagementSelect = {
+  ...integrationPublicSelect,
+  signingSecret: true,
+  previousSigningSecret: true,
+  statusCallbackSecret: true,
+  previousStatusCallbackSecret: true,
+} as const;
+
+export type OrderIntegrationManagementRecord = Prisma.OrderIntegrationGetPayload<{
+  select: typeof integrationManagementSelect;
+}>;
+
+export type OrderIntegrationPublicRecord = Prisma.OrderIntegrationGetPayload<{
+  select: typeof integrationPublicSelect;
+}>;
+
+export async function listOrderIntegrations(params: {
+  profileIds: number[];
+  businessProfileId?: number;
+}): Promise<OrderIntegrationPublicRecord[]> {
+  if (params.profileIds.length === 0) return [];
+
+  return prisma.orderIntegration.findMany({
+    where: {
+      businessProfileId:
+        params.businessProfileId === undefined
+          ? { in: params.profileIds }
+          : { in: params.profileIds, equals: params.businessProfileId },
+    },
+    select: integrationPublicSelect,
+    orderBy: { updatedAt: "desc" },
+  });
+}
+
+export async function findOrderIntegrationForProfiles(
+  id: number,
+  profileIds: number[],
+): Promise<OrderIntegrationManagementRecord | null> {
+  if (profileIds.length === 0) return null;
+
+  return prisma.orderIntegration.findFirst({
+    where: { id, businessProfileId: { in: profileIds } },
+    select: integrationManagementSelect,
+  });
+}
+
+export type CreateOrderIntegrationRepositoryParams = {
+  businessProfileId: number;
+  whatsappAccountId?: number | null;
+  kind: string;
+  integrationKey: string;
+  signingSecret: string;
+  statusCallbackUrl?: string | null;
+  statusCallbackSecret?: string | null;
+  isActive: boolean;
+  storeSyncEnabled: boolean;
+  defaultLocale: string;
+};
+
+export async function createOrderIntegration(
+  params: CreateOrderIntegrationRepositoryParams,
+): Promise<OrderIntegrationManagementRecord> {
+  return prisma.orderIntegration.create({
+    data: {
+      businessProfileId: params.businessProfileId,
+      whatsappAccountId: params.whatsappAccountId ?? null,
+      kind: params.kind,
+      integrationKey: params.integrationKey,
+      signingSecret: params.signingSecret,
+      statusCallbackUrl: params.statusCallbackUrl ?? null,
+      statusCallbackSecret: params.statusCallbackSecret ?? null,
+      isActive: params.isActive,
+      storeSyncEnabled: params.storeSyncEnabled,
+      defaultLocale: params.defaultLocale,
+    },
+    select: integrationManagementSelect,
+  });
+}
+
+export type UpdateOrderIntegrationRepositoryParams = {
+  id: number;
+  businessProfileId: number;
+  data: Prisma.OrderIntegrationUpdateInput;
+};
+
+export async function updateOrderIntegration(
+  params: UpdateOrderIntegrationRepositoryParams,
+): Promise<OrderIntegrationManagementRecord> {
+  return prisma.orderIntegration.update({
+    where: { id: params.id, businessProfileId: params.businessProfileId },
+    data: params.data,
+    select: integrationManagementSelect,
+  });
+}
+
+export async function rotateOrderIntegrationSecret(params: {
+  id: number;
+  businessProfileId: number;
+  signingSecret: string;
+  previousSigningSecret: string;
+}): Promise<OrderIntegrationManagementRecord> {
+  return prisma.orderIntegration.update({
+    where: { id: params.id, businessProfileId: params.businessProfileId },
+    data: {
+      signingSecret: params.signingSecret,
+      previousSigningSecret: params.previousSigningSecret,
+    },
+    select: integrationManagementSelect,
+  });
+}
+
+export type WhatsAppAccountForOrderManagement = {
+  id: number;
+  businessProfileId: number | null;
+  phoneNumberId: string;
+  displayPhoneNumber: string;
+  wabaId: string;
+  accessToken: string;
+  isActive: boolean;
+};
+
+export async function findWhatsAppAccountForProfile(
+  whatsappAccountId: number,
+  businessProfileId: number,
+): Promise<WhatsAppAccountForOrderManagement | null> {
+  return prisma.whatsAppAccount.findFirst({
+    where: { id: whatsappAccountId, businessProfileId, isActive: true },
+    select: {
+      id: true,
+      businessProfileId: true,
+      phoneNumberId: true,
+      displayPhoneNumber: true,
+      wabaId: true,
+      accessToken: true,
+      isActive: true,
+    },
+  });
+}
+
+const templateConfigPublicSelect = {
+  id: true,
+  businessProfileId: true,
+  whatsappAccountId: true,
+  eventType: true,
+  locale: true,
+  templateName: true,
+  languageCode: true,
+  templateVersion: true,
+  isActive: true,
+  approvalStatus: true,
+  variableMapping: true,
+  lastSyncedAt: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
+
+export type OrderTemplateConfigManagementRecord = Prisma.OrderTemplateConfigGetPayload<{
+  select: typeof templateConfigPublicSelect;
+}>;
+
+export async function listOrderTemplateConfigs(params: {
+  profileIds: number[];
+  businessProfileId?: number;
+  whatsappAccountId?: number;
+  eventType?: string;
+  locale?: string;
+}): Promise<OrderTemplateConfigManagementRecord[]> {
+  if (params.profileIds.length === 0) return [];
+
+  return prisma.orderTemplateConfig.findMany({
+    where: {
+      businessProfileId:
+        params.businessProfileId === undefined
+          ? { in: params.profileIds }
+          : { in: params.profileIds, equals: params.businessProfileId },
+      ...(params.whatsappAccountId === undefined
+        ? {}
+        : { whatsappAccountId: params.whatsappAccountId }),
+      ...(params.eventType === undefined ? {} : { eventType: params.eventType }),
+      ...(params.locale === undefined ? {} : { locale: params.locale }),
+    },
+    select: templateConfigPublicSelect,
+    orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+  });
+}
+
+export async function findOrderTemplateConfigForTest(params: {
+  id?: number;
+  businessProfileId: number;
+  whatsappAccountId: number;
+  eventType: string;
+  locale: string;
+}): Promise<OrderTemplateConfigManagementRecord | null> {
+  return prisma.orderTemplateConfig.findFirst({
+    where: {
+      ...(params.id === undefined ? {} : { id: params.id }),
+      businessProfileId: params.businessProfileId,
+      whatsappAccountId: params.whatsappAccountId,
+      eventType: params.eventType,
+      locale: params.locale,
+    },
+    select: templateConfigPublicSelect,
+  });
+}
+
+export async function findOrderTemplateConfigByIdForProfiles(
+  id: number,
+  profileIds: number[],
+): Promise<OrderTemplateConfigManagementRecord | null> {
+  if (profileIds.length === 0) return null;
+
+  return prisma.orderTemplateConfig.findFirst({
+    where: { id, businessProfileId: { in: profileIds } },
+    select: templateConfigPublicSelect,
+  });
+}
+
+export type CreateOrderTemplateConfigRepositoryParams = {
+  businessProfileId: number;
+  whatsappAccountId: number;
+  eventType: string;
+  locale: string;
+  templateName: string;
+  languageCode: string;
+  templateVersion: number;
+  variableMapping: Prisma.InputJsonValue;
+  approvalStatus: string;
+  isActive: boolean;
+};
+
+export async function createOrderTemplateConfig(
+  params: CreateOrderTemplateConfigRepositoryParams,
+): Promise<OrderTemplateConfigManagementRecord> {
+  return prisma.$transaction(async (tx) => {
+    if (params.isActive) {
+      await tx.orderTemplateConfig.updateMany({
+        where: {
+          businessProfileId: params.businessProfileId,
+          whatsappAccountId: params.whatsappAccountId,
+          eventType: params.eventType,
+          locale: params.locale,
+          isActive: true,
+        },
+        data: { isActive: false },
+      });
+    }
+
+    return tx.orderTemplateConfig.create({
+      data: {
+        businessProfileId: params.businessProfileId,
+        whatsappAccountId: params.whatsappAccountId,
+        eventType: params.eventType,
+        locale: params.locale,
+        templateName: params.templateName,
+        languageCode: params.languageCode,
+        templateVersion: params.templateVersion,
+        variableMapping: params.variableMapping,
+        approvalStatus: params.approvalStatus,
+        isActive: params.isActive,
+      },
+      select: templateConfigPublicSelect,
+    });
+  });
+}
+
+export async function updateOrderTemplateConfig(params: {
+  id: number;
+  businessProfileId: number;
+  data: Prisma.OrderTemplateConfigUpdateInput;
+  activateKey?: {
+    whatsappAccountId: number;
+    eventType: string;
+    locale: string;
+  };
+}): Promise<OrderTemplateConfigManagementRecord> {
+  return prisma.$transaction(async (tx) => {
+    if (params.data.isActive === true && params.activateKey) {
+      await tx.orderTemplateConfig.updateMany({
+        where: {
+          businessProfileId: params.businessProfileId,
+          whatsappAccountId: params.activateKey.whatsappAccountId,
+          eventType: params.activateKey.eventType,
+          locale: params.activateKey.locale,
+          isActive: true,
+          id: { not: params.id },
+        },
+        data: { isActive: false },
+      });
+    }
+
+    return tx.orderTemplateConfig.update({
+      where: { id: params.id, businessProfileId: params.businessProfileId },
+      data: params.data,
+      select: templateConfigPublicSelect,
+    });
+  });
+}
+
+const managedOrderSelect = {
+  id: true,
+  businessProfileId: true,
+  integrationId: true,
+  externalOrderId: true,
+  orderNumber: true,
+  status: true,
+  customerPhone: true,
+  customerName: true,
+  locale: true,
+  total: true,
+  currency: true,
+  sourceCreatedAt: true,
+  sourceUpdatedAt: true,
+  createdAt: true,
+  updatedAt: true,
+  events: {
+    orderBy: { occurredAt: "desc" as const },
+    take: 1,
+    select: { externalEventId: true },
+  },
+  notifications: {
+    orderBy: { createdAt: "asc" as const },
+    select: {
+      id: true,
+      kind: true,
+      status: true,
+      providerMessageId: true,
+      conversationMessageId: true,
+      attemptCount: true,
+      lastError: true,
+      queuedAt: true,
+      sentAt: true,
+      deliveredAt: true,
+      readAt: true,
+      failedAt: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  },
+  storeSyncs: {
+    orderBy: { createdAt: "asc" as const },
+    select: {
+      id: true,
+      requestedStatus: true,
+      status: true,
+      providerStatus: true,
+      attemptCount: true,
+      lastError: true,
+      nextAttemptAt: true,
+      startedAt: true,
+      completedAt: true,
+      failedAt: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  },
+} as const;
+
+export type ManagedOrderRecord = Prisma.OrderGetPayload<{ select: typeof managedOrderSelect }>;
+
+export async function listManagedOrders(params: {
+  profileIds: number[];
+  businessProfileId?: number;
+  integrationId?: number;
+  status?: string;
+  page: number;
+  limit: number;
+}): Promise<{ data: ManagedOrderRecord[]; meta: { total: number; page: number; limit: number; totalPages: number } }> {
+  if (params.profileIds.length === 0) {
+    return {
+      data: [],
+      meta: { total: 0, page: params.page, limit: params.limit, totalPages: 0 },
+    };
+  }
+
+  const where: Prisma.OrderWhereInput = {
+    businessProfileId:
+      params.businessProfileId === undefined
+        ? { in: params.profileIds }
+        : { in: params.profileIds, equals: params.businessProfileId },
+    ...(params.integrationId === undefined ? {} : { integrationId: params.integrationId }),
+    ...(params.status === undefined ? {} : { status: params.status as any }),
+  };
+  const [total, data] = await Promise.all([
+    prisma.order.count({ where }),
+    prisma.order.findMany({
+      where,
+      select: managedOrderSelect,
+      orderBy: { updatedAt: "desc" },
+      skip: (params.page - 1) * params.limit,
+      take: params.limit,
+    }),
+  ]);
+
+  return {
+    data,
+    meta: {
+      total,
+      page: params.page,
+      limit: params.limit,
+      totalPages: Math.ceil(total / params.limit),
+    },
+  };
+}
+
+export async function findManagedOrder(
+  id: number,
+  profileIds: number[],
+): Promise<ManagedOrderRecord | null> {
+  if (profileIds.length === 0) return null;
+
+  return prisma.order.findFirst({
+    where: { id, businessProfileId: { in: profileIds } },
+    select: managedOrderSelect,
+  });
+}
+
+export async function findNotificationForManagementRetry(
+  id: number,
+  profileIds: number[],
+): Promise<{
+  id: number;
+  businessProfileId: number;
+  kind: string;
+  status: string;
+  order: { id: number; businessProfileId: number; status: string };
+} | null> {
+  if (profileIds.length === 0) return null;
+
+  return prisma.orderNotification.findFirst({
+    where: { id, businessProfileId: { in: profileIds } },
+    select: {
+      id: true,
+      businessProfileId: true,
+      kind: true,
+      status: true,
+      order: { select: { id: true, businessProfileId: true, status: true } },
+    },
+  });
+}
+
+export async function requeueNotificationForRetry(
+  id: number,
+  businessProfileId: number,
+): Promise<boolean> {
+  const result = await prisma.orderNotification.updateMany({
+    where: { id, businessProfileId, status: "FAILED" },
+    data: { status: "QUEUED", lastError: null, failedAt: null, queuedAt: new Date() },
+  });
+  return result.count > 0;
+}
+
+export async function findStoreSyncForManagementRetry(
+  id: number,
+  profileIds: number[],
+): Promise<{
+  id: number;
+  businessProfileId: number;
+  status: string;
+  requestedStatus: string;
+  order: { id: number; businessProfileId: number; status: string };
+} | null> {
+  if (profileIds.length === 0) return null;
+
+  return prisma.orderStoreSync.findFirst({
+    where: { id, businessProfileId: { in: profileIds } },
+    select: {
+      id: true,
+      businessProfileId: true,
+      status: true,
+      requestedStatus: true,
+      order: { select: { id: true, businessProfileId: true, status: true } },
+    },
+  });
+}
+
+export async function requeueStoreSyncForRetry(
+  id: number,
+  businessProfileId: number,
+): Promise<boolean> {
+  const result = await prisma.orderStoreSync.updateMany({
+    where: { id, businessProfileId, status: "FAILED" },
+    data: {
+      status: "PENDING",
+      lastError: null,
+      failedAt: null,
+      nextAttemptAt: null,
+    },
+  });
+  return result.count > 0;
+}
+
+export async function findSystemSettingUpdatedAt(key: string): Promise<Date | null> {
+  const setting = await prisma.systemSetting.findUnique({
+    where: { key },
+    select: { updatedAt: true },
+  });
+  return setting?.updatedAt ?? null;
+}

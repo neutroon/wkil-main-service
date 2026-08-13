@@ -41,6 +41,7 @@ vi.mock("@utils/logger", () => ({
 import {
   createOrderConfirmationJobId,
   enqueueNotification,
+  enqueueNotificationRetry,
   enqueueOrderAction,
   enqueueOrderEvent,
   enqueueStoreSync,
@@ -224,5 +225,22 @@ describe("order confirmation queue", () => {
 
     expect(remove).not.toHaveBeenCalled();
     expect(mocks.add).not.toHaveBeenCalled();
+  });
+
+  it("replaces an exhausted notification job before manually retrying it", async () => {
+    const remove = vi.fn().mockResolvedValue(undefined);
+    const getState = vi.fn().mockResolvedValue("failed");
+    mocks.getJob.mockResolvedValue({ getState, remove });
+
+    await enqueueNotificationRetry(18, "manual-notification-retry");
+
+    expect(mocks.getJob).toHaveBeenCalledWith("order-send-notification-18");
+    expect(getState).toHaveBeenCalledTimes(1);
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(mocks.add).toHaveBeenCalledWith(
+      "send_notification",
+      { type: "SEND_NOTIFICATION", notificationId: 18, correlationId: "manual-notification-retry" },
+      { jobId: "order-send-notification-18" },
+    );
   });
 });

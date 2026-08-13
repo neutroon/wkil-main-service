@@ -75,4 +75,21 @@ describe("app route mounts", () => {
     expect(appSource).toContain("mobileAuthRoutes");
     expect(appSource).toMatch(/mobileApp\.use\(mobileAuthRoutes\)/);
   });
+
+  it("mounts order-confirmation management routes behind authentication, verification, and CSRF", () => {
+    const authMount = appSource.indexOf("app.use(authenticateToken)");
+    const verifiedMount = appSource.indexOf("app.use(requireVerified)");
+    const csrfMount = appSource.indexOf("app.use(validateCsrfToken)");
+    const managementMount = appSource.indexOf('app.use("/v1", orderConfirmationRoutes)');
+    const publicOrderMount = appSource.indexOf(
+      'app.use("/v1/order-integrations", orderConfirmationPublicRoutes)',
+    );
+
+    expect(appSource).toContain("orderConfirmationRoutes");
+    expect(managementMount).toBeGreaterThan(-1);
+    expect(authMount).toBeLessThan(managementMount);
+    expect(verifiedMount).toBeLessThan(managementMount);
+    expect(csrfMount).toBeLessThan(managementMount);
+    expect(publicOrderMount).toBeLessThan(authMount);
+  });
 });

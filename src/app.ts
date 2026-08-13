@@ -52,6 +52,7 @@ import { generateCsrfToken, validateCsrfToken } from "@middlewares/csrf.middlewa
 import { authenticateToken, requireAdmin, requireVerified } from "@modules/auth/core/auth.middleware";
 import { runHealthChecks, allCriticalOk } from "@utils/healthChecks";
 import orderConfirmationPublicRoutes from "@modules/order-confirmation/orderConfirmation.public.routes";
+import orderConfirmationRoutes from "@modules/order-confirmation/orderConfirmation.routes";
 
 const app = express();
 
@@ -208,6 +209,7 @@ app.use(authenticateToken);
 app.use(requireVerified);
 app.use(validateCsrfToken); // Enforce CSRF on all protected mutating routes
 
+app.use("/v1", orderConfirmationRoutes);
 app.use("/v1/users", userRoutes);
 app.use("/v1/content", contentRoutes);
 app.use("/v1/facebook", facebookRoutes);
@@ -264,7 +266,6 @@ Sentry.setupExpressErrorHandler(app);
 app.use(errorHandler);
 
 export default app;
-
 
 
 

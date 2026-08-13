@@ -112,6 +112,25 @@ export function enqueueNotification(notificationId: number, correlationId: strin
   });
 }
 
+export function enqueueNotificationRetry(
+  notificationId: number,
+  correlationId: string,
+): Promise<void> {
+  return enqueueRetryJob(
+    createOrderConfirmationJobId({
+      type: "SEND_NOTIFICATION",
+      notificationId,
+      correlationId,
+    }),
+    "send_notification",
+    {
+      type: "SEND_NOTIFICATION",
+      notificationId,
+      correlationId,
+    },
+  );
+}
+
 export function enqueueOrderAction(input: OrderActionInput): Promise<void> {
   const encryptedActionToken = encryptFacebookSecret(input.actionToken);
   if (encryptedActionToken === input.actionToken) {
@@ -158,4 +177,19 @@ async function enqueueStoreSyncJob(syncId: number, correlationId: string): Promi
 
 export function enqueueStoreSyncRetry(syncId: number, correlationId: string): Promise<void> {
   return enqueueStoreSyncJob(syncId, correlationId);
+}
+
+async function enqueueRetryJob(
+  jobId: string,
+  name: "send_notification" | "sync_store",
+  job: Extract<OrderConfirmationJob, { type: "SEND_NOTIFICATION" | "SYNC_STORE" }>,
+): Promise<void> {
+  const existing = await orderConfirmationQueue.getJob(jobId);
+  if (existing) {
+    const state = await existing.getState();
+    if (state !== "failed" && state !== "completed") return;
+    await existing.remove();
+  }
+
+  await enqueueOrderConfirmationJob(name, job);
 }

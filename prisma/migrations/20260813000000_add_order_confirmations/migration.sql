@@ -48,7 +48,7 @@ CREATE TABLE "OrderEvent" (
     "schemaVersion" TEXT NOT NULL,
     "occurredAt" TIMESTAMP(3) NOT NULL,
     "rawPayload" JSONB,
-    "rawPayloadRetentionUntil" TIMESTAMP(3) NOT NULL DEFAULT (CURRENT_TIMESTAMP + INTERVAL '30 days'),
+    "rawPayloadRetentionUntil" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP + INTERVAL '30 days',
     "status" "OrderEventProcessingStatus" NOT NULL DEFAULT 'RECEIVED',
     "attemptCount" INTEGER NOT NULL DEFAULT 0,
     "lastError" TEXT,
@@ -212,7 +212,7 @@ CREATE INDEX "OrderStoreSync_businessProfileId_status_idx" ON "OrderStoreSync"("
 CREATE INDEX "OrderStoreSync_orderId_status_idx" ON "OrderStoreSync"("orderId", "status");
 
 CREATE INDEX "OrderTemplateConfig_businessProfileId_idx" ON "OrderTemplateConfig"("businessProfileId");
-CREATE INDEX "OrderTemplateConfig_whatsappAccountId_eventType_locale_isActive_idx" ON "OrderTemplateConfig"("whatsappAccountId", "eventType", "locale", "isActive");
+CREATE INDEX "OrderTemplateConfig_whatsappAccountId_eventType_locale_isAc_idx" ON "OrderTemplateConfig"("whatsappAccountId", "eventType", "locale", "isActive");
 
 CREATE UNIQUE INDEX "WhatsAppSuppression_businessProfileId_normalizedPhone_key" ON "WhatsAppSuppression"("businessProfileId", "normalizedPhone");
 CREATE INDEX "WhatsAppSuppression_businessProfileId_clearedAt_idx" ON "WhatsAppSuppression"("businessProfileId", "clearedAt");

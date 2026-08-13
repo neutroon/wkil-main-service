@@ -69,10 +69,17 @@ export async function receiveOrderEvent(req: Request, res: Response): Promise<vo
   }
 
   let signingSecret: string;
+  let previousSigningSecret: string | null = null;
   try {
     signingSecret = decryptFacebookSecret(integration.signingSecret);
     if (typeof signingSecret !== "string" || signingSecret.length === 0) {
       throw new Error("Missing signing secret");
+    }
+    if (integration.previousSigningSecret) {
+      previousSigningSecret = decryptFacebookSecret(integration.previousSigningSecret);
+      if (previousSigningSecret.length === 0) {
+        throw new Error("Missing previous signing secret");
+      }
     }
   } catch {
     logger.error("order_confirmation.webhook.secret_unavailable", {
@@ -86,14 +93,24 @@ export async function receiveOrderEvent(req: Request, res: Response): Promise<vo
 
   const timestamp = req.headers["x-wkil-timestamp"];
   const signature = req.headers["x-wkil-signature"];
-  if (
-    !verifyOrderWebhookSignature({
-      rawBody,
-      timestamp: typeof timestamp === "string" ? timestamp : undefined,
-      signature: typeof signature === "string" ? signature : undefined,
-      secret: signingSecret,
-    })
-  ) {
+  const signatureParams = {
+    rawBody,
+    timestamp: typeof timestamp === "string" ? timestamp : undefined,
+    signature: typeof signature === "string" ? signature : undefined,
+  };
+  const currentSignatureValid = verifyOrderWebhookSignature({
+    ...signatureParams,
+    secret: signingSecret,
+  });
+  const previousSignatureValid =
+    !currentSignatureValid && previousSigningSecret !== null
+      ? verifyOrderWebhookSignature({
+          ...signatureParams,
+          secret: previousSigningSecret,
+        })
+      : false;
+
+  if (!currentSignatureValid && !previousSignatureValid) {
     res.status(401).json({ error: "Invalid signature" });
     return;
   }

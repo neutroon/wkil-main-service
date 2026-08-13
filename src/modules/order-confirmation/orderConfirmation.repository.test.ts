@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   txAcknowledgementUpsert: vi.fn(),
   notificationUpdateMany: vi.fn(),
   notificationUpdate: vi.fn(),
+  notificationFindMany: vi.fn(),
   conversationMessageFindUnique: vi.fn(),
   storeSyncFindMany: vi.fn(),
 }));
@@ -28,6 +29,7 @@ vi.mock("@config/prisma", () => ({
       findFirst: mocks.findActionToken,
     },
     orderNotification: {
+      findMany: mocks.notificationFindMany,
       updateMany: mocks.notificationUpdateMany,
       update: mocks.notificationUpdate,
     },
@@ -49,6 +51,8 @@ import {
   markNotificationSent,
   markStaleSendingNotificationsFailed,
   findPendingOrderStoreSyncs,
+  findUnattemptedQueuedOrderNotifications,
+  requeueNotificationForRetry,
 } from "./orderConfirmation.repository";
 import { hashOrderActionToken } from "./orderConfirmation.crypto";
 
@@ -88,6 +92,7 @@ describe("order confirmation repository", () => {
     });
     mocks.notificationUpdateMany.mockResolvedValue({ count: 1 });
     mocks.notificationUpdate.mockResolvedValue(undefined);
+    mocks.notificationFindMany.mockResolvedValue([]);
     mocks.conversationMessageFindUnique.mockResolvedValue({ id: 88 });
     mocks.transaction.mockImplementation(async (callback: (tx: unknown) => unknown) =>
       callback({
@@ -107,6 +112,7 @@ describe("order confirmation repository", () => {
       id: 7,
       businessProfileId: 11,
       signingSecret: "enc:v1:encrypted-secret",
+      previousSigningSecret: "enc:v1:previous-secret",
       isActive: true,
     };
     mocks.findFirst.mockResolvedValue(integration);
@@ -121,6 +127,7 @@ describe("order confirmation repository", () => {
         id: true,
         businessProfileId: true,
         signingSecret: true,
+        previousSigningSecret: true,
         isActive: true,
       },
     });
@@ -302,6 +309,46 @@ describe("order confirmation repository", () => {
         OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }],
       },
       select: { id: true },
+    });
+  });
+
+  it("recovers every stale queued notification, including notifications with prior attempts", async () => {
+    const cutoff = new Date("2026-08-13T09:59:00.000Z");
+    mocks.notificationFindMany.mockResolvedValue([{ id: 18 }]);
+
+    await expect(findUnattemptedQueuedOrderNotifications(cutoff)).resolves.toEqual([{ id: 18 }]);
+
+    expect(mocks.notificationFindMany).toHaveBeenCalledWith({
+      where: { status: "QUEUED", updatedAt: { lt: cutoff } },
+      select: { id: true },
+    });
+  });
+
+  it("requeues a confirmation only while its order is still awaiting confirmation", async () => {
+    await expect(requeueNotificationForRetry(18, 11)).resolves.toBe(true);
+
+    expect(mocks.notificationUpdateMany).toHaveBeenLastCalledWith({
+      where: {
+        id: 18,
+        businessProfileId: 11,
+        status: "FAILED",
+        OR: [
+          {
+            kind: "CONFIRMATION_REQUEST",
+            order: { status: "AWAITING_CONFIRMATION" },
+          },
+          {
+            kind: "ACKNOWLEDGEMENT",
+            order: { status: { in: ["CONFIRMED", "CANCELED"] } },
+          },
+        ],
+      },
+      data: {
+        status: "QUEUED",
+        lastError: null,
+        failedAt: null,
+        queuedAt: expect.any(Date),
+      },
     });
   });
 });

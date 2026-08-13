@@ -145,7 +145,14 @@ export async function resolveActiveTemplateConfig(params: {
       isActive: true,
       approvalStatus: "APPROVED",
       whatsappAccount: {
-        orderIntegrations: { some: { id: params.integrationId } },
+        orderIntegrations: {
+          some: {
+            id: params.integrationId,
+            ...(params.businessProfileId === undefined
+              ? {}
+              : { businessProfileId: params.businessProfileId }),
+          },
+        },
       },
     },
     select: {

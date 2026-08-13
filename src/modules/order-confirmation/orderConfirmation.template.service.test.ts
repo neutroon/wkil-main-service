@@ -93,6 +93,11 @@ describe("order confirmation template mapping", () => {
           whatsappAccountId: 9,
           isActive: true,
           approvalStatus: "APPROVED",
+          whatsappAccount: {
+            orderIntegrations: {
+              some: { id: 7, businessProfileId: 11 },
+            },
+          },
         }),
       }),
     );

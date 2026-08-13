@@ -7,6 +7,7 @@ export type ActiveOrderIntegration = {
   id: number;
   businessProfileId: number;
   signingSecret: string;
+  previousSigningSecret: string | null;
   isActive: boolean;
 };
 
@@ -33,6 +34,7 @@ export async function findActiveIntegrationByPublicKey(
       id: true,
       businessProfileId: true,
       signingSecret: true,
+      previousSigningSecret: true,
       isActive: true,
     },
   });
@@ -787,7 +789,6 @@ export async function findUnattemptedQueuedOrderNotifications(
   return prisma.orderNotification.findMany({
     where: {
       status: "QUEUED",
-      attemptCount: 0,
       updatedAt: { lt: cutoff },
     },
     select: { id: true },
@@ -1012,6 +1013,7 @@ export type OrderTemplateConfigManagementRecord = Prisma.OrderTemplateConfigGetP
 
 export async function listOrderTemplateConfigs(params: {
   profileIds: number[];
+  integrationId: number;
   businessProfileId?: number;
   whatsappAccountId?: number;
   eventType?: string;
@@ -1028,6 +1030,16 @@ export async function listOrderTemplateConfigs(params: {
       ...(params.whatsappAccountId === undefined
         ? {}
         : { whatsappAccountId: params.whatsappAccountId }),
+      whatsappAccount: {
+        orderIntegrations: {
+          some: {
+            id: params.integrationId,
+            ...(params.businessProfileId === undefined
+              ? {}
+              : { businessProfileId: params.businessProfileId }),
+          },
+        },
+      },
       ...(params.eventType === undefined ? {} : { eventType: params.eventType }),
       ...(params.locale === undefined ? {} : { locale: params.locale }),
     },
@@ -1038,6 +1050,7 @@ export async function listOrderTemplateConfigs(params: {
 
 export async function findOrderTemplateConfigForTest(params: {
   id?: number;
+  integrationId: number;
   businessProfileId: number;
   whatsappAccountId: number;
   eventType: string;
@@ -1050,6 +1063,11 @@ export async function findOrderTemplateConfigForTest(params: {
       whatsappAccountId: params.whatsappAccountId,
       eventType: params.eventType,
       locale: params.locale,
+      whatsappAccount: {
+        orderIntegrations: {
+          some: { id: params.integrationId, businessProfileId: params.businessProfileId },
+        },
+      },
     },
     select: templateConfigPublicSelect,
   });
@@ -1058,16 +1076,22 @@ export async function findOrderTemplateConfigForTest(params: {
 export async function findOrderTemplateConfigByIdForProfiles(
   id: number,
   profileIds: number[],
+  integrationId: number,
 ): Promise<OrderTemplateConfigManagementRecord | null> {
   if (profileIds.length === 0) return null;
 
   return prisma.orderTemplateConfig.findFirst({
-    where: { id, businessProfileId: { in: profileIds } },
+    where: {
+      id,
+      businessProfileId: { in: profileIds },
+      whatsappAccount: { orderIntegrations: { some: { id: integrationId } } },
+    },
     select: templateConfigPublicSelect,
   });
 }
 
 export type CreateOrderTemplateConfigRepositoryParams = {
+  integrationId: number;
   businessProfileId: number;
   whatsappAccountId: number;
   eventType: string;
@@ -1084,6 +1108,18 @@ export async function createOrderTemplateConfig(
   params: CreateOrderTemplateConfigRepositoryParams,
 ): Promise<OrderTemplateConfigManagementRecord> {
   return prisma.$transaction(async (tx) => {
+    const integration = await tx.orderIntegration.findFirst({
+      where: {
+        id: params.integrationId,
+        businessProfileId: params.businessProfileId,
+        whatsappAccountId: params.whatsappAccountId,
+      },
+      select: { id: true },
+    });
+    if (!integration) {
+      throw new Error("WhatsApp account is not configured for this order integration");
+    }
+
     if (params.isActive) {
       await tx.orderTemplateConfig.updateMany({
         where: {
@@ -1117,7 +1153,9 @@ export async function createOrderTemplateConfig(
 
 export async function updateOrderTemplateConfig(params: {
   id: number;
+  integrationId: number;
   businessProfileId: number;
+  whatsappAccountId: number;
   data: Prisma.OrderTemplateConfigUpdateInput;
   activateKey?: {
     whatsappAccountId: number;
@@ -1126,6 +1164,18 @@ export async function updateOrderTemplateConfig(params: {
   };
 }): Promise<OrderTemplateConfigManagementRecord> {
   return prisma.$transaction(async (tx) => {
+    const integration = await tx.orderIntegration.findFirst({
+      where: {
+        id: params.integrationId,
+        businessProfileId: params.businessProfileId,
+        whatsappAccountId: params.whatsappAccountId,
+      },
+      select: { id: true },
+    });
+    if (!integration) {
+      throw new Error("WhatsApp account is not configured for this order integration");
+    }
+
     if (params.data.isActive === true && params.activateKey) {
       await tx.orderTemplateConfig.updateMany({
         where: {
@@ -1295,7 +1345,21 @@ export async function requeueNotificationForRetry(
   businessProfileId: number,
 ): Promise<boolean> {
   const result = await prisma.orderNotification.updateMany({
-    where: { id, businessProfileId, status: "FAILED" },
+    where: {
+      id,
+      businessProfileId,
+      status: "FAILED",
+      OR: [
+        {
+          kind: "CONFIRMATION_REQUEST",
+          order: { status: "AWAITING_CONFIRMATION" },
+        },
+        {
+          kind: "ACKNOWLEDGEMENT",
+          order: { status: { in: ["CONFIRMED", "CANCELED"] } },
+        },
+      ],
+    },
     data: { status: "QUEUED", lastError: null, failedAt: null, queuedAt: new Date() },
   });
   return result.count > 0;

@@ -79,7 +79,7 @@ const templateListSchema = z.object({
 const templateConfigListSchema = z.object({
   query: z
     .object({
-      integrationId: positiveId.optional(),
+      integrationId: positiveId,
       businessProfileId: positiveId.optional(),
       whatsappAccountId: positiveId.optional(),
       eventType: eventType.optional(),
@@ -91,7 +91,7 @@ const templateConfigListSchema = z.object({
 const createTemplateConfigSchema = z.object({
   body: z
     .object({
-      integrationId: positiveId.optional(),
+      integrationId: positiveId,
       businessProfileId: positiveId.optional(),
       whatsappAccountId: positiveId,
       eventType,
@@ -109,6 +109,7 @@ const updateTemplateConfigSchema = z.object({
   ...idParams.shape,
   body: z
     .object({
+      integrationId: positiveId,
       whatsappAccountId: positiveId.optional(),
       locale: locale.optional(),
       templateName: z.string().trim().min(1).optional(),

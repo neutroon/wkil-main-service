@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   markStaleSendingNotificationsFailed: vi.fn(),
   enqueueOrderEvent: vi.fn(),
   enqueueNotification: vi.fn(),
+  enqueueNotificationRetry: vi.fn(),
   enqueueStoreSync: vi.fn(),
   processOrderAction: vi.fn(),
   processOrderEvent: vi.fn(),
@@ -62,6 +63,7 @@ vi.mock("./orderConfirmation.repository", () => ({
 vi.mock("./orderConfirmation.queue", () => ({
   enqueueOrderEvent: mocks.enqueueOrderEvent,
   enqueueNotification: mocks.enqueueNotification,
+  enqueueNotificationRetry: mocks.enqueueNotificationRetry,
   enqueueStoreSync: mocks.enqueueStoreSync,
 }));
 vi.mock("./orderConfirmation.service", () => ({
@@ -83,7 +85,7 @@ describe("order confirmation recovery lifecycle", () => {
     vi.clearAllMocks();
     mocks.findStaleOrderEvents.mockResolvedValue([]);
     mocks.findStaleOrderNotifications.mockResolvedValue([{ id: 7 }]);
-    mocks.findUnattemptedQueuedOrderNotifications.mockResolvedValue([{ id: 8 }]);
+    mocks.findUnattemptedQueuedOrderNotifications.mockResolvedValue([{ id: 8, attemptCount: 3 }]);
     mocks.findPendingOrderStoreSyncs.mockResolvedValue([{ id: 9 }]);
     mocks.markStaleSendingNotificationsFailed.mockResolvedValue(undefined);
     mocks.clearExpiredOrderEventPayloads.mockResolvedValue(undefined);
@@ -96,8 +98,8 @@ describe("order confirmation recovery lifecycle", () => {
     await runOrderConfirmationRecoveryScan(new Date("2026-08-13T10:00:00.000Z"));
 
     expect(mocks.markStaleSendingNotificationsFailed).toHaveBeenCalledTimes(1);
-    expect(mocks.enqueueNotification).toHaveBeenCalledTimes(1);
-    expect(mocks.enqueueNotification).toHaveBeenCalledWith(
+    expect(mocks.enqueueNotificationRetry).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueNotificationRetry).toHaveBeenCalledWith(
       8,
       "order-recovery-notification-8",
     );

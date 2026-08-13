@@ -92,4 +92,10 @@ describe("app route mounts", () => {
     expect(csrfMount).toBeLessThan(managementMount);
     expect(publicOrderMount).toBeLessThan(authMount);
   });
+
+  it("keeps the management router inside the exact protected middleware sequence", () => {
+    expect(appSource).toMatch(
+      /app\.use\(authenticateToken\);\s*app\.use\(requireVerified\);\s*app\.use\(validateCsrfToken\)[\s\S]*?app\.use\("\/v1", orderConfirmationRoutes\);/,
+    );
+  });
 });

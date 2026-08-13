@@ -12,7 +12,7 @@ import {
   markStaleSendingNotificationsFailed,
 } from "./orderConfirmation.repository";
 import {
-  enqueueNotification,
+  enqueueNotificationRetry,
   enqueueOrderEvent,
   enqueueStoreSync,
 } from "./orderConfirmation.queue";
@@ -127,7 +127,10 @@ export async function runOrderConfirmationRecoveryScan(now = new Date()): Promis
 
   for (const notification of queuedNotifications) {
     try {
-      await enqueueNotification(notification.id, `order-recovery-notification-${notification.id}`);
+      await enqueueNotificationRetry(
+        notification.id,
+        `order-recovery-notification-${notification.id}`,
+      );
     } catch (error) {
       logger.error("order_confirmation.recovery_notification_enqueue_failed", {
         correlationId: `order-recovery-notification-${notification.id}`,

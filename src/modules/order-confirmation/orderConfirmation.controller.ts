@@ -29,7 +29,6 @@ import {
   updateOrderIntegration,
   updateOrderTemplateConfig,
   type OrderIntegrationManagementRecord,
-  type OrderTemplateConfigManagementRecord,
 } from "./orderConfirmation.repository";
 import {
   enqueueNotificationRetry,
@@ -289,23 +288,9 @@ function hasRequiredQuickReplies(template: any): boolean {
     (component) => String(component?.type ?? "").toUpperCase() === "BUTTONS",
   );
   const buttons = Array.isArray(buttonComponent?.buttons) ? buttonComponent.buttons : [];
-  if (buttons.length < 2) return false;
-
-  const role = (button: any) => {
-    const text = String(button?.text ?? "").trim().toLowerCase();
-    const payload = String(button?.payload ?? "").trim().toLowerCase();
-    return text === "confirm" || payload === "confirm"
-      ? "confirm"
-      : text === "cancel" || payload === "cancel"
-        ? "cancel"
-        : "";
-  };
-  return (
+  return buttons.length === 2 &&
     String(buttons[0]?.type ?? "").toUpperCase() === "QUICK_REPLY" &&
-    String(buttons[1]?.type ?? "").toUpperCase() === "QUICK_REPLY" &&
-    role(buttons[0]) === "confirm" &&
-    role(buttons[1]) === "cancel"
-  );
+    String(buttons[1]?.type ?? "").toUpperCase() === "QUICK_REPLY";
 }
 
 function bodyPlaceholderCount(template: any): number | null {
@@ -377,6 +362,16 @@ async function integrationForRequest(
   const integration = await findOrderIntegrationForProfiles(integrationId, profileIds);
   if (!integration) notFound("Order integration not found");
   return { integration, profileIds };
+}
+
+function assertIntegrationWhatsAppAccount(integration: any, account: any): void {
+  if (
+    integration.whatsappAccountId === null ||
+    account.id !== integration.whatsappAccountId ||
+    account.businessProfileId !== integration.businessProfileId
+  ) {
+    badRequest("Selected WhatsApp account does not belong to this order integration");
+  }
 }
 
 async function templatesForAccount(account: any): Promise<any[]> {
@@ -538,7 +533,7 @@ export async function updateIntegration(req: Request, res: Response): Promise<vo
   const typedReq = req as ProfileScopedRequest;
   const id = req.params.id as unknown as number;
   const body = req.body as Record<string, any>;
-  const { integration, profileIds } = await integrationForRequest(typedReq, id);
+  const { integration } = await integrationForRequest(typedReq, id);
 
   if (hasOwn(body, "whatsappAccountId") && body.whatsappAccountId !== null) {
     const account = await findWhatsAppAccountForProfile(
@@ -572,7 +567,6 @@ export async function updateIntegration(req: Request, res: Response): Promise<vo
     businessProfileId: integration.businessProfileId,
     data: fields.data as any,
   });
-  void profileIds;
   res.json({
     data: serializeIntegration(record, req),
     ...(fields.callbackSecret ? { statusCallbackSecret: fields.callbackSecret } : {}),
@@ -610,36 +604,39 @@ export async function listTemplateConfigs(req: Request, res: Response): Promise<
   const typedReq = req as ProfileScopedRequest;
   const profileIds = await accessibleProfiles(typedReq);
   let businessProfileId = (req.query as any).businessProfileId as number | undefined;
-  let whatsappAccountId = (req.query as any).whatsappAccountId as number | undefined;
+  const requestedWhatsappAccountId = (req.query as any).whatsappAccountId as number | undefined;
   const integrationId = (req.query as any).integrationId as number | undefined;
+  if (integrationId === undefined) badRequest("integrationId is required");
   if (businessProfileId !== undefined) requireAccessibleProfile(profileIds, businessProfileId);
-  if (integrationId !== undefined) {
-    const integration = await findOrderIntegrationForProfiles(integrationId, profileIds);
-    if (!integration) notFound("Order integration not found");
-    if (
-      businessProfileId !== undefined &&
-      businessProfileId !== integration.businessProfileId
-    ) {
-      notFound("Order integration not found");
-    }
-    businessProfileId = integration.businessProfileId;
-    if (whatsappAccountId === undefined) whatsappAccountId = integration.whatsappAccountId ?? undefined;
+  const integration = await findOrderIntegrationForProfiles(integrationId, profileIds);
+  if (!integration) notFound("Order integration not found");
+  if (
+    businessProfileId !== undefined &&
+    businessProfileId !== integration.businessProfileId
+  ) {
+    notFound("Order integration not found");
   }
-  if (whatsappAccountId !== undefined) {
-    const accountProfiles = businessProfileId === undefined ? profileIds : [businessProfileId];
-    let accountBelongsToProfile = false;
-    for (const profileId of accountProfiles) {
-      if (await findWhatsAppAccountForProfile(whatsappAccountId, profileId)) {
-        accountBelongsToProfile = true;
-        break;
-      }
-    }
-    if (!accountBelongsToProfile) notFound("WhatsApp account not found");
+  if (integration.whatsappAccountId === null) {
+    badRequest("A WhatsApp account must be selected before configuring templates");
   }
+  if (
+    requestedWhatsappAccountId !== undefined &&
+    requestedWhatsappAccountId !== integration.whatsappAccountId
+  ) {
+    badRequest("Selected WhatsApp account does not belong to this order integration");
+  }
+  businessProfileId = integration.businessProfileId;
+  const account = await findWhatsAppAccountForProfile(
+    integration.whatsappAccountId,
+    businessProfileId,
+  );
+  if (!account) notFound("WhatsApp account not found");
+  assertIntegrationWhatsAppAccount(integration, account);
   const configs = await listOrderTemplateConfigs({
     profileIds,
+    integrationId,
     businessProfileId,
-    whatsappAccountId,
+    whatsappAccountId: integration.whatsappAccountId,
     eventType: (req.query as any).eventType,
     locale: (req.query as any).locale,
   });
@@ -648,26 +645,26 @@ export async function listTemplateConfigs(req: Request, res: Response): Promise<
 
 async function resolveTemplateTarget(req: ProfileScopedRequest, body: Record<string, any>) {
   const profileIds = await accessibleProfiles(req);
-  let integration: OrderIntegrationManagementRecord | null = null;
-  if (body.integrationId !== undefined) {
-    integration = await findOrderIntegrationForProfiles(body.integrationId, profileIds);
-    if (!integration) notFound("Order integration not found");
-    if (
-      body.businessProfileId !== undefined &&
-      body.businessProfileId !== integration.businessProfileId
-    ) {
-      notFound("Order integration not found");
-    }
+  if (typeof body.integrationId !== "number") badRequest("integrationId is required");
+  const integration = await findOrderIntegrationForProfiles(body.integrationId, profileIds);
+  if (!integration) notFound("Order integration not found");
+  if (
+    body.businessProfileId !== undefined &&
+    body.businessProfileId !== integration.businessProfileId
+  ) {
+    notFound("Order integration not found");
   }
-
-  const businessProfileId = integration?.businessProfileId ?? body.businessProfileId;
-  if (typeof businessProfileId !== "number") {
-    badRequest("businessProfileId or integrationId is required");
+  if (integration.whatsappAccountId === null) {
+    badRequest("A WhatsApp account must be selected before configuring templates");
   }
+  if (body.whatsappAccountId !== integration.whatsappAccountId) {
+    badRequest("Selected WhatsApp account does not belong to this order integration");
+  }
+  const businessProfileId = integration.businessProfileId;
   requireAccessibleProfile(profileIds, businessProfileId);
-  if (typeof body.whatsappAccountId !== "number") badRequest("whatsappAccountId is required");
   const account = await findWhatsAppAccountForProfile(body.whatsappAccountId, businessProfileId);
   if (!account) notFound("WhatsApp account not found");
+  assertIntegrationWhatsAppAccount(integration, account);
 
   return { profileIds, integration, businessProfileId, account };
 }
@@ -682,6 +679,7 @@ export async function createTemplateConfig(req: Request, res: Response): Promise
     variableMapping: body.variableMapping,
   });
   const record = await createOrderTemplateConfig({
+    integrationId: target.integration.id,
     businessProfileId: target.businessProfileId,
     whatsappAccountId: body.whatsappAccountId,
     eventType: DEFAULT_EVENT_TYPE,
@@ -700,14 +698,31 @@ export async function updateTemplateConfig(req: Request, res: Response): Promise
   const typedReq = req as ProfileScopedRequest;
   const id = req.params.id as unknown as number;
   const profileIds = await accessibleProfiles(typedReq);
-  const current = await findOrderTemplateConfigByIdForProfiles(id, profileIds);
-  if (!current) notFound("Order template configuration not found");
-
   const body = req.body as Record<string, any>;
-  const businessProfileId = current.businessProfileId;
-  const whatsappAccountId = body.whatsappAccountId ?? current.whatsappAccountId;
+  if (typeof body.integrationId !== "number") badRequest("integrationId is required");
+  const integration = await findOrderIntegrationForProfiles(body.integrationId, profileIds);
+  if (!integration) notFound("Order integration not found");
+  if (integration.whatsappAccountId === null) {
+    badRequest("A WhatsApp account must be selected before configuring templates");
+  }
+  const current = await findOrderTemplateConfigByIdForProfiles(
+    id,
+    profileIds,
+    integration.id,
+  );
+  if (!current) notFound("Order template configuration not found");
+  if (current.businessProfileId !== integration.businessProfileId) {
+    notFound("Order template configuration not found");
+  }
+
+  const businessProfileId = integration.businessProfileId;
+  const whatsappAccountId = body.whatsappAccountId ?? integration.whatsappAccountId;
+  if (whatsappAccountId !== integration.whatsappAccountId) {
+    badRequest("Selected WhatsApp account does not belong to this order integration");
+  }
   const account = await findWhatsAppAccountForProfile(whatsappAccountId, businessProfileId);
   if (!account) notFound("WhatsApp account not found");
+  assertIntegrationWhatsAppAccount(integration, account);
 
   const finalName = body.templateName ?? current.templateName;
   const finalLanguageCode = body.languageCode ?? current.languageCode;
@@ -737,7 +752,9 @@ export async function updateTemplateConfig(req: Request, res: Response): Promise
 
   const record = await updateOrderTemplateConfig({
     id,
+    integrationId: integration.id,
     businessProfileId,
+    whatsappAccountId,
     data: data as any,
     ...(finalActive
       ? {
@@ -765,7 +782,14 @@ export async function testEvent(req: Request, res: Response): Promise<void> {
   if (!account) notFound("WhatsApp account not found");
 
   const body = req.body as Record<string, any>;
-  const rawEvent = body.event && typeof body.event === "object" ? body.event : body;
+  const {
+    event: nestedEvent,
+    locale: previewLocale,
+    templateConfigId: previewTemplateConfigId,
+    ...topLevelEvent
+  } = body;
+  const rawEvent =
+    nestedEvent && typeof nestedEvent === "object" ? nestedEvent : topLevelEvent;
   let event: ReturnType<typeof normalizeCanonicalOrderEvent>;
   try {
     event = normalizeCanonicalOrderEvent(rawEvent);
@@ -773,10 +797,23 @@ export async function testEvent(req: Request, res: Response): Promise<void> {
     badRequest(error instanceof Error ? error.message : "Invalid canonical order event");
   }
 
-  const locale = body.locale ?? event.order.customer.locale ?? integration.defaultLocale;
+  const locale = previewLocale ?? event.order.customer.locale ?? integration.defaultLocale;
   if (locale !== "ar" && locale !== "en") badRequest("Test event locale must be ar or en");
+  let templateConfigId: number | undefined;
+  if (previewTemplateConfigId !== undefined) {
+    templateConfigId =
+      typeof previewTemplateConfigId === "number"
+        ? previewTemplateConfigId
+        : typeof previewTemplateConfigId === "string" && /^\d+$/.test(previewTemplateConfigId)
+          ? Number(previewTemplateConfigId)
+          : undefined;
+    if (!templateConfigId || !Number.isSafeInteger(templateConfigId)) {
+      badRequest("templateConfigId must be a positive integer");
+    }
+  }
   const config = await findOrderTemplateConfigForTest({
-    id: typeof body.templateConfigId === "number" ? body.templateConfigId : undefined,
+    id: templateConfigId,
+    integrationId: integration.id,
     businessProfileId: integration.businessProfileId,
     whatsappAccountId: integration.whatsappAccountId,
     eventType: DEFAULT_EVENT_TYPE,

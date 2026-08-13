@@ -98,17 +98,23 @@ const integration = {
   id: 7,
   businessProfileId: 11,
   signingSecret: "webhook-secret",
+  previousSigningSecret: "previous-webhook-secret",
   isActive: true,
 };
 
-function signedRequest(body = Buffer.from(JSON.stringify(event), "utf8")) {
+function signedRequest(
+  secretOrBody: string | Buffer = integration.signingSecret,
+  body = Buffer.from(JSON.stringify(event), "utf8"),
+) {
+  const secret = Buffer.isBuffer(secretOrBody) ? integration.signingSecret : secretOrBody;
+  const rawBody = Buffer.isBuffer(secretOrBody) ? secretOrBody : body;
   const timestamp = String(Math.floor(Date.now() / 1000));
   return {
-    body,
+    body: rawBody,
     headers: {
       "idempotency-key": event.eventId,
       "x-wkil-timestamp": timestamp,
-      "x-wkil-signature": computeOrderWebhookSignature(timestamp, body, integration.signingSecret),
+      "x-wkil-signature": computeOrderWebhookSignature(timestamp, rawBody, secret),
     },
   };
 }
@@ -176,6 +182,41 @@ describe("POST /:integrationKey/events", () => {
 
     expect(response.status).toBe(401);
     expect(mocks.insertOrderEventIfNew).not.toHaveBeenCalled();
+  });
+
+  it("accepts the previous signing secret during rotation overlap", async () => {
+    const response = await doRequest(server, {
+      method: "POST",
+      path: "/public-key/events",
+      ...signedRequest(integration.previousSigningSecret),
+    });
+
+    expect(response.status).toBe(202);
+    expect(mocks.insertOrderEventIfNew).toHaveBeenCalledTimes(1);
+    expect(mocks.decryptFacebookSecret).toHaveBeenNthCalledWith(1, integration.signingSecret);
+    expect(mocks.decryptFacebookSecret).toHaveBeenNthCalledWith(
+      2,
+      integration.previousSigningSecret,
+    );
+  });
+
+  it("returns 500 when the previous signing secret cannot be decrypted", async () => {
+    mocks.decryptFacebookSecret.mockImplementation((value: string) => {
+      if (value === integration.previousSigningSecret) throw new Error("invalid previous secret");
+      return value;
+    });
+
+    const response = await doRequest(server, {
+      method: "POST",
+      path: "/public-key/events",
+      ...signedRequest(),
+    });
+
+    expect(response.status).toBe(500);
+    expect(mocks.insertOrderEventIfNew).not.toHaveBeenCalled();
+    expect(JSON.stringify(mocks.loggerError.mock.calls)).not.toContain(
+      integration.previousSigningSecret,
+    );
   });
 
   it("returns 500 when the integration secret cannot be decrypted", async () => {

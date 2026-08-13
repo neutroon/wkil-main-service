@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   findSystemSettingUpdatedAt: vi.fn(),
   generateRandomToken: vi.fn(),
   encryptFacebookSecret: vi.fn(),
+  decryptFacebookSecret: vi.fn(),
   listWhatsAppTemplates: vi.fn(),
   sendWhatsAppTemplate: vi.fn(),
   validateOrderTemplateMapping: vi.fn(),
@@ -62,6 +63,7 @@ vi.mock("./orderConfirmation.repository", () => ({
 vi.mock("@modules/auth/core/tokenCrypto", () => ({
   generateRandomToken: mocks.generateRandomToken,
   encryptFacebookSecret: mocks.encryptFacebookSecret,
+  decryptFacebookSecret: mocks.decryptFacebookSecret,
 }));
 
 vi.mock("@modules/meta/whatsapp/whatsapp.service", () => ({
@@ -101,7 +103,7 @@ function makeApp(user: TestUser = { id: 7, role: "user", isEmailVerified: true }
   });
   app.use(orderConfirmationRoutes);
   app.use((error: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-    res.status(error.statusCode ?? 500).json({ message: error.message });
+    res.status(error.statusCode ?? (error.name === "ZodError" ? 400 : 500)).json({ message: error.message });
   });
   return app;
 }
@@ -173,7 +175,24 @@ describe("order-confirmation management APIs", () => {
     mocks.findOrderIntegrationForProfiles.mockResolvedValue(integrationWithSecrets);
     mocks.generateRandomToken.mockReturnValue("plain-signing-secret");
     mocks.encryptFacebookSecret.mockImplementation((value: string) => `enc:${value}`);
+    mocks.decryptFacebookSecret.mockImplementation((value: string) => value);
     mocks.createOrderIntegration.mockResolvedValue(integrationWithSecrets);
+    mocks.createOrderTemplateConfig.mockResolvedValue({
+      id: 22,
+      businessProfileId: 11,
+      whatsappAccountId: 9,
+      eventType: "order.created",
+      locale: "en",
+      templateName: "order_confirm",
+      languageCode: "en",
+      templateVersion: 1,
+      isActive: true,
+      approvalStatus: "APPROVED",
+      variableMapping: {
+        body: ["orderNumber"],
+        buttons: ["confirmToken", "cancelToken"],
+      },
+    });
     mocks.updateOrderIntegration.mockResolvedValue(integrationWithSecrets);
     mocks.rotateOrderIntegrationSecret.mockResolvedValue(integrationWithSecrets);
     mocks.findWhatsAppAccountForProfile.mockResolvedValue({
@@ -353,6 +372,7 @@ describe("order-confirmation management APIs", () => {
       method: "POST",
       path: "/order-confirmations/template-configs",
       body: {
+        integrationId: 4,
         businessProfileId: 11,
         whatsappAccountId: 9,
         eventType: "order.created",
@@ -370,6 +390,99 @@ describe("order-confirmation management APIs", () => {
     expect(response.status).toBe(400);
     expect(mocks.createOrderTemplateConfig).not.toHaveBeenCalled();
     expect(mocks.listWhatsAppTemplates).not.toHaveBeenCalled();
+  });
+
+  it("rejects a template account that is not the integration's configured account", async () => {
+    mocks.findWhatsAppAccountForProfile.mockResolvedValue({
+      id: 10,
+      businessProfileId: 11,
+      wabaId: "waba-10",
+      accessToken: "access-10",
+      isActive: true,
+    });
+
+    const response = await request(server, {
+      method: "POST",
+      path: "/order-confirmations/template-configs",
+      body: {
+        integrationId: 4,
+        businessProfileId: 11,
+        whatsappAccountId: 10,
+        eventType: "order.created",
+        locale: "en",
+        templateName: "order_confirm",
+        languageCode: "en",
+        variableMapping: {
+          body: ["orderNumber"],
+          buttons: ["confirmToken", "cancelToken"],
+        },
+        isActive: true,
+      },
+    });
+
+    expect(response.status).toBe(400);
+    expect(mocks.createOrderTemplateConfig).not.toHaveBeenCalled();
+  });
+
+  it("accepts localized quick-reply labels because action mapping follows button position", async () => {
+    mocks.listWhatsAppTemplates.mockResolvedValue([
+      {
+        name: "order_confirm",
+        language: "ar",
+        status: "APPROVED",
+        components: [
+          { type: "BODY", text: "Order {{1}}" },
+          {
+            type: "BUTTONS",
+            buttons: [
+              { type: "QUICK_REPLY", text: "تأكيد" },
+              { type: "QUICK_REPLY", text: "إلغاء" },
+            ],
+          },
+        ],
+      },
+    ]);
+
+    const response = await request(server, {
+      method: "POST",
+      path: "/order-confirmations/template-configs",
+      body: {
+        integrationId: 4,
+        businessProfileId: 11,
+        whatsappAccountId: 9,
+        eventType: "order.created",
+        locale: "ar",
+        templateName: "order_confirm",
+        languageCode: "ar",
+        variableMapping: {
+          body: ["orderNumber"],
+          buttons: ["confirmToken", "cancelToken"],
+        },
+        isActive: true,
+      },
+    });
+
+    expect(response.status).toBe(201);
+    expect(mocks.createOrderTemplateConfig).toHaveBeenCalled();
+  });
+
+  it("rejects listing template configs for an account different from the integration account", async () => {
+    mocks.findWhatsAppAccountForProfile.mockResolvedValue({
+      id: 10,
+      businessProfileId: 11,
+      wabaId: "waba-10",
+      accessToken: "access-10",
+      isActive: true,
+    });
+    mocks.listOrderTemplateConfigs.mockResolvedValue([]);
+
+    const response = await request(server, {
+      method: "GET",
+      path: "/order-confirmations/template-configs?integrationId=4&whatsappAccountId=10",
+    });
+
+    expect(response.status).toBe(400);
+    expect(mocks.listOrderTemplateConfigs).not.toHaveBeenCalled();
   });
 
   it("renders a test preview without contacting a customer", async () => {
@@ -395,6 +508,63 @@ describe("order-confirmation management APIs", () => {
     expect(response.json.data.previewText).toBe("#100");
     expect(mocks.sendWhatsAppTemplate).not.toHaveBeenCalled();
     expect(mocks.enqueueNotificationRetry).not.toHaveBeenCalled();
+  });
+
+  it("accepts top-level preview locale and templateConfigId without passing them to canonical parsing", async () => {
+    const response = await request(server, {
+      method: "POST",
+      path: "/order-integrations/4/test-event",
+      body: {
+        schemaVersion: "1",
+        eventId: "evt-test-options",
+        eventType: "order.created",
+        occurredAt: "2026-08-13T10:30:00.000Z",
+        locale: "ar",
+        templateConfigId: 21,
+        order: {
+          id: "order-test-options",
+          number: "#101",
+          currency: "USD",
+          total: "11.00",
+          customer: { phone: "+12025550123" },
+        },
+      },
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.json.data.locale).toBe("ar");
+    expect(mocks.findOrderTemplateConfigForTest).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 21, locale: "ar" }),
+    );
+    expect(mocks.sendWhatsAppTemplate).not.toHaveBeenCalled();
+  });
+
+  it("rejects updates for a template config without an integration context", async () => {
+    mocks.findOrderTemplateConfigByIdForProfiles.mockResolvedValue({
+      id: 21,
+      businessProfileId: 11,
+      whatsappAccountId: 9,
+      eventType: "order.created",
+      locale: "en",
+      templateName: "order_confirm",
+      languageCode: "en",
+      templateVersion: 1,
+      isActive: true,
+      approvalStatus: "APPROVED",
+      variableMapping: {
+        body: ["orderNumber"],
+        buttons: ["confirmToken", "cancelToken"],
+      },
+    });
+
+    const response = await request(server, {
+      method: "PATCH",
+      path: "/order-confirmations/template-configs/21",
+      body: { whatsappAccountId: 9, isActive: false },
+    });
+
+    expect(response.status).toBe(400);
+    expect(mocks.updateOrderTemplateConfig).not.toHaveBeenCalled();
   });
 
   it("passes pagination and status filters and keeps order views free of payloads and action tokens", async () => {

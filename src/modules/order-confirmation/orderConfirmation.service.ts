@@ -82,7 +82,10 @@ export async function processOrderEvent(eventId: number): Promise<void> {
     cancelTokenHash: cancelToken.tokenHash,
   });
 
-  if (!workflow.created || !workflow.notification) {
+  if (
+    !workflow.notification ||
+    (!workflow.created && !workflow.shouldEnqueueNotification)
+  ) {
     return;
   }
 

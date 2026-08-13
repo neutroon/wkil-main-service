@@ -157,6 +157,19 @@ describe("order confirmation workflow", () => {
     expect(mocks.enqueueNotification).not.toHaveBeenCalled();
   });
 
+  it("re-enqueues an existing queued notification when event recovery is requested", async () => {
+    mocks.findOrderEventForProcessing.mockResolvedValue(eventRecord);
+    mocks.createOrderConfirmationWorkflow.mockResolvedValue({
+      created: false,
+      shouldEnqueueNotification: true,
+      notification: { id: 18 },
+    });
+
+    await processOrderEvent(101);
+
+    expect(mocks.enqueueNotification).toHaveBeenCalledWith(18, expect.any(String));
+  });
+
   it("lets only the first action transition the order and enqueue an acknowledgement", async () => {
     mocks.claimOrderAction
       .mockResolvedValueOnce({

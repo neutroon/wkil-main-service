@@ -105,6 +105,7 @@ export type CreateOrderConfirmationWorkflowParams = {
 
 export type CreateOrderConfirmationWorkflowResult = {
   created: boolean;
+  shouldEnqueueNotification?: boolean;
   order?: { id: number; status: string; businessProfileId: number };
   notification?: { id: number };
 };
@@ -244,7 +245,12 @@ export async function createOrderConfirmationWorkflow(
           lastError: null,
         },
       });
-      return { created: false, order, notification: existingNotification };
+      return {
+        created: false,
+        shouldEnqueueNotification: true,
+        order,
+        notification: existingNotification,
+      };
     }
 
     const notification = await tx.orderNotification.create({

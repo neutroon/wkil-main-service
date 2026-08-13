@@ -1,12 +1,14 @@
 import * as Sentry from "@sentry/node";
 import { Job, Worker } from "bullmq";
 import { bullConnection, bullQueuePrefix } from "@config/redis";
+import { decryptFacebookSecret } from "@modules/auth/core/tokenCrypto";
 import { logger } from "@utils/logger";
 import {
   clearExpiredOrderEventPayloads,
   findStaleOrderEvents,
   findStaleOrderNotifications,
-  markNotificationQueued,
+  findUnattemptedQueuedOrderNotifications,
+  markStaleSendingNotificationsFailed,
 } from "./orderConfirmation.repository";
 import { enqueueNotification, enqueueOrderEvent } from "./orderConfirmation.queue";
 import {
@@ -40,7 +42,15 @@ async function processOrderConfirmationJob(
       await sendOrderNotification(job.data.notificationId);
       return;
     case "PROCESS_ACTION":
-      await processOrderAction(job.data);
+      await processOrderAction({
+        businessProfileId: job.data.businessProfileId,
+        phoneNumberId: job.data.phoneNumberId,
+        customerPhone: job.data.customerPhone,
+        inboundMessageId: job.data.inboundMessageId,
+        buttonTitle: job.data.buttonTitle,
+        correlationId: job.data.correlationId,
+        actionToken: decryptFacebookSecret(job.data.encryptedActionToken),
+      });
       return;
   }
 }
@@ -82,10 +92,13 @@ export const orderConfirmationWorker = new Worker<OrderConfirmationJob>(
 
 export async function runOrderConfirmationRecoveryScan(now = new Date()): Promise<void> {
   const cutoff = new Date(now.getTime() - STALE_AFTER_MS);
-  const [events, notifications] = await Promise.all([
+  const [events, staleSendingNotifications, queuedNotifications] = await Promise.all([
     findStaleOrderEvents(cutoff),
     findStaleOrderNotifications(cutoff),
+    findUnattemptedQueuedOrderNotifications(cutoff),
   ]);
+
+  await markStaleSendingNotificationsFailed(cutoff);
 
   for (const event of events) {
     try {
@@ -99,9 +112,8 @@ export async function runOrderConfirmationRecoveryScan(now = new Date()): Promis
     }
   }
 
-  for (const notification of notifications) {
+  for (const notification of queuedNotifications) {
     try {
-      await markNotificationQueued(notification.id);
       await enqueueNotification(notification.id, `order-recovery-notification-${notification.id}`);
     } catch (error) {
       logger.error("order_confirmation.recovery_notification_enqueue_failed", {
@@ -110,6 +122,13 @@ export async function runOrderConfirmationRecoveryScan(now = new Date()): Promis
         error: error instanceof Error ? error.message : String(error),
       });
     }
+  }
+
+  if (staleSendingNotifications.length > 0) {
+    logger.warn("order_confirmation.recovery_sending_marked_ambiguous", {
+      correlationId: "order-confirmation-recovery",
+      notificationCount: staleSendingNotifications.length,
+    });
   }
 
   try {
@@ -194,4 +213,10 @@ export function startOrderConfirmationQueue(): void {
       error: error instanceof Error ? error.message : String(error),
     });
   });
+}
+
+export function stopOrderConfirmationQueue(): void {
+  if (!recoveryTimer) return;
+  clearInterval(recoveryTimer);
+  recoveryTimer = undefined;
 }

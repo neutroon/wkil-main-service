@@ -23,6 +23,10 @@ vi.mock("@config/redis", () => ({
   bullQueuePrefix: "test-prefix",
 }));
 
+vi.mock("@modules/auth/core/tokenCrypto", () => ({
+  encryptFacebookSecret: vi.fn((value: string) => `enc:${value}`),
+}));
+
 vi.mock("@utils/logger", () => ({
   logger: {
     info: mocks.loggerInfo,
@@ -37,6 +41,7 @@ import {
   enqueueStoreSync,
   orderConfirmationQueue,
 } from "./orderConfirmation.queue";
+import { hashOrderActionToken } from "./orderConfirmation.crypto";
 
 const actionInput = {
   businessProfileId: 7,
@@ -46,6 +51,18 @@ const actionInput = {
   inboundMessageId: "wamid-123",
   buttonTitle: "Confirm",
   correlationId: "corr-action",
+} as const;
+
+const actionJob = {
+  type: "PROCESS_ACTION",
+  businessProfileId: actionInput.businessProfileId,
+  phoneNumberId: actionInput.phoneNumberId,
+  customerPhone: actionInput.customerPhone,
+  encryptedActionToken: `enc:${actionInput.actionToken}`,
+  actionTokenDigest: hashOrderActionToken(actionInput.actionToken),
+  inboundMessageId: actionInput.inboundMessageId,
+  buttonTitle: actionInput.buttonTitle,
+  correlationId: actionInput.correlationId,
 } as const;
 
 describe("order confirmation queue", () => {
@@ -84,13 +101,12 @@ describe("order confirmation queue", () => {
   });
 
   it("creates a deterministic action ID without exposing the action token", () => {
-    const job = { type: "PROCESS_ACTION", ...actionInput } as const;
-    const jobId = createOrderConfirmationJobId(job);
+    const jobId = createOrderConfirmationJobId(actionJob);
 
     expect(jobId).toContain("order-process-action");
     expect(jobId).toContain("wamid-123");
     expect(jobId).not.toContain(actionInput.actionToken);
-    expect(createOrderConfirmationJobId(job)).toBe(jobId);
+    expect(createOrderConfirmationJobId(actionJob)).toBe(jobId);
   });
 
   it("uses the dedicated queue and durable retry defaults", () => {
@@ -145,12 +161,13 @@ describe("order confirmation queue", () => {
 
     expect(mocks.add).toHaveBeenCalledWith(
       "process_action",
-      { type: "PROCESS_ACTION", ...actionInput },
+      actionJob,
       { jobId: expect.stringContaining("order-process-action") },
     );
     expect(mocks.loggerInfo).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(mocks.loggerInfo.mock.calls)).not.toContain(actionInput.actionToken);
     expect(mocks.loggerInfo.mock.calls[0]?.[1]).not.toHaveProperty("actionToken");
+    expect(mocks.add.mock.calls[0]?.[1]).not.toHaveProperty("actionToken");
   });
 
   it("enqueues store sync jobs with their deterministic ID", async () => {

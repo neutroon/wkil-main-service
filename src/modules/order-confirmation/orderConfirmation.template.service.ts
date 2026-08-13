@@ -14,14 +14,13 @@ const allowedOrderFields = new Set<OrderTemplateField>([
 const allowedButtonFields = new Set([
   "confirmToken",
   "cancelToken",
-  "actionToken",
 ]);
 
 export type OrderTemplateMapping =
-  | OrderTemplateField[]
+  | readonly OrderTemplateField[]
   | {
-      body: OrderTemplateField[] | Record<string, OrderTemplateField>;
-      buttons?: string[] | Record<string, string>;
+      body: readonly OrderTemplateField[] | Readonly<Record<string, OrderTemplateField>>;
+      buttons?: readonly string[] | Readonly<Record<string, string>>;
     }
   | Record<string, OrderTemplateField>;
 
@@ -49,7 +48,7 @@ export type RenderedOrderTemplateVariables = {
 };
 
 function asMapping(value: unknown): OrderTemplateMapping {
-  if (Array.isArray(value)) return value as OrderTemplateField[];
+  if (Array.isArray(value)) return value as readonly OrderTemplateField[];
   if (typeof value !== "object" || value === null) {
     throw new Error("Template variable mapping must be an object or array");
   }
@@ -98,7 +97,7 @@ function validateFieldList(fields: string[], allowed: Set<string>, label: string
   }
 }
 
-function validateMapping(mapping: OrderTemplateMapping, requireButtons = false): void {
+function validateMapping(mapping: OrderTemplateMapping, requireButtons = true): void {
   validateFieldList(bodyFields(mapping), allowedOrderFields, "body");
 
   const buttons = buttonFields(mapping);
@@ -110,18 +109,18 @@ function validateMapping(mapping: OrderTemplateMapping, requireButtons = false):
     if (requireButtons && buttons.length !== 2) {
       throw new Error("Confirm and Cancel button parameters are required");
     }
-    if (requireButtons && !buttons.includes("confirmToken")) {
-      throw new Error("Confirm button parameter must map to confirmToken");
-    }
-    if (requireButtons && !buttons.includes("cancelToken")) {
-      throw new Error("Cancel button parameter must map to cancelToken");
+    if (
+      requireButtons &&
+      (buttons[0] !== "confirmToken" || buttons[1] !== "cancelToken")
+    ) {
+      throw new Error("Confirm and Cancel button parameters must be in order");
     }
   }
 }
 
 export function validateOrderTemplateMapping(
   mapping: OrderTemplateMapping | unknown,
-  requireButtons = false,
+  requireButtons = true,
 ): OrderTemplateMapping {
   const normalizedMapping = asMapping(mapping);
   validateMapping(normalizedMapping, requireButtons);
@@ -130,12 +129,16 @@ export function validateOrderTemplateMapping(
 
 export async function resolveActiveTemplateConfig(params: {
   integrationId: number;
+  businessProfileId?: number;
   whatsappAccountId: number;
   locale: string;
   eventType: string;
 }): Promise<OrderTemplateConfig> {
   const config = await prisma.orderTemplateConfig.findFirst({
     where: {
+      ...(params.businessProfileId === undefined
+        ? {}
+        : { businessProfileId: params.businessProfileId }),
       whatsappAccountId: params.whatsappAccountId,
       eventType: params.eventType,
       locale: params.locale,
@@ -164,6 +167,13 @@ export async function resolveActiveTemplateConfig(params: {
     throw new Error("No active WhatsApp order template is configured");
   }
 
+  if (
+    params.businessProfileId !== undefined &&
+    config.businessProfileId !== params.businessProfileId
+  ) {
+    throw new Error("WhatsApp order template belongs to another business profile");
+  }
+
   if (config.approvalStatus && config.approvalStatus !== "APPROVED") {
     throw new Error("Configured WhatsApp order template is not approved");
   }
@@ -173,7 +183,64 @@ export async function resolveActiveTemplateConfig(params: {
   return { ...config, variableMapping };
 }
 
-function readOrderValue(order: CanonicalOrder | Record<string, unknown>, field: string): string {
+function localizedDigits(value: string, locale: string): string {
+  const digitFormatter = new Intl.NumberFormat(locale, { useGrouping: false });
+  const digits = new Map<string, string>();
+  for (let digit = 0; digit <= 9; digit += 1) {
+    digits.set(String(digit), digitFormatter.format(digit));
+  }
+  return [...value].map((character) => digits.get(character) ?? character).join("");
+}
+
+function formatMoneyWithoutNumber(
+  rawTotal: string,
+  currency: string,
+  locale: string,
+): string {
+  if (!/^\d+(?:\.\d+)?$/.test(rawTotal)) {
+    return `${currency} ${rawTotal}`.trim();
+  }
+
+  try {
+    const formatter = new Intl.NumberFormat(locale, {
+      style: "currency",
+      currency,
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 20,
+    });
+    const pattern = formatter.formatToParts(1.1);
+    const firstInteger = pattern.findIndex((part) => part.type === "integer");
+    let lastNumber = -1;
+    for (let index = 0; index < pattern.length; index += 1) {
+      if (pattern[index]?.type === "integer" || pattern[index]?.type === "fraction") {
+        lastNumber = index;
+      }
+    }
+    if (firstInteger < 0 || lastNumber < firstInteger) {
+      return `${currency} ${rawTotal}`.trim();
+    }
+
+    const prefix = pattern.slice(0, firstInteger).map((part) => part.value).join("");
+    const suffix = pattern.slice(lastNumber + 1).map((part) => part.value).join("");
+    const decimalSeparator =
+      pattern.find((part) => part.type === "decimal")?.value ?? ".";
+    const [integerPart, fractionPart] = rawTotal.split(".");
+    const localizedInteger = localizedDigits(integerPart, locale);
+    const localizedFraction = fractionPart
+      ? `${decimalSeparator}${localizedDigits(fractionPart, locale)}`
+      : "";
+
+    return `${prefix}${localizedInteger}${localizedFraction}${suffix}`;
+  } catch {
+    return `${currency} ${rawTotal}`.trim();
+  }
+}
+
+function readOrderValue(
+  order: CanonicalOrder | Record<string, unknown>,
+  field: string,
+  selectedLocale?: string,
+): string {
   const source = order as Record<string, unknown>;
   const customer = (source.customer ?? {}) as Record<string, unknown>;
   const shippingAddress = (source.shippingAddress ?? {}) as Record<string, unknown>;
@@ -194,13 +261,8 @@ function readOrderValue(order: CanonicalOrder | Record<string, unknown>, field: 
     case "total": {
       const rawTotal = String(source.total ?? "");
       const currency = String(source.currency ?? "USD");
-      const locale = String(source.locale ?? customer.locale ?? "en");
-      const numericTotal = Number(rawTotal);
-      if (!Number.isFinite(numericTotal)) return `${currency} ${rawTotal}`.trim();
-      return new Intl.NumberFormat(locale, {
-        style: "currency",
-        currency,
-      }).format(numericTotal);
+      const locale = selectedLocale ?? String(source.locale ?? customer.locale ?? "en");
+      return formatMoneyWithoutNumber(rawTotal, currency, locale);
     }
     case "currency":
       return String(source.currency ?? "");
@@ -217,10 +279,13 @@ export function renderOrderTemplateVariables(
   order: CanonicalOrder | Record<string, unknown>,
   mapping: OrderTemplateMapping | unknown,
   actionTokens?: { confirm: string; cancel: string },
+  selectedLocale?: string,
 ): RenderedOrderTemplateVariables {
-  const normalizedMapping = validateOrderTemplateMapping(mapping);
+  const normalizedMapping = validateOrderTemplateMapping(mapping, true);
 
-  const body = bodyFields(normalizedMapping).map((field) => readOrderValue(order, field));
+  const body = bodyFields(normalizedMapping).map((field) =>
+    readOrderValue(order, field, selectedLocale),
+  );
   const rendered: RenderedOrderTemplateVariables = {
     body,
     previewText: body.filter(Boolean).join(" | "),

@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { Queue } from "bullmq";
 import { bullConnection, bullQueuePrefix } from "@config/redis";
 import { logger } from "@utils/logger";
+import { encryptFacebookSecret } from "@modules/auth/core/tokenCrypto";
+import { hashOrderActionToken } from "./orderConfirmation.crypto";
 import type { OrderActionInput, OrderConfirmationJob } from "./orderConfirmation.types";
 
 const orderConfirmationDefaultJobOptions = {
@@ -43,11 +45,11 @@ export function createOrderConfirmationJobId(job: OrderConfirmationJob): string 
       return safeBullMqJobId(`order-send-notification-${job.notificationId}`);
     case "PROCESS_ACTION": {
       const inboundMessageId =
-        job.inboundMessageId && !job.inboundMessageId.includes(job.actionToken)
+        job.inboundMessageId && !job.inboundMessageId.includes(job.actionTokenDigest)
           ? job.inboundMessageId
           : "action";
       return safeBullMqJobId(
-        `order-process-action-${inboundMessageId}-${hashJobText(job.actionToken)}`,
+        `order-process-action-${inboundMessageId}-${job.actionTokenDigest.slice(0, 24)}`,
       );
     }
     case "SYNC_STORE":
@@ -107,9 +109,23 @@ export function enqueueNotification(notificationId: number, correlationId: strin
 }
 
 export function enqueueOrderAction(input: OrderActionInput): Promise<void> {
+  const encryptedActionToken = encryptFacebookSecret(input.actionToken);
+  if (encryptedActionToken === input.actionToken) {
+    return Promise.reject(
+      new Error("FB_TOKEN_ENCRYPTION_KEY is required before queueing an order action"),
+    );
+  }
+
   return enqueueOrderConfirmationJob("process_action", {
     type: "PROCESS_ACTION",
-    ...input,
+    businessProfileId: input.businessProfileId,
+    phoneNumberId: input.phoneNumberId,
+    customerPhone: input.customerPhone,
+    inboundMessageId: input.inboundMessageId,
+    buttonTitle: input.buttonTitle,
+    correlationId: input.correlationId,
+    encryptedActionToken,
+    actionTokenDigest: hashOrderActionToken(input.actionToken),
   });
 }
 

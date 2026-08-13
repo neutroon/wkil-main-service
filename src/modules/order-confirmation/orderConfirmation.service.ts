@@ -1,14 +1,13 @@
 import { logger } from "@utils/logger";
 import {
-  createAcknowledgementNotification,
   createOrderConfirmationWorkflow,
-  createPendingStoreSync,
   findNotificationForSending,
   findOrderEventForProcessing,
   markNotificationFailed,
   markNotificationQueued,
   markNotificationSending,
   markNotificationSent,
+  markOrderEventProcessed,
   markOrderEventFailed,
   markOrderEventRecoverable,
   claimOrderAction,
@@ -82,27 +81,28 @@ export async function processOrderEvent(eventId: number): Promise<void> {
     cancelTokenHash: cancelToken.tokenHash,
   });
 
-  if (
-    !workflow.notification ||
-    (!workflow.created && !workflow.shouldEnqueueNotification)
-  ) {
+  if (!workflow.notification || !workflow.order) {
     return;
   }
 
   const correlationId = `order-event-${eventId}`;
-  try {
-    await enqueueNotification(workflow.notification.id, correlationId);
-  } catch (error) {
-    const message = errorMessage(error);
-    await markOrderEventRecoverable(eventId, message);
-    logger.error("order_confirmation.event_notification_enqueue_failed", {
-      correlationId,
-      eventId,
-      notificationId: workflow.notification.id,
-      error: message,
-    });
-    throw error;
+  if (workflow.created || workflow.shouldEnqueueNotification) {
+    try {
+      await enqueueNotification(workflow.notification.id, correlationId);
+    } catch (error) {
+      const message = errorMessage(error);
+      await markOrderEventRecoverable(eventId, message);
+      logger.error("order_confirmation.event_notification_enqueue_failed", {
+        correlationId,
+        eventId,
+        notificationId: workflow.notification.id,
+        error: message,
+      });
+      throw error;
+    }
   }
+
+  await markOrderEventProcessed(eventId, workflow.order.id);
 }
 
 export async function sendOrderNotification(notificationId: number): Promise<void> {
@@ -156,6 +156,13 @@ export async function processOrderAction(input: OrderActionInput): Promise<{
 }> {
   const result = await claimOrderAction(input);
 
+  if (result.acknowledgement && result.shouldEnqueueAcknowledgement) {
+    await enqueueNotification(
+      result.acknowledgement.id,
+      input.correlationId,
+    );
+  }
+
   if (!result.applied) {
     return {
       orderId: result.orderId,
@@ -163,28 +170,6 @@ export async function processOrderAction(input: OrderActionInput): Promise<{
       applied: false,
       currentStatus: result.currentStatus as OrderStatus,
     };
-  }
-
-  const acknowledgement = await createAcknowledgementNotification({
-    orderId: result.orderId,
-    businessProfileId: result.businessProfileId,
-    locale: result.locale ?? "en",
-    action: result.action,
-  });
-
-  if (acknowledgement?.notification && acknowledgement.created !== false) {
-    await enqueueNotification(
-      acknowledgement.notification.id,
-      input.correlationId,
-    );
-  }
-
-  if (result.storeSyncEnabled) {
-    await createPendingStoreSync(
-      result.orderId,
-      result.businessProfileId,
-      result.currentStatus as "CONFIRMED" | "CANCELED",
-    );
   }
 
   return {

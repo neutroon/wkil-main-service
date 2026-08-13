@@ -1,6 +1,6 @@
 import prisma from "@config/prisma";
 import { Prisma } from "@prisma/client";
-import { hashOrderActionToken } from "./orderConfirmation.crypto";
+import { hashOrderActionToken, issueOrderActionToken } from "./orderConfirmation.crypto";
 import type { CanonicalOrderEvent, OrderAction, OrderStatus } from "./orderConfirmation.types";
 
 export type ActiveOrderIntegration = {
@@ -107,7 +107,7 @@ export type CreateOrderConfirmationWorkflowResult = {
   created: boolean;
   shouldEnqueueNotification?: boolean;
   order?: { id: number; status: string; businessProfileId: number };
-  notification?: { id: number };
+  notification?: { id: number; status?: string; attemptCount?: number };
 };
 
 export async function findOrderEventForProcessing(
@@ -173,11 +173,12 @@ async function findExistingWorkflow(
   });
   const notification = await tx.orderNotification.findUnique({
     where: { orderId_kind: { orderId, kind: "CONFIRMATION_REQUEST" } },
-    select: { id: true },
+    select: { id: true, status: true, attemptCount: true },
   });
 
   return {
     created: false,
+    shouldEnqueueNotification: notification?.status === "QUEUED" && notification.attemptCount === 0,
     ...(order ? { order } : {}),
     ...(notification ? { notification } : {}),
   };
@@ -232,22 +233,14 @@ export async function createOrderConfirmationWorkflow(
 
     const existingNotification = await tx.orderNotification.findUnique({
       where: { orderId_kind: { orderId: order.id, kind: "CONFIRMATION_REQUEST" } },
-      select: { id: true },
+      select: { id: true, status: true, attemptCount: true },
     });
 
     if (existingNotification) {
-      await tx.orderEvent.update({
-        where: { id: params.eventId },
-        data: {
-          status: "PROCESSED",
-          orderId: order.id,
-          processedAt: new Date(),
-          lastError: null,
-        },
-      });
       return {
         created: false,
-        shouldEnqueueNotification: true,
+        shouldEnqueueNotification:
+          existingNotification.status === "QUEUED" && existingNotification.attemptCount === 0,
         order,
         notification: existingNotification,
       };
@@ -258,14 +251,14 @@ export async function createOrderConfirmationWorkflow(
         businessProfileId: params.businessProfileId,
         orderId: order.id,
         kind: "CONFIRMATION_REQUEST",
-    locale: params.locale,
+        locale: params.locale,
         idempotencyKey: notificationIdempotencyKey(
           params.integrationId,
           params.externalEventId,
           order.id,
         ),
       },
-      select: { id: true },
+      select: { id: true, status: true, attemptCount: true },
     });
 
     await tx.orderActionToken.createMany({
@@ -287,17 +280,22 @@ export async function createOrderConfirmationWorkflow(
       ],
     });
 
-    await tx.orderEvent.update({
-      where: { id: params.eventId },
-      data: {
-        status: "PROCESSED",
-        orderId: order.id,
-        processedAt: new Date(),
-        lastError: null,
-      },
-    });
-
     return { created: true, order, notification };
+  });
+}
+
+export async function markOrderEventProcessed(
+  eventId: number,
+  orderId: number,
+): Promise<void> {
+  await prisma.orderEvent.updateMany({
+    where: { id: eventId, status: { in: ["RECEIVED", "PROCESSING"] } },
+    data: {
+      status: "PROCESSED",
+      orderId,
+      processedAt: new Date(),
+      lastError: null,
+    },
   });
 }
 
@@ -307,7 +305,7 @@ export async function markOrderEventRecoverable(
 ): Promise<void> {
   await prisma.orderEvent.update({
     where: { id: eventId },
-    data: { status: "RECEIVED", lastError: errorMessage },
+    data: { status: "RECEIVED", processedAt: null, lastError: errorMessage },
   });
 }
 
@@ -426,18 +424,25 @@ export async function markNotificationSending(notificationId: number): Promise<b
     },
     data: {
       status: "SENDING",
-      attemptCount: { increment: 1 },
       lastError: null,
+      failedAt: null,
     },
   });
 
   return result.count > 0;
 }
 
+export async function markNotificationAttempted(notificationId: number): Promise<void> {
+  await prisma.orderNotification.updateMany({
+    where: { id: notificationId, status: "SENDING" },
+    data: { attemptCount: { increment: 1 } },
+  });
+}
+
 export async function markNotificationQueued(notificationId: number): Promise<void> {
   await prisma.orderNotification.update({
     where: { id: notificationId },
-    data: { status: "QUEUED", lastError: null },
+    data: { status: "QUEUED", lastError: null, failedAt: null },
   });
 }
 
@@ -458,6 +463,7 @@ export async function markNotificationSent(
       conversationMessageId: message?.id,
       sentAt: new Date(),
       lastError: null,
+      failedAt: null,
     },
   });
 }
@@ -480,6 +486,47 @@ export async function saveNotificationRenderedVariables(
     where: { id: notificationId },
     data: { renderedVariables: renderedVariables as Prisma.InputJsonValue },
   });
+}
+
+export type PreparedOrderActionTokens = {
+  confirmToken: string;
+  cancelToken: string;
+  confirmTokenHash: string;
+  cancelTokenHash: string;
+};
+
+export async function prepareOrderActionTokensForSend(
+  notificationId: number,
+): Promise<PreparedOrderActionTokens> {
+  const confirm = issueOrderActionToken();
+  const cancel = issueOrderActionToken();
+
+  await prisma.$transaction(async (tx) => {
+    const notification = await tx.orderNotification.findUnique({
+      where: { id: notificationId },
+      select: { orderId: true, status: true },
+    });
+
+    if (!notification || notification.status !== "SENDING") {
+      throw new Error("Order notification is not claimed for sending");
+    }
+
+    await tx.orderActionToken.update({
+      where: { orderId_action: { orderId: notification.orderId, action: "CONFIRM" } },
+      data: { tokenHash: confirm.tokenHash, usedAt: null },
+    });
+    await tx.orderActionToken.update({
+      where: { orderId_action: { orderId: notification.orderId, action: "CANCEL" } },
+      data: { tokenHash: cancel.tokenHash, usedAt: null },
+    });
+  });
+
+  return {
+    confirmToken: confirm.token,
+    cancelToken: cancel.token,
+    confirmTokenHash: confirm.tokenHash,
+    cancelTokenHash: cancel.tokenHash,
+  };
 }
 
 export async function findActiveWhatsAppSuppression(
@@ -507,7 +554,51 @@ export type ClaimOrderActionResult = {
   businessProfileId: number;
   locale?: string;
   storeSyncEnabled?: boolean;
+  acknowledgement?: { id: number; status: string; attemptCount: number };
+  shouldEnqueueAcknowledgement?: boolean;
 };
+
+async function upsertPendingStoreSyncInTransaction(
+  tx: any,
+  orderId: number,
+  businessProfileId: number,
+  requestedStatus: "CONFIRMED" | "CANCELED",
+): Promise<{ id: number }> {
+  return tx.orderStoreSync.upsert({
+    where: { orderId_requestedStatus: { orderId, requestedStatus } },
+    update: {},
+    create: {
+      orderId,
+      businessProfileId,
+      requestedStatus,
+      status: "PENDING",
+      providerIdempotencyKey: `order-status:${orderId}:${requestedStatus}`,
+    },
+    select: { id: true },
+  });
+}
+
+async function upsertAcknowledgementInTransaction(
+  tx: any,
+  orderId: number,
+  businessProfileId: number,
+  locale: string,
+  action: OrderAction,
+): Promise<{ id: number; status: string; attemptCount: number }> {
+  return tx.orderNotification.upsert({
+    where: { orderId_kind: { orderId, kind: "ACKNOWLEDGEMENT" } },
+    update: {},
+    create: {
+      businessProfileId,
+      orderId,
+      kind: "ACKNOWLEDGEMENT",
+      locale,
+      renderedVariables: { action } as Prisma.InputJsonValue,
+      idempotencyKey: `order-acknowledgement:${orderId}`,
+    },
+    select: { id: true, status: true, attemptCount: true },
+  });
+}
 
 export async function claimOrderAction(
   params: ClaimOrderActionParams,
@@ -516,7 +607,7 @@ export async function claimOrderAction(
   const token = await prisma.orderActionToken.findFirst({
     where: {
       businessProfileId: params.businessProfileId,
-      OR: [{ tokenHash: params.actionToken }, { tokenHash: hashedInput }],
+      tokenHash: hashedInput,
       order: {
         businessProfileId: params.businessProfileId,
         customerPhone: params.customerPhone,
@@ -545,6 +636,7 @@ export async function claimOrderAction(
   }
 
   return prisma.$transaction(async (tx) => {
+    const targetStatus = token.action === "CONFIRM" ? "CONFIRMED" : "CANCELED";
     const transition = await tx.order.updateMany({
       where: {
         id: token.order.id,
@@ -552,36 +644,62 @@ export async function claimOrderAction(
         customerPhone: params.customerPhone,
         status: "AWAITING_CONFIRMATION",
       },
-      data: { status: token.action === "CONFIRM" ? "CONFIRMED" : "CANCELED" },
+      data: { status: targetStatus },
     });
 
+    let currentStatus: OrderStatus = targetStatus;
     if (transition.count === 0) {
       const current = await tx.order.findUnique({
         where: { id: token.order.id },
         select: { status: true },
       });
-      return {
-        applied: false,
-        orderId: token.order.id,
-        action: token.action,
-        currentStatus: current?.status ?? token.order.status,
-        businessProfileId: params.businessProfileId,
-      };
+      currentStatus = (current?.status ?? token.order.status) as OrderStatus;
+      if (currentStatus !== targetStatus) {
+        return {
+          applied: false,
+          orderId: token.order.id,
+          action: token.action,
+          currentStatus,
+          businessProfileId: params.businessProfileId,
+        };
+      }
     }
 
-    await tx.orderActionToken.updateMany({
-      where: { id: token.id, usedAt: null },
-      data: { usedAt: new Date() },
-    });
+    if (transition.count > 0) {
+      await tx.orderActionToken.updateMany({
+        where: { id: token.id, usedAt: null },
+        data: { usedAt: new Date() },
+      });
+    }
+
+    if (token.order.integration.storeSyncEnabled) {
+      await upsertPendingStoreSyncInTransaction(
+        tx,
+        token.order.id,
+        params.businessProfileId,
+        targetStatus,
+      );
+    }
+
+    const acknowledgement = await upsertAcknowledgementInTransaction(
+      tx,
+      token.order.id,
+      params.businessProfileId,
+      token.order.locale ?? "en",
+      token.action,
+    );
 
     return {
-      applied: true,
+      applied: transition.count > 0,
       orderId: token.order.id,
       action: token.action,
-      currentStatus: token.action === "CONFIRM" ? "CONFIRMED" : "CANCELED",
+      currentStatus,
       businessProfileId: params.businessProfileId,
       locale: token.order.locale,
       storeSyncEnabled: token.order.integration.storeSyncEnabled,
+      acknowledgement,
+      shouldEnqueueAcknowledgement:
+        acknowledgement.status === "QUEUED" && acknowledgement.attemptCount === 0,
     };
   });
 }
@@ -653,6 +771,30 @@ export async function findStaleOrderNotifications(
   return prisma.orderNotification.findMany({
     where: { status: "SENDING", updatedAt: { lt: cutoff } },
     select: { id: true },
+  });
+}
+
+export async function findUnattemptedQueuedOrderNotifications(
+  cutoff: Date,
+): Promise<Array<{ id: number }>> {
+  return prisma.orderNotification.findMany({
+    where: {
+      status: "QUEUED",
+      attemptCount: 0,
+      updatedAt: { lt: cutoff },
+    },
+    select: { id: true },
+  });
+}
+
+export async function markStaleSendingNotificationsFailed(cutoff: Date): Promise<void> {
+  await prisma.orderNotification.updateMany({
+    where: { status: "SENDING", updatedAt: { lt: cutoff } },
+    data: {
+      status: "FAILED",
+      failedAt: new Date(),
+      lastError: "AMBIGUOUS_PROVIDER_DELIVERY",
+    },
   });
 }
 

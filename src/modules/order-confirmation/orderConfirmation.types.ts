@@ -65,8 +65,13 @@ export type OrderActionInput = {
   correlationId: string;
 };
 
+export type OrderActionQueueJob = Omit<OrderActionInput, "actionToken"> & {
+  encryptedActionToken: string;
+  actionTokenDigest: string;
+};
+
 export type OrderConfirmationJob =
   | { type: "PROCESS_EVENT"; eventId: number; correlationId: string }
   | { type: "SEND_NOTIFICATION"; notificationId: number; correlationId: string }
-  | ({ type: "PROCESS_ACTION" } & OrderActionInput)
+  | ({ type: "PROCESS_ACTION" } & OrderActionQueueJob)
   | { type: "SYNC_STORE"; syncId: number; correlationId: string };

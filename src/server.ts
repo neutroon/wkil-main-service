@@ -31,6 +31,7 @@ import { startBillingQueue, billingWorker } from "@modules/billing/billing.queue
 import {
   orderConfirmationWorker,
   startOrderConfirmationQueue,
+  stopOrderConfirmationQueue,
 } from "@modules/order-confirmation/orderConfirmation.worker";
 import { logger } from "@utils/logger";
 import prisma from "@config/prisma";
@@ -88,6 +89,7 @@ const gracefulShutdown = async (signal: string) => {
     }
 
     // 3. Gracefully close BullMQ Workers to prevent job corruption
+    stopOrderConfirmationQueue();
     const workers = [
       expressWorker,
       productionWorker,
@@ -138,6 +140,5 @@ process.on("uncaughtException", (err: any) => {
     stack: err?.stack,
   });
 });
-
 
 

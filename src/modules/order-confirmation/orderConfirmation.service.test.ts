@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   findOrderEventForProcessing: vi.fn(),
   createOrderConfirmationWorkflow: vi.fn(),
+  markOrderEventProcessed: vi.fn(),
   markOrderEventRecoverable: vi.fn(),
   claimOrderAction: vi.fn(),
   createAcknowledgementNotification: vi.fn(),
@@ -25,6 +26,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("./orderConfirmation.repository", () => ({
   findOrderEventForProcessing: mocks.findOrderEventForProcessing,
   createOrderConfirmationWorkflow: mocks.createOrderConfirmationWorkflow,
+  markOrderEventProcessed: mocks.markOrderEventProcessed,
   markOrderEventRecoverable: mocks.markOrderEventRecoverable,
   claimOrderAction: mocks.claimOrderAction,
   createAcknowledgementNotification: mocks.createAcknowledgementNotification,
@@ -122,6 +124,7 @@ describe("order confirmation workflow", () => {
       notification: { id: 18 },
     });
     mocks.enqueueNotification.mockResolvedValue(undefined);
+    mocks.markOrderEventProcessed.mockResolvedValue(undefined);
     mocks.markNotificationSending.mockResolvedValue(true);
     mocks.markNotificationSent.mockResolvedValue(undefined);
   });
@@ -145,6 +148,7 @@ describe("order confirmation workflow", () => {
       "raw-cancel-token",
     );
     expect(mocks.enqueueNotification).toHaveBeenCalledWith(18, expect.any(String));
+    expect(mocks.markOrderEventProcessed).toHaveBeenCalledWith(101, 12);
   });
 
   it("does not enqueue a second notification when the event was already processed", async () => {
@@ -162,12 +166,27 @@ describe("order confirmation workflow", () => {
     mocks.createOrderConfirmationWorkflow.mockResolvedValue({
       created: false,
       shouldEnqueueNotification: true,
+      order: { id: 12, status: "AWAITING_CONFIRMATION" },
       notification: { id: 18 },
     });
 
     await processOrderEvent(101);
 
     expect(mocks.enqueueNotification).toHaveBeenCalledWith(18, expect.any(String));
+    expect(mocks.markOrderEventProcessed).toHaveBeenCalledWith(101, 12);
+  });
+
+  it("leaves the event recoverable when notification enqueue fails", async () => {
+    mocks.findOrderEventForProcessing.mockResolvedValue(eventRecord);
+    mocks.enqueueNotification.mockRejectedValueOnce(new Error("queue unavailable"));
+
+    await expect(processOrderEvent(101)).rejects.toThrow("queue unavailable");
+
+    expect(mocks.markOrderEventRecoverable).toHaveBeenCalledWith(
+      101,
+      "queue unavailable",
+    );
+    expect(mocks.markOrderEventProcessed).not.toHaveBeenCalled();
   });
 
   it("lets only the first action transition the order and enqueue an acknowledgement", async () => {
@@ -180,18 +199,17 @@ describe("order confirmation workflow", () => {
         businessProfileId: 11,
         locale: "en",
         storeSyncEnabled: true,
+        acknowledgement: { id: 19, status: "QUEUED", attemptCount: 0 },
+        shouldEnqueueAcknowledgement: true,
       })
       .mockResolvedValueOnce({
         applied: false,
         orderId: 12,
         action: "CANCEL",
         currentStatus: "CONFIRMED",
+        acknowledgement: { id: 19, status: "SENT", attemptCount: 1 },
+        shouldEnqueueAcknowledgement: false,
       });
-    mocks.createAcknowledgementNotification.mockResolvedValue({
-      created: true,
-      notification: { id: 19 },
-    });
-    mocks.createPendingStoreSync.mockResolvedValue({ id: 20 });
 
     await expect(processOrderAction(actionInput)).resolves.toMatchObject({ applied: true });
     await expect(
@@ -199,7 +217,44 @@ describe("order confirmation workflow", () => {
     ).resolves.toMatchObject({ applied: false, currentStatus: "CONFIRMED" });
 
     expect(mocks.enqueueNotification).toHaveBeenCalledTimes(1);
-    expect(mocks.createPendingStoreSync).toHaveBeenCalledTimes(1);
+    expect(mocks.createAcknowledgementNotification).not.toHaveBeenCalled();
+    expect(mocks.createPendingStoreSync).not.toHaveBeenCalled();
+  });
+
+  it("re-enqueues an existing acknowledgement after the first enqueue fails", async () => {
+    mocks.claimOrderAction
+      .mockResolvedValueOnce({
+        applied: true,
+        orderId: 12,
+        action: "CONFIRM",
+        currentStatus: "CONFIRMED",
+        businessProfileId: 11,
+        locale: "en",
+        acknowledgement: { id: 19, status: "QUEUED", attemptCount: 0 },
+        shouldEnqueueAcknowledgement: true,
+      })
+      .mockResolvedValueOnce({
+        applied: false,
+        orderId: 12,
+        action: "CONFIRM",
+        currentStatus: "CONFIRMED",
+        businessProfileId: 11,
+        acknowledgement: { id: 19, status: "QUEUED", attemptCount: 0 },
+        shouldEnqueueAcknowledgement: true,
+      });
+    mocks.enqueueNotification
+      .mockRejectedValueOnce(new Error("queue unavailable"))
+      .mockResolvedValueOnce(undefined);
+
+    await expect(processOrderAction(actionInput)).rejects.toThrow("queue unavailable");
+    await expect(processOrderAction(actionInput)).resolves.toMatchObject({
+      applied: false,
+      currentStatus: "CONFIRMED",
+    });
+
+    expect(mocks.enqueueNotification).toHaveBeenCalledTimes(2);
+    expect(mocks.enqueueNotification).toHaveBeenNthCalledWith(1, 19, "corr-1");
+    expect(mocks.enqueueNotification).toHaveBeenNthCalledWith(2, 19, "corr-1");
   });
 
   it("marks a notification SENDING before the provider call and SENT after success", async () => {

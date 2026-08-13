@@ -12,6 +12,8 @@ import { acquireBusinessSendPermit } from "./orderConfirmation.rateLimit";
 import {
   findActiveWhatsAppSuppression,
   findNotificationForSending,
+  markNotificationAttempted,
+  prepareOrderActionTokensForSend,
   saveNotificationRenderedVariables,
   type OrderNotificationForSending,
 } from "./orderConfirmation.repository";
@@ -21,7 +23,7 @@ import {
   validateOrderTemplateMapping,
   type OrderTemplateConfig,
 } from "./orderConfirmation.template.service";
-import type { OrderAction } from "./orderConfirmation.types";
+import { hashOrderActionToken } from "./orderConfirmation.crypto";
 
 export class OrderConfirmationRateLimitError extends Error {
   readonly code = "ORDER_CONFIRMATION_RATE_LIMIT";
@@ -56,7 +58,7 @@ function isGlobalSwitchEnabled(value: string): boolean {
   return !["false", "0", "off", "disabled", "no"].includes(value.trim().toLowerCase());
 }
 
-async function ensureOutboundSendAllowed(
+async function ensureGlobalAndSuppressionAllowed(
   notification: OrderNotificationForSending,
 ): Promise<void> {
   const enabled = await getSystemSetting("order_confirmations_global_enabled", "true");
@@ -72,10 +74,6 @@ async function ensureOutboundSendAllowed(
     throw new OrderConfirmationSuppressedError(suppression.reason);
   }
 
-  const retryAfterMs = await acquireBusinessSendPermit(notification.businessProfileId);
-  if (retryAfterMs !== null) {
-    throw new OrderConfirmationRateLimitError(retryAfterMs);
-  }
 }
 
 function getAccount(notification: OrderNotificationForSending) {
@@ -90,22 +88,6 @@ async function getTemplateConfig(
   notification: OrderNotificationForSending,
   accountId: number,
 ): Promise<OrderTemplateConfig> {
-  if (notification.templateConfig) {
-    return Promise.resolve({
-      id: notification.templateConfig.id,
-      businessProfileId: notification.businessProfileId,
-      whatsappAccountId: accountId,
-      eventType: "order.created",
-      locale: notification.locale,
-      templateName: notification.templateConfig.templateName,
-      languageCode: notification.templateConfig.languageCode,
-      templateVersion: 1,
-      isActive: true,
-      approvalStatus: "APPROVED",
-      variableMapping: notification.templateConfig.variableMapping as any,
-    });
-  }
-
   const locales = [notification.locale, notification.order.integration.defaultLocale]
     .filter((locale, index, all) => locale.length > 0 && all.indexOf(locale) === index);
   let lastError: unknown;
@@ -113,6 +95,7 @@ async function getTemplateConfig(
     try {
       return await resolveActiveTemplateConfig({
         integrationId: notification.order.integration.id,
+        businessProfileId: notification.businessProfileId,
         whatsappAccountId: accountId,
         locale,
         eventType: "order.created",
@@ -144,17 +127,6 @@ function orderPreview(
   return details ? `Order ${orderNumber}: ${details}` : `Order ${orderNumber}`;
 }
 
-function actionTokenHash(
-  notification: OrderNotificationForSending,
-  action: OrderAction,
-): string {
-  const token = notification.actionTokens.find((candidate) => candidate.action === action);
-  if (!token?.tokenHash) {
-    throw new Error(`Missing ${action} action token for order notification`);
-  }
-  return token.tokenHash;
-}
-
 export async function sendConfirmationNotification(notificationId: number): Promise<{
   providerMessageId: string;
   previewText: string;
@@ -162,19 +134,31 @@ export async function sendConfirmationNotification(notificationId: number): Prom
   const notification = await findNotificationForSending(notificationId);
   if (!notification) throw new Error("Order notification not found");
 
-  await ensureOutboundSendAllowed(notification);
+  await ensureGlobalAndSuppressionAllowed(notification);
 
   const account = getAccount(notification);
   const templateConfig = await getTemplateConfig(notification, account.id);
-  validateOrderTemplateMapping(templateConfig.variableMapping);
+  validateOrderTemplateMapping(templateConfig.variableMapping, true);
+  const actionTokens = await prepareOrderActionTokensForSend(notificationId);
+  if (
+    hashOrderActionToken(actionTokens.confirmToken) !== actionTokens.confirmTokenHash ||
+    hashOrderActionToken(actionTokens.cancelToken) !== actionTokens.cancelTokenHash
+  ) {
+    throw new Error("Prepared order action token verification failed");
+  }
+  const accessToken = decryptFacebookSecret(account.accessToken);
   const rendered = renderOrderTemplateVariables(
     notification.order as any,
     templateConfig.variableMapping,
     {
-      confirm: actionTokenHash(notification, "CONFIRM"),
-      cancel: actionTokenHash(notification, "CANCEL"),
+      confirm: actionTokens.confirmToken,
+      cancel: actionTokens.cancelToken,
     },
+    templateConfig.locale,
   );
+  if (!rendered.buttons?.confirm || !rendered.buttons.cancel) {
+    throw new Error("Confirm and Cancel payloads are required");
+  }
   const components = [
     {
       type: "body",
@@ -184,26 +168,27 @@ export async function sendConfirmationNotification(notificationId: number): Prom
       type: "button",
       sub_type: "quick_reply",
       index: "0",
-      parameters: [{ type: "payload", payload: rendered.buttons?.confirm }],
+      parameters: [{ type: "payload", payload: rendered.buttons.confirm }],
     },
     {
       type: "button",
       sub_type: "quick_reply",
       index: "1",
-      parameters: [{ type: "payload", payload: rendered.buttons?.cancel }],
+      parameters: [{ type: "payload", payload: rendered.buttons.cancel }],
     },
   ];
 
   await saveNotificationRenderedVariables(notificationId, {
     body: rendered.body,
     previewText: orderPreview(notification, rendered.body),
-    buttonPayloads: {
-      confirm: rendered.buttons?.confirm,
-      cancel: rendered.buttons?.cancel,
-    },
+    buttonMapping: ["confirmToken", "cancelToken"],
   });
 
-  const accessToken = decryptFacebookSecret(account.accessToken);
+  const retryAfterMs = await acquireBusinessSendPermit(notification.businessProfileId);
+  if (retryAfterMs !== null) {
+    throw new OrderConfirmationRateLimitError(retryAfterMs);
+  }
+  await markNotificationAttempted(notificationId);
   const response = await sendWhatsAppTemplate(
     notification.order.customerPhone,
     templateConfig.templateName,
@@ -251,11 +236,16 @@ export async function sendAcknowledgementNotification(notificationId: number): P
   const notification = await findNotificationForSending(notificationId);
   if (!notification) throw new Error("Order notification not found");
 
-  await ensureOutboundSendAllowed(notification);
+  await ensureGlobalAndSuppressionAllowed(notification);
 
   const account = getAccount(notification);
   const previewText = acknowledgementText(notification);
   const accessToken = decryptFacebookSecret(account.accessToken);
+  const retryAfterMs = await acquireBusinessSendPermit(notification.businessProfileId);
+  if (retryAfterMs !== null) {
+    throw new OrderConfirmationRateLimitError(retryAfterMs);
+  }
+  await markNotificationAttempted(notificationId);
   const response = await sendWhatsAppReply(
     notification.order.customerPhone,
     previewText,

@@ -573,8 +573,48 @@ export async function processMetaMessage(
     traceBusinessProfileId = businessProfileId;
     logger.info("meta.processor.identity_resolved", { 
       businessProfileId, 
-      tokenSnippet: accessToken.substring(0, 10) + "..." 
+      tokenSnippet: accessToken.substring(0, 10) + "..."
     });
+
+    const shouldRecordWhatsAppOptOut =
+      platform === "whatsapp" &&
+      !job.isFromBusiness &&
+      (type === "text" || type === undefined) &&
+      isWhatsAppOptOut(messageText || "");
+    const normalizedOptOutPhone = shouldRecordWhatsAppOptOut
+      ? normalizeWhatsAppPhone(job.customerPhone || senderId)
+      : undefined;
+    const recordWhatsAppOptOut = async (conversationId?: number) => {
+      if (!normalizedOptOutPhone) return;
+
+      await prisma.whatsAppSuppression.upsert({
+        where: {
+          businessProfileId_normalizedPhone: {
+            businessProfileId,
+            normalizedPhone: normalizedOptOutPhone,
+          },
+        },
+        update: {
+          reason: "CUSTOMER_OPT_OUT",
+          source: "WHATSAPP",
+          clearedAt: null,
+        },
+        create: {
+          businessProfileId,
+          normalizedPhone: normalizedOptOutPhone,
+          reason: "CUSTOMER_OPT_OUT",
+          source: "WHATSAPP",
+        },
+      });
+      traceOutcome = "whatsapp_opt_out_recorded";
+      logger.info("meta.processor.whatsapp_opt_out_recorded", {
+        businessProfileId,
+        normalizedPhone: normalizedOptOutPhone,
+        conversationId,
+        externalId,
+        normalizedText: normalizeOptOutText(messageText || ""),
+      });
+    };
 
     // 2. Idempotency Check
     if (externalId) {
@@ -585,6 +625,10 @@ export async function processMetaMessage(
         }),
       );
       if (existing) {
+        if (shouldRecordWhatsAppOptOut) {
+          await recordWhatsAppOptOut();
+          return;
+        }
         traceOutcome = "duplicate_message";
         logger.info("meta.processor.message_already_exists", { externalId });
         return;
@@ -683,40 +727,8 @@ export async function processMetaMessage(
       }),
     );
 
-    if (
-      platform === "whatsapp" &&
-      !job.isFromBusiness &&
-      (type === "text" || type === undefined) &&
-      isWhatsAppOptOut(messageText || "")
-    ) {
-      const normalizedPhone = normalizeWhatsAppPhone(job.customerPhone || senderId);
-      await prisma.whatsAppSuppression.upsert({
-        where: {
-          businessProfileId_normalizedPhone: {
-            businessProfileId,
-            normalizedPhone,
-          },
-        },
-        update: {
-          reason: "CUSTOMER_OPT_OUT",
-          source: "WHATSAPP",
-          clearedAt: null,
-        },
-        create: {
-          businessProfileId,
-          normalizedPhone,
-          reason: "CUSTOMER_OPT_OUT",
-          source: "WHATSAPP",
-        },
-      });
-      traceOutcome = "whatsapp_opt_out_recorded";
-      logger.info("meta.processor.whatsapp_opt_out_recorded", {
-        businessProfileId,
-        normalizedPhone,
-        conversationId: conversation.id,
-        externalId,
-        normalizedText: normalizeOptOutText(messageText || ""),
-      });
+    if (shouldRecordWhatsAppOptOut) {
+      await recordWhatsAppOptOut(conversation.id);
       return;
     }
 

@@ -95,6 +95,22 @@ export function createBullMqJobId(...parts: Array<string | number | null | undef
   );
 }
 
+function summarizeMetaQueuePayload(payload: any): Record<string, string | number> {
+  const summary: Record<string, string | number> = {};
+
+  if (typeof payload?.platform === "string") summary.platform = payload.platform;
+  if (typeof payload?.type === "string") summary.type = payload.type;
+  if (typeof payload?.identifier === "string") summary.identifier = payload.identifier;
+  if (typeof payload?.phoneNumberId === "string") summary.phoneNumberId = payload.phoneNumberId;
+  if (typeof payload?.pageId === "string") summary.pageId = payload.pageId;
+  if (Number.isInteger(payload?.businessProfileId)) {
+    summary.businessProfileId = payload.businessProfileId;
+  }
+  if (typeof payload?.externalId === "string") summary.externalId = payload.externalId;
+
+  return summary;
+}
+
 /**
  * Enqueues a job into the appropriate BullMQ lane.
  */
@@ -128,7 +144,10 @@ export async function enqueueMetaJob(
       counts,
     });
   } catch (err: any) {
-    logger.error("meta.queue.add_failed", { error: err.message, payload });
+    logger.error("meta.queue.add_failed", {
+      error: err.message,
+      summary: summarizeMetaQueuePayload(payload),
+    });
     throw err;
   }
 }
@@ -458,7 +477,6 @@ function hashJobText(text: string): string {
   }
   return Math.abs(hash).toString(36);
 }
-
 
 
 

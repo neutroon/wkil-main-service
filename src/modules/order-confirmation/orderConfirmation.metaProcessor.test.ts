@@ -226,4 +226,34 @@ describe("WhatsApp order action routing and suppression", () => {
     expect(mocks.computeBusinessChatReply).not.toHaveBeenCalled();
     expect(mocks.startConversationAiRun).not.toHaveBeenCalled();
   });
+
+  it("records suppression when the same opt-out webhook retries after an upsert failure", async () => {
+    mocks.getOrCreateConversation.mockResolvedValue({ id: 77, aiEnabled: true });
+    mocks.conversationMessageFindFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 88 });
+    mocks.suppressionUpsert
+      .mockRejectedValueOnce(new Error("suppression unavailable"))
+      .mockResolvedValueOnce({ id: 99 });
+
+    const job = {
+      platform: "whatsapp" as const,
+      identifier: "phone-number-id",
+      phoneNumberId: "phone-number-id",
+      businessProfileId: 11,
+      senderId: "+201001234567",
+      customerPhone: "+201001234567",
+      messageText: "STOP",
+      type: "text",
+      externalId: "wamid-retry-1",
+    };
+
+    await expect(processMetaMessage(job)).rejects.toThrow("suppression unavailable");
+    await expect(processMetaMessage(job)).resolves.toBeUndefined();
+
+    expect(mocks.saveMessage).toHaveBeenCalledTimes(1);
+    expect(mocks.suppressionUpsert).toHaveBeenCalledTimes(2);
+    expect(mocks.computeBusinessChatReply).not.toHaveBeenCalled();
+    expect(mocks.startConversationAiRun).not.toHaveBeenCalled();
+  });
 });

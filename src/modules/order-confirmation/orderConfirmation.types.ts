@@ -1,5 +1,7 @@
 export type OrderAction = "CONFIRM" | "CANCEL";
 
+export type OrderStatus = "AWAITING_CONFIRMATION" | "CONFIRMED" | "CANCELED";
+
 export type OrderTemplateField =
   | "customerName"
   | "orderNumber"

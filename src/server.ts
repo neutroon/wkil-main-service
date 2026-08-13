@@ -28,6 +28,10 @@ import {
 import { startMediaRefreshJob } from "@modules/media/mediaRefresh.job";
 import { socialWorker } from "@modules/content/social.worker"; 
 import { startBillingQueue, billingWorker } from "@modules/billing/billing.queue";
+import {
+  orderConfirmationWorker,
+  startOrderConfirmationQueue,
+} from "@modules/order-confirmation/orderConfirmation.worker";
 import { logger } from "@utils/logger";
 import prisma from "@config/prisma";
 import { startCacheBusSubscriber, stopCacheBusSubscriber } from "@config/cache-bus";
@@ -59,6 +63,7 @@ void (async () => {
     // Start the background queue loop for delayed/scheduled jobs
     startMetaQueue();
     startBillingQueue();
+    startOrderConfirmationQueue();
     // Daily WhatsApp media ID refresh (expires after 30 days)
     startMediaRefreshJob();
   });
@@ -83,7 +88,13 @@ const gracefulShutdown = async (signal: string) => {
     }
 
     // 3. Gracefully close BullMQ Workers to prevent job corruption
-    const workers = [expressWorker, productionWorker, socialWorker, billingWorker];
+    const workers = [
+      expressWorker,
+      productionWorker,
+      socialWorker,
+      billingWorker,
+      orderConfirmationWorker,
+    ];
     for (const worker of workers) {
       if (worker && typeof worker.close === "function") {
         await worker.close();
@@ -127,7 +138,6 @@ process.on("uncaughtException", (err: any) => {
     stack: err?.stack,
   });
 });
-
 
 
 

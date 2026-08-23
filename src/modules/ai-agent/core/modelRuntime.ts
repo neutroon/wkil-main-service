@@ -430,6 +430,49 @@ export async function invokeDecisionOrTool(params: {
   };
 }
 
+export async function streamDecisionOrTool(params: {
+  systemInstruction: string;
+  contents: AgentContent[];
+  tools: AgentToolDefinition[];
+  temperature?: number;
+  timeoutMs?: number;
+  pipeline?: string;
+  onTextDelta?: (delta: string) => void;
+}): Promise<DecisionOrToolResult> {
+  const messages = toLangChainMessages(params.contents, params.systemInstruction);
+
+  const { result: aggregated, model } = await executeWithModelFallback<any>(
+    async (tier, abortSignal, ctx) => {
+      const llm = createChatModel({
+        tier,
+        temperature: params.temperature ?? 0.4,
+        maxOutputTokens: ctx.defaultMaxOutputTokens ?? undefined,
+      }) as any;
+      const stream = await llm
+        .bindTools(params.tools as any)
+        .stream(messages, { signal: abortSignal } as any);
+      let final: any;
+      for await (const chunk of stream) {
+        const delta = contentToText(chunk?.content);
+        if (delta) params.onTextDelta?.(delta);
+        final = final ? final.concat(chunk) : chunk;
+      }
+      return final;
+    },
+    "Copilot.streamDecisionOrTool",
+    params.timeoutMs,
+    params.pipeline ?? "copilot",
+  );
+
+  return {
+    toolCalls: readToolCalls(aggregated),
+    rawText: contentToText(aggregated?.content),
+    usage: readUsage(aggregated),
+    modelName: model,
+    finishReason: readFinishReason(aggregated),
+  };
+}
+
 export function buildDecisionOrToolSystemInstruction(
   systemInstruction: string,
 ): string {

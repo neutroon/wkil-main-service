@@ -32,5 +32,16 @@ export const postCopilotMessageController = async (req: Request, res: Response) 
   const { text } = (req as any).body as { text: string };
   const locale = detectLocale(req);
   const result = await runCopilotTurn({ userId, text, locale });
-  res.status(200).json({ data: result });
+  if (!result.ok) {
+    res.status(500).json({ error: { code: result.code, message: result.message, retryable: result.retryable } });
+    return;
+  }
+  res.status(200).json({
+    data: {
+      conversationId: result.conversationId,
+      envelopes: result.envelopes,
+      truncated: result.truncated,
+      ...(result.expectedTotal !== null ? { expectedTotal: result.expectedTotal } : {}),
+    },
+  });
 };

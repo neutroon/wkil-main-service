@@ -36,6 +36,14 @@ const SEED_PIPELINES: SeedPipeline[] = [
     inheritsChatDefault: true, // chat IS the anchor; resolves from the AiModel chat tiers
   },
   {
+    key: "copilot",
+    displayName: "Owner Copilot",
+    description:
+      "Chat-first owner experience: dashboard copilot Q&A, actions and onboarding interview.",
+    modelClass: "text",
+    inheritsChatDefault: true,
+  },
+  {
     key: "media_understanding",
     displayName: "Media Understanding",
     description:

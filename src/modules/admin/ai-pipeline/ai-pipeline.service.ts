@@ -33,6 +33,7 @@ import {
 // ── Canonical pipeline keys (shared vocabulary across the backend) ────────────
 export const PIPELINE_KEYS = [
   "chat",
+  "copilot",
   "media_understanding",
   "follow_up",
   "content",

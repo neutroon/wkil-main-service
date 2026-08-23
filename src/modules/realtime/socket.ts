@@ -509,4 +509,14 @@ export function emitToBusiness(businessProfileId: number, event: string, data: u
   emitToRoom(`business:${businessProfileId}`, event, data);
 }
 
+/**
+ * Emit a message to the owner's copilot room (`copilot:<userId>`).
+ * Task 9 extends this with `authorizeCopilotRoomJoin` and a `join_copilot`
+ * socket handler; for now the copilot graph (Task 8) just needs the room
+ * emission so it can push progress/delta/text envelopes.
+ */
+export function emitToCopilot(userId: number, event: string, data: unknown) {
+  emitToRoom(`copilot:${userId}`, event, data);
+}
+
 

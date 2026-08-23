@@ -58,6 +58,15 @@ void (async () => {
   await initFcm();
 
   await startCacheBusSubscriber();
+
+  // D1: wire the previously-unused PostgresSaver so the copilot graph can checkpoint.
+  try {
+    const { checkpointer } = await import("@modules/ai-agent/core/checkpointer");
+    await checkpointer.setup();
+    logger.info("copilot.checkpointer_ready");
+  } catch (e: any) {
+    logger.error("copilot.checkpointer_setup_failed", { error: e?.message });
+  }
   server = httpServer.listen(PORT, "0.0.0.0", () => {
     logger.info(`Server running on port ${PORT}`);
 

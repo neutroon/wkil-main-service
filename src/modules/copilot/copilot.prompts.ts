@@ -10,7 +10,8 @@ const EN_LOCALE_BLOCK = "Always answer in English. Keep replies short and friend
 
 const TOOL_RULES = `Tool rules:
 - Call a tool only when its data is required; never invent numbers.
-- For read tools (get_overview_stats, get_leads, get_conversations_needing_attention, get_customer, get_ai_usage) call directly when the owner asks about their business.
+- For overview queries ("how are things going", "today's numbers", "show me stats/leads/attention"), call get_overview once with the relevant sections — do NOT call separate tools for stats, leads, and attention.
+- For get_customer and get_ai_usage, call directly when the owner asks about a specific customer or their usage.
 - For onboarding tools, follow the step ladder and call them in order after collecting the owner's answers.
 - If you don't know what to do, ask one short clarifying question.`;
 

@@ -536,7 +536,7 @@ git commit -m "feat(copilot): add envelope types and cards mapper"
 
 **Interfaces:**
 - Consumes: `getUnifiedDashboardStats` (`@modules/analytics/dashboard/dashboard.service`), `listCustomers` + `getCustomerForUser` (`@modules/business/customer/customer.service`), `getAiPerformanceStats` (`@modules/analytics/ai/analytics.service`).
-- Produces: `CopilotToolDefinition = { name: string; description: string; schema: z.ZodTypeAny; requiresConfirmation: boolean; handler: (args: any, ctx: CopilotToolContext) => Promise<unknown> }`; `CopilotToolContext = { userId: number; conversationId: number; locale: "ar" | "en" }`; `copilotTools: CopilotToolDefinition[]`; `findCopilotTool(name: string): CopilotToolDefinition | undefined`. Consumed by Task 8.
+- Produces: `CopilotToolDefinition = { name: string; description: string; schema: z.ZodTypeAny; requiresConfirmation: boolean; handler: (args: any, ctx: CopilotToolContext) => Promise<unknown> }`; `CopilotToolContext = { userId: number; conversationId: number; locale: "ar" | "en"; onProgress?: (message: string) => void }` (onProgress added now — Task 7's onboarding tools rely on it); `copilotTools: CopilotToolDefinition[]`; `findCopilotTool(name: string): CopilotToolDefinition | undefined`. Consumed by Task 8.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -555,7 +555,7 @@ vi.mock("@modules/analytics/ai/analytics.service", () => ({ getAiPerformanceStat
 import { listCustomers } from "@modules/business/customer/customer.service";
 import { copilotTools, findCopilotTool, type CopilotToolContext } from "./index";
 
-const ctx: CopilotToolContext = { userId: 5, conversationId: 7, locale: "ar" };
+const ctx: CopilotToolContext = { userId: 5, conversationId: 7, locale: "ar" }; // onProgress optional; omitted here
 
 describe("copilot tool registry", () => {
   beforeEach(() => vi.clearAllMocks());
@@ -1420,7 +1420,9 @@ git commit -m "feat(copilot): api service and socket/query hooks"
 "use client";
 import { useCallback, useState } from "react";
 import { useTranslations } from "next-intl";
+import { useQueryClient } from "@tanstack/react-query";
 import { copilotService } from "@/lib/copilot-api";
+import { COPILOT_KEYS } from "@/hooks/copilot/copilot.keys";
 import { useCopilotConversation } from "@/hooks/copilot/useCopilotConversation";
 import { useCopilotSocket } from "@/hooks/copilot/useCopilotSocket";
 import { MessageStream } from "./MessageStream";
@@ -1440,8 +1442,9 @@ export function CopilotShell() {
   const send = async (text: string) => {
     setPending(true);
     try {
-      await copilotService.postMessage(text);   // REST fallback: response arrives here
-      onStreamEnd();                             // if socket delivered first, this is a no-op
+await copilotService.postMessage(text);   // REST fallback (also persists the message server-side)
+    onStreamEnd();
+    queryClient.invalidateQueries({ queryKey: COPILOT_KEYS.messages() }); // ensure UI refetches even if socket dropped
     } catch {
       setPending(false);
       onStreamEnd();

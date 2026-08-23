@@ -1,18 +1,20 @@
-# Copilot Phase 1 — Manual QA Script
+# Copilot Overlay — Manual QA Script
 
-Run with dev servers up: backend on `:8080`, frontend on `:3000`. Test in both `/ar` and `/en`.
+Run with dev servers up: backend on `:8080`, frontend on `:3000`. Test in both `/ar` and `/en`. Requires owner login session.
 
 | # | Scenario | Expected |
 |---|---|---|
-| 1 | Log in as an owner | Lands on `/{locale}/user/copilot`, sidebar shows "وكيلك"/"Copilot" as the FIRST entry |
-| 2 | Send "Show me my numbers" | Thinking indicator → streamed text → stat-grid card |
-| 3 | Ask "مين محتاج رد مني؟" in `/ar` | Arabic reply + conversation-list card; layout fully RTL |
-| 4 | Sign up a brand-new account, first open | Onboarding interview starts (business_info step) |
-| 5 | Give website URL during onboarding | progress envelope, then extracted identity summary |
-| 6 | Complete onboarding (`finish_onboarding`) | Thread continues as general copilot (kind flips to GENERAL) |
-| 7 | Disconnect network mid-reply, reconnect | Final envelopes appear after refetch (REST history) |
-| 8 | Exhaust quota (or mock 402) | Clear quota error envelope, no crash; UI shows error card |
-| 9 | Spam 61+ messages/hour | `429` from `copilotLimiter` |
-| 10 | `/user/dashboard` directly | Old dashboard still renders and works |
-| 11 | Already-authenticated owner visits `/auth/login` | Redirects to `/user/copilot`, not `/user/dashboard` |
-| 12 | New browser tab while chat is streaming | On reconnect, messages refetch via React Query invalidation |
+| 1 | Land on `/user/dashboard` | FAB visible bottom-right, no overlay open |
+| 2 | Click FAB | Overlay expands full-screen, backdrop blocks page, scroll-locked |
+| 3 | Send "Show me my numbers" | Stat-grid card with real values (no `—` for actual zeros) |
+| 4 | Ask "مين محتاج رد مني؟" in `/ar` | Conversation-list card; full RTL |
+| 5 | Click minimize | Bottom strip remains, page interactive, scroll restored |
+| 6 | Type in composer, navigate to `/user/customers` | Overlay stays minimized, draft preserved |
+| 7 | Navigate back to dashboard | Expand via FAB → draft still there |
+| 8 | Send the draft | Message appears + assistant streams |
+| 9 | Click sidebar `Copilot` entry | Overlay toggles expand/minimize |
+| 10 | Press `Esc` while expanded | Closes; `Esc` from `minimized` does nothing (the page underneath may handle its own Esc semantics) |
+| 11 | Hit `/user/dashboard` directly | Loads at dashboard, not at a stale overlay state (overlay state resets on hard navigation / page reload) |
+| 12 | Sign up a new owner | Onboarding interview runs inside the overlay (the onboarding-mode graph + tools are unchanged; the overlay renders the same envelopes) |
+| 13 | Verify no `—` zeros, no raw tool-output cards, no overlapping header | (Bug #1, #2, #3, #4, #5 all visually clean) |
+| 14 | Verify `/copilot` route | Returns 404 (deleted page) |

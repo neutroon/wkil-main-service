@@ -1,0 +1,75 @@
+// src/modules/copilot/copilot.store.ts
+import type { CopilotConversation, CopilotMessage, CopilotMessageRole, Prisma } from "@prisma/client";
+import prisma from "@config/prisma";
+import { AppError } from "@middlewares/errorHandler.middleware";
+
+export async function getOrCreateCopilotConversation(
+  userId: number,
+  locale: string,
+): Promise<CopilotConversation> {
+  const existing = await prisma.copilotConversation.findFirst({
+    where: { userId },
+    orderBy: { lastMessageAt: "desc" },
+  });
+  if (existing) return existing;
+  return prisma.copilotConversation.create({ data: { userId, locale } });
+}
+
+export async function getCopilotConversationForUser(
+  conversationId: number,
+  userId: number,
+): Promise<CopilotConversation> {
+  const conversation = await prisma.copilotConversation.findFirst({
+    where: { id: conversationId, userId },
+  });
+  if (!conversation) throw new AppError("Copilot conversation not found", 404);
+  return conversation;
+}
+
+export async function appendCopilotMessage(params: {
+  conversationId: number;
+  role: CopilotMessageRole;
+  envelope: unknown;
+}): Promise<CopilotMessage> {
+  const message = await prisma.copilotMessage.create({
+    data: {
+      conversationId: params.conversationId,
+      role: params.role,
+      envelope: params.envelope as Prisma.InputJsonValue,
+    },
+  });
+  await prisma.copilotConversation.update({
+    where: { id: params.conversationId },
+    data: { lastMessageAt: new Date() },
+  });
+  return message;
+}
+
+export async function listCopilotMessages(
+  conversationId: number,
+  limit: number = 20,
+): Promise<CopilotMessage[]> {
+  const rows = await prisma.copilotMessage.findMany({
+    where: { conversationId },
+    orderBy: { createdAt: "desc" },
+    take: limit,
+  });
+  return rows.reverse();
+}
+
+export async function setCopilotOnboardingStep(
+  conversationId: number,
+  step: string,
+): Promise<void> {
+  await prisma.copilotConversation.update({
+    where: { id: conversationId },
+    data: { onboardingStep: step },
+  });
+}
+
+export async function completeCopilotOnboarding(conversationId: number): Promise<void> {
+  await prisma.copilotConversation.update({
+    where: { id: conversationId },
+    data: { kind: "GENERAL", onboardingStep: "done" },
+  });
+}

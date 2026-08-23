@@ -26,12 +26,40 @@ describe("copilot tool registry", () => {
     }
   });
 
-  it("get_conversations_needing_attention queries handoff customers", async () => {
-    await findCopilotTool("get_conversations_needing_attention")!.handler({ limit: 5 }, ctx);
+  it("get_overview with sections=attention queries handoff customers", async () => {
+    await findCopilotTool("get_overview")!.handler({ sections: ["attention"], limit: 5 }, ctx);
+    expect(listCustomers).toHaveBeenCalledWith(expect.objectContaining({ userId: 5, status: "handoff" }));
+  });
+
+  it("get_overview with all sections queries both endpoints", async () => {
+    await findCopilotTool("get_overview")!.handler({ sections: ["stats", "leads", "attention"], days: 30, limit: 10 }, ctx);
+    expect(listCustomers).toHaveBeenCalledWith(expect.objectContaining({ userId: 5, page: 1, limit: 10 }));
     expect(listCustomers).toHaveBeenCalledWith(expect.objectContaining({ userId: 5, status: "handoff" }));
   });
 
   it("tool handlers surface service errors instead of swallowing them", async () => {
     await expect(findCopilotTool("get_customer")!.handler({ customerId: 1 }, ctx)).rejects.toThrow("Customer not found");
+  });
+});
+
+describe("get_overview", () => {
+  it("returns all 3 sections by default", async () => {
+    const { getOverviewTool } = await import("./getOverview.tool");
+    const ctx: any = { userId: 5 };
+    const args: any = getOverviewTool.schema.parse({});
+    const result: any = await getOverviewTool.handler(args, ctx);
+    expect(result).toHaveProperty("stats");
+    expect(result).toHaveProperty("leads");
+    expect(result).toHaveProperty("attention");
+  });
+
+  it("returns only requested sections", async () => {
+    const { getOverviewTool } = await import("./getOverview.tool");
+    const ctx: any = { userId: 5 };
+    const args: any = getOverviewTool.schema.parse({ sections: ["stats"] });
+    const result: any = await getOverviewTool.handler(args, ctx);
+    expect(result).toHaveProperty("stats");
+    expect(result).not.toHaveProperty("leads");
+    expect(result).not.toHaveProperty("attention");
   });
 });

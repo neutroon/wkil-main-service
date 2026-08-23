@@ -3,32 +3,40 @@ import { describe, expect, it } from "vitest";
 import { envelopesForToolResult } from "./copilot.cards";
 
 describe("envelopesForToolResult", () => {
-  it("maps unified stats to a stat-grid", () => {
-    const envs = envelopesForToolResult("get_overview_stats", {
-      totalMessages: 120, aiAutomationRate: 0.82, leadVelocity: 6, avgResponseTime: "2m",
-    });
+  it("maps get_overview with all 3 sections to stat-grid + conversation-list + lead-list in order", () => {
+    const result = {
+      stats: { totalMessages: 10, aiAutomationRate: 0.5, leadVelocity: 3, avgResponseTime: "2m" },
+      attention: { data: [{ id: 1, name: "Alice", channel: "messenger", lastHandoffCategory: "sales", preview: "hi" }] },
+      leads: { data: [{ id: 2, name: "Bob" }], meta: { total: 1 } },
+    };
+    const envs = envelopesForToolResult("get_overview", result);
+    expect(envs).toHaveLength(3);
     expect(envs[0]!.type).toBe("stat-grid");
-    expect((envs[0] as any).items.length).toBeGreaterThan(0);
+    expect(envs[1]!.type).toBe("conversation-list");
+    expect(envs[2]!.type).toBe("lead-list");
   });
 
-  it("maps customers to a lead-list", () => {
-    const envs = envelopesForToolResult("get_leads", {
-      data: [{ id: 1, name: "Mona", channel: "whatsapp", createdAt: "2026-08-20" }],
-      meta: { total: 1 },
+  it("maps get_overview with only stats to a single stat-grid", () => {
+    const envs = envelopesForToolResult("get_overview", {
+      stats: { totalMessages: 0, aiAutomationRate: 0, leadVelocity: 0, avgResponseTime: "—" },
     });
-    expect(envs[0]).toMatchObject({ type: "lead-list", leads: [{ id: 1, name: "Mona" }] });
+    expect(envs).toHaveLength(1);
+    expect(envs[0]!.type).toBe("stat-grid");
   });
 
-  it("maps handoff customers to a conversation-list", () => {
-    const envs = envelopesForToolResult("get_conversations_needing_attention", {
-      data: [{ id: 3, name: "Omar", lastHandoffCategory: "complaint" }],
-    });
-    expect(envs[0]!.type).toBe("conversation-list");
+  it("emits 0 envelopes when get_overview has no sections", () => {
+    const envs = envelopesForToolResult("get_overview", {});
+    expect(envs).toHaveLength(0);
   });
 
   it("formats a single customer as text", () => {
     const envs = envelopesForToolResult("get_customer", { name: "Yara", phone: "+20…" });
     expect(envs[0]).toMatchObject({ type: "text" });
+  });
+
+  it("maps get_ai_usage to a stat-grid", () => {
+    const envs = envelopesForToolResult("get_ai_usage", { totalTokens: 100, embeddingTokens: 20, totalCost: 0.01 });
+    expect(envs[0]!.type).toBe("stat-grid");
   });
 
   it("returns an error envelope for unknown tools", () => {

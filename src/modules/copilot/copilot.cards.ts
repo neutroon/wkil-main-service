@@ -3,12 +3,14 @@ import type { CopilotEnvelope } from "./copilot.types";
 
 export function envelopesForToolResult(toolName: string, result: unknown): CopilotEnvelope[] {
   switch (toolName) {
-    case "get_overview_stats":
-      return [{ type: "stat-grid", items: statsItems(result) }];
-    case "get_leads":
-      return [{ type: "lead-list", leads: (result as any)?.data ?? [], total: (result as any)?.meta?.total }];
-    case "get_conversations_needing_attention":
-      return [{ type: "conversation-list", conversations: ((result as any)?.data ?? []).map(toConvRow) }];
+    case "get_overview": {
+      const r = result as any;
+      const envs: CopilotEnvelope[] = [];
+      if (r?.stats) envs.push({ type: "stat-grid", items: statsItems(r.stats) });
+      if (r?.attention) envs.push({ type: "conversation-list", conversations: ((r.attention?.data ?? []) as any[]).map(toConvRow) });
+      if (r?.leads) envs.push({ type: "lead-list", leads: r.leads?.data ?? [], total: r.leads?.meta?.total });
+      return envs;
+    }
     case "get_customer":
       return [{ type: "text", text: formatCustomer((result as any)) }];
     case "get_ai_usage":

@@ -10,7 +10,7 @@ import { buildCopilotSystemPrompt } from "./copilot.prompts";
 import { CopilotState, type CopilotStateType } from "./copilot.state";
 import { copilotTools, findCopilotTool } from "./copilot.tools";
 
-const MAX_TOOL_ROUNDS = 5;
+const MAX_TOOL_ROUNDS = 10;
 
 function emptyToolResult(name: string, error: string): { name: string; result: unknown } {
   return { name, result: { error } };
@@ -105,26 +105,44 @@ async function executeTools(state: CopilotStateType): Promise<Partial<CopilotSta
   };
 }
 
-const CAP_ERROR: Record<"ar" | "en", string> = {
-  ar: "وصلت لعدد كبير من الخطوات. حاول تاني من أول.",
-  en: "I took too many steps trying to help. Try again from the top.",
-};
-
 function buildEnvelopes(state: CopilotStateType): Partial<CopilotStateType> {
   const cards = state.toolResults.flatMap((r) => envelopesForToolResult(r.name, r.result));
   const out: CopilotStateType["envelopes"] = [...cards];
   if (state.rawText) out.push({ type: "text", text: state.rawText });
-  if (state.toolRounds >= MAX_TOOL_ROUNDS && !state.rawText) {
-    out.push({ type: "error", message: CAP_ERROR[state.locale], retryable: true });
-  }
   return { envelopes: out };
+}
+
+async function finalize(state: CopilotStateType): Promise<Partial<CopilotStateType>> {
+  const envelopes = [...state.envelopes];
+  const capHit = state.toolRounds >= MAX_TOOL_ROUNDS;
+  const hasContent = envelopes.length > 0;
+
+  if (!hasContent) {
+    // No cards, no text — emit a friendly fallback so the user never sees an
+    // empty panel. This covers the cap-hit-with-no-data case.
+    const fallback = state.locale === "ar"
+      ? "حاول تاني من أول."
+      : "Try again from the top.";
+    envelopes.push({ type: "text", text: fallback });
+    return { envelopes, truncated: false };
+  }
+
+  // We have content. If the cap was hit, mark the response as truncated so the
+  // frontend can show a "Got N of M" footer. We don't append an error envelope
+  // here because the user got real data — an error would be misleading.
+  // `expectedTotal` is the lower bound on what the model was trying to produce:
+  // each tool round contributed at least 1 envelope, plus 1 for the final
+  // assistant response that never happened (the cap cut it off).
+  const expectedTotal = capHit ? state.toolRounds + 1 : null;
+  return { envelopes, truncated: capHit, expectedTotal };
 }
 
 const workflow = new StateGraph(CopilotState)
   .addNode("loadContext", loadContext)
   .addNode("callModel", callModel)
   .addNode("executeTools", executeTools)
-  .addNode("buildEnvelopes", buildEnvelopes);
+  .addNode("buildEnvelopes", buildEnvelopes)
+  .addNode("finalize", finalize);
 
 workflow.addEdge(START, "loadContext");
 workflow.addEdge("loadContext", "callModel");
@@ -132,7 +150,8 @@ workflow.addConditionalEdges("callModel", (state) =>
   state.toolCalls.length > 0 && state.toolRounds < MAX_TOOL_ROUNDS ? "executeTools" : "buildEnvelopes"
 );
 workflow.addEdge("executeTools", "callModel");
-workflow.addEdge("buildEnvelopes", END);
+workflow.addEdge("buildEnvelopes", "finalize");
+workflow.addEdge("finalize", END);
 
 export const copilotGraph = workflow.compile({ checkpointer });
 
@@ -145,13 +164,24 @@ export async function runCopilotGraph(params: {
   envelopes: import("./copilot.types").CopilotEnvelope[];
   usage: { promptTokens: number; completionTokens: number };
   modelName: string;
+  truncated: boolean;
+  expectedTotal: number | null;
 }> {
   const final = await copilotGraph.invoke(
     // `contents` starts empty: the orchestrator persists the user message
     // before invoking (Task 10), so `loadContext` sources the full history
     // — including the new message — from the store.
     { conversationId: params.conversationId, userId: params.userId, locale: params.locale },
-    { configurable: { thread_id: `copilot-${params.conversationId}`, graph_version: "copilot-v1" } },
+    {
+      configurable: { thread_id: `copilot-${params.conversationId}`, graph_version: "copilot-v1" },
+      recursionLimit: 25,
+    },
   );
-  return { envelopes: final.envelopes, usage: final.usage, modelName: final.modelName };
+  return {
+    envelopes: final.envelopes,
+    usage: final.usage,
+    modelName: final.modelName,
+    truncated: final.truncated,
+    expectedTotal: final.expectedTotal,
+  };
 }

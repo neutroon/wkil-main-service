@@ -10,17 +10,22 @@ import {
 } from "./copilot.store";
 import type { CopilotEnvelope } from "./copilot.types";
 
-const ERROR_TEXT: Record<"ar" | "en", string> = {
-  ar: "الخدمة مش متاحة دلوقتي، جرب تاني بعد شوية.",
-  en: "The service is unavailable right now — please try again shortly.",
-};
+export type CopilotTurnResult =
+  | {
+      ok: true;
+      conversationId: number;
+      envelopes: CopilotEnvelope[];
+      truncated: boolean;
+      expectedTotal: number | null;
+    }
+  | { ok: false; code: string; message: string; retryable: boolean };
 
 export async function runCopilotTurn(params: {
   userId: number;
   text: string;
   locale: "ar" | "en";
   conversationId?: number;
-}): Promise<{ conversationId: number; envelopes: CopilotEnvelope[] }> {
+}): Promise<CopilotTurnResult> {
   const conv = params.conversationId
     ? await getCopilotConversationForUser(params.conversationId, params.userId)
     : await getOrCreateCopilotConversation(params.userId, params.locale);
@@ -32,33 +37,48 @@ export async function runCopilotTurn(params: {
     envelope: { type: "text", text: params.text },
   });
 
-  let envelopes: CopilotEnvelope[];
+  let out: Awaited<ReturnType<typeof runCopilotGraph>>;
   try {
-    const out = await runCopilotGraph({
+    out = await runCopilotGraph({
       conversationId: conv.id,
       userId: params.userId,
       locale: params.locale,
       text: params.text,
     });
-    envelopes = out.envelopes;
-    await recordAiUsage({
-      userId: params.userId,
-      modelName: out.modelName,
-      operation: "copilot_chat",
-      conversationId: String(conv.id),
-      promptTokens: out.usage.promptTokens,
-      completionTokens: out.usage.completionTokens,
-    });
   } catch (error: any) {
     logger.error("copilot.turn_failed", { conversationId: conv.id, error: error?.message });
-    envelopes = [{ type: "error", message: ERROR_TEXT[params.locale], retryable: true }];
+    return { ok: false, code: "GRAPH_FAILED", message: "The service is unavailable right now.", retryable: true };
   }
+
+  await recordAiUsage({
+    userId: params.userId,
+    modelName: out.modelName,
+    operation: "copilot_chat",
+    conversationId: String(conv.id),
+    promptTokens: out.usage.promptTokens,
+    completionTokens: out.usage.completionTokens,
+  });
 
   await appendCopilotMessage({
     conversationId: conv.id,
     role: "ASSISTANT",
-    envelope: { envelopes },
+    envelope: {
+      envelopes: out.envelopes,
+      truncated: out.truncated,
+      ...(out.expectedTotal !== null ? { expectedTotal: out.expectedTotal } : {}),
+    },
   });
-  emitToCopilot(params.userId, "copilot:message", { conversationId: conv.id, envelopes });
-  return { conversationId: conv.id, envelopes };
+  emitToCopilot(params.userId, "copilot:message", {
+    conversationId: conv.id,
+    envelopes: out.envelopes,
+    truncated: out.truncated,
+    ...(out.expectedTotal !== null ? { expectedTotal: out.expectedTotal } : {}),
+  });
+  return {
+    ok: true,
+    conversationId: conv.id,
+    envelopes: out.envelopes,
+    truncated: out.truncated,
+    expectedTotal: out.expectedTotal,
+  };
 }

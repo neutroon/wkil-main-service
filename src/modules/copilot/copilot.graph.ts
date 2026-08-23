@@ -73,7 +73,7 @@ async function executeTools(state: CopilotStateType): Promise<Partial<CopilotSta
     locale: state.locale,
     onProgress: (msg: string) => {
       state.emitProgress?.(msg);
-      emitToCopilot(state.userId, "copilot:message", { conversationId: state.conversationId, envelopes: [{ type: "progress", message: msg }] });
+      emitToCopilot(state.userId, "copilot:progress", { conversationId: state.conversationId, message: msg });
     },
   };
   for (const call of state.toolCalls as ToolCall[]) {

@@ -13,15 +13,15 @@ describe("envelopesForToolResult", () => {
 
   it("maps customers to a lead-list", () => {
     const envs = envelopesForToolResult("get_leads", {
-      customers: [{ id: 1, name: "Mona", channel: "whatsapp", createdAt: "2026-08-20" }],
-      total: 1,
+      data: [{ id: 1, name: "Mona", channel: "whatsapp", createdAt: "2026-08-20" }],
+      meta: { total: 1 },
     });
     expect(envs[0]).toMatchObject({ type: "lead-list", leads: [{ id: 1, name: "Mona" }] });
   });
 
   it("maps handoff customers to a conversation-list", () => {
     const envs = envelopesForToolResult("get_conversations_needing_attention", {
-      customers: [{ id: 3, name: "Omar", lastHandoffCategory: "complaint" }],
+      data: [{ id: 3, name: "Omar", lastHandoffCategory: "complaint" }],
     });
     expect(envs[0]!.type).toBe("conversation-list");
   });

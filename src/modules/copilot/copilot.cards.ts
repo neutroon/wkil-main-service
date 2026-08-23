@@ -6,9 +6,9 @@ export function envelopesForToolResult(toolName: string, result: unknown): Copil
     case "get_overview_stats":
       return [{ type: "stat-grid", items: statsItems(result) }];
     case "get_leads":
-      return [{ type: "lead-list", leads: (result as any)?.customers ?? [], total: (result as any)?.total }];
+      return [{ type: "lead-list", leads: (result as any)?.data ?? [], total: (result as any)?.meta?.total }];
     case "get_conversations_needing_attention":
-      return [{ type: "conversation-list", conversations: ((result as any)?.customers ?? []).map(toConvRow) }];
+      return [{ type: "conversation-list", conversations: ((result as any)?.data ?? []).map(toConvRow) }];
     case "get_customer":
       return [{ type: "text", text: formatCustomer((result as any)) }];
     case "get_ai_usage":

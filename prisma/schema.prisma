@@ -158,6 +158,8 @@ model User {
 
   // Mobile push notification device tokens (FCM)
   deviceTokens DeviceToken[]
+
+  copilotConversations CopilotConversation[]
 }
 
 /// One row per mobile app install that has registered for push
@@ -1304,4 +1306,44 @@ enum WatermarkPosition {
   BOTTOM_LEFT
   BOTTOM_RIGHT
   CENTER
+}
+
+enum CopilotConversationKind {
+  ONBOARDING
+  GENERAL
+}
+
+enum CopilotMessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+model CopilotConversation {
+  id             Int                     @id @default(autoincrement())
+  userId         Int
+  user           User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind           CopilotConversationKind @default(ONBOARDING)
+  title          String?
+  locale         String                  @default("ar")
+  onboardingStep String                  @default("business_info")
+  summary        String?
+  lastMessageAt  DateTime                @default(now())
+  createdAt      DateTime                @default(now())
+  updatedAt      DateTime                @updatedAt
+  messages       CopilotMessage[]
+
+  @@index([userId])
+}
+
+model CopilotMessage {
+  id             Int                 @id @default(autoincrement())
+  conversationId Int
+  conversation   CopilotConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           CopilotMessageRole
+  envelope       Json
+  status         String              @default("complete")
+  createdAt      DateTime            @default(now())
+
+  @@index([conversationId, createdAt])
 }

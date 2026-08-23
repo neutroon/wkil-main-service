@@ -272,6 +272,18 @@ export async function authorizeBusinessRoomJoin(
   return canAccessBusinessProfile(identity, businessProfileId);
 }
 
+export async function authorizeCopilotRoomJoin(
+  identity: SocketIdentity | undefined,
+  userId: number,
+): Promise<boolean> {
+  if (!parsePositiveInt(userId) || !identity?.user) return false;
+  return (
+    identity.user.id === userId ||
+    identity.user.role === "super_admin" ||
+    identity.user.role === "admin"
+  );
+}
+
 export async function authorizeConversationRoomJoin(
   identity: SocketIdentity | undefined,
   conversationId: number,
@@ -399,6 +411,15 @@ function attachConnectionHandlers(socket: AppSocket): void {
     const room = `business:${id}`;
     socket.join(room);
     logger.info("socket.join_room", { socketId: socket.id, room });
+  });
+
+  socket.on("join_copilot", async (userId: string | number) => {
+    const id = parsePositiveInt(userId);
+    if (!id || !(await authorizeCopilotRoomJoin(socket.data.identity, id))) {
+      logger.warn("socket.join_copilot_denied", { socketId: socket.id, userId });
+      return;
+    }
+    socket.join(`copilot:${id}`);
   });
 
   socket.on("send_message", async (data: { visitorId: string; message: string; conversationId?: number }) => {

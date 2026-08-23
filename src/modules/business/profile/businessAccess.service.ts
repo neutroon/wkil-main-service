@@ -210,6 +210,18 @@ export async function updateBusinessProfileForAdmin(
   return updateBusinessProfileRecord(profileId, body);
 }
 
+export async function updateBusinessProfileForOwner(
+  userId: number,
+  profileId: number,
+  body: BusinessProfileUpdateBody,
+) {
+  const owned = await prisma.businessProfile.findFirst({
+    where: { id: profileId, userId },
+  });
+  if (!owned) throw new AppError("Business profile not found", 404);
+  return updateBusinessProfileRecord(profileId, body);
+}
+
 export async function getBusinessProfileForManagedUser(
   managerId: number,
   profileId: number,

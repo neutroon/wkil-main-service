@@ -98,4 +98,8 @@ describe("app route mounts", () => {
       /app\.use\(authenticateToken\);\s*app\.use\(requireVerified\);\s*app\.use\(validateCsrfToken\)[\s\S]*?app\.use\("\/v1", orderConfirmationRoutes\);/,
     );
   });
+
+  it("mounts Copilot on /v1/copilot", () => {
+    expect(appSource).toContain('app.use("/v1/copilot", copilotRoutes)');
+  });
 });

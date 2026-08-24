@@ -12,15 +12,24 @@ vi.mock("./copilot.store", () => ({
   getOrCreateCopilotConversation: vi.fn(async () => ({ id: 7, userId: 5, kind: "GENERAL" })),
   getCopilotConversationForUser: vi.fn(async () => ({ id: 7, userId: 5, kind: "GENERAL" })),
   appendCopilotMessage: vi.fn(async () => ({ id: 100 })),
+  listCopilotMessages: vi.fn(async () => []),
 }));
 vi.mock("./copilot.graph", () => ({ runCopilotGraph: runGraphMock }));
 vi.mock("@modules/realtime/socket", () => ({ emitToCopilot: emitMock }));
 vi.mock("@modules/billing/billing.service", () => ({ assertQuotaAvailable: assertQuotaMock, recordAiUsage: recordUsageMock }));
 
 import { AppError } from "@middlewares/errorHandler.middleware";
-import { runCopilotTurn } from "./copilot.service";
+import { activeRuns, cancelCopilotRun, startCopilotTurn } from "./copilot.service";
 
-describe("runCopilotTurn", () => {
+async function waitForBackground(runId: string): Promise<void> {
+  for (let i = 0; i < 200; i++) {
+    if (!activeRuns.has(runId)) return;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  throw new Error(`background runner for ${runId} did not finish in time`);
+}
+
+describe("startCopilotTurn", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     runGraphMock.mockResolvedValue({
@@ -32,14 +41,50 @@ describe("runCopilotTurn", () => {
     });
   });
 
-  it("persists user + assistant messages, emits, and records usage", async () => {
-    const out = await runCopilotTurn({ userId: 5, text: "مرحبا", locale: "ar" });
+  it("returns { runId, conversationId } synchronously and does not await the graph", async () => {
+    const out = await startCopilotTurn({ userId: 5, text: "مرحبا", locale: "ar" });
+    expect(out.runId).toMatch(/^[0-9a-f-]{36}$/); // UUID v4-ish
+    expect(out.conversationId).toBe(7);
+    // runId is registered in activeRuns
+    expect(activeRuns.has(out.runId)).toBe(true);
+    // clean up the background so it doesn't leak into other tests
+    await waitForBackground(out.runId);
+  });
+
+  it("registers the run with the caller's userId", async () => {
+    const out = await startCopilotTurn({ userId: 5, text: "x", locale: "ar" });
+    const run = activeRuns.get(out.runId);
+    expect(run?.userId).toBe(5);
+    expect(run?.conversationId).toBe(7);
+    expect(run?.abortController).toBeInstanceOf(AbortController);
+    await waitForBackground(out.runId);
+  });
+
+  it("persists the user message", async () => {
+    const out = await startCopilotTurn({ userId: 5, text: "hello", locale: "en" });
+    await waitForBackground(out.runId);
+    const { appendCopilotMessage } = await import("./copilot.store");
+    const calls = (appendCopilotMessage as any).mock.calls;
+    const userCall = calls.find((c: any[]) => c[0]?.role === "USER");
+    expect(userCall[0].envelope).toMatchObject({ type: "text", text: "hello" });
+  });
+
+  it("persists user + assistant messages, emits copilot:message, and records usage", async () => {
+    const out = await startCopilotTurn({ userId: 5, text: "مرحبا", locale: "ar" });
+    await waitForBackground(out.runId);
     expect(assertQuotaMock).toHaveBeenCalledWith(5, undefined);
-    expect(out).toMatchObject({ ok: true, conversationId: 7, envelopes: [{ type: "text" }] });
-    expect(emitMock).toHaveBeenCalledWith(5, "copilot:message", expect.objectContaining({ conversationId: 7 }));
+    expect(emitMock).toHaveBeenCalledWith(5, "copilot:message", expect.objectContaining({
+      runId: out.runId,
+      conversationId: 7,
+      envelopes: [{ type: "text", text: "أهلاً" }],
+    }));
     expect(recordUsageMock).toHaveBeenCalledWith(expect.objectContaining({
       userId: 5, operation: "copilot_chat", promptTokens: 3, conversationId: "7",
     }));
+    const { appendCopilotMessage } = await import("./copilot.store");
+    const calls = (appendCopilotMessage as any).mock.calls;
+    expect(calls.find((c: any[]) => c[0]?.role === "USER")).toBeTruthy();
+    expect(calls.find((c: any[]) => c[0]?.role === "ASSISTANT")).toBeTruthy();
   });
 
   it("persists expectedTotal when truncated", async () => {
@@ -50,7 +95,8 @@ describe("runCopilotTurn", () => {
       truncated: true,
       expectedTotal: 4,
     });
-    await runCopilotTurn({ userId: 5, text: "مرحبا", locale: "ar" });
+    const out = await startCopilotTurn({ userId: 5, text: "مرحبا", locale: "ar" });
+    await waitForBackground(out.runId);
     const { appendCopilotMessage } = await import("./copilot.store");
     const calls = (appendCopilotMessage as any).mock.calls;
     const assistant = calls.find((c: any[]) => c[0]?.role === "ASSISTANT");
@@ -58,23 +104,65 @@ describe("runCopilotTurn", () => {
   });
 
   it("omits expectedTotal from the persisted envelope when not truncated", async () => {
-    await runCopilotTurn({ userId: 5, text: "مرحبا", locale: "ar" });
+    const out = await startCopilotTurn({ userId: 5, text: "مرحبا", locale: "ar" });
+    await waitForBackground(out.runId);
     const { appendCopilotMessage } = await import("./copilot.store");
     const calls = (appendCopilotMessage as any).mock.calls;
     const assistant = calls.find((c: any[]) => c[0]?.role === "ASSISTANT");
     expect(assistant[0].envelope).not.toHaveProperty("expectedTotal");
   });
 
-  it("propagates quota exhaustion as 402", async () => {
+  it("throws quota exhaustion synchronously and persists no user message", async () => {
     assertQuotaMock.mockRejectedValueOnce(new AppError("quota", 402, true));
-    await expect(runCopilotTurn({ userId: 5, text: "x", locale: "ar" })).rejects.toMatchObject({ statusCode: 402 });
+    await expect(startCopilotTurn({ userId: 5, text: "x", locale: "ar" })).rejects.toMatchObject({ statusCode: 402 });
+    const { appendCopilotMessage } = await import("./copilot.store");
+    const calls = (appendCopilotMessage as any).mock.calls;
+    expect(calls).toHaveLength(0);
   });
 
-  it("returns ok: false on graph failure without persisting an assistant message", async () => {
+  it("emits copilot:error and persists no assistant message on graph failure", async () => {
     runGraphMock.mockRejectedValueOnce(new Error("provider down"));
-    const out = await runCopilotTurn({ userId: 5, text: "x", locale: "ar" });
-    expect(out).toMatchObject({ ok: false, retryable: true });
-    // User message should still be persisted, but assistant message should NOT be:
+    const out = await startCopilotTurn({ userId: 5, text: "x", locale: "ar" });
+    await waitForBackground(out.runId);
+    expect(emitMock).toHaveBeenCalledWith(5, "copilot:error", expect.objectContaining({
+      runId: out.runId,
+      conversationId: 7,
+      message: "The service is unavailable right now.",
+    }));
+    const { appendCopilotMessage } = await import("./copilot.store");
+    const calls = (appendCopilotMessage as any).mock.calls;
+    const assistantCalls = calls.filter((c: any[]) => c[0]?.role === "ASSISTANT");
+    expect(assistantCalls).toHaveLength(0);
+  });
+
+  it("emits copilot:cancelled (not copilot:error) when the run is aborted mid-graph", async () => {
+    const abortError: any = new Error("aborted");
+    abortError.name = "AbortError";
+    runGraphMock.mockImplementationOnce(async (params: any) => {
+      // simulate the graph honoring the abort signal
+      if (params.signal) {
+        await new Promise<void>((resolve, reject) => {
+          params.signal.addEventListener("abort", () => reject(abortError));
+        });
+      }
+      return {
+        envelopes: [{ type: "text", text: "أهلاً" }],
+        usage: { promptTokens: 3, completionTokens: 2 },
+        modelName: "gemini-2.5-flash",
+        truncated: false,
+        expectedTotal: null,
+      };
+    });
+    const out = await startCopilotTurn({ userId: 5, text: "x", locale: "ar" });
+    // abort the run before the graph finishes
+    const cancelOut = await cancelCopilotRun(out.runId, 5);
+    expect(cancelOut.cancelled).toBe(true);
+    await waitForBackground(out.runId);
+    expect(emitMock).toHaveBeenCalledWith(5, "copilot:cancelled", expect.objectContaining({
+      runId: out.runId,
+      conversationId: 7,
+    }));
+    expect(emitMock).not.toHaveBeenCalledWith(5, "copilot:error", expect.anything());
     const { appendCopilotMessage } = await import("./copilot.store");
     const calls = (appendCopilotMessage as any).mock.calls;
     const assistantCalls = calls.filter((c: any[]) => c[0]?.role === "ASSISTANT");
@@ -82,16 +170,17 @@ describe("runCopilotTurn", () => {
   });
 });
 
-import { cancelCopilotRun } from "./copilot.service";
-
 describe("cancelCopilotRun", () => {
+  beforeEach(() => {
+    activeRuns.clear();
+  });
+
   it("returns { cancelled: false } for an unknown runId", async () => {
     const out = await cancelCopilotRun("nonexistent-id", 5);
     expect(out).toEqual({ cancelled: false });
   });
 
   it("returns { cancelled: true } and aborts when runId is registered", async () => {
-    const { activeRuns } = await import("./copilot.service");
     const controller = new AbortController();
     activeRuns.set("test-run-id", {
       abortController: controller,
@@ -105,7 +194,6 @@ describe("cancelCopilotRun", () => {
   });
 
   it("returns { cancelled: false } when runId belongs to another user", async () => {
-    const { activeRuns } = await import("./copilot.service");
     const controller = new AbortController();
     activeRuns.set("other-user-run", {
       abortController: controller,

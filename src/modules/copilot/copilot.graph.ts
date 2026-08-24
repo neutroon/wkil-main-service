@@ -160,6 +160,7 @@ export async function runCopilotGraph(params: {
   userId: number;
   locale: "ar" | "en";
   text: string;
+  signal?: AbortSignal;
 }): Promise<{
   envelopes: import("./copilot.types").CopilotEnvelope[];
   usage: { promptTokens: number; completionTokens: number };
@@ -175,6 +176,7 @@ export async function runCopilotGraph(params: {
     {
       configurable: { thread_id: `copilot-${params.conversationId}`, graph_version: "copilot-v1" },
       recursionLimit: 25,
+      ...(params.signal ? { signal: params.signal } : {}),
     },
   );
   return {

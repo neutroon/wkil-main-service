@@ -211,17 +211,22 @@ describe("startCopilotTurn", () => {
 
   it("does not auto-title when the conversation already has a title", async () => {
     const store = await import("./copilot.store");
-    (store.getCopilotConversationForUser as any).mockResolvedValueOnce({
+    (store.getOrCreateCopilotConversation as any).mockResolvedValueOnce({
       id: 7, userId: 5, kind: "GENERAL", title: "Existing Title",
     });
+    (store.listCopilotMessages as any).mockResolvedValueOnce([
+      { id: 1, role: "USER", conversationId: 7, createdAt: new Date(), envelope: { type: "text", text: "hello" } },
+    ]);
     try {
-      const out = await startCopilotTurn({ userId: 5, text: "hello", locale: "ar", conversationId: 7 });
+      const out = await startCopilotTurn({ userId: 5, text: "hello", locale: "ar" });
       await waitForBackground(out.runId);
       await flushMicrotasks();
       expect(store.updateConversationTitle).not.toHaveBeenCalled();
     } finally {
-      (store.getCopilotConversationForUser as any).mockReset();
-      (store.getCopilotConversationForUser as any).mockResolvedValue({ id: 7, userId: 5, kind: "GENERAL", title: null });
+      (store.getOrCreateCopilotConversation as any).mockReset();
+      (store.getOrCreateCopilotConversation as any).mockResolvedValue({ id: 7, userId: 5, kind: "GENERAL", title: null });
+      (store.listCopilotMessages as any).mockReset();
+      (store.listCopilotMessages as any).mockResolvedValue([]);
     }
   });
 });

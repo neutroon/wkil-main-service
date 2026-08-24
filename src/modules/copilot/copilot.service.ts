@@ -23,6 +23,27 @@ export type ActiveRun = {
 
 export const activeRuns = new Map<string, ActiveRun>();
 
+function maybeAutoTitle(
+  conversationId: number,
+  userId: number,
+  currentTitle: string | null | undefined,
+): void {
+  if (currentTitle) return;
+  void (async () => {
+    try {
+      const recent = await listCopilotMessages(conversationId, 50);
+      const firstUser = recent.find((m) => m.role === "USER");
+      if (firstUser && (firstUser.envelope as any)?.type === "text") {
+        const fullText = (firstUser.envelope as any).text as string;
+        const truncated = fullText.length > 50 ? `${fullText.slice(0, 50)}…` : fullText;
+        await updateConversationTitle(conversationId, userId, truncated);
+      }
+    } catch {
+      // ignore — auto-title is best-effort
+    }
+  })();
+}
+
 export async function cancelCopilotRun(
   runId: string,
   userId: number,
@@ -109,21 +130,7 @@ async function runCopilotTurnInBackground(
 
     // Auto-title: set a short summary from the first user message on first assistant response.
     // Fire-and-forget — don't block the response.
-    if (!conv.title) {
-      void (async () => {
-        try {
-          const recent = await listCopilotMessages(conv.id, 50);
-          const firstUser = recent.find((m) => m.role === "USER");
-          if (firstUser && (firstUser.envelope as any)?.type === "text") {
-            const fullText = (firstUser.envelope as any).text as string;
-            const truncated = fullText.length > 50 ? `${fullText.slice(0, 50)}…` : fullText;
-            await updateConversationTitle(conv.id, params.userId, truncated);
-          }
-        } catch {
-          // ignore — auto-title is best-effort
-        }
-      })();
-    }
+    maybeAutoTitle(conv.id, params.userId, conv.title);
   } catch (error: any) {
     if (error?.name === "AbortError" || signal.aborted) {
       emitToCopilot(params.userId, "copilot:cancelled", {
@@ -236,20 +243,8 @@ async function runCopilotRegenerateBackground(
 
     // Auto-title: set a short summary from the first user message on first assistant response.
     // Fire-and-forget — don't block the response.
-    if (!conv.title) {
-      void (async () => {
-        try {
-          const recent = await listCopilotMessages(parent.conversationId, 50);
-          const firstUser = recent.find((m) => m.role === "USER");
-          if (firstUser && (firstUser.envelope as any)?.type === "text") {
-            const fullText = (firstUser.envelope as any).text as string;
-            const truncated = fullText.length > 50 ? `${fullText.slice(0, 50)}…` : fullText;
-            await updateConversationTitle(parent.conversationId, params.userId, truncated);
-          }
-        } catch {
-          // ignore — auto-title is best-effort
-        }
-      })();
+    if (conv && !conv.title) {
+      maybeAutoTitle(parent.conversationId, params.userId, conv.title);
     }
   } catch (error: any) {
     if (error?.name === "AbortError" || signal.aborted) {

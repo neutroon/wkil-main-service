@@ -73,3 +73,40 @@ export async function completeCopilotOnboarding(conversationId: number): Promise
     data: { kind: "GENERAL", onboardingStep: "done" },
   });
 }
+
+export async function getCopilotMessageById(
+  messageId: number,
+  userId: number,
+): Promise<CopilotMessage | null> {
+  const msg = await prisma.copilotMessage.findFirst({
+    where: { id: messageId, conversation: { userId } },
+  });
+  return msg;
+}
+
+export async function deleteCopilotMessagesAfter(
+  conversationId: number,
+  userMsgId: number,
+  userId: number,
+): Promise<void> {
+  // Two-step: fetch the parent's created_at, then delete by strict > comparison.
+  // Done in a transaction so a race with a concurrent insert can't delete the parent.
+  // Scoped to user via the conversation relation: the copilot_messages table has no
+  // direct user_id column, so we reach the user through conversation.userId. This
+  // preserves the design's intent (defense-in-depth + no info leak) without a
+  // schema migration.
+  await prisma.$transaction(async (tx) => {
+    const parent = await tx.copilotMessage.findFirst({
+      where: { id: userMsgId, conversation: { userId } },
+      select: { createdAt: true },
+    });
+    if (!parent) return;
+    await tx.copilotMessage.deleteMany({
+      where: {
+        conversationId,
+        conversation: { userId },
+        createdAt: { gt: parent.createdAt },
+      },
+    });
+  });
+}

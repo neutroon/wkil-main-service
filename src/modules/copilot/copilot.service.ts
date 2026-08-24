@@ -4,6 +4,7 @@ import { AppError } from "@middlewares/errorHandler.middleware";
 import { assertQuotaAvailable, recordAiUsage } from "@modules/billing/billing.service";
 import { emitToCopilot } from "@modules/realtime/socket";
 import { runCopilotGraph } from "./copilot.graph";
+import { maybeAutoTitle } from "./copilot.autoTitle";
 import {
   appendCopilotMessage,
   deleteCopilotMessagesAfter,
@@ -11,7 +12,6 @@ import {
   getCopilotMessageById,
   getOrCreateCopilotConversation,
   listCopilotMessages,
-  updateConversationTitle,
 } from "./copilot.store";
 import type { CopilotEnvelope } from "./copilot.types";
 
@@ -22,27 +22,6 @@ export type ActiveRun = {
 };
 
 export const activeRuns = new Map<string, ActiveRun>();
-
-function maybeAutoTitle(
-  conversationId: number,
-  userId: number,
-  currentTitle: string | null | undefined,
-): void {
-  if (currentTitle) return;
-  void (async () => {
-    try {
-      const recent = await listCopilotMessages(conversationId, 50);
-      const firstUser = recent.find((m) => m.role === "USER");
-      if (firstUser && (firstUser.envelope as any)?.type === "text") {
-        const fullText = (firstUser.envelope as any).text as string;
-        const truncated = fullText.length > 50 ? `${fullText.slice(0, 50)}…` : fullText;
-        await updateConversationTitle(conversationId, userId, truncated);
-      }
-    } catch {
-      // ignore — auto-title is best-effort
-    }
-  })();
-}
 
 export async function cancelCopilotRun(
   runId: string,

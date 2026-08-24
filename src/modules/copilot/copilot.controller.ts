@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { runCopilotTurn } from "./copilot.service";
+import { cancelCopilotRun, runCopilotTurn } from "./copilot.service";
 import {
   getCopilotConversationForUser,
   getOrCreateCopilotConversation,
@@ -44,4 +44,22 @@ export const postCopilotMessageController = async (req: Request, res: Response) 
       ...(result.expectedTotal !== null ? { expectedTotal: result.expectedTotal } : {}),
     },
   });
+};
+
+export const cancelCopilotRunController = async (req: Request, res: Response) => {
+  const userId = (req as any).user.id as number;
+  const runId = (req as any).params.runId as string;
+  const out = await cancelCopilotRun(runId, userId);
+  if (out.cancelled) {
+    res.status(200).json({ data: { cancelled: true } });
+    return;
+  }
+  // Determine 403 vs 404: peek at activeRuns
+  const { activeRuns } = await import("./copilot.service");
+  const exists = activeRuns.has(runId);
+  if (!exists) {
+    res.status(404).json({ error: { message: "no active run" } });
+  } else {
+    res.status(403).json({ error: { message: "forbidden" } });
+  }
 };

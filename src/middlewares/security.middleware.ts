@@ -89,6 +89,11 @@ export const corsOptions = {
     "X-Requested-With",
     "X-CSRF-Token",
     "ngrok-skip-browser-warning",
+    // Sent by the dashboard `fetchWithAuth` so the copilot can match
+    // the UI's locale instead of relying on the browser's
+    // `Accept-Language`. Must be listed here or the browser blocks
+    // every state-mutating request behind a failed preflight.
+    "X-Locale",
   ],
   exposedHeaders: ["Set-Cookie"],
   maxAge: 86400, // 24 hours

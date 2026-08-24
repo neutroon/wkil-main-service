@@ -26,7 +26,14 @@ export const getCopilotConversationController = async (req: Request, res: Respon
 export const listCopilotMessagesController = async (req: Request, res: Response) => {
   const userId = (req as any).user.id as number;
   const limit = ((req.query as any).limit as number | undefined) ?? 50;
-  const conv = await getOrCreateCopilotConversation(userId, detectLocale(req));
+  const requestedConversationId = ((req.query as any).conversationId as number | undefined);
+  // When the caller passes a conversationId, look up that specific thread
+  // (ownership-checked via `getCopilotConversationForUser`); otherwise fall
+  // back to the legacy "current primary conversation" semantics so the
+  // single-thread frontend flow continues to work.
+  const conv = requestedConversationId !== undefined
+    ? await getCopilotConversationForUser(requestedConversationId, userId)
+    : await getOrCreateCopilotConversation(userId, detectLocale(req));
   const messages = await listCopilotMessages(conv.id, limit);
   res.status(200).json({ data: messages });
 };

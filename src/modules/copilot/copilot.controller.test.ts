@@ -26,6 +26,7 @@ import { startCopilotTurn } from "./copilot.service";
 import {
   cancelCopilotRunController,
   createConversationController,
+  detectLocale,
   deleteConversationController,
   getCopilotConversationController,
   listConversationsController,
@@ -52,6 +53,20 @@ describe("copilot.controller", () => {
     expect(startCopilotTurn).toHaveBeenCalledWith(expect.objectContaining({ userId: 5, text: "hello" }));
     expect(response.status).toHaveBeenCalledWith(200);
     expect(response.json).toHaveBeenCalledWith({ data: expect.objectContaining({ runId: "test-run-id", conversationId: 7 }) });
+  });
+
+  it("POST message forwards a body conversationId to startCopilotTurn", async () => {
+    // Regression: previously the controller only destructured `text` from the
+    // body, so the frontend's `conversationId` was silently dropped and
+    // `startCopilotTurn` always fell through to `getOrCreateCopilotConversation`
+    // (the most-recent existing thread). Sending a message in a "New chat"
+    // then silently landed in the previous conversation.
+    const req: any = { user: { id: 5 }, body: { text: "hello", conversationId: 99 }, headers: {} };
+    const response = makeRes();
+    await postCopilotMessageController(req, response);
+    expect(startCopilotTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 5, text: "hello", conversationId: 99 }),
+    );
   });
 
   it("GET conversation returns the current thread", async () => {
@@ -217,5 +232,43 @@ describe("deleteConversationController", () => {
     const response = makeRes();
     await deleteConversationController(req, response);
     expect(response.status).toHaveBeenCalledWith(404);
+  });
+});
+
+describe("detectLocale", () => {
+  it("prefers X-Locale 'ar' over an English Accept-Language", () => {
+    const req: any = {
+      headers: { "x-locale": "ar", "accept-language": "en-US,en;q=0.9" },
+    };
+    expect(detectLocale(req)).toBe("ar");
+  });
+
+  it("prefers X-Locale 'en' over an Arabic Accept-Language", () => {
+    const req: any = {
+      headers: { "x-locale": "en", "accept-language": "ar-EG,ar;q=0.9" },
+    };
+    expect(detectLocale(req)).toBe("en");
+  });
+
+  it("falls back to Accept-Language when X-Locale is missing", () => {
+    const req: any = { headers: { "accept-language": "ar-EG,ar;q=0.9" } };
+    expect(detectLocale(req)).toBe("ar");
+  });
+
+  it("returns en when neither header is present", () => {
+    const req: any = { headers: {} };
+    expect(detectLocale(req)).toBe("en");
+  });
+
+  it("ignores garbage X-Locale values and falls back to Accept-Language", () => {
+    const req: any = {
+      headers: { "x-locale": "fr-FR", "accept-language": "ar" },
+    };
+    expect(detectLocale(req)).toBe("ar");
+  });
+
+  it("normalizes whitespace and casing in X-Locale", () => {
+    const req: any = { headers: { "x-locale": "  AR  " } };
+    expect(detectLocale(req)).toBe("ar");
   });
 });

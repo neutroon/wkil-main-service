@@ -10,7 +10,27 @@ import {
   updateConversationTitle,
 } from "./copilot.store";
 
-function detectLocale(req: Request): "ar" | "en" {
+/**
+ * Detect the owner's UI locale for the copilot.
+ *
+ * Priority:
+ *  1. Explicit `X-Locale` header from the frontend. The Next.js app sets this
+ *     from `useLocale()` on every request so the copilot always matches the
+ *     UI language — independent of the browser's `Accept-Language`. This
+ *     matters because the dashboard is bilingual (ar/en) but the user's
+ *     browser may be set to a different default.
+ *  2. `Accept-Language` header (browser default). Covers the case where the
+ *     client doesn't set `X-Locale` (e.g. third-party callers).
+ *  3. English (defensive fallback for completely missing/garbage input).
+ *
+ * Whitespace and casing are normalized; the response is restricted to the
+ * two locales the copilot supports.
+ */
+export function detectLocale(req: Request): "ar" | "en" {
+  const xLocale = (req.headers["x-locale"] as string | undefined)?.toLowerCase().trim();
+  if (xLocale === "ar") return "ar";
+  if (xLocale === "en") return "en";
+
   const al = (req.headers["accept-language"] as string | undefined) ?? "";
   return al.toLowerCase().startsWith("ar") ? "ar" : "en";
 }
@@ -40,9 +60,25 @@ export const listCopilotMessagesController = async (req: Request, res: Response)
 
 export const postCopilotMessageController = async (req: Request, res: Response) => {
   const userId = (req as any).user.id as number;
-  const { text } = (req as any).body as { text: string };
+  // The frontend posts to a specific thread it has already created (either
+  // a synced remote id, or one it just created in response to a local
+  // `__LOCALID_xxx` placeholder). We MUST forward `conversationId` to
+  // `startCopilotTurn` — otherwise the service falls through to
+  // `getOrCreateCopilotConversation` (the user's most-recent existing
+  // thread) and the message silently lands in the wrong conversation.
+  // The service's `getCopilotConversationForUser` enforces ownership, so
+  // passing a foreign id is a safe 404.
+  const { text, conversationId } = (req as any).body as {
+    text: string;
+    conversationId?: number;
+  };
   const locale = detectLocale(req);
-  const result = await startCopilotTurn({ userId, text, locale });
+  const result = await startCopilotTurn({
+    userId,
+    text,
+    locale,
+    ...(typeof conversationId === "number" ? { conversationId } : {}),
+  });
   res.status(200).json({ data: { runId: result.runId, conversationId: result.conversationId } });
 };
 

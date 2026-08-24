@@ -110,3 +110,50 @@ export async function deleteCopilotMessagesAfter(
     });
   });
 }
+
+export async function listConversationsForUser(userId: number): Promise<CopilotConversation[]> {
+  return prisma.copilotConversation.findMany({
+    where: { userId },
+    orderBy: { lastMessageAt: "desc" },
+  });
+}
+
+export async function createConversation(userId: number, locale: string): Promise<CopilotConversation> {
+  return prisma.copilotConversation.create({
+    data: { userId, locale, kind: "GENERAL" },  // title defaults to null → "New chat" in UI
+  });
+}
+
+export async function updateConversationTitle(
+  conversationId: number,
+  userId: number,
+  title: string,
+): Promise<void> {
+  // Verify ownership first (defense in depth — controller also checks)
+  const conv = await prisma.copilotConversation.findFirst({
+    where: { id: conversationId, userId },
+    select: { id: true },
+  });
+  if (!conv) throw new AppError("conversation not found", 404, false);
+  await prisma.copilotConversation.update({
+    where: { id: conversationId },
+    data: { title: title.slice(0, 200) },  // cap to prevent abuse
+  });
+}
+
+export async function deleteConversation(conversationId: number, userId: number): Promise<void> {
+  // Transaction: verify ownership + cascade delete messages + delete conversation
+  await prisma.$transaction(async (tx) => {
+    const conv = await tx.copilotConversation.findFirst({
+      where: { id: conversationId, userId },
+      select: { id: true },
+    });
+    if (!conv) throw new AppError("conversation not found", 404, false);
+    await tx.copilotMessage.deleteMany({
+      where: { conversationId },
+    });
+    await tx.copilotConversation.delete({
+      where: { id: conversationId },
+    });
+  });
+}

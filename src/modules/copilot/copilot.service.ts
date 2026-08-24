@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { AppError } from "@middlewares/errorHandler.middleware";
 import { logger } from "@utils/logger";
 import { assertQuotaAvailable, recordAiUsage } from "@modules/billing/billing.service";
 import { emitToCopilot } from "@modules/realtime/socket";
@@ -8,19 +7,8 @@ import {
   appendCopilotMessage,
   getCopilotConversationForUser,
   getOrCreateCopilotConversation,
-  listCopilotMessages,
 } from "./copilot.store";
 import type { CopilotEnvelope } from "./copilot.types";
-
-export type CopilotTurnResult =
-  | {
-      ok: true;
-      conversationId: number;
-      envelopes: CopilotEnvelope[];
-      truncated: boolean;
-      expectedTotal: number | null;
-    }
-  | { ok: false; code: string; message: string; retryable: boolean };
 
 export type ActiveRun = {
   abortController: AbortController;
@@ -134,50 +122,4 @@ async function runCopilotTurnInBackground(
   } finally {
     activeRuns.delete(runId);
   }
-}
-
-// DEPRECATED shim — kept so the existing controller (which expects the
-// sync { ok, ... } result shape) continues to work until Task 3 rewires it
-// to startCopilotTurn. Internally delegates to startCopilotTurn + waits for
-// the background runner to finish, then reads the persisted assistant
-// message from the store.
-export async function runCopilotTurn(params: {
-  userId: number;
-  text: string;
-  locale: "ar" | "en";
-  conversationId?: number;
-}): Promise<CopilotTurnResult> {
-  let runId: string;
-  let conversationId: number;
-  try {
-    const started = await startCopilotTurn(params);
-    runId = started.runId;
-    conversationId = started.conversationId;
-  } catch (err: any) {
-    if (err instanceof AppError) throw err;
-    throw err;
-  }
-
-  while (activeRuns.has(runId)) {
-    await new Promise((r) => setTimeout(r, 5));
-  }
-
-  const messages = await listCopilotMessages(conversationId, 50);
-  const lastAssistant = [...messages].reverse().find((m) => m.role === "ASSISTANT");
-  if (!lastAssistant) {
-    return {
-      ok: false,
-      code: "GRAPH_FAILED",
-      message: "The service is unavailable right now.",
-      retryable: true,
-    };
-  }
-  const env = lastAssistant.envelope as any;
-  return {
-    ok: true,
-    conversationId,
-    envelopes: env.envelopes,
-    truncated: env.truncated,
-    expectedTotal: env.expectedTotal ?? null,
-  };
 }

@@ -9,12 +9,13 @@ const { runGraphMock, assertQuotaMock, recordUsageMock, emitMock } = vi.hoisted(
 
 vi.mock("@utils/logger", () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 vi.mock("./copilot.store", () => ({
-  getOrCreateCopilotConversation: vi.fn(async () => ({ id: 7, userId: 5, kind: "GENERAL" })),
-  getCopilotConversationForUser: vi.fn(async () => ({ id: 7, userId: 5, kind: "GENERAL" })),
+  getOrCreateCopilotConversation: vi.fn(async () => ({ id: 7, userId: 5, kind: "GENERAL", title: null })),
+  getCopilotConversationForUser: vi.fn(async () => ({ id: 7, userId: 5, kind: "GENERAL", title: null })),
   appendCopilotMessage: vi.fn(async () => ({ id: 100 })),
   listCopilotMessages: vi.fn(async () => []),
   getCopilotMessageById: vi.fn(async () => null),
   deleteCopilotMessagesAfter: vi.fn(async () => undefined),
+  updateConversationTitle: vi.fn(async () => undefined),
 }));
 vi.mock("./copilot.graph", () => ({ runCopilotGraph: runGraphMock }));
 vi.mock("@modules/realtime/socket", () => ({ emitToCopilot: emitMock }));
@@ -29,6 +30,19 @@ async function waitForBackground(runId: string): Promise<void> {
     await new Promise((r) => setTimeout(r, 5));
   }
   throw new Error(`background runner for ${runId} did not finish in time`);
+}
+
+async function waitForMockCalled(mockFn: any, timeoutMs = 2000): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if ((mockFn as any).mock.calls.length > 0) return;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  throw new Error("mock was not called within timeout");
+}
+
+async function flushMicrotasks(ms = 50): Promise<void> {
+  await new Promise((r) => setTimeout(r, ms));
 }
 
 describe("startCopilotTurn", () => {
@@ -169,6 +183,46 @@ describe("startCopilotTurn", () => {
     const calls = (appendCopilotMessage as any).mock.calls;
     const assistantCalls = calls.filter((c: any[]) => c[0]?.role === "ASSISTANT");
     expect(assistantCalls).toHaveLength(0);
+  });
+
+  it("auto-titles the conversation after the first assistant response when title is null", async () => {
+    const store = await import("./copilot.store");
+    const longText = "a".repeat(60);
+    (store.getCopilotConversationForUser as any).mockResolvedValueOnce({
+      id: 7, userId: 5, kind: "GENERAL", title: null,
+    });
+    (store.listCopilotMessages as any).mockResolvedValueOnce([
+      { id: 1, role: "USER", conversationId: 7, createdAt: new Date(), envelope: { type: "text", text: longText } },
+    ]);
+    try {
+      const out = await startCopilotTurn({ userId: 5, text: longText, locale: "ar", conversationId: 7 });
+      await waitForBackground(out.runId);
+      await waitForMockCalled(store.updateConversationTitle as any);
+      const expected = `${"a".repeat(50)}…`;
+      expect(store.updateConversationTitle).toHaveBeenCalledWith(7, 5, expected);
+    } finally {
+      // Clear mockResolvedValueOnce queue + restore defaults to prevent leaks.
+      (store.listCopilotMessages as any).mockReset();
+      (store.listCopilotMessages as any).mockResolvedValue([]);
+      (store.getCopilotConversationForUser as any).mockReset();
+      (store.getCopilotConversationForUser as any).mockResolvedValue({ id: 7, userId: 5, kind: "GENERAL", title: null });
+    }
+  });
+
+  it("does not auto-title when the conversation already has a title", async () => {
+    const store = await import("./copilot.store");
+    (store.getCopilotConversationForUser as any).mockResolvedValueOnce({
+      id: 7, userId: 5, kind: "GENERAL", title: "Existing Title",
+    });
+    try {
+      const out = await startCopilotTurn({ userId: 5, text: "hello", locale: "ar", conversationId: 7 });
+      await waitForBackground(out.runId);
+      await flushMicrotasks();
+      expect(store.updateConversationTitle).not.toHaveBeenCalled();
+    } finally {
+      (store.getCopilotConversationForUser as any).mockReset();
+      (store.getCopilotConversationForUser as any).mockResolvedValue({ id: 7, userId: 5, kind: "GENERAL", title: null });
+    }
   });
 });
 

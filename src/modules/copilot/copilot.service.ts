@@ -11,6 +11,7 @@ import {
   getCopilotMessageById,
   getOrCreateCopilotConversation,
   listCopilotMessages,
+  updateConversationTitle,
 } from "./copilot.store";
 import type { CopilotEnvelope } from "./copilot.types";
 
@@ -68,7 +69,7 @@ export async function startCopilotTurn(params: {
 async function runCopilotTurnInBackground(
   runId: string,
   params: { userId: number; text: string; locale: "ar" | "en"; conversationId?: number },
-  conv: { id: number },
+  conv: { id: number; title: string | null },
   signal: AbortSignal,
 ): Promise<void> {
   try {
@@ -105,6 +106,24 @@ async function runCopilotTurnInBackground(
       truncated: out.truncated,
       ...(out.expectedTotal !== null ? { expectedTotal: out.expectedTotal } : {}),
     });
+
+    // Auto-title: set a short summary from the first user message on first assistant response.
+    // Fire-and-forget — don't block the response.
+    if (!conv.title) {
+      void (async () => {
+        try {
+          const recent = await listCopilotMessages(conv.id, 50);
+          const firstUser = recent.find((m) => m.role === "USER");
+          if (firstUser && (firstUser.envelope as any)?.type === "text") {
+            const fullText = (firstUser.envelope as any).text as string;
+            const truncated = fullText.length > 50 ? `${fullText.slice(0, 50)}…` : fullText;
+            await updateConversationTitle(conv.id, params.userId, truncated);
+          }
+        } catch {
+          // ignore — auto-title is best-effort
+        }
+      })();
+    }
   } catch (error: any) {
     if (error?.name === "AbortError" || signal.aborted) {
       emitToCopilot(params.userId, "copilot:cancelled", {
@@ -180,6 +199,7 @@ async function runCopilotRegenerateBackground(
 ): Promise<void> {
   try {
     const envelope = parent.envelope as { type: "text"; text: string };
+    const conv = await getCopilotConversationForUser(parent.conversationId, params.userId);
     const out = await runCopilotGraph({
       conversationId: parent.conversationId,
       userId: params.userId,
@@ -213,6 +233,24 @@ async function runCopilotRegenerateBackground(
       truncated: out.truncated,
       ...(out.expectedTotal !== null ? { expectedTotal: out.expectedTotal } : {}),
     });
+
+    // Auto-title: set a short summary from the first user message on first assistant response.
+    // Fire-and-forget — don't block the response.
+    if (!conv.title) {
+      void (async () => {
+        try {
+          const recent = await listCopilotMessages(parent.conversationId, 50);
+          const firstUser = recent.find((m) => m.role === "USER");
+          if (firstUser && (firstUser.envelope as any)?.type === "text") {
+            const fullText = (firstUser.envelope as any).text as string;
+            const truncated = fullText.length > 50 ? `${fullText.slice(0, 50)}…` : fullText;
+            await updateConversationTitle(parent.conversationId, params.userId, truncated);
+          }
+        } catch {
+          // ignore — auto-title is best-effort
+        }
+      })();
+    }
   } catch (error: any) {
     if (error?.name === "AbortError" || signal.aborted) {
       emitToCopilot(params.userId, "copilot:cancelled", {

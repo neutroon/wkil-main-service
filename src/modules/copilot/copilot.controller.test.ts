@@ -5,8 +5,7 @@ vi.mock("./copilot.service", () => {
   const activeRuns = new Map<string, unknown>();
   activeRuns.set("other-user", { abortController: { abort: () => {} }, conversationId: 7, userId: 999 });
   return {
-    runCopilotTurn: vi.fn(async () => ({ ok: true, conversationId: 7, envelopes: [{ type: "text", text: "ok" }], truncated: false, expectedTotal: null })),
-    startCopilotTurn: vi.fn(async () => ({ runId: "test-run", conversationId: 7 })),
+    startCopilotTurn: vi.fn(async () => ({ runId: "test-run-id", conversationId: 7 })),
     cancelCopilotRun: vi.fn(async () => ({ cancelled: false })),
     activeRuns,
   };
@@ -17,7 +16,7 @@ vi.mock("./copilot.store", () => ({
   getCopilotConversationForUser: vi.fn(),
 }));
 
-import { runCopilotTurn } from "./copilot.service";
+import { startCopilotTurn } from "./copilot.service";
 import { cancelCopilotRunController, getCopilotConversationController, listCopilotMessagesController, postCopilotMessageController } from "./copilot.controller";
 
 function makeRes() {
@@ -34,25 +33,9 @@ describe("copilot.controller", () => {
     const req: any = { user: { id: 5 }, body: { text: "hello" }, headers: {} };
     const response = makeRes();
     await postCopilotMessageController(req, response);
-    expect(runCopilotTurn).toHaveBeenCalledWith(expect.objectContaining({ userId: 5, text: "hello" }));
-    expect(response.json).toHaveBeenCalledWith({ data: expect.objectContaining({ conversationId: 7 }) });
-  });
-
-  it("POST message responds HTTP 500 when runCopilotTurn returns ok: false", async () => {
-    const { runCopilotTurn } = await import("./copilot.service");
-    (runCopilotTurn as any).mockResolvedValueOnce({
-      ok: false,
-      code: "GRAPH_FAILED",
-      message: "The service is unavailable right now.",
-      retryable: true,
-    });
-    const req: any = { user: { id: 5 }, body: { text: "hello" }, headers: {} };
-    const response = makeRes();
-    await postCopilotMessageController(req, response);
-    expect(response.status).toHaveBeenCalledWith(500);
-    expect(response.json).toHaveBeenCalledWith({
-      error: expect.objectContaining({ code: "GRAPH_FAILED", retryable: true }),
-    });
+    expect(startCopilotTurn).toHaveBeenCalledWith(expect.objectContaining({ userId: 5, text: "hello" }));
+    expect(response.status).toHaveBeenCalledWith(200);
+    expect(response.json).toHaveBeenCalledWith({ data: expect.objectContaining({ runId: "test-run-id", conversationId: 7 }) });
   });
 
   it("GET conversation returns the current thread", async () => {

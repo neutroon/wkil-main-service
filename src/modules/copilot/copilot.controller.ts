@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { cancelCopilotRun, runCopilotTurn } from "./copilot.service";
+import { cancelCopilotRun, startCopilotTurn } from "./copilot.service";
 import {
   getCopilotConversationForUser,
   getOrCreateCopilotConversation,
@@ -31,19 +31,8 @@ export const postCopilotMessageController = async (req: Request, res: Response) 
   const userId = (req as any).user.id as number;
   const { text } = (req as any).body as { text: string };
   const locale = detectLocale(req);
-  const result = await runCopilotTurn({ userId, text, locale });
-  if (!result.ok) {
-    res.status(500).json({ error: { code: result.code, message: result.message, retryable: result.retryable } });
-    return;
-  }
-  res.status(200).json({
-    data: {
-      conversationId: result.conversationId,
-      envelopes: result.envelopes,
-      truncated: result.truncated,
-      ...(result.expectedTotal !== null ? { expectedTotal: result.expectedTotal } : {}),
-    },
-  });
+  const result = await startCopilotTurn({ userId, text, locale });
+  res.status(200).json({ data: { runId: result.runId, conversationId: result.conversationId } });
 };
 
 export const cancelCopilotRunController = async (req: Request, res: Response) => {

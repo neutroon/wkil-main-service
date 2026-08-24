@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { cancelCopilotRun, startCopilotTurn, activeRuns } from "./copilot.service";
+import { cancelCopilotRun, startCopilotTurn, startCopilotRegenerate, activeRuns } from "./copilot.service";
 import {
   getCopilotConversationForUser,
   getOrCreateCopilotConversation,
@@ -49,5 +49,18 @@ export const cancelCopilotRunController = async (req: Request, res: Response) =>
     res.status(404).json({ data: { cancelled: false, message: "no active run" } });
   } else {
     res.status(403).json({ data: { cancelled: false, message: "forbidden" } });
+  }
+};
+
+export const regenerateCopilotMessageController = async (req: Request, res: Response) => {
+  const userId = (req as any).user.id as number;
+  const userMsgId = Number((req as any).params.userMsgId);
+  try {
+    const result = await startCopilotRegenerate({ userId, userMsgId, locale: detectLocale(req) });
+    res.status(200).json({ data: { runId: result.runId, conversationId: result.conversationId } });
+  } catch (err: any) {
+    const status = err?.statusCode ?? 500;
+    const message = err?.message ?? "The service is unavailable right now.";
+    res.status(status).json({ error: { message } });
   }
 };

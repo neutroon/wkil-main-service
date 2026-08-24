@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { AppError } from "@middlewares/errorHandler.middleware";
 
 vi.mock("@utils/logger", () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 vi.mock("./copilot.service", () => {
@@ -7,6 +8,7 @@ vi.mock("./copilot.service", () => {
   return {
     startCopilotTurn: vi.fn(async () => ({ runId: "test-run-id", conversationId: 7 })),
     cancelCopilotRun: vi.fn(async () => ({ cancelled: false })),
+    startCopilotRegenerate: vi.fn(),
     activeRuns,
   };
 });
@@ -17,7 +19,7 @@ vi.mock("./copilot.store", () => ({
 }));
 
 import { startCopilotTurn } from "./copilot.service";
-import { cancelCopilotRunController, getCopilotConversationController, listCopilotMessagesController, postCopilotMessageController } from "./copilot.controller";
+import { cancelCopilotRunController, getCopilotConversationController, listCopilotMessagesController, postCopilotMessageController, regenerateCopilotMessageController } from "./copilot.controller";
 
 function makeRes() {
   const r: any = {};
@@ -84,5 +86,44 @@ describe("DELETE /copilot/runs/:runId", () => {
     expect(response.json).toHaveBeenCalledWith({
       data: { cancelled: false, message: "forbidden" },
     });
+  });
+});
+
+describe("regenerateCopilotMessageController", () => {
+  it("POST regenerate returns 200 with runId + conversationId", async () => {
+    const { startCopilotRegenerate } = await import("./copilot.service");
+    (startCopilotRegenerate as any).mockResolvedValueOnce({
+      runId: "regen-123",
+      conversationId: 7,
+    });
+    const req: any = { user: { id: 5 }, params: { userMsgId: 41 }, headers: {} };
+    const response = makeRes();
+    await regenerateCopilotMessageController(req, response);
+    expect(startCopilotRegenerate).toHaveBeenCalledWith(expect.objectContaining({ userId: 5, userMsgId: 41 }));
+    expect(response.status).toHaveBeenCalledWith(200);
+    expect(response.json).toHaveBeenCalledWith({
+      data: { runId: "regen-123", conversationId: 7 },
+    });
+  });
+
+  it("POST regenerate returns 404 when startCopilotRegenerate throws 404", async () => {
+    const { startCopilotRegenerate } = await import("./copilot.service");
+    (startCopilotRegenerate as any).mockRejectedValueOnce(new AppError("parent message not found", 404, false));
+    const req: any = { user: { id: 5 }, params: { userMsgId: 99 }, headers: {} };
+    const response = makeRes();
+    await regenerateCopilotMessageController(req, response);
+    expect(response.status).toHaveBeenCalledWith(404);
+    expect(response.json).toHaveBeenCalledWith({
+      error: expect.objectContaining({ message: "parent message not found" }),
+    });
+  });
+
+  it("POST regenerate returns 422 when startCopilotRegenerate throws 422", async () => {
+    const { startCopilotRegenerate } = await import("./copilot.service");
+    (startCopilotRegenerate as any).mockRejectedValueOnce(new AppError("no assistant response to regenerate", 422, false));
+    const req: any = { user: { id: 5 }, params: { userMsgId: 41 }, headers: {} };
+    const response = makeRes();
+    await regenerateCopilotMessageController(req, response);
+    expect(response.status).toHaveBeenCalledWith(422);
   });
 });

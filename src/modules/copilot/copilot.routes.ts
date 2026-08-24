@@ -6,6 +6,7 @@ import {
   getCopilotConversationController,
   listCopilotMessagesController,
   postCopilotMessageController,
+  regenerateCopilotMessageController,
 } from "./copilot.controller";
 import { copilotMessagesQuerySchema, copilotPostMessageSchema } from "./copilot.validation";
 
@@ -14,6 +15,7 @@ const copilotRoutes = Router();
 copilotRoutes.get("/conversation", getCopilotConversationController);
 copilotRoutes.get("/conversation/messages", validate(copilotMessagesQuerySchema), listCopilotMessagesController);
 copilotRoutes.post("/conversation/messages", copilotLimiter, validate(copilotPostMessageSchema), postCopilotMessageController);
+copilotRoutes.post("/messages/:userMsgId/regenerate", regenerateCopilotMessageController);
 copilotRoutes.delete("/runs/:runId", cancelCopilotRunController);
 
 export default copilotRoutes;

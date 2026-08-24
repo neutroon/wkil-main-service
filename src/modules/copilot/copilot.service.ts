@@ -1,12 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { logger } from "@utils/logger";
+import { AppError } from "@middlewares/errorHandler.middleware";
 import { assertQuotaAvailable, recordAiUsage } from "@modules/billing/billing.service";
 import { emitToCopilot } from "@modules/realtime/socket";
 import { runCopilotGraph } from "./copilot.graph";
 import {
   appendCopilotMessage,
+  deleteCopilotMessagesAfter,
   getCopilotConversationForUser,
+  getCopilotMessageById,
   getOrCreateCopilotConversation,
+  listCopilotMessages,
 } from "./copilot.store";
 import type { CopilotEnvelope } from "./copilot.types";
 
@@ -116,6 +120,114 @@ async function runCopilotTurnInBackground(
       emitToCopilot(params.userId, "copilot:error", {
         runId,
         conversationId: conv.id,
+        message: "The service is unavailable right now.",
+      });
+    }
+  } finally {
+    activeRuns.delete(runId);
+  }
+}
+
+export type RegenerateParams = {
+  userId: number;
+  userMsgId: number;
+  locale: "ar" | "en";
+};
+
+export async function startCopilotRegenerate(
+  params: RegenerateParams,
+): Promise<{ runId: string; conversationId: number }> {
+  const parent = await getCopilotMessageById(params.userMsgId, params.userId);
+  if (!parent) throw new AppError("parent message not found", 404, false);
+  if (parent.role !== "USER") {
+    throw new AppError("parent must be a user message", 422, false);
+  }
+
+  // Verify there's an assistant response to regenerate.
+  const children = await listCopilotMessages(parent.conversationId, 50);
+  const hasAssistant = children.some(
+    (m) =>
+      m.role === "ASSISTANT" &&
+      new Date(m.createdAt) >= new Date(parent.createdAt),
+  );
+  if (!hasAssistant) {
+    throw new AppError("no assistant response to regenerate", 422, false);
+  }
+
+  // Delete messages after the parent (including original assistant + later turns).
+  await deleteCopilotMessagesAfter(parent.conversationId, params.userMsgId, params.userId);
+
+  // Register the new runId + kick off background runner.
+  const runId = randomUUID();
+  const abortController = new AbortController();
+  activeRuns.set(runId, {
+    abortController,
+    conversationId: parent.conversationId,
+    userId: params.userId,
+  });
+
+  // Fire-and-forget.
+  void runCopilotRegenerateBackground(runId, params, parent, abortController.signal);
+
+  return { runId, conversationId: parent.conversationId };
+}
+
+async function runCopilotRegenerateBackground(
+  runId: string,
+  params: RegenerateParams,
+  parent: NonNullable<Awaited<ReturnType<typeof getCopilotMessageById>>>,
+  signal: AbortSignal,
+): Promise<void> {
+  try {
+    const envelope = parent.envelope as { type: "text"; text: string };
+    const out = await runCopilotGraph({
+      conversationId: parent.conversationId,
+      userId: params.userId,
+      locale: params.locale,
+      text: envelope.text,
+      signal,
+    });
+
+    await recordAiUsage({
+      userId: params.userId,
+      modelName: out.modelName,
+      operation: "copilot_chat",
+      conversationId: String(parent.conversationId),
+      promptTokens: out.usage.promptTokens,
+      completionTokens: out.usage.completionTokens,
+    });
+
+    await appendCopilotMessage({
+      conversationId: parent.conversationId,
+      role: "ASSISTANT",
+      envelope: {
+        envelopes: out.envelopes,
+        truncated: out.truncated,
+        ...(out.expectedTotal !== null ? { expectedTotal: out.expectedTotal } : {}),
+      },
+    });
+    emitToCopilot(params.userId, "copilot:message", {
+      runId,
+      conversationId: parent.conversationId,
+      envelopes: out.envelopes,
+      truncated: out.truncated,
+      ...(out.expectedTotal !== null ? { expectedTotal: out.expectedTotal } : {}),
+    });
+  } catch (error: any) {
+    if (error?.name === "AbortError" || signal.aborted) {
+      emitToCopilot(params.userId, "copilot:cancelled", {
+        runId,
+        conversationId: parent.conversationId,
+      });
+    } else {
+      logger.error("copilot.regenerate_failed", {
+        parentId: params.userMsgId,
+        runId,
+        error: error?.message,
+      });
+      emitToCopilot(params.userId, "copilot:error", {
+        runId,
+        conversationId: parent.conversationId,
         message: "The service is unavailable right now.",
       });
     }

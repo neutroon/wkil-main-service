@@ -13,6 +13,8 @@ vi.mock("./copilot.store", () => ({
   getCopilotConversationForUser: vi.fn(async () => ({ id: 7, userId: 5, kind: "GENERAL" })),
   appendCopilotMessage: vi.fn(async () => ({ id: 100 })),
   listCopilotMessages: vi.fn(async () => []),
+  getCopilotMessageById: vi.fn(async () => null),
+  deleteCopilotMessagesAfter: vi.fn(async () => undefined),
 }));
 vi.mock("./copilot.graph", () => ({ runCopilotGraph: runGraphMock }));
 vi.mock("@modules/realtime/socket", () => ({ emitToCopilot: emitMock }));
@@ -167,6 +169,55 @@ describe("startCopilotTurn", () => {
     const calls = (appendCopilotMessage as any).mock.calls;
     const assistantCalls = calls.filter((c: any[]) => c[0]?.role === "ASSISTANT");
     expect(assistantCalls).toHaveLength(0);
+  });
+});
+
+describe("startCopilotRegenerate", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    runGraphMock.mockResolvedValue({
+      envelopes: [{ type: "text", text: "أهلاً" }],
+      usage: { promptTokens: 3, completionTokens: 2 },
+      modelName: "gemini-2.5-flash",
+      truncated: false,
+      expectedTotal: null,
+    });
+  });
+
+  it("returns { runId, conversationId } for a valid parent with an assistant child", async () => {
+    const { startCopilotRegenerate } = await import("./copilot.service");
+    const { getCopilotMessageById, listCopilotMessages } = await import("./copilot.store");
+    const parent = { id: 41, role: "USER", conversationId: 7, createdAt: new Date("2026-08-24T10:00:00Z"), envelope: { type: "text", text: "hello" } };
+    (getCopilotMessageById as any).mockResolvedValueOnce(parent);
+    (listCopilotMessages as any).mockResolvedValueOnce([
+      parent,
+      { ...parent, id: 42, role: "ASSISTANT", createdAt: new Date("2026-08-24T10:00:01Z") },
+    ]);
+    const out = await startCopilotRegenerate({ userId: 5, userMsgId: 41, locale: "ar" });
+    expect(out.runId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(out.conversationId).toBe(7);
+    await waitForBackground(out.runId);
+  });
+
+  it("throws AppError(404) when parent not found", async () => {
+    const { startCopilotRegenerate } = await import("./copilot.service");
+    const { getCopilotMessageById } = await import("./copilot.store");
+    (getCopilotMessageById as any).mockResolvedValueOnce(null);
+    await expect(startCopilotRegenerate({ userId: 5, userMsgId: 99, locale: "ar" }))
+      .rejects.toMatchObject({ statusCode: 404 });
+  });
+
+  it("throws AppError(422) when parent exists but no assistant child", async () => {
+    const { startCopilotRegenerate } = await import("./copilot.service");
+    const { getCopilotMessageById, listCopilotMessages } = await import("./copilot.store");
+    (getCopilotMessageById as any).mockResolvedValueOnce({
+      id: 41, role: "USER", conversationId: 7, createdAt: new Date("2026-08-24T10:00:00Z"), envelope: { type: "text", text: "hello" },
+    });
+    (listCopilotMessages as any).mockResolvedValueOnce([
+      { id: 41, role: "USER", conversationId: 7, createdAt: new Date("2026-08-24T10:00:00Z"), envelope: {} },
+    ]);
+    await expect(startCopilotRegenerate({ userId: 5, userMsgId: 41, locale: "ar" }))
+      .rejects.toMatchObject({ statusCode: 422 });
   });
 });
 

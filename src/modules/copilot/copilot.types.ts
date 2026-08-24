@@ -1,11 +1,27 @@
 // src/modules/copilot/copilot.types.ts
+export type EnvelopeCite = {
+  tool: string;
+  section?: string;
+  fetchedAt: string;
+  deepLink?: string;
+};
+
 export type CopilotEnvelope =
-  | { type: "text"; text: string }
-  | { type: "stat-grid"; items: { label: string; value: string | number; hint?: string }[] }
-  | { type: "lead-list"; leads: { id: number; name: string; channel?: string | null; interest?: string | null; createdAt?: string }[]; total?: number }
-  | { type: "conversation-list"; conversations: { id: number; customerName: string; channel?: string | null; handoffCategory?: string | null; preview?: string | null }[] }
+  | { type: "text"; text: string; cite?: EnvelopeCite }
+  | { type: "stat-grid"; items: { label: string; value: string | number; hint?: string }[]; cite?: EnvelopeCite }
+  | { type: "lead-list"; leads: Array<{
+      id: number;
+      name?: string | null;
+      displayName?: string | null;
+      channel?: string | null;
+      primaryChannel?: string | null;
+      interest?: string | null;
+      phone?: string | null;
+      [key: string]: unknown;
+    }>; total?: number; cite?: EnvelopeCite }
+  | { type: "conversation-list"; conversations: { id: number; customerName: string; channel?: string | null; handoffCategory?: string | null; preview?: string | null }[]; cite?: EnvelopeCite }
   | { type: "progress"; message: string }
-  | { type: "link-card"; title: string; description?: string; href: string; cta: string }
+  | { type: "link-card"; title: string; description?: string; href: string; cta: string; cite?: EnvelopeCite }
   | { type: "error"; message: string; retryable: boolean };
 
 // Persisted assistant-message envelope. `truncated` is set when the graph hit
@@ -19,4 +35,5 @@ export type CopilotMessagePayload = {
   envelopes: CopilotEnvelope[];
   truncated?: boolean;
   expectedTotal?: number;
+  trace?: { steps: { name: string; durationMs: number }[] };
 };

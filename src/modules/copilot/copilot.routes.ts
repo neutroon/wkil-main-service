@@ -13,9 +13,12 @@ import {
   updateConversationTitleController,
 } from "./copilot.controller";
 import { copilotMessagesQuerySchema, copilotPostMessageSchema } from "./copilot.validation";
+import { getSuggestionsController, getUx2FlagController } from "./copilot.suggestions.controller";
 
 const copilotRoutes = Router();
 
+copilotRoutes.get("/suggestions", getSuggestionsController);
+copilotRoutes.get("/ux2", getUx2FlagController);
 copilotRoutes.get("/conversation", getCopilotConversationController);
 copilotRoutes.get("/conversation/messages", validate(copilotMessagesQuerySchema), listCopilotMessagesController);
 copilotRoutes.post("/conversation/messages", copilotLimiter, validate(copilotPostMessageSchema), postCopilotMessageController);

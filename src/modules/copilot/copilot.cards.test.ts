@@ -49,3 +49,32 @@ describe("envelopesForToolResult", () => {
     expect(envs).toHaveLength(0);
   });
 });
+
+describe("envelope citations", () => {
+  it("attaches cite to get_overview sections", () => {
+    const envs = envelopesForToolResult("get_overview", {
+      stats: { totalMessages: 10, aiAutomationRate: 0.5, leadVelocity: 3, avgResponseTime: "1m" },
+      leads: { data: [{ id: 7, displayName: "Yara" }], meta: { total: 1 } },
+      attention: { data: [{ id: 3, name: "Sam", channel: "whatsapp" }] },
+    });
+    const stat = envs.find((e) => e.type === "stat-grid") as any;
+    const lead = envs.find((e) => e.type === "lead-list") as any;
+    const att = envs.find((e) => e.type === "conversation-list") as any;
+    expect(stat.cite).toMatchObject({ tool: "get_overview", section: "stats", deepLink: "/analytics" });
+    expect(lead.cite).toMatchObject({ tool: "get_overview", section: "leads", deepLink: "/customers" });
+    expect(att.cite).toMatchObject({ tool: "get_overview", section: "attention", deepLink: "/inbox?filter=handoff" });
+    expect(typeof stat.cite.fetchedAt).toBe("string");
+  });
+
+  it("attaches cite to get_customer with deepLink", () => {
+    const envs = envelopesForToolResult("get_customer", { id: 42, name: "Yara", phone: "+20…" });
+    const text = envs[0] as any;
+    expect(text.cite).toMatchObject({ tool: "get_customer", deepLink: "/customers/42" });
+  });
+
+  it("attaches cite to get_ai_usage", () => {
+    const envs = envelopesForToolResult("get_ai_usage", { totalTokens: 100, embeddingTokens: 20, totalCost: 0.01 });
+    const stat = envs[0] as any;
+    expect(stat.cite).toMatchObject({ tool: "get_ai_usage", deepLink: "/analytics?tab=ai-usage" });
+  });
+});

@@ -100,6 +100,7 @@ async function runCopilotTurnInBackground(
       locale: params.locale,
       text: params.text,
       signal,
+      runId,
     });
 
     await recordAiUsage({
@@ -117,6 +118,7 @@ async function runCopilotTurnInBackground(
       envelope: {
         envelopes: out.envelopes,
         truncated: out.truncated,
+        trace: { steps: out.trace },
         ...(out.expectedTotal !== null ? { expectedTotal: out.expectedTotal } : {}),
       },
     });
@@ -125,6 +127,7 @@ async function runCopilotTurnInBackground(
       conversationId: conv.id,
       envelopes: out.envelopes,
       truncated: out.truncated,
+      trace: { steps: out.trace },
       ...(out.expectedTotal !== null ? { expectedTotal: out.expectedTotal } : {}),
     });
 
@@ -213,6 +216,7 @@ async function runCopilotRegenerateBackground(
       locale: params.locale,
       text: envelope.text,
       signal,
+      runId,
     });
 
     await recordAiUsage({
@@ -230,6 +234,7 @@ async function runCopilotRegenerateBackground(
       envelope: {
         envelopes: out.envelopes,
         truncated: out.truncated,
+        trace: { steps: out.trace },
         ...(out.expectedTotal !== null ? { expectedTotal: out.expectedTotal } : {}),
       },
     });
@@ -238,6 +243,7 @@ async function runCopilotRegenerateBackground(
       conversationId: parent.conversationId,
       envelopes: out.envelopes,
       truncated: out.truncated,
+      trace: { steps: out.trace },
       ...(out.expectedTotal !== null ? { expectedTotal: out.expectedTotal } : {}),
     });
 

@@ -22,6 +22,8 @@ export const CopilotState = Annotation.Root({
   envelopes: Annotation<CopilotEnvelope[]>({ value: overwrite, default: () => [] }),
   truncated: Annotation<boolean>({ value: overwrite, default: () => false }),
   expectedTotal: Annotation<number | null>({ value: overwrite, default: () => null }),
+  runId: Annotation<string | null>({ value: overwrite, default: () => null }),
+  traceSteps: Annotation<{ name: string; durationMs: number }[]>({ value: overwrite, default: () => [] }),
   usage: Annotation<{ promptTokens: number; completionTokens: number }>({ value: addUsage, default: () => ({ promptTokens: 0, completionTokens: 0 }) }),
   modelName: Annotation<string>({ value: overwrite, default: () => "" }),
   emitDelta: Annotation<((d: string) => void) | undefined>({ value: overwrite, default: () => undefined }),

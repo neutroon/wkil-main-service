@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { streamMock } = vi.hoisted(() => ({ streamMock: vi.fn() }));
 
+import { emitToCopilot } from "@modules/realtime/socket";
+
 vi.mock("@utils/logger", () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 vi.mock("@modules/ai-agent/core/modelRuntime", () => ({ streamDecisionOrTool: streamMock }));
 vi.mock("@modules/realtime/socket", () => ({ emitToCopilot: vi.fn() }));
@@ -71,5 +73,36 @@ describe("runCopilotGraph", () => {
     expect(out.envelopes.length).toBeGreaterThan(0);
     expect(out.envelopes.some((e) => e.type === "text")).toBe(true);
     expect(out.truncated).toBe(false);
+  });
+});
+
+describe("copilot trace", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    streamMock
+      .mockResolvedValueOnce({ toolCalls: [{ id: "t1", name: "get_overview", args: { sections: ["stats", "leads", "attention"] } }], rawText: "", usage: { promptTokens: 3, completionTokens: 1, groundingCalls: 0 }, modelName: "m", finishReason: "STOP" })
+      .mockResolvedValueOnce({ toolCalls: [], rawText: "Here is your overview.", usage: { promptTokens: 5, completionTokens: 4, groundingCalls: 0 }, modelName: "m", finishReason: "STOP" });
+  });
+
+  it("emits copilot:tool once per executed tool with duration + returns trace", async () => {
+    const emit = emitToCopilot as unknown as ReturnType<typeof vi.fn>;
+    emit.mockClear();
+    const out = await runCopilotGraph({
+      conversationId: 1,
+      userId: 5,
+      locale: "en",
+      text: "show me stats",
+      runId: "run-xyz",
+    });
+    const toolCalls = emit.mock.calls.filter((c: any) => c[1] === "copilot:tool");
+    expect(toolCalls.length).toBeGreaterThanOrEqual(1);
+    const [userId, evt, payload] = toolCalls[0];
+    expect(userId).toBe(5);
+    expect(evt).toBe("copilot:tool");
+    expect(payload).toMatchObject({ conversationId: 1, runId: "run-xyz", step: expect.any(Number), name: expect.any(String), durationMs: expect.any(Number) });
+    expect(payload.durationMs).toBeGreaterThanOrEqual(0);
+    expect(Array.isArray(out.trace)).toBe(true);
+    expect(out.trace[0]).toHaveProperty("name");
+    expect(out.trace[0]).toHaveProperty("durationMs");
   });
 });

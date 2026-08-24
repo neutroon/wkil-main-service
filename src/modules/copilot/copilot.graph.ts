@@ -67,6 +67,7 @@ async function callModel(state: CopilotStateType): Promise<Partial<CopilotStateT
 async function executeTools(state: CopilotStateType): Promise<Partial<CopilotStateType>> {
   const newResults: { name: string; result: unknown }[] = [];
   const toolMessages: AgentContent[] = [];
+  const traceSteps = [...state.traceSteps];
   const ctx = {
     userId: state.userId,
     conversationId: state.conversationId,
@@ -85,6 +86,7 @@ async function executeTools(state: CopilotStateType): Promise<Partial<CopilotSta
     } catch (err: any) {
       result = { error: `Invalid arguments: ${err?.message ?? "parse failed"}` };
     }
+    const startedAt = Date.now();
     if (result === undefined && tool) {
       try {
         result = await tool.handler(args, ctx);
@@ -95,13 +97,25 @@ async function executeTools(state: CopilotStateType): Promise<Partial<CopilotSta
     } else if (!tool) {
       result = { error: `Unknown tool: ${call.name}` };
     }
+    const durationMs = Date.now() - startedAt;
     newResults.push({ name: call.name, result });
     toolMessages.push({ role: "tool", toolName: call.name, toolCallId: call.id ?? call.name, toolResult: result });
+    traceSteps.push({ name: call.name, durationMs });
+    if (state.runId) {
+      emitToCopilot(state.userId, "copilot:tool", {
+        conversationId: state.conversationId,
+        runId: state.runId,
+        step: state.toolRounds + 1,
+        name: call.name,
+        durationMs,
+      });
+    }
   }
   return {
     toolResults: newResults,
     contents: [...state.contents, ...toolMessages],
     toolRounds: state.toolRounds + 1,
+    traceSteps,
   };
 }
 
@@ -161,18 +175,20 @@ export async function runCopilotGraph(params: {
   locale: "ar" | "en";
   text: string;
   signal?: AbortSignal;
+  runId?: string;
 }): Promise<{
   envelopes: import("./copilot.types").CopilotEnvelope[];
   usage: { promptTokens: number; completionTokens: number };
   modelName: string;
   truncated: boolean;
   expectedTotal: number | null;
+  trace: { name: string; durationMs: number }[];
 }> {
   const final = await copilotGraph.invoke(
     // `contents` starts empty: the orchestrator persists the user message
     // before invoking (Task 10), so `loadContext` sources the full history
     // — including the new message — from the store.
-    { conversationId: params.conversationId, userId: params.userId, locale: params.locale },
+    { conversationId: params.conversationId, userId: params.userId, locale: params.locale, runId: params.runId ?? null },
     {
       configurable: { thread_id: `copilot-${params.conversationId}`, graph_version: "copilot-v1" },
       recursionLimit: 25,
@@ -185,5 +201,6 @@ export async function runCopilotGraph(params: {
     modelName: final.modelName,
     truncated: final.truncated,
     expectedTotal: final.expectedTotal,
+    trace: final.traceSteps,
   };
 }

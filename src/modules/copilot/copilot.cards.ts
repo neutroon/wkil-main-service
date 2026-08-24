@@ -2,27 +2,21 @@
 import type { CopilotEnvelope } from "./copilot.types";
 
 export function envelopesForToolResult(toolName: string, result: unknown): CopilotEnvelope[] {
+  const fetchedAt = new Date().toISOString();
   switch (toolName) {
     case "get_overview": {
       const r = result as any;
       const envs: CopilotEnvelope[] = [];
-      if (r?.stats) envs.push({ type: "stat-grid", items: statsItems(r.stats) });
-      if (r?.attention) envs.push({ type: "conversation-list", conversations: ((r.attention?.data ?? []) as any[]).map(toConvRow) });
-      if (r?.leads) envs.push({ type: "lead-list", leads: r.leads?.data ?? [], total: r.leads?.meta?.total });
+      if (r?.stats) envs.push({ type: "stat-grid", items: statsItems(r.stats), cite: { tool: "get_overview", section: "stats", fetchedAt, deepLink: "/analytics" } });
+      if (r?.attention) envs.push({ type: "conversation-list", conversations: ((r.attention?.data ?? []) as any[]).map(toConvRow), cite: { tool: "get_overview", section: "attention", fetchedAt, deepLink: "/inbox?filter=handoff" } });
+      if (r?.leads) envs.push({ type: "lead-list", leads: r.leads?.data ?? [], total: r.leads?.meta?.total, cite: { tool: "get_overview", section: "leads", fetchedAt, deepLink: "/customers" } });
       return envs;
     }
     case "get_customer":
-      return [{ type: "text", text: formatCustomer((result as any)) }];
+      return [{ type: "text", text: formatCustomer(result), cite: { tool: "get_customer", fetchedAt, deepLink: (result as any)?.id ? `/customers/${(result as any).id}` : undefined } }];
     case "get_ai_usage":
-      return [{ type: "stat-grid", items: usageItems(result) }];
+      return [{ type: "stat-grid", items: usageItems(result), cite: { tool: "get_ai_usage", fetchedAt, deepLink: "/analytics?tab=ai-usage" } }];
     default:
-      // Unknown tool name — drop silently rather than render a confusing red card.
-      // This can happen if the LLM hallucinates a tool name, the deployed backend
-      // has stale tool definitions, or the model was trained on an older API
-      // version. Either way, the user shouldn't see a broken UI: the LLM should
-      // fall back to a text answer (or finalize's fallback text). The actual error
-      // is logged at executeTools in copilot.graph.ts when findCopilotTool
-      // returns undefined.
       return [];
   }
 }

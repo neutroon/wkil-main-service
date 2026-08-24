@@ -70,7 +70,7 @@ describe("DELETE /copilot/runs/:runId", () => {
     await cancelCopilotRunController(req, response);
     expect(response.status).toHaveBeenCalledWith(404);
     expect(response.json).toHaveBeenCalledWith({
-      error: expect.objectContaining({ message: "no active run" }),
+      data: { cancelled: false, message: "no active run" },
     });
   });
 
@@ -82,7 +82,7 @@ describe("DELETE /copilot/runs/:runId", () => {
     await cancelCopilotRunController(req, response);
     expect(response.status).toHaveBeenCalledWith(403);
     expect(response.json).toHaveBeenCalledWith({
-      error: expect.objectContaining({ message: "forbidden" }),
+      data: { cancelled: false, message: "forbidden" },
     });
   });
 });

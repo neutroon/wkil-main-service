@@ -47,8 +47,8 @@ export const cancelCopilotRunController = async (req: Request, res: Response) =>
   const { activeRuns } = await import("./copilot.service");
   const exists = activeRuns.has(runId);
   if (!exists) {
-    res.status(404).json({ error: { message: "no active run" } });
+    res.status(404).json({ data: { cancelled: false, message: "no active run" } });
   } else {
-    res.status(403).json({ error: { message: "forbidden" } });
+    res.status(403).json({ data: { cancelled: false, message: "forbidden" } });
   }
 };

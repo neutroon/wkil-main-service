@@ -1,9 +1,13 @@
 import { Request, Response } from "express";
 import { cancelCopilotRun, startCopilotTurn, startCopilotRegenerate, activeRuns } from "./copilot.service";
 import {
+  createConversation,
+  deleteConversation,
   getCopilotConversationForUser,
   getOrCreateCopilotConversation,
+  listConversationsForUser,
   listCopilotMessages,
+  updateConversationTitle,
 } from "./copilot.store";
 
 function detectLocale(req: Request): "ar" | "en" {
@@ -61,6 +65,46 @@ export const regenerateCopilotMessageController = async (req: Request, res: Resp
   } catch (err: any) {
     const status = err?.statusCode ?? 500;
     const message = err?.message ?? "The service is unavailable right now.";
+    res.status(status).json({ error: { message } });
+  }
+};
+
+export const listConversationsController = async (req: Request, res: Response) => {
+  const userId = (req as any).user.id as number;
+  const conversations = await listConversationsForUser(userId);
+  res.status(200).json({ data: conversations });
+};
+
+export const createConversationController = async (req: Request, res: Response) => {
+  const userId = (req as any).user.id as number;
+  const locale = detectLocale(req);
+  const conv = await createConversation(userId, locale);
+  res.status(200).json({ data: { id: conv.id, conversationId: conv.id } });
+};
+
+export const updateConversationTitleController = async (req: Request, res: Response) => {
+  const userId = (req as any).user.id as number;
+  const id = Number((req as any).params.id);
+  const title = String((req as any).body?.title ?? "");
+  try {
+    await updateConversationTitle(id, userId, title);
+    res.status(200).json({ data: { id } });
+  } catch (err: any) {
+    const status = err?.statusCode ?? 500;
+    const message = err?.message ?? "Conversation not found";
+    res.status(status).json({ error: { message } });
+  }
+};
+
+export const deleteConversationController = async (req: Request, res: Response) => {
+  const userId = (req as any).user.id as number;
+  const id = Number((req as any).params.id);
+  try {
+    await deleteConversation(id, userId);
+    res.status(204).end();
+  } catch (err: any) {
+    const status = err?.statusCode ?? 500;
+    const message = err?.message ?? "Conversation not found";
     res.status(status).json({ error: { message } });
   }
 };

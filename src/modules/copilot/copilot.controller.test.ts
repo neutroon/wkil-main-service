@@ -16,10 +16,24 @@ vi.mock("./copilot.store", () => ({
   getOrCreateCopilotConversation: vi.fn(async () => ({ id: 7, userId: 5, kind: "GENERAL", locale: "ar", lastMessageAt: new Date() })),
   listCopilotMessages: vi.fn(async () => []),
   getCopilotConversationForUser: vi.fn(),
+  listConversationsForUser: vi.fn(),
+  createConversation: vi.fn(),
+  updateConversationTitle: vi.fn(),
+  deleteConversation: vi.fn(),
 }));
 
 import { startCopilotTurn } from "./copilot.service";
-import { cancelCopilotRunController, getCopilotConversationController, listCopilotMessagesController, postCopilotMessageController, regenerateCopilotMessageController } from "./copilot.controller";
+import {
+  cancelCopilotRunController,
+  createConversationController,
+  deleteConversationController,
+  getCopilotConversationController,
+  listConversationsController,
+  listCopilotMessagesController,
+  postCopilotMessageController,
+  regenerateCopilotMessageController,
+  updateConversationTitleController,
+} from "./copilot.controller";
 
 function makeRes() {
   const r: any = {};
@@ -125,5 +139,83 @@ describe("regenerateCopilotMessageController", () => {
     const response = makeRes();
     await regenerateCopilotMessageController(req, response);
     expect(response.status).toHaveBeenCalledWith(422);
+  });
+});
+
+describe("listConversationsController", () => {
+  it("returns 200 with the user's conversations", async () => {
+    const { listConversationsForUser } = await import("./copilot.store");
+    (listConversationsForUser as any).mockResolvedValueOnce([
+      { id: 1, userId: 5, kind: "GENERAL", locale: "ar", title: "Chat 1", lastMessageAt: new Date() },
+      { id: 2, userId: 5, kind: "GENERAL", locale: "ar", title: null, lastMessageAt: new Date() },
+    ]);
+    const req: any = { user: { id: 5 }, headers: {} };
+    const response = makeRes();
+    await listConversationsController(req, response);
+    expect(listConversationsForUser).toHaveBeenCalledWith(5);
+    expect(response.status).toHaveBeenCalledWith(200);
+    expect(response.json).toHaveBeenCalledWith({
+      data: expect.arrayContaining([
+        expect.objectContaining({ id: 1, title: "Chat 1" }),
+        expect.objectContaining({ id: 2, title: null }),
+      ]),
+    });
+  });
+});
+
+describe("createConversationController", () => {
+  it("returns 200 with { id, conversationId } on success", async () => {
+    const { createConversation } = await import("./copilot.store");
+    (createConversation as any).mockResolvedValueOnce({
+      id: 42, userId: 5, kind: "GENERAL", locale: "en", title: null, lastMessageAt: new Date(),
+    });
+    const req: any = { user: { id: 5 }, headers: {} };
+    const response = makeRes();
+    await createConversationController(req, response);
+    expect(createConversation).toHaveBeenCalledWith(5, "en");
+    expect(response.status).toHaveBeenCalledWith(200);
+    expect(response.json).toHaveBeenCalledWith({ data: { id: 42, conversationId: 42 } });
+  });
+});
+
+describe("updateConversationTitleController", () => {
+  it("returns 200 on successful rename", async () => {
+    const { updateConversationTitle } = await import("./copilot.store");
+    (updateConversationTitle as any).mockResolvedValueOnce(undefined);
+    const req: any = { user: { id: 5 }, params: { id: "42" }, body: { title: "New name" }, headers: {} };
+    const response = makeRes();
+    await updateConversationTitleController(req, response);
+    expect(updateConversationTitle).toHaveBeenCalledWith(42, 5, "New name");
+    expect(response.status).toHaveBeenCalledWith(200);
+  });
+
+  it("returns 404 when conversation not found", async () => {
+    const { updateConversationTitle } = await import("./copilot.store");
+    (updateConversationTitle as any).mockRejectedValueOnce(new AppError("conversation not found", 404, false));
+    const req: any = { user: { id: 5 }, params: { id: "99" }, body: { title: "x" }, headers: {} };
+    const response = makeRes();
+    await updateConversationTitleController(req, response);
+    expect(response.status).toHaveBeenCalledWith(404);
+  });
+});
+
+describe("deleteConversationController", () => {
+  it("returns 204 on successful delete", async () => {
+    const { deleteConversation } = await import("./copilot.store");
+    (deleteConversation as any).mockResolvedValueOnce(undefined);
+    const req: any = { user: { id: 5 }, params: { id: "42" }, headers: {} };
+    const response = makeRes();
+    await deleteConversationController(req, response);
+    expect(deleteConversation).toHaveBeenCalledWith(42, 5);
+    expect(response.status).toHaveBeenCalledWith(204);
+  });
+
+  it("returns 404 when conversation not found", async () => {
+    const { deleteConversation } = await import("./copilot.store");
+    (deleteConversation as any).mockRejectedValueOnce(new AppError("conversation not found", 404, false));
+    const req: any = { user: { id: 5 }, params: { id: "99" }, headers: {} };
+    const response = makeRes();
+    await deleteConversationController(req, response);
+    expect(response.status).toHaveBeenCalledWith(404);
   });
 });

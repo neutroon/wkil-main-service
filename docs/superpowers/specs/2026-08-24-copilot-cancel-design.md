@@ -184,21 +184,21 @@ useCopilotSocket({
   conversationId: ...,
   onDelta: (d) => setStreamingText((p) => p + d),
   onStreamEnd: () => setStreamingText(""),
-  onMessage: (p: { runId; conversationId; envelopes; truncated; expectedTotal }) => {
+  onMessage: (p: { runId: string; conversationId: number; envelopes: CopilotEnvelope[]; truncated: boolean; expectedTotal: number | null }) => {
     queryClient.invalidateQueries(...);
     if (p.runId === currentRunId) {
       setOptimisticUserMessage(null);
       setCurrentRunId(null);
     }
   },
-  onCancelled: (p: { runId; conversationId }) => {
+  onCancelled: (p: { runId: string; conversationId: number }) => {
     if (p.runId === currentRunId) {
       setOptimisticUserMessage(null);
       setStreamingText("");
       setCurrentRunId(null);
     }
   },
-  onError: (p: { runId; conversationId; message }) => {
+  onError: (p: { runId: string; conversationId: number; message: string }) => {
     if (p.runId === currentRunId) {
       setOptimisticUserMessage(null);
       setStreamingText("");
@@ -208,6 +208,8 @@ useCopilotSocket({
   },
 });
 ```
+
+**Edge case — cancel before POST response:** if the user clicks Stop within the millisecond window before `currentRunId` is set (POST response hasn't returned yet), `currentRunId` is `null` and the DELETE is not fired. The backend graph still runs to `MAX_TOOL_ROUNDS`. In practice this window is sub-100ms so users won't hit it, but document for the test plan: clicking Stop before the POST response completes is not aborting the backend.
 
 ### Stop button
 

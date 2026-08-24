@@ -81,3 +81,40 @@ describe("runCopilotTurn", () => {
     expect(assistantCalls).toHaveLength(0);
   });
 });
+
+import { cancelCopilotRun } from "./copilot.service";
+
+describe("cancelCopilotRun", () => {
+  it("returns { cancelled: false } for an unknown runId", async () => {
+    const out = await cancelCopilotRun("nonexistent-id", 5);
+    expect(out).toEqual({ cancelled: false });
+  });
+
+  it("returns { cancelled: true } and aborts when runId is registered", async () => {
+    const { activeRuns } = await import("./copilot.service");
+    const controller = new AbortController();
+    activeRuns.set("test-run-id", {
+      abortController: controller,
+      conversationId: 7,
+      userId: 5,
+    });
+    const out = await cancelCopilotRun("test-run-id", 5);
+    expect(out).toEqual({ cancelled: true });
+    expect(controller.signal.aborted).toBe(true);
+    expect(activeRuns.has("test-run-id")).toBe(false);
+  });
+
+  it("returns { cancelled: false } when runId belongs to another user", async () => {
+    const { activeRuns } = await import("./copilot.service");
+    const controller = new AbortController();
+    activeRuns.set("other-user-run", {
+      abortController: controller,
+      conversationId: 7,
+      userId: 99,
+    });
+    const out = await cancelCopilotRun("other-user-run", 5);
+    expect(out).toEqual({ cancelled: false });
+    expect(controller.signal.aborted).toBe(false);
+    expect(activeRuns.has("other-user-run")).toBe(true);
+  });
+});

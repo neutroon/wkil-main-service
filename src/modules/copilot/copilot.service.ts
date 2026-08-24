@@ -20,6 +20,26 @@ export type CopilotTurnResult =
     }
   | { ok: false; code: string; message: string; retryable: boolean };
 
+export type ActiveRun = {
+  abortController: AbortController;
+  conversationId: number;
+  userId: number;
+};
+
+export const activeRuns = new Map<string, ActiveRun>();
+
+export async function cancelCopilotRun(
+  runId: string,
+  userId: number,
+): Promise<{ cancelled: boolean }> {
+  const run = activeRuns.get(runId);
+  if (!run) return { cancelled: false };
+  if (run.userId !== userId) return { cancelled: false };
+  run.abortController.abort();
+  activeRuns.delete(runId);
+  return { cancelled: true };
+}
+
 export async function runCopilotTurn(params: {
   userId: number;
   text: string;

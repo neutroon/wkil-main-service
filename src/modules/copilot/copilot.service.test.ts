@@ -219,6 +219,20 @@ describe("startCopilotRegenerate", () => {
     await expect(startCopilotRegenerate({ userId: 5, userMsgId: 41, locale: "ar" }))
       .rejects.toMatchObject({ statusCode: 422 });
   });
+
+  it("throws AppError(422) when parent exists but is not a USER message", async () => {
+    const { startCopilotRegenerate } = await import("./copilot.service");
+    const { getCopilotMessageById } = await import("./copilot.store");
+    (getCopilotMessageById as any).mockResolvedValueOnce({
+      id: 41,
+      role: "ASSISTANT",
+      conversationId: 7,
+      createdAt: new Date("2026-08-24T10:00:00Z"),
+      envelope: { type: "text", text: "hi" },
+    });
+    await expect(startCopilotRegenerate({ userId: 5, userMsgId: 41, locale: "ar" }))
+      .rejects.toMatchObject({ statusCode: 422 });
+  });
 });
 
 describe("cancelCopilotRun", () => {

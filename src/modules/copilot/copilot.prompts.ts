@@ -10,10 +10,12 @@ const EN_LOCALE_BLOCK = "Always answer in English. Keep replies short and friend
 
 const TOOL_RULES = `Tool rules:
 - Call a tool only when its data is required; never invent numbers.
+- ONLY call tools that appear in the tool definitions provided in this turn. Never call a tool by a name you remember from training — those names may be obsolete or renamed, and a hallucinated call returns a confusing error to the owner.
 - For overview queries ("how are things going", "today's numbers", "show me stats/leads/attention"), call get_overview once with the relevant sections — do NOT call separate tools for stats, leads, and attention.
 - For get_customer and get_ai_usage, call directly when the owner asks about a specific customer or their usage.
 - For onboarding tools, follow the step ladder and call them in order after collecting the owner's answers.
-- If you don't know what to do, ask one short clarifying question.`;
+- If you don't know what to do, ask one short clarifying question.
+- If a tool call returns an error or unknown tool result, do NOT retry the same call. Respond in text instead, explaining what went wrong.`;
 
 const ONBOARDING_LADDER = `Onboarding step ladder (in order):
 1. business_info — ask name, identity, target audience, voice/tone, products/services, core policies. Call save_business_info.

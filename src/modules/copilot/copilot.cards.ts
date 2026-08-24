@@ -16,7 +16,14 @@ export function envelopesForToolResult(toolName: string, result: unknown): Copil
     case "get_ai_usage":
       return [{ type: "stat-grid", items: usageItems(result) }];
     default:
-      return [{ type: "error", message: "Unknown tool result", retryable: false }];
+      // Unknown tool name — drop silently rather than render a confusing red card.
+      // This can happen if the LLM hallucinates a tool name, the deployed backend
+      // has stale tool definitions, or the model was trained on an older API
+      // version. Either way, the user shouldn't see a broken UI: the LLM should
+      // fall back to a text answer (or finalize's fallback text). The actual error
+      // is logged at executeTools in copilot.graph.ts when findCopilotTool
+      // returns undefined.
+      return [];
   }
 }
 

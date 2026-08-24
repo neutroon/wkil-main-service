@@ -39,8 +39,13 @@ describe("envelopesForToolResult", () => {
     expect(envs[0]!.type).toBe("stat-grid");
   });
 
-  it("returns an error envelope for unknown tools", () => {
+  it("drops unknown tool results silently (no error envelope)", () => {
+    // Previously returned `[{ type: "error", message: "Unknown tool result" }]`,
+    // which surfaced as red-bordered cards in the UI when the LLM hallucinated
+    // tool names. Now returns an empty array — the LLM should fall back to a
+    // text answer (or finalize's fallback text). The underlying "unknown tool"
+    // error is logged at executeTools in copilot.graph.ts.
     const envs = envelopesForToolResult("nope", {});
-    expect(envs[0]!.type).toBe("error");
+    expect(envs).toHaveLength(0);
   });
 });

@@ -44,6 +44,7 @@ import mediaLibraryRoutes from "@modules/media/media.routes";
 import docsRoutes from "@modules/docs/docs.routes";
 import notificationsRoutes from "@modules/notifications/notifications.routes";
 import copilotRoutes from "@modules/copilot/copilot.routes";
+import agentTools from "@modules/ai-agent/tools/agent.tools.controller";
 import { identifyUserForRateLimit } from "@middlewares/identify.middleware";
 import { errorHandler } from "@middlewares/errorHandler.middleware";
 import prisma from "@config/prisma";
@@ -230,6 +231,7 @@ app.use("/v1/analytics", aiAnalyticsRoutes);
 app.use("/v1/media", mediaLibraryRoutes);
 app.use("/v1/notifications", notificationsRoutes);
 app.use("/v1/copilot", copilotRoutes);
+app.use("/internal/agent", agentTools);
 
 // Admin-only detailed health (for admin dashboard)
 app.get(

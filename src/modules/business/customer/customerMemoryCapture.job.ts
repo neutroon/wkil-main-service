@@ -1,3 +1,4 @@
+import { AgentClient } from "@modules/ai-agent/client/agent.client";
 import prisma from "@config/prisma";
 import { invokePipelineStructured } from "@modules/ai-agent/core/pipelineRuntime";
 import { logger } from "@utils/logger";
@@ -20,6 +21,15 @@ type CustomerMemoryField = {
 export async function processCustomerMemoryCaptureJob(
   job: CustomerMemoryCaptureJob,
 ): Promise<void> {
+  if (AgentClient.enabled()) {
+    return AgentClient.runAgent({
+      business_profile_id: job.businessProfileId,
+      user_id: undefined,
+      messages: [],
+      stage: "fast",
+    } as any) as any;
+  }
+
   if (!job.conversationId) return;
 
   const context = await loadMemoryContext(job);

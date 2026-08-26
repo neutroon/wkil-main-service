@@ -1,3 +1,4 @@
+import { AgentClient } from "@modules/ai-agent/client/agent.client";
 import { Request, Response } from "express";
 import prisma from "@config/prisma";
 import {
@@ -434,6 +435,15 @@ export const retrieveBusinessProfile = async (req: Request, res: Response) => {
 };
 
 export const previewBusinessProfileChat = async (req: Request, res: Response) => {
+  if (AgentClient.enabled()) {
+    return AgentClient.runAgent({
+      business_profile_id: Number(req.params.id),
+      user_id: (req as any).user.id,
+      messages: [],
+      stage: "fast",
+    } as any) as any;
+  }
+
   const userId: number = (req as any).user.id;
   const profileId = Number(req.params.id);
   const message = String(req.body?.message ?? "")

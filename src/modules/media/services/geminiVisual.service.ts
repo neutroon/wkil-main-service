@@ -1,3 +1,4 @@
+import { AgentClient } from "@modules/ai-agent/client/agent.client";
 import {
   invokePipelineText,
   invokePipelineImageGen,
@@ -99,6 +100,15 @@ export async function createGeminiVisual(params: {
   userPrompt: string;
   postId?: number; 
 }) {
+  if (AgentClient.enabled()) {
+    return AgentClient.runAgent({
+      business_profile_id: params.businessProfileId,
+      user_id: params.userId,
+      messages: [],
+      stage: "fast",
+    } as any) as any;
+  }
+
   const { userId, businessProfileId, userPrompt, postId } = params;
 
   // 1. Fetch Business Profile and Brand Kit
@@ -223,6 +233,15 @@ export async function refineGeminiVisual(params: {
   instruction: string;
   postId?: number;
 }) {
+  if (AgentClient.enabled()) {
+    return AgentClient.runAgent({
+      business_profile_id: params.businessProfileId,
+      user_id: params.userId,
+      messages: [],
+      stage: "fast",
+    } as any) as any;
+  }
+
   const { userId, businessProfileId, assetId, instruction, postId } = params;
 
   // 1. Quota Check

@@ -1,3 +1,4 @@
+import { AgentClient } from "@modules/ai-agent/client/agent.client";
 import prisma from "@config/prisma";
 import { logger } from "@utils/logger";
 import {
@@ -52,6 +53,15 @@ export async function processWidgetChatMessage(params: {
   conversationId: number;
   attachment?: { url: string; type: string; caption?: string | null } | null;
 }> {
+  if (AgentClient.enabled()) {
+    return AgentClient.runAgent({
+      business_profile_id: params.install.businessProfileId,
+      user_id: undefined,
+      messages: [],
+      stage: "fast",
+    } as any) as any;
+  }
+
   const { install, message } = params;
   const latency = createLatencyTrace({
     queueWaitMs: 0,

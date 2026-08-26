@@ -1,3 +1,4 @@
+import { AgentClient } from "@modules/ai-agent/client/agent.client";
 import prisma from "@config/prisma";
 import { logger } from "@utils/logger";
 import { invokePipelineText } from "@modules/ai-agent/core/pipelineRuntime";
@@ -345,6 +346,15 @@ async function deliverFollowUp(conversation: any, businessProfile: any, text: st
 }
 
 export async function processFollowUpJob(payload: FollowUpJobPayload) {
+  if (AgentClient.enabled()) {
+    return AgentClient.runAgent({
+      business_profile_id: payload.businessProfileId,
+      user_id: undefined,
+      messages: [],
+      stage: "fast",
+    } as any) as any;
+  }
+
   const conversation = await prisma.conversation.findFirst({
     where: {
       id: payload.conversationId,

@@ -1,3 +1,4 @@
+import { AgentClient } from "@modules/ai-agent/client/agent.client";
 import { invokePipelineStructured, invokePipelineText } from "@modules/ai-agent/core/pipelineRuntime";
 import { logger } from "@utils/logger";
 import { assertQuotaAvailable, recordAiUsage } from "../../billing/billing.service";
@@ -15,6 +16,15 @@ async function discoverStrategicLinks(
   baseUrl: string,
   pageContent: string,
 ) {
+  if (AgentClient.enabled()) {
+    return AgentClient.runAgent({
+      business_profile_id: businessProfileId,
+      user_id: userId,
+      messages: [],
+      stage: "fast",
+    } as any) as any;
+  }
+
   // Pre-flight quota check
   await assertQuotaAvailable(userId, businessProfileId);
   const prompt = `
@@ -83,6 +93,15 @@ async function extractBusinessIdentity(
   businessProfileId: number | null,
   markdown: string,
 ) {
+  if (AgentClient.enabled()) {
+    return AgentClient.runAgent({
+      business_profile_id: businessProfileId,
+      user_id: userId,
+      messages: [],
+      stage: "fast",
+    } as any) as any;
+  }
+
   // Pre-flight quota check
   await assertQuotaAvailable(userId, businessProfileId);
   const prompt = `

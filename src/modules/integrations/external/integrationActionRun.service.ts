@@ -1,3 +1,4 @@
+import { AgentClient } from "@modules/ai-agent/client/agent.client";
 import prisma from "@config/prisma";
 import { logger } from "@utils/logger";
 import type { AgentActionTrigger, AgentActionType, Prisma } from "@prisma/client";
@@ -26,6 +27,15 @@ export async function createIntegrationActionRun(params: {
   jobId: string;
   requestPayload?: JsonRecord | null;
 }) {
+  if (AgentClient.enabled()) {
+    return AgentClient.runAgent({
+      business_profile_id: params.businessProfileId,
+      user_id: undefined,
+      messages: [],
+      stage: "fast",
+    } as any) as any;
+  }
+
   return prisma.integrationActionRun.create({
     data: {
       businessProfileId: params.businessProfileId,

@@ -1,3 +1,4 @@
+import { AgentClient } from "@modules/ai-agent/client/agent.client";
 import type { Prisma } from "@prisma/client";
 import { retrieveRelevantChunksWithEmbedding } from "../rag/rag.service";
 import { buildSystemPrompt } from "../../meta/core/prompt.service";
@@ -540,6 +541,15 @@ export async function computeBusinessChatReply(params: {
   allowedActionSourceIds?: number[];
   completedExternalLookup?: CompletedExternalLookup;
 }): Promise<AiRoutingDecision> {
+  if (AgentClient.enabled()) {
+    return AgentClient.runAgent({
+      business_profile_id: params.businessProfile.id,
+      user_id: params.businessProfile.userId,
+      messages: [],
+      stage: "fast",
+    } as any) as any;
+  }
+
   const startedAt = Date.now();
   const responseDeadlineAt = startedAt + env.AI_CHAT_RESPONSE_DEADLINE_MS;
   const continuation = await findPendingMutationCorrectionContext(params);

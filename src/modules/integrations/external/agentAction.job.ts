@@ -1,3 +1,4 @@
+import { AgentClient } from "@modules/ai-agent/client/agent.client";
 import prisma from "@config/prisma";
 import { logger } from "@utils/logger";
 import { decryptFacebookSecret } from "@modules/auth/core/tokenCrypto";
@@ -53,6 +54,15 @@ export type IntegrationActionJob = {
 export async function processIntegrationActionJob(
   job: IntegrationActionJob,
 ): Promise<void> {
+  if (AgentClient.enabled()) {
+    return AgentClient.runAgent({
+      business_profile_id: job.businessProfileId,
+      user_id: undefined,
+      messages: [],
+      stage: "fast",
+    } as any) as any;
+  }
+
   await markIntegrationActionRunRunning(job.actionRunId);
 
   const source = await prisma.agentActionSource.findFirst({

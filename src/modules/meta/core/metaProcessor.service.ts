@@ -1,3 +1,4 @@
+import { AgentClient } from "@modules/ai-agent/client/agent.client";
 import { UnrecoverableError } from "bullmq";
 import prisma from "@config/prisma";
 import { logger } from "@utils/logger";
@@ -447,6 +448,15 @@ export async function processMetaMessage(
   job: MetaMessageJob,
   traceOptions: MetaProcessorTraceOptions = {},
 ) {
+  if (AgentClient.enabled()) {
+    return AgentClient.runAgent({
+      business_profile_id: job.businessProfileId,
+      user_id: undefined,
+      messages: [],
+      stage: "fast",
+    } as any) as any;
+  }
+
   const { platform, identifier, senderId, messageText, externalId, type, mediaId, mediaMetadata } = job;
   let activeRun: ConversationAiRun | undefined;
   const shouldTraceChannelLatency =

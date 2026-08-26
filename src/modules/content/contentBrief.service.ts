@@ -1,3 +1,4 @@
+import { AgentClient } from "@modules/ai-agent/client/agent.client";
 import prisma from "@config/prisma";
 import { env } from "@config/env";
 import { internalClient } from "@utils/apiClient";
@@ -785,6 +786,15 @@ Return ONLY strict JSON:
 }
 
 export async function* generateContentAuditStream(input: ContentAuditInput) {
+  if (AgentClient.enabled()) {
+    return AgentClient.runAgent({
+      business_profile_id: input.businessProfileId,
+      user_id: input.userId,
+      messages: [],
+      stage: "fast",
+    } as any) as any;
+  }
+
   const signalWindowDays = input.signalWindowDays || 90;
   const profile = await getOwnedProfile(input.businessProfileId, input.userId);
   await assertQuotaAvailable(input.userId, input.businessProfileId);

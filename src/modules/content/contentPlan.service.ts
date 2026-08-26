@@ -1,3 +1,4 @@
+import { AgentClient } from "@modules/ai-agent/client/agent.client";
 import {
   invokePipelineText,
   invokePipelineTextStream,
@@ -353,6 +354,15 @@ Schema:
 }
 
 export async function generateContentStrategy(briefing: BriefingInput) {
+  if (AgentClient.enabled()) {
+    return AgentClient.runAgent({
+      business_profile_id: briefing.businessProfileId,
+      user_id: briefing.userId,
+      messages: [],
+      stage: "fast",
+    } as any) as any;
+  }
+
   const profile = await prisma.businessProfile.findUnique({
     where: { id: briefing.businessProfileId },
     include: {

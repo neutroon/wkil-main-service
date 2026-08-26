@@ -258,7 +258,6 @@ model BusinessProfile {
   updatedAt DateTime @updatedAt
 
   faqs            BusinessProfileFaq[]
-  chunks          BusinessProfileChunk[]
   facebookPages   FacebookPage[]
   whatsAppAccounts WhatsAppAccount[]
   agentActionSources AgentActionSource[]
@@ -386,22 +385,6 @@ model BusinessProfileKnowledgeSection {
   updatedAt DateTime @updatedAt
 
   @@index([businessId])
-}
-
-model BusinessProfileChunk {
-  id                Int                        @id @default(autoincrement())
-  businessProfileId Int
-  businessProfile   BusinessProfile            @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
-  content           String
-  chunkType         String
-  // raw_content | identity | product | contact | faq | intents
-  embedding         Unsupported("vector(768)")
-  chunkIndex        Int
-  createdAt         DateTime                   @default(now())
-  updatedAt         DateTime                   @updatedAt
-
-  @@index([businessProfileId])
-  @@index([businessProfileId, chunkType]) // fast filtered deletes
 }
 
 model Customer {

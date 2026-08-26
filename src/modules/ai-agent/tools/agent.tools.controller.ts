@@ -1,20 +1,36 @@
 import { Router } from "express";
-import { runAgentActionTool } from "../core/agentActionTools"; // existing business logic
+import { randomUUID } from "crypto";
+import { createIntegrationActionRun } from "../../integrations/external/integrationActionRun.service";
 import { assertQuotaAvailable, recordAiUsage } from "../../billing/billing.service";
 import prisma from "@config/prisma";
 
 const router = Router();
-const TOKEN = process.env.MONOLITH_SERVICE_TOKEN ?? "";
 
 router.use((req, res, next) => {
+  const TOKEN = process.env.MONOLITH_SERVICE_TOKEN ?? "";
   if (req.header("x-service-token") !== TOKEN) return res.status(401).json({ error: "unauthorized" });
   next();
 });
 
 router.post("/tools/run", async (req, res) => {
-  const { tool, tool_call_id, args } = req.body;
-  const result = await runAgentActionTool(tool, args);
-  res.json({ result });
+  const { tool, args } = req.body ?? {};
+  const m = /^integration_action_(\d+)$/.exec(tool ?? "");
+  if (!m) return res.status(400).json({ error: "unknown_tool", tool });
+  const businessProfileId = Number(args?.businessProfileId ?? req.body.businessProfileId);
+  if (!businessProfileId) return res.status(400).json({ error: "businessProfileId_required" });
+  try {
+    const run = await createIntegrationActionRun({
+      businessProfileId,
+      sourceId: Number(m[1]),
+      jobId: randomUUID(),
+      trigger: "AGENT",
+      toolName: tool,
+      requestPayload: args,
+    });
+    res.json({ result: { runId: run.id } });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "tool_execution_failed" });
+  }
 });
 
 router.get("/quota", async (req, res) => {

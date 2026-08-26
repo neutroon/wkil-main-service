@@ -1,8 +1,0 @@
-{
-  "dependencies": ["./pyproject.toml"],
-  "graphs": {
-    "agent": "./src/agent_svc/agent_graph.py:graph",
-    "rag_ingest": "./src/agent_svc/rag/rag_ingest_graph.py:graph"
-  },
-  "env": ".env"
-}

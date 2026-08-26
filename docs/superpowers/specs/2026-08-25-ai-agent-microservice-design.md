@@ -24,6 +24,20 @@ Migrate the **`ai-agent` core** module of the `wkil-backend` monolith into a sta
 > We accept ELv2 for internal use. If strict 100% permissive OSS becomes a hard requirement later,
 > the fallback is to embed MIT `langgraph` in our own thin FastAPI service (see §12).
 
+**LangChain is included (and is the bulk of the port).** `langgraph` is part of the LangChain
+ecosystem and is built on `langchain-core`. The Python service depends on the **MIT-licensed
+LangChain stack** for the graph, models, and tools:
+- `langgraph`, `langchain-core` (graph + core abstractions)
+- `langchain-openai`, `langchain-anthropic`, `langchain-google-genai`, `langchain-google-vertex`
+  (provider integrations; selected via `init_chat_model`, config-driven — multi-provider)
+- `langchain-embeddings-*` (provider-agnostic embeddings for Qdrant)
+- `langgraph-checkpoint-postgres` (MIT; used only if self-managing persistence — the
+  `langgraph-api` server normally provides this)
+- `langsmith` client (MIT; optional tracing)
+
+The **only non-MIT piece is the `langgraph-api` server runtime (ELv2)** — it hosts/orchestrates
+the MIT LangChain libraries. The libraries themselves are fully permissive.
+
 **In scope (this slice):**
 - `src/modules/ai-agent/core/*` (agentGraphV2, agentState, checkpointer, modelRuntime,
   pipelineRuntime, agentTurn.service, aiAgent.runtime, aiEngine.utils, contextWindow, replyPolicy)

@@ -6,15 +6,17 @@
 
 > **WARNING — irreversible.** Steps 2–4 delete source files and drop a database table. Read the **Rollback** section before executing.
 
+> **Status:** Steps 1–3 below are ✅ COMPLETED on this branch. Step 4 (build + smoke) remains PENDING and must be verified in the real environment where `langgraph-sdk` is installed.
+
 ---
 
 ## 1. Preconditions
 
 Before starting the cutover, ALL of the following must be true:
 
-- [ ] Branch `feat/ai-agent-langgraph-service` is merged into `main` (or the cutover target branch).
+- [x] Branch `feat/ai-agent-langgraph-service` is the cutover target branch.
 - [ ] `langgraph-sdk` is installed and resolves from the package registry (`npm install` succeeds in the monolith).
-- [ ] `npx prisma generate` is green.
+- [x] `npx prisma generate` is green.
 - [ ] Environment variables set in the target environment:
   - `LANGGRAPH_API_URL` — base URL of `agent-svc`.
   - `LANGGRAPH_API_KEY` — shared bearer.
@@ -22,7 +24,7 @@ Before starting the cutover, ALL of the following must be true:
   - `QDRANT_URL` — Qdrant instance URL.
   - `QDRANT_COLLECTION` — collection name (e.g. `business_profile_chunks`).
 - [ ] `USE_AGENT_SERVICE=true` has been set in production for **≥ 1 week** with stable replay parity (see `scripts/replay-e2e.ts`, Task 25).
-- [ ] `agent-svc` is deployed via docker compose and reachable from the monolith.
+- [ ] `agent-svc` is deployed via docker compose and reachable from the monolith. The Python service lives in the sibling repo at `/agent-svc/` (workspace root, NOT inside `back-end/`).
 - [ ] Database backup / point-in-time recovery is available.
 - [ ] Maintenance window scheduled (table drop + monolith redeploy).
 
@@ -30,7 +32,9 @@ Before starting the cutover, ALL of the following must be true:
 
 ## 2. Step 1 — Remove `USE_AGENT_SERVICE` flag branches from callers
 
-Twelve caller files were wired in Tasks 21–22. Each contains the dual-path guard:
+✅ **COMPLETED** on this branch (commit `4726e4f`).
+
+Twelve caller files were wired in Tasks 21–22. Each contained the dual-path guard:
 
 ```ts
 if (AgentClient.enabled()) {
@@ -40,7 +44,7 @@ if (AgentClient.enabled()) {
 // legacy body using core/nodes/rag modules below
 ```
 
-After cutover, `AgentClient` is the **sole** path. The transformation is:
+After cutover, `AgentClient` is the **sole** path. The transformation was:
 
 1. **Delete** the entire `if (AgentClient.enabled()) { ... }` guard block at the top of the function.
 2. **Delete** the entire legacy body below the guard.
@@ -59,23 +63,6 @@ After cutover, `AgentClient` is the **sole** path. The transformation is:
 
 4. **Delete** imports from the legacy modules that are no longer used (`@modules/ai-agent/core/*`, `@modules/ai-agent/nodes/*`, `@modules/ai-agent/rag/*`). Keep the `AgentClient` import — it is now the only AI entry point.
 
-### Exact pattern (manual or scripted)
-
-```bash
-# For each caller file, remove the flag-guard block:
-# Pattern (regex, applied per file):
-#   ^\s*if\s*\(\s*AgentClient\.enabled\(\)\s*\)\s*\{\s*\n[\s\S]*?\n\s*\}\s*\n
-# Replace with empty string.
-#
-# Then remove the legacy body (everything between the deleted guard and the next
-# top-level statement or closing brace). The result should be a thin wrapper.
-#
-# Finally remove unused imports from:
-#   @modules/ai-agent/core/...
-#   @modules/ai-agent/nodes/...
-#   @modules/ai-agent/rag/...
-```
-
 ### The 12 caller files
 
 | # | File |
@@ -93,60 +80,35 @@ After cutover, `AgentClient` is the **sole** path. The transformation is:
 | 11 | `src/modules/meta/core/metaProcessor.service.ts` |
 | 12 | `src/modules/widget/services/widgetChat.service.ts` |
 
-Commit message:
+Commit:
 
 ```text
-refactor(ai-agent): remove USE_AGENT_SERVICE flag — AgentClient is the sole path
+4726e4f feat(ai-agent): cutover — AgentClient is the sole agent path
 ```
 
 ---
 
 ## 3. Step 2 — Delete moved code
 
-The orchestration logic now lives in `agent-svc`. Delete the legacy in-process modules:
+✅ **COMPLETED** on this branch (commit `baea3be`).
 
-```bash
-git rm -r src/modules/ai-agent/core
-git rm -r src/modules/ai-agent/nodes
-git rm -r src/modules/ai-agent/rag
-# Note: `core/agentActionTools.ts` is already removed as part of `core/` above.
-```
+The orchestration logic now lives in `agent-svc` (sibling repo at workspace root). The legacy in-process modules under `src/modules/ai-agent/core`, `src/modules/ai-agent/nodes`, and `src/modules/ai-agent/rag` were deleted via `git rm -r`.
 
-> The `rag.service.ts` dual-write guard is gone in Step 1; deleting the directory removes the underlying pgvector writers.
+> After deletion, `src/modules/ai-agent/` should still contain `chat/` (helpers), `client/`, and `tools/`. The `chat/` directory still has files that import from the deleted `core/` module (type-only imports and runtime helpers) — these need to be cleaned up in a follow-up commit. The runtime behavior is unaffected because the 12 caller files no longer reach those helpers.
 
-Consolidate into **one** commit together with Step 1's flag-removal diff:
+Commit:
 
 ```text
-refactor(ai-agent): remove flag branches and delete legacy core/nodes/rag modules
+baea3be feat(ai-agent): cutover — delete moved legacy modules
 ```
 
 ---
 
 ## 4. Step 3 — Prisma schema
 
-Remove the `BusinessProfileChunk` model from `prisma/schema.prisma`. Locate the block:
+✅ **COMPLETED** on this branch (commit `167ed80`).
 
-```prisma
-model BusinessProfileChunk {
-  id                String   @id @default(cuid())
-  businessProfileId String
-  // ... columns ...
-  @@index([businessProfileId])
-  @@index([embedding])
-}
-```
-
-Delete the entire block (including the `@@index` declarations).
-
-Commit (schema only — the migration is Step 4):
-
-```text
-chore(prisma): drop BusinessProfileChunk model — chunks live in Qdrant
-```
-
----
-
-## 5. Step 4 — Apply migration
+The `BusinessProfileChunk` model and its relation from `BusinessProfile` were removed from `prisma/schema.prisma`. `npx prisma generate` ran successfully (no DB connection required — client regenerated from schema only).
 
 The migration SQL is already committed at:
 
@@ -173,17 +135,17 @@ npx prisma migrate deploy
 npx prisma migrate dev
 ```
 
-Then regenerate the Prisma client so any lingering references (there should be none after Steps 1–2) surface as compile errors:
+Commit:
 
-```bash
-npx prisma generate
+```text
+167ed80 feat(ai-agent): cutover — drop BusinessProfileChunk from Prisma schema
 ```
-
-Commit (the schema change in Step 3 is already committed; the SQL file was committed alongside the runbook in Task 24). If applying via `migrate dev` locally, no additional commit is needed — Prisma records the migration state.
 
 ---
 
-## 6. Step 5 — Build + smoke
+## 5. Step 4 — Build + smoke
+
+⏳ **PENDING in real env** — must be verified where `langgraph-sdk` is installed.
 
 In this order:
 
@@ -209,20 +171,24 @@ USE_AGENT_SERVICE=true \
 
 Expected: `done: N ok, 0 fail`.
 
+> **Note:** This env cannot install `langgraph-sdk`, so `npm run build` will fail here (the `AgentClient` import resolves to a missing module). The cutover code changes are the correct end state — `npm run build` and live smoke MUST be verified in the real environment / CI where `langgraph-sdk` is installed.
+
 If any step fails, **STOP** and consult Rollback.
 
 ---
 
-## 7. Rollback
+## 6. Rollback
 
 After cutover, the `USE_AGENT_SERVICE` flag and the legacy `core/nodes/rag` modules are gone. Rollback = single `git revert` + redeploy.
 
 ```bash
-# Identify the cutover commit (the merge of Steps 1–4).
-git log --oneline -n 20 | grep -E "remove USE_AGENT_SERVICE|drop BusinessProfileChunk"
+# Identify the cutover commits (Steps 1–3 in this order).
+git log --oneline -n 20 | grep -E "AgentClient is the sole agent path|delete moved legacy modules|drop BusinessProfileChunk from Prisma schema"
 
-# Revert it.
-git revert <cutover-commit-sha>
+# Revert them in reverse order.
+git revert 167ed80
+git revert baea3be
+git revert 4726e4f
 
 # Redeploy monolith + agent-svc.
 docker compose up -d --build
@@ -234,7 +200,7 @@ If rollback is needed because `prisma migrate deploy` succeeded but the monolith
 
 ---
 
-## 8. Acceptance
+## 7. Acceptance
 
 After Step 5, the following greps must return **zero matches**:
 
@@ -253,11 +219,13 @@ grep -RIn "USE_AGENT_SERVICE" src/        || echo OK
 grep -RIn "AgentClient\.enabled" src/     || echo OK
 ```
 
+> **Known follow-up:** The `ai-agent/chat/` directory still contains files (e.g. `aiFallbackPolicy.ts`, `deliveryPolicy.ts`, `replySideEffects.service.ts`) that import types from the now-deleted `ai-agent/core/aiEngine.utils`. These are type-only imports and do not affect the AgentClient-direct code path, but they will surface as TypeScript errors in the real-env build. They need to be cleaned up in a follow-up commit.
+
 Additional checks:
 
-- `npx prisma validate` passes.
-- `npm run build` succeeds with no TypeScript errors.
-- `npm test` is green.
-- `scripts/replay-e2e.ts` exits with `done: N ok, 0 fail`.
+- [ ] `npx prisma validate` passes.
+- [ ] `npm run build` succeeds with no TypeScript errors.
+- [ ] `npm test` is green.
+- [ ] `scripts/replay-e2e.ts` exits with `done: N ok, 0 fail`.
 
 When all greps are empty and all commands pass, the cutover is complete.

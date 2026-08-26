@@ -1,16 +1,9 @@
 import { AgentClient } from "@modules/ai-agent/client/agent.client";
 import { Request, Response } from "express";
 import prisma from "@config/prisma";
-import {
-  ingestBusinessProfile,
-  partialReIngestBusinessProfile,
-  retrieveRelevantChunks,
-} from "../../ai-agent/rag/rag.service";
 import { uploadToR2 } from "@modules/media/services/r2Storage.service";
 import { randomUUID } from "crypto";
 import path from "path";
-import { computeBusinessChatReply } from "@modules/ai-agent/chat/businessChatReply.service";
-import { resolveAssetForChannel } from "@modules/media/services/mediaLibrary.service";
 
 import { AppError } from "@middlewares/errorHandler.middleware";
 
@@ -211,8 +204,12 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
     },
   });
 
-  // trigger full ingestion
-  await ingestBusinessProfile(businessProfile.id);
+  // trigger full ingestion via AgentClient — RAG lives in agent-svc now.
+  await AgentClient.ingestRag({
+    business_profile_id: businessProfile.id,
+    profile: businessProfile,
+    mode: "full",
+  } as any);
 
   const formattedProfile = {
     ...businessProfile,
@@ -371,11 +368,16 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
     },
   });
 
-  // trigger partial re-ingestion - only re-embeds what changed
+  // trigger partial re-ingestion via AgentClient — RAG lives in agent-svc now.
   const updatedFields = Object.keys(
     req.body as BusinessProfileBody,
   ) as (keyof BusinessProfileBody)[];
-  await partialReIngestBusinessProfile(profileId, updatedFields);
+  await AgentClient.ingestRag({
+    business_profile_id: profileId,
+    profile: businessProfile,
+    mode: "partial",
+    updated_fields: updatedFields,
+  } as any);
 
   const { facebookPages = [], ...rest } = businessProfile as typeof businessProfile & {
     facebookPages?: { pageId: string }[];
@@ -430,8 +432,15 @@ export const retrieveBusinessProfile = async (req: Request, res: Response) => {
   const { query } = req.body;
   if (!query) throw new AppError("query is required", 400);
 
-  const chunks = await retrieveRelevantChunks(Number(req.params.id), query);
-  res.json({ chunks });
+  // Retrieval lives in agent-svc now. Surface a clear message until a
+  // retrieval endpoint is exposed by the agent-svc microservice.
+  res.status(503).json({
+    error: "rag_retrieval_moved_to_agent_svc",
+    message:
+      "RAG retrieval is now handled by the agent-svc microservice; this endpoint is disabled.",
+  });
+  void query;
+  void req;
 };
 
 export const previewBusinessProfileChat = async (req: Request, res: Response) => {

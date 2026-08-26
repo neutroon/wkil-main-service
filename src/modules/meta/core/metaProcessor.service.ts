@@ -5,29 +5,11 @@ import { logger } from "@utils/logger";
 import { decryptFacebookSecret } from "@modules/auth/core/tokenCrypto";
 import { cache } from "@utils/cache";
 import {
-  getOrCreateConversation,
-  saveMessage,
-} from "../core/conversation.service";
-import { computeBusinessChatReply } from "@modules/ai-agent/chat/businessChatReply.service";
-import { initialCustomerReplyStatus } from "@modules/ai-agent/chat/deliveryPolicy";
-import {
-  notifySavedModelReplySideEffects,
-  scheduleFollowUpsForDeliveredReply,
-} from "@modules/ai-agent/chat/replySideEffects.service";
-import {
   getFacebookUserProfile,
   likeComment,
 } from "../facebook/facebook.service";
 import { understandInboundMedia } from "./inboundMediaUnderstanding.service";
-import { buildUnansweredUserTurnContext } from "@modules/ai-agent/chat/conversationTurnContext";
-import {
-  assertLatestConversationAiRun,
-  isStaleConversationRunError,
-  startConversationAiRun,
-  type ConversationAiRun,
-} from "@modules/ai-agent/chat/conversationRunGuard";
 import { createLatencyTrace } from "@utils/latencyTrace";
-import { classifyInboundMessageSignal, buildTurnTextWithTranscript } from "@modules/ai-agent/chat/messageSignals";
 import { enqueueOrderAction } from "@modules/order-confirmation/orderConfirmation.queue";
 import {
   isWhatsAppOptOut,
@@ -321,7 +303,7 @@ async function resolveAccountIdentity(job: MetaMessageJob): Promise<IdentityReso
     let account = await findWhatsAppAccountIdentity(routedBusinessProfileId);
 
     if (!account || !account.businessProfileId) {
-      await clearWhatsAppIdentityCaches(phoneNumberId);
+      await clearWhatsAppIdentityCaches(identifier);
       await wait(300);
       account = await findWhatsAppAccountIdentity(routedBusinessProfileId);
     }

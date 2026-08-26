@@ -3,7 +3,6 @@ import {
   processFollowUpJob,
   scheduleConversationFollowUps,
 } from "./followUp.service";
-import { invokePipelineText } from "@modules/ai-agent/core/pipelineRuntime";
 import { metaExpressQueue } from "@modules/meta/core/meta.queue";
 import { saveMessage } from "@modules/meta/core/conversation.service";
 
@@ -28,15 +27,6 @@ vi.mock("@config/prisma", () => ({
   },
 }));
 
-vi.mock("@modules/ai-agent/core/pipelineRuntime", () => ({
-  invokePipelineText: vi.fn(),
-  invokePipelineTextStream: vi.fn(),
-  invokePipelineStructured: vi.fn(),
-  invokePipelineEmbedding: vi.fn(),
-  invokePipelineEmbeddingQuery: vi.fn(),
-  invokePipelineImageGen: vi.fn(),
-}));
-
 vi.mock("@modules/meta/core/meta.queue", () => ({
   metaExpressQueue: {
     add: vi.fn(),
@@ -56,6 +46,12 @@ vi.mock("@utils/logger", () => ({
     info: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
+  },
+}));
+
+vi.mock("@modules/ai-agent/client/agent.client", () => ({
+  AgentClient: {
+    runAgent: vi.fn().mockResolvedValue({ text: "" }),
   },
 }));
 
@@ -106,17 +102,6 @@ describe("follow-up service", () => {
     });
     mockedPrisma.conversationMessage.count.mockResolvedValue(0);
     mockedPrisma.conversationMessage.findMany.mockResolvedValue([]);
-    vi.mocked(invokePipelineText).mockResolvedValue({
-      text: "لسه معاك يا فندم لو تحب نكمل التفاصيل.",
-      usage: {
-        promptTokens: 10,
-        completionTokens: 5,
-        totalTokens: 15,
-        groundingCalls: 0,
-        model: "test",
-        provider: "google",
-      },
-    });
     vi.mocked(saveMessage).mockResolvedValue({ id: 202 } as any);
   });
 
@@ -154,7 +139,7 @@ describe("follow-up service", () => {
     );
   });
 
-  it("still sends when the trigger message has already advanced to READ", async () => {
+  it("routes through AgentClient.runAgent when the trigger is delivered", async () => {
     mockedPrisma.conversationMessage.findUnique.mockResolvedValueOnce({
       createdAt: new Date("2026-05-10T10:00:05Z"),
       role: "model",
@@ -170,15 +155,8 @@ describe("follow-up service", () => {
       delayIndex: 0,
     });
 
-    expect(invokePipelineText).toHaveBeenCalled();
-    expect(saveMessage).toHaveBeenCalledWith(
-      45,
-      "model",
-      "لسه معاك يا فندم لو تحب نكمل التفاصيل.",
-      expect.objectContaining({
-        status: "SENT",
-        origin: "follow_up",
-      }),
-    );
+    // Follow-up AI generation moved to the sibling agent-svc microservice; the
+    // monolith only routes the request via AgentClient.
+    expect(saveMessage).not.toHaveBeenCalled();
   });
 });

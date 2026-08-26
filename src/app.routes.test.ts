@@ -99,7 +99,8 @@ describe("app route mounts", () => {
     );
   });
 
-  it("mounts Copilot on /v1/copilot", () => {
-    expect(appSource).toContain('app.use("/v1/copilot", copilotRoutes)');
+  it("does not mount Copilot (moved to agent-svc)", () => {
+    expect(appSource).not.toContain('app.use("/v1/copilot", copilotRoutes)');
+    expect(appSource).not.toContain('from "@modules/copilot/copilot.routes"');
   });
 });

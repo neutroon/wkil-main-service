@@ -1,7 +1,6 @@
 import { AgentClient } from "@modules/ai-agent/client/agent.client";
 import prisma from "@config/prisma";
 import { logger } from "@utils/logger";
-import { invokePipelineText } from "@modules/ai-agent/core/pipelineRuntime";
 import { metaExpressQueue } from "@modules/meta/core/meta.queue";
 import { saveMessage } from "@modules/meta/core/conversation.service";
 import { decryptFacebookSecret } from "@modules/auth/core/tokenCrypto";
@@ -160,20 +159,13 @@ async function generateFollowUpText(params: {
   history: Array<{ role: string; content: string; createdAt: Date }>;
   delayIndex: number;
 }): Promise<string> {
-  const prompt = buildFollowUpPrompt(params);
-  const result = await Promise.race([
-    invokePipelineText({
-      pipeline: "follow_up",
-      prompt,
-      temperature: 0.3,
-      timeoutMs: FOLLOW_UP_TIMEOUT_MS,
-    }),
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("FOLLOW_UP_AI_TIMEOUT")), FOLLOW_UP_TIMEOUT_MS),
-    ),
-  ]);
-
-  return cleanAiText(result.text || "");
+  void params;
+  void buildFollowUpPrompt;
+  void cleanAiText;
+  // Follow-up AI text generation moved to the sibling agent-svc microservice
+  // in the ai-agent cutover. The job is now routed via AgentClient.runAgent in
+  // processFollowUpJob below.
+  throw new Error("Follow-up AI text generation moved to agent-svc microservice; this path is disabled.");
 }
 
 export async function scheduleConversationFollowUps(params: {

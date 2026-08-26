@@ -59,14 +59,10 @@ void (async () => {
 
   await startCacheBusSubscriber();
 
-  // D1: wire the previously-unused PostgresSaver so the copilot graph can checkpoint.
-  try {
-    const { checkpointer } = await import("@modules/ai-agent/core/checkpointer");
-    await checkpointer.setup();
-    logger.info("copilot.checkpointer_ready");
-  } catch (e: any) {
-    logger.error("copilot.checkpointer_setup_failed", { error: e?.message });
-  }
+  // The agent-svc platform owns persistence now; the monolith must not set up
+  // the PostgresSaver (the copilot graph wiring that used the checkpointer was
+  // deleted in the ai-agent cutover).
+
   server = httpServer.listen(PORT, "0.0.0.0", () => {
     logger.info(`Server running on port ${PORT}`);
 

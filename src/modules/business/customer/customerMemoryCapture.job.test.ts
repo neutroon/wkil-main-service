@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { processCustomerMemoryCaptureJob } from "./customerMemoryCapture.job";
-import { invokePipelineStructured } from "@modules/ai-agent/core/pipelineRuntime";
 import { updateCustomerFromSavedDetails } from "./customer.service";
 
 vi.mock("@config/prisma", () => ({
@@ -14,15 +13,6 @@ vi.mock("@config/prisma", () => ({
   },
 }));
 
-vi.mock("@modules/ai-agent/core/pipelineRuntime", () => ({
-  invokePipelineStructured: vi.fn(),
-  invokePipelineText: vi.fn(),
-  invokePipelineTextStream: vi.fn(),
-  invokePipelineEmbedding: vi.fn(),
-  invokePipelineEmbeddingQuery: vi.fn(),
-  invokePipelineImageGen: vi.fn(),
-}));
-
 vi.mock("./customer.service", () => ({
   updateCustomerFromSavedDetails: vi.fn(),
 }));
@@ -32,6 +22,12 @@ vi.mock("@utils/logger", () => ({
     info: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
+  },
+}));
+
+vi.mock("@modules/ai-agent/client/agent.client", () => ({
+  AgentClient: {
+    runAgent: vi.fn().mockResolvedValue({ text: "" }),
   },
 }));
 
@@ -78,53 +74,13 @@ describe("customer memory capture job", () => {
     });
   });
 
-  it("extracts memory with AI and saves the structured result locally", async () => {
-    vi.mocked(invokePipelineStructured).mockResolvedValue({
-      result: {
-        profileUpdates: { name: "Hesham", phone: null, email: null },
-        fieldUpdates: { requested_program: "Life coaching" },
-        notes: "Customer wants registration details.",
-      },
-      raw: "",
-      usage: {
-        promptTokens: 10,
-        completionTokens: 5,
-        totalTokens: 15,
-        groundingCalls: 0,
-        model: "test",
-        provider: "google",
-      },
-    });
-
+  it("routes through AgentClient.runAgent and never calls updateCustomerFromSavedDetails", async () => {
+    // Memory-capture AI moved to the sibling agent-svc microservice; the
+    // monolith only routes the request via AgentClient.
     await processCustomerMemoryCaptureJob({
       businessProfileId: 10,
       conversationId: 45,
       latestUserText: "عاوز أسجل",
-      recentTurns: [],
-    });
-
-    const call = vi.mocked(invokePipelineStructured).mock.calls[0][0];
-    expect(call.pipeline).toBe("memory_capture");
-    expect(call.prompt).toContain("message 12");
-    expect(call.prompt).toContain("requested_program");
-    expect(updateCustomerFromSavedDetails).toHaveBeenCalledWith({
-      businessProfileId: 10,
-      conversationId: 45,
-      details: {
-        name: "Hesham",
-        requested_program: "Life coaching",
-        notes: "Customer wants registration details.",
-      },
-    });
-  });
-
-  it("skips saving when the AI extractor fails", async () => {
-    vi.mocked(invokePipelineStructured).mockRejectedValue(new Error("timeout"));
-
-    await processCustomerMemoryCaptureJob({
-      businessProfileId: 10,
-      conversationId: 45,
-      latestUserText: "hello",
       recentTurns: [],
     });
 

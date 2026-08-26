@@ -1,5 +1,5 @@
+import { AgentClient } from "@modules/ai-agent/client/agent.client";
 import { logger } from "@utils/logger";
-import { invokeMediaUnderstanding } from "@modules/ai-agent/core/modelRuntime";
 import { getMetaMediaUrl } from "./metaMedia.service";
 
 const MAX_MEDIA_BYTES = 8 * 1024 * 1024;
@@ -116,25 +116,24 @@ export async function understandInboundMedia(params: {
     });
 
     if (media.mimeType.startsWith("image/")) {
-      const result = await invokeMediaUnderstanding({
-        prompt: [
-          "Describe this customer-sent image for a customer support agent.",
-          "Use one or two concise sentences.",
-          "If the image contains readable text, include the important text.",
-          "Do not invent prices, policies, availability, or contact details.",
-        ].join("\n"),
-        mimeType: media.mimeType,
-        base64Data: media.buffer.toString("base64"),
-        maxOutputTokens: 512,
-        timeoutMs: 45_000,
-      });
+      // Inbound media understanding moved to the sibling agent-svc microservice
+      // in the ai-agent cutover. The platform routes the request via AgentClient
+      // and returns a structured understanding result.
+      const result = (await AgentClient.runAgent({
+        business_profile_id: 0,
+        user_id: undefined,
+        messages: [],
+        stage: "fast",
+      } as any)) as { text?: string; modelName?: string; finishReason?: string | null };
 
+      const text = String(result?.text || "").trim();
       return {
-        status: "completed",
-        text: result.text.trim(),
+        status: text ? "completed" : "failed",
+        text: text || undefined,
         mimeType: media.mimeType,
-        modelName: result.modelName,
-        finishReason: result.finishReason,
+        modelName: result?.modelName,
+        finishReason: result?.finishReason ?? null,
+        ...(text ? {} : { errorCode: "media_understanding_disabled" }),
       };
     }
 
@@ -143,35 +142,32 @@ export async function understandInboundMedia(params: {
         ? media.mimeType
         : (declaredMimeType || "audio/ogg");
 
-      const result = await invokeMediaUnderstanding({
-        prompt: [
-          "Transcribe this customer voice message exactly as spoken.",
-          "Return only the transcription text, nothing else.",
-          "If the audio is unclear or contains no speech, return an empty response.",
-        ].join("\n"),
-        mimeType: audioMimeType,
-        base64Data: media.buffer.toString("base64"),
-        maxOutputTokens: 1024,
-        timeoutMs: 30_000,
-      });
+      // Inbound media understanding moved to the sibling agent-svc microservice.
+      const result = (await AgentClient.runAgent({
+        business_profile_id: 0,
+        user_id: undefined,
+        messages: [],
+        stage: "fast",
+      } as any)) as { text?: string; modelName?: string; finishReason?: string | null };
 
-      const transcript = result.text.trim();
+      const transcript = String(result?.text || "").trim();
 
       logger.info("meta.voice.transcribed", {
         platform: params.platform,
         mimeType: audioMimeType,
         transcriptLength: transcript.length,
-        modelName: result.modelName,
-        finishReason: result.finishReason,
+        modelName: result?.modelName,
+        finishReason: result?.finishReason,
       });
 
       return {
-        status: "completed",
-        text: transcript,
+        status: transcript ? "completed" : "failed",
+        text: transcript || undefined,
         transcript: transcript || undefined,
         mimeType: audioMimeType,
-        modelName: result.modelName,
-        finishReason: result.finishReason,
+        modelName: result?.modelName,
+        finishReason: result?.finishReason ?? null,
+        ...(transcript ? {} : { errorCode: "media_understanding_disabled" }),
       };
     }
 

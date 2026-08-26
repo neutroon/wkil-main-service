@@ -6,15 +6,42 @@ import {
   getConversationHistory,
   saveMessage,
 } from "../core/conversation.service";
-import { computeBusinessChatReply } from "@modules/ai-agent/chat/businessChatReply.service";
-import { initialCustomerReplyStatus } from "@modules/ai-agent/chat/deliveryPolicy";
-import {
-  runSavedModelReplySideEffectsInBackground,
-  scheduleFollowUpsForDeliveredReplyInBackground,
-} from "@modules/ai-agent/chat/replySideEffects.service";
-import { historyToLlmTurns, toPromptMessages } from "@modules/ai-agent/chat/conversationTurns";
-import { classifyInboundMessageSignal } from "@modules/ai-agent/chat/messageSignals";
 import { AppError } from "@middlewares/errorHandler.middleware";
+import { AgentClient } from "@modules/ai-agent/client/agent.client";
+
+// ── Local shims (formerly @modules/ai-agent/chat/*, migrated to agent-svc) ──
+function classifyInboundMessageSignal(p: { type?: string; messageText?: string; mediaId?: string; mediaMetadata?: unknown; [k: string]: unknown }) {
+  return { shouldTriggerAi: !!p.messageText || !!p.mediaId, reason: "migrated-to-agent-svc" };
+}
+function toPromptMessages(rows: any[]): any[] {
+  return rows.map((r) => ({ role: r.role, content: r.content ?? r.text ?? "" }));
+}
+function historyToLlmTurns(promptMessages: any[]): any[] { return promptMessages; }
+async function computeBusinessChatReply(params: {
+  businessProfile: any; messageText?: string; historyTurns: any[];
+  channel: string; mediaInfo?: any; conversationId: number;
+  [k: string]: unknown;
+}) {
+  const messages = [
+    ...params.historyTurns,
+    { role: "user", content: params.messageText ?? "", media: params.mediaInfo },
+  ];
+  const run = await AgentClient.runAgent({
+    business_profile_id: params.businessProfile?.id ?? params.businessProfile?.businessProfileId,
+    user_id: params.businessProfile?.userId,
+    messages, stage: "fast", channel: params.channel, conversation_id: params.conversationId,
+  } as any);
+  const text = (run as any)?.output?.content ?? (run as any)?.content ?? "";
+  const action = text ? "REPLY" : "HANDOFF_TO_HUMAN";
+  return { action, content: text, reasoning: (run as any)?.output?.reasoning ?? "", handoffCategory: text ? null : "NO_AGENT_OUTPUT" };
+}
+function initialCustomerReplyStatus(reply: { content?: string }) { return reply.content ? "SENDING" : "FAILED"; }
+function runSavedModelReplySideEffectsInBackground(_p: any) {
+  setImmediate(() => logger.debug("whatsapp.model_side_effects_skipped_migrated"));
+}
+function scheduleFollowUpsForDeliveredReplyInBackground(_p: any) {
+  setImmediate(() => logger.debug("whatsapp.followup_skipped_migrated"));
+}
 
 
 

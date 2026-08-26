@@ -1,6 +1,5 @@
 import { AgentClient } from "@modules/ai-agent/client/agent.client";
 import prisma from "@config/prisma";
-import { invokePipelineStructured } from "@modules/ai-agent/core/pipelineRuntime";
 import { logger } from "@utils/logger";
 import { updateCustomerFromSavedDetails } from "./customer.service";
 import {
@@ -115,26 +114,15 @@ async function extractCustomerMemoryWithAi(
   job: CustomerMemoryCaptureJob,
   context: NonNullable<Awaited<ReturnType<typeof loadMemoryContext>>>,
 ): Promise<MemoryExtractionResult | null> {
-  const fields = normalizeMemoryFields(context.businessProfile.customerMemoryFields);
-  const prompt = buildExtractionPrompt(job, context, fields);
-
-  try {
-    const { result } = await invokePipelineStructured<MemoryExtractionResult>({
-      pipeline: "memory_capture",
-      schema: memoryExtractionSchema,
-      schemaName: "MemoryExtraction",
-      prompt,
-      temperature: 0,
-    });
-    return result;
-  } catch (error: any) {
-    logger.warn("customer.memory_capture.ai_failed", {
-      businessProfileId: job.businessProfileId,
-      conversationId: job.conversationId,
-      error: error?.message || String(error),
-    });
-    return null;
-  }
+  // Memory-capture AI moved to the sibling agent-svc microservice in the
+  // ai-agent cutover. The job entry point (processCustomerMemoryCaptureJob)
+  // routes via AgentClient; this helper is preserved for the future re-enable.
+  void job;
+  void context;
+  void normalizeMemoryFields;
+  void buildExtractionPrompt;
+  void memoryExtractionSchema;
+  return null;
 }
 
 function buildExtractionPrompt(

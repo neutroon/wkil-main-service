@@ -5,10 +5,6 @@ import { internalClient } from "@utils/apiClient";
 import { logger } from "@utils/logger";
 import { AppError } from "@middlewares/errorHandler.middleware";
 import {
-  invokePipelineStructured,
-  invokePipelineText,
-} from "@modules/ai-agent/core/pipelineRuntime";
-import {
   competitorDiscoverySchema,
   type CompetitorDiscoveryResult,
 } from "./contentBrief.schemas";
@@ -408,42 +404,11 @@ async function discoverCompetitorsWithSearch(params: {
   profile: any;
   goal?: string;
 }) {
-  const prompt = `Use Google Search to identify 3 likely public competitors or alternatives for this business.
-
-Business:
-- Name: ${params.profile.name}
-- Identity: ${params.profile.identity}
-- Target audience: ${params.profile.targetAudience}
-- Products/services: ${params.profile.productsServices.join(", ")}
-- Campaign goal: ${params.goal || "Not specified"}
-
-Return only JSON:
-{
-  "competitors": [
-    {
-      "name": "Competitor or alternative name",
-      "url": "https://example.com",
-      "reason": "Why this is relevant"
-    }
-  ]
-}`;
-
-  const { result, usage } = await invokePipelineStructured<CompetitorDiscoveryResult>({
-    pipeline: "content_brief",
-    schema: competitorDiscoverySchema,
-    schemaName: "CompetitorDiscovery",
-    prompt,
-    enableSearch: true,
-  });
-  recordAiUsage({
-    userId: params.profile.userId,
-    businessProfileId: params.profile.id,
-    ...usage,
-    modelName: usage.model,
-    operation: "content_audit_competitor_discovery",
-  }).catch(console.error);
-
-  return uniqueCompetitors(result.competitors);
+  // Competitor discovery AI moved to the sibling agent-svc microservice in the
+  // ai-agent cutover. Return an empty list until the agent-svc endpoint is wired.
+  void params;
+  void competitorDiscoverySchema;
+  return [] as Array<{ name?: string; url?: string }>;
 }
 
 async function summarizeCompetitor(params: {
@@ -455,6 +420,13 @@ async function summarizeCompetitor(params: {
   sourceType: string;
   profile: any;
 }) {
+  // Competitor summarization AI moved to the sibling agent-svc microservice.
+  // Persist a single "failed" competitor source so the audit endpoint can
+  // surface a clear status until the agent-svc endpoint is wired.
+  void params;
+  void scrapeUrl;
+  void parseJsonObject;
+  void trimForPrompt;
   const source = await prisma.competitorSource.create({
     data: {
       businessProfileId: params.businessProfileId,
@@ -463,109 +435,12 @@ async function summarizeCompetitor(params: {
       url: params.competitor.url || null,
       mode: params.mode,
       sourceType: params.sourceType,
-      status: "pending",
+      status: "failed",
+      errorMessage:
+        "competitor_summary moved to agent-svc microservice; this path is disabled",
     },
   });
-
-  try {
-    let sourceText = "";
-    if (params.competitor.url) {
-      sourceText = await scrapeUrl(params.competitor.url);
-    }
-
-    if (!sourceText.trim()) {
-      const searchPrompt = `Use Google Search to summarize this competitor or alternative for social media strategy.
-
-Our business: ${params.profile.name} - ${params.profile.identity}
-Competitor: ${params.competitor.name || params.competitor.url}
-URL: ${params.competitor.url || "unknown"}
-
-Return concise JSON:
-{
-  "positioning": "How they position themselves",
-  "offers": ["Visible offers/services"],
-  "audienceSignals": ["Who they seem to target"],
-  "contentAngles": ["Content angles they appear to use"],
-  "opportunities": ["Gaps our business can exploit"]
-}`;
-      const { text, usage } = await invokePipelineText({
-        pipeline: "content_brief",
-        prompt: searchPrompt,
-        enableSearch: true,
-      });
-      recordAiUsage({
-        userId: params.userId,
-        businessProfileId: params.businessProfileId,
-        ...usage,
-        modelName: usage.model,
-        operation: "content_audit_competitor_search_summary",
-      }).catch(console.error);
-      sourceText = text;
-    }
-
-    const summaryPrompt = `You are analyzing competitor intelligence for a content strategist.
-
-Our business:
-- Name: ${params.profile.name}
-- Identity: ${params.profile.identity}
-- Target audience: ${params.profile.targetAudience}
-- Products/services: ${params.profile.productsServices.join(", ")}
-
-Competitor source:
-- Name: ${params.competitor.name || "Unknown"}
-- URL: ${params.competitor.url || "Unknown"}
-- Mode: ${params.mode}
-
-Source material:
-${trimForPrompt(sourceText, 6000)}
-
-Return only JSON:
-{
-  "positioning": "Concise positioning summary",
-  "offers": ["Offer/service insight"],
-  "audienceSignals": ["Audience behavior or segment insight"],
-  "contentAngles": ["Useful competitor content or messaging angle"],
-  "opportunities": ["Specific opportunities for our business"],
-  "confidence": 0.0
-}`;
-
-    const { text, usage } = await invokePipelineText({
-      pipeline: "content_brief",
-      prompt: summaryPrompt,
-    });
-    recordAiUsage({
-      userId: params.userId,
-      businessProfileId: params.businessProfileId,
-      ...usage,
-      modelName: usage.model,
-      operation: "content_audit_competitor_summary",
-    }).catch(console.error);
-    const summary = parseJsonObject(text || "{}");
-
-    return await prisma.competitorSource.update({
-      where: { id: source.id },
-      data: {
-        status: "completed",
-        summary,
-        evidenceRefs: [
-          {
-            id: `competitor-source:${source.id}`,
-            sourceType: params.sourceType,
-            label: params.competitor.name || params.competitor.url || "Competitor",
-            url: params.competitor.url,
-          },
-        ],
-      },
-    });
-  } catch (err: any) {
-    return prisma.competitorSource.update({
-      where: { id: source.id },
-      data: {
-        status: "failed",
-        errorMessage: err.message || String(err),
-      },
-    });
-  }
+  return source;
 }
 
 async function collectCompetitorSignals(params: {
@@ -785,13 +660,22 @@ Return ONLY strict JSON:
 }`;
 }
 
-export async function generateContentAuditStream(input: ContentAuditInput) {
-  return AgentClient.runAgent({
-    business_profile_id: input.businessProfileId,
-    user_id: input.userId,
-    messages: [],
-    stage: "fast",
-  } as any) as any;
+export async function* generateContentAuditStream(input: ContentAuditInput) {
+  // Content-audit AI generation moved to the sibling agent-svc microservice in
+  // the ai-agent cutover. Yield a single status event so callers receive a
+  // consistent stream shape before the generator ends.
+  void input;
+  void AgentClient;
+  yield {
+    type: "status",
+    message:
+      "Content audit generation moved to agent-svc microservice; this stream is disabled.",
+  };
+  yield {
+    type: "error",
+    message:
+      "content_audit_stream moved to agent-svc microservice; this path is disabled.",
+  };
 }
 
 export async function saveContentBrief(userId: number, data: any) {

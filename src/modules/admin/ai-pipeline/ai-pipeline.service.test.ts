@@ -1,3 +1,4 @@
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentClient } from "@modules/ai-agent/client/agent.client";
 
 /**
@@ -34,7 +35,7 @@ describe("ai-pipeline AgentClient flag routing (parity)", () => {
   const OLD_ENV = process.env;
 
   beforeEach(() => {
-    jest.resetModules();
+    vi.resetModules();
     process.env = { ...OLD_ENV };
     delete process.env.USE_AGENT_SERVICE;
   });
@@ -45,7 +46,7 @@ describe("ai-pipeline AgentClient flag routing (parity)", () => {
 
   it("delegates to AgentClient.runAgent when USE_AGENT_SERVICE=true", async () => {
     process.env.USE_AGENT_SERVICE = "true";
-    const runAgent = jest
+    const runAgent = vi
       .spyOn(AgentClient, "runAgent")
       .mockResolvedValue({ thread_id: "t", run_id: "r" } as any);
 
@@ -69,7 +70,7 @@ describe("ai-pipeline AgentClient flag routing (parity)", () => {
   });
 
   it("keeps the in-process path when USE_AGENT_SERVICE is not set", async () => {
-    const runAgent = jest.spyOn(AgentClient, "runAgent");
+    const runAgent = vi.spyOn(AgentClient, "runAgent");
 
     const result = await routeAiPipeline({
       businessProfileId: 10,

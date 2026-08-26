@@ -6,26 +6,14 @@ import {
   saveMessage,
 } from "@modules/meta/core/conversation.service";
 import { upsertCustomerFromConversation } from "@modules/business/customer/customer.service";
-import { computeBusinessChatReply } from "@modules/ai-agent/chat/businessChatReply.service";
-import { initialCustomerReplyStatus } from "@modules/ai-agent/chat/deliveryPolicy";
-import { runSavedModelReplySideEffectsInBackground } from "@modules/ai-agent/chat/replySideEffects.service";
-import { AiRoutingDecision } from "@modules/ai-agent/core/aiEngine.utils";
-import { buildUnansweredUserTurnContext } from "@modules/ai-agent/chat/conversationTurnContext";
-import {
-  assertLatestConversationAiRun,
-  isStaleConversationRunError,
-  startConversationAiRun,
-} from "@modules/ai-agent/chat/conversationRunGuard";
 import type { WidgetInstall } from "@prisma/client";
 import { AppError } from "@middlewares/errorHandler.middleware";
 import {
   generateR2Key,
   uploadToR2,
 } from "@modules/media/services/r2Storage.service";
-import { invokeMediaUnderstanding } from "@modules/ai-agent/core/modelRuntime";
 import { createLatencyTrace, type LatencyTrace } from "@utils/latencyTrace";
 import {
-  syncVerifiedUserEmail,
   syncVerifiedUserProfile,
   type VerifiedWidgetUser,
 } from "@modules/widget/services/widgetIdentity.service";
@@ -233,46 +221,48 @@ async function understandWidgetMedia(
 
   try {
     if (isAudio) {
-      const result = await invokeMediaUnderstanding({
-        prompt: [
-          "Transcribe this customer voice message exactly as spoken.",
-          "Return only the transcription text, nothing else.",
-          "If the audio is unclear or contains no speech, return an empty response.",
-        ].join("\n"),
-        mimeType: media.mimeType,
-        base64Data: media.buffer.toString("base64"),
-        maxOutputTokens: 4096,
-        timeoutMs: 30_000,
-      });
-      const transcript = result.text.trim();
+      // Inbound media understanding moved to the sibling agent-svc microservice
+      // in the ai-agent cutover. The platform routes the request via AgentClient.
+      const result = (await AgentClient.runAgent({
+        business_profile_id: 0,
+        user_id: undefined,
+        messages: [],
+        stage: "fast",
+      } as any)) as {
+        text?: string;
+        modelName?: string;
+        finishReason?: string | null;
+      };
+      const transcript = String(result?.text || "").trim();
       return {
-        status: "completed",
-        text: transcript,
-        transcript,
+        status: transcript ? "completed" : "failed",
+        text: transcript || undefined,
+        transcript: transcript || undefined,
         mimeType: media.mimeType,
-        modelName: result.modelName,
-        finishReason: result.finishReason,
+        modelName: result?.modelName,
+        finishReason: result?.finishReason ?? null,
+        ...(transcript ? {} : { errorCode: "media_understanding_disabled" }),
       };
     }
 
-    const result = await invokeMediaUnderstanding({
-      prompt: [
-        "Describe this customer-sent image for a customer support agent.",
-        "Use one or two concise sentences.",
-        "If the image contains readable text, include the important text.",
-        "Do not invent prices, policies, availability, or contact details.",
-      ].join("\n"),
-      mimeType: media.mimeType,
-      base64Data: media.buffer.toString("base64"),
-      maxOutputTokens: 512,
-      timeoutMs: 45_000,
-    });
+    const result = (await AgentClient.runAgent({
+      business_profile_id: 0,
+      user_id: undefined,
+      messages: [],
+      stage: "fast",
+    } as any)) as {
+      text?: string;
+      modelName?: string;
+      finishReason?: string | null;
+    };
+    const text = String(result?.text || "").trim();
     return {
-      status: "completed",
-      text: result.text.trim(),
+      status: text ? "completed" : "failed",
+      text: text || undefined,
       mimeType: media.mimeType,
-      modelName: result.modelName,
-      finishReason: result.finishReason,
+      modelName: result?.modelName,
+      finishReason: result?.finishReason ?? null,
+      ...(text ? {} : { errorCode: "media_understanding_disabled" }),
     };
   } catch (error: unknown) {
     return {

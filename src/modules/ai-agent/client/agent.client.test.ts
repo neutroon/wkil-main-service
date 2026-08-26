@@ -1,3 +1,4 @@
+import { describe, expect, it } from "vitest";
 import { AgentClient } from "./agent.client";
 
 describe("AgentClient", () => {

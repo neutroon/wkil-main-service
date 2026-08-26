@@ -23,7 +23,7 @@ router.post("/tools/run", async (req, res) => {
       businessProfileId,
       sourceId: Number(m[1]),
       jobId: randomUUID(),
-      trigger: "AGENT",
+      trigger: "CHAT_REQUESTED",
       toolName: tool,
       requestPayload: args,
     });

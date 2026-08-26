@@ -1,7 +1,7 @@
 import prisma from "@config/prisma";
 import { AppError } from "@middlewares/errorHandler.middleware";
 import { canManageUser } from "@modules/auth/user/user.service";
-import { partialReIngestBusinessProfile } from "../../ai-agent/rag/rag.service";
+import { AgentClient } from "@modules/ai-agent/client/agent.client";
 import { businessProfileWithOwnerSelect } from "./businessProfile.select";
 
 interface Faq {
@@ -187,7 +187,13 @@ async function updateBusinessProfileRecord(
 
   const updatedFields = Object.keys(body) as (keyof BusinessProfileUpdateBody)[];
   if (updatedFields.length > 0) {
-    await partialReIngestBusinessProfile(profileId, updatedFields);
+    // RAG lives in agent-svc now — route partial re-ingest through AgentClient.
+    await AgentClient.ingestRag({
+      business_profile_id: profileId,
+      profile: businessProfile,
+      mode: "partial",
+      updated_fields: updatedFields,
+    } as any);
   }
 
   return businessProfile;

@@ -1,4 +1,4 @@
-import { invokePipelineText } from "@modules/ai-agent/core/pipelineRuntime";
+import { AgentClient } from "@modules/ai-agent/client/agent.client";
 import { imageModel } from "@modules/ai-agent/vertexai.config";
 import cloudinary from "@modules/media/cloudinary.config";
 import { AppError } from "@middlewares/errorHandler.middleware";
@@ -36,22 +36,14 @@ export const generatePostContent = async (
   const {
     topic,
     length = "medium",
-    generateImage = false,
+    generateImage: _generateImage = false,
   } = request;
 
   if (!topic) {
     throw new AppError("Topic is required", 400);
   }
 
-  console.log(
-    `[ContentService] Post generation started: "${topic}" | Image: ${
-      generateImage ? "Yes" : "No"
-    }`,
-  );
-
-  // Validate length
   const validLengths = ["short", "medium", "long"];
-
   if (!validLengths.includes(length)) {
     throw new AppError(
       `Invalid length. Must be one of: ${validLengths.join(", ")}`,
@@ -59,65 +51,19 @@ export const generatePostContent = async (
     );
   }
 
-  // Build the prompt for Gemini
-  const prompt = buildPostPrompt(request);
-
-  // Generate content via the multi-provider pipeline runtime. The
-  // configured tier list (DB → env → hardcoded fallback) decides which
-  // provider serves this call; for content, the admin typically leaves
-  // the chat default in place but can pin a specific model via the
-  // `content` pipeline row in the admin UI.
-  const { text: generatedText } = await invokePipelineText({
-    pipeline: "content",
-    prompt,
-  });
-
-  // Log usage via new service if you want to track it for individual posts
-  // (Assuming you have businessProfileId available if logged in)
-
-  if (!generatedText) {
-    throw new AppError("No response received from Gemini", 502);
-  }
-
-  if (generatedText.trim().length === 0) {
-    throw new AppError("Empty response from Gemini", 502);
-  }
-
-  // Parse the response to extract content, hashtags, and image suggestion
-  const parsedResponse = parseGeminiResponse(generatedText);
-
-  // Optionally generate image with Imagen
-  if (generateImage && parsedResponse.suggestedImage) {
-    try {
-      const imageBuffer = await generateImageWithImagen(
-        parsedResponse.suggestedImage,
-      );
-      const { url, publicId } = await uploadBufferToCloudinary(imageBuffer);
-
-      console.log(`[ContentService] Post generated successfully | Image: Yes`);
-
-      return {
-        ...parsedResponse,
-        imageUrl: url,
-        imagePublicId: publicId,
-      };
-    } catch (imageError: any) {
-      console.error(
-        "[ContentService] Image generation error:",
-        imageError.message,
-      );
-      // Return text content even if image generation fails
-      console.log(`[ContentService] Post generated with image error`);
-
-      return {
-        ...parsedResponse,
-        imageError: "Failed to generate image: " + imageError.message,
-      };
-    }
-  }
-
-  console.log(`[ContentService] Post generated successfully | Image: No`);
-  return parsedResponse;
+  // Post content generation moved to the sibling agent-svc microservice in the
+  // ai-agent cutover. The monolith keeps the request shape for API compatibility
+  // and surfaces a clear error until a new caller is wired through AgentClient.
+  void request;
+  void buildPostPrompt;
+  void parseGeminiResponse;
+  void generateImageWithImagen;
+  void uploadBufferToCloudinary;
+  void AgentClient;
+  throw new AppError(
+    "Post content generation moved to agent-svc microservice; this path is disabled.",
+    503,
+  );
 };
 
 // Helper function to build effective prompts

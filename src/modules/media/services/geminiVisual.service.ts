@@ -1,8 +1,4 @@
 import { AgentClient } from "@modules/ai-agent/client/agent.client";
-import {
-  invokePipelineText,
-  invokePipelineImageGen,
-} from "@modules/ai-agent/core/pipelineRuntime";
 import { createMediaAsset } from "./mediaLibrary.service";
 import { recordAiUsage, assertQuotaAvailable } from "../../billing/billing.service";
 import { applyWatermark, WatermarkPosition } from "./watermark.service";
@@ -44,52 +40,6 @@ const ART_STYLE_MAPPINGS: Record<string, string> = {
   MINIMAL_LINE: "minimal line art illustration, single color lines, clean",
   ISOMETRIC_3D: "isometric 3D illustration, clean geometric, pastel colors",
 };
-
-/**
- * Art Director Helper: Injects Brand Identity into prompts
- */
-async function groundingPromptWithBrand(params: {
-  userPrompt: string,
-  profile: any,
-  isRefine?: boolean,
-  sourcePrompt?: string
-}) {
-  const { userPrompt, profile, isRefine, sourcePrompt } = params;
-  
-  const aestheticBrief = profile.visualAesthetic ? AESTHETIC_MAPPINGS[profile.visualAesthetic] || "" : "";
-  const styleBrief = profile.artStyle ? ART_STYLE_MAPPINGS[profile.artStyle] || "" : "";
-  const colorBrief = [profile.brandPrimaryColor, profile.brandSecondaryColor, profile.brandAccentColor]
-    .filter(Boolean)
-    .join(", ");
-
-  const artDirectorPrompt = `You are a world-class Social Media Art Director and Master Photographer.
-${isRefine ? "You are performing a high-end photo retouch and asset refinement." : "You are conceptualizing an industry-grade commercial visual."}
-
-[BRAND IDENTITY & PRODUCTION TIER]:
-- Aesthetic Essence: ${aestheticBrief || "Sleek, Modern, and Globally Competitive"}
-- Rendering Engine: ${styleBrief || "Photorealistic 8K Cinema Grade"}
-- Color DNA: ${colorBrief || "Vibrant and Harmonious"}
-
-[MANUAL PRODUCTION SPECIFICATIONS]:
-1. Camera Settings: Shoot on Phase One XF, 100MP, 80mm Lens, f/2.8 for creamy bokeh, ISO 100 for zero noise.
-2. Lighting Architecture: Use Three-Point Lighting with soft-boxes, global illumination, Ray-traced reflections, and volumetric fog for depth.
-3. Post-Processing: Color grade for "Cinematic Teal & Orange" or "High-Fashion Monochrome" where appropriate. Sharp focus on the subject.
-4. Texture Depth: Macro-level detail on surfaces (fabric, skin, metal, stone). Unreal Engine 5.4 Path Tracing quality.
-5. Composition: Masterful use of Negative Space, Golden Ratio, and Dynamic Leading Lines.
-6. Native Branding: ${profile.brandWatermarkEnabled ? "DO NOT generate any logos or text. Return a CLEAN, pristine commercial asset. Branding will be added in post." : `Integrate the logo naturally as a premium physical element (e.g. etched in glass) or high-fidelity placement in the ${profile.watermarkPosition || "BOTTOM_RIGHT"}.`}
-${isRefine ? `7. The Evolution: The current asset is "${sourcePrompt}". Apply the surgical refinement: "${userPrompt}" while boosting total visual weight and luxury feel.` : `7. The Narrative: ${userPrompt}`}
-8. Formatting: Return ONLY the optimized, high-density prompt string. No conversational meta-talk.`;
-
-  // The art-director prompt is a text-only call. We deliberately route it
-  // through the chat pipeline (the most capable text model the admin has
-  // configured) rather than the image pipeline, because the image-gen
-  // tier is reserved for actual image synthesis.
-  const { text: enhancedPrompt } = await invokePipelineText({
-    pipeline: "chat",
-    prompt: artDirectorPrompt,
-  });
-  return (enhancedPrompt || userPrompt).trim();
-}
 
 /**
  * Service to handle end-to-end Gemini 3.1 Flash Image generation and editing.

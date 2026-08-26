@@ -4,30 +4,11 @@ import { logger } from "@utils/logger";
 import { decryptFacebookSecret } from "@modules/auth/core/tokenCrypto";
 import { executeExternalQuery } from "./agentActionExecutor.service";
 import {
-  getConversationHistory,
-  saveMessage,
-} from "@modules/meta/core/conversation.service";
-import {
-  historyToLlmTurns,
-  toPromptMessages,
-} from "@modules/ai-agent/chat/conversationTurns";
-import { computeBusinessChatReply } from "@modules/ai-agent/chat/businessChatReply.service";
-import { formatCompletedActionRequestMessage } from "@modules/ai-agent/chat/completedActionRequest";
-import { initialCustomerReplyStatus } from "@modules/ai-agent/chat/deliveryPolicy";
-import {
-  notifySavedModelReplySideEffects,
-  scheduleFollowUpsForDeliveredReply,
-} from "@modules/ai-agent/chat/replySideEffects.service";
-import { createAgentTurn } from "@modules/ai-agent/core/agentTurn.service";
-import { validateChatRequestedExternalAction } from "@modules/ai-agent/chat/externalToolEligibility";
-import {
   listActiveAgentActionWorkflows,
   nextMutationSourceForCompletedLookup,
 } from "./agentActionWorkflow.service";
 import {
   markIntegrationActionRunFailed,
-  markIntegrationActionRunRunning,
-  markIntegrationActionRunSkipped,
   markIntegrationActionRunSucceeded,
 } from "./integrationActionRun.service";
 

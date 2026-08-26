@@ -5,7 +5,7 @@ services:
       LANGGRAPH_DB_URL: postgresql://lg:lg@postgres:5432/lg
       REDIS_URL: redis://redis:6379
       QDRANT_URL: http://qdrant:6333
-    volumes: ["./langgraph.json:/langgraph.json", "./src:/agent_svc/src", "./.env:/agent_svc/.env"]
+    volumes: ["./langgraph.json:/langgraph.json", ".:/agent_svc", "./.env:/agent_svc/.env"]
     ports: ["8123:8123"]
     depends_on: [postgres, redis, qdrant]
   postgres:

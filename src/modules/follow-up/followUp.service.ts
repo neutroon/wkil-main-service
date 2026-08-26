@@ -346,99 +346,10 @@ async function deliverFollowUp(conversation: any, businessProfile: any, text: st
 }
 
 export async function processFollowUpJob(payload: FollowUpJobPayload) {
-  if (AgentClient.enabled()) {
-    return AgentClient.runAgent({
-      business_profile_id: payload.businessProfileId,
-      user_id: undefined,
-      messages: [],
-      stage: "fast",
-    } as any) as any;
-  }
-
-  const conversation = await prisma.conversation.findFirst({
-    where: {
-      id: payload.conversationId,
-      businessProfileId: payload.businessProfileId,
-    },
-    include: {
-      businessProfile: true,
-      messages: {
-        orderBy: { createdAt: "asc" },
-        take: 30,
-        select: { role: true, content: true, createdAt: true },
-      },
-    },
-  });
-
-  if (!isFollowUpConversationEligible(conversation)) {
-    logger.info("follow_up.skipped.ineligible_conversation", {
-      conversationId: payload.conversationId,
-    });
-    return;
-  }
-  if (conversation.channel === "whatsapp" && !(await isWhatsAppFreeFormWindowOpen(conversation.id))) {
-    logger.info("follow_up.skipped.whatsapp_window_closed", {
-      conversationId: conversation.id,
-    });
-    return;
-  }
-  if (await customerOptedOut(conversation.id)) {
-    logger.info("follow_up.skipped.customer_opted_out", {
-      conversationId: conversation.id,
-    });
-    return;
-  }
-
-  const trigger = await prisma.conversationMessage.findUnique({
-    where: { id: payload.triggerMessageId },
-    select: { createdAt: true, status: true, role: true, origin: true, handoffCategory: true },
-  });
-
-  if (!isFollowUpTriggerEligible(trigger)) {
-    logger.info("follow_up.skipped.ineligible_trigger", {
-      conversationId: conversation.id,
-      triggerMessageId: payload.triggerMessageId,
-      status: (trigger as any)?.status,
-      role: (trigger as any)?.role,
-      origin: (trigger as any)?.origin,
-      handoffCategory: (trigger as any)?.handoffCategory,
-    });
-    return;
-  }
-  if (await hasNewerHumanOrCustomerMessage(conversation.id, trigger.createdAt)) {
-    logger.info("follow_up.skipped.newer_human_or_customer_message", {
-      conversationId: conversation.id,
-      triggerMessageId: payload.triggerMessageId,
-    });
-    return;
-  }
-
-  const text = await generateFollowUpText({
-    businessProfile: conversation.businessProfile,
-    conversation,
-    history: conversation.messages,
-    delayIndex: payload.delayIndex,
-  });
-
-  if (!text) return;
-
-  const saved = await saveMessage(conversation.id, "model", text, {
-    status: "SENT",
-    origin: "follow_up",
-  });
-
-  try {
-    await deliverFollowUp(conversation, conversation.businessProfile, text, saved.id);
-    logger.info("follow_up.sent", {
-      conversationId: conversation.id,
-      messageId: saved.id,
-      channel: conversation.channel,
-    });
-  } catch (error: any) {
-    await prisma.conversationMessage.update({
-      where: { id: saved.id },
-      data: { status: "FAILED", aiReasoning: error?.message || String(error) },
-    });
-    throw error;
-  }
+  return AgentClient.runAgent({
+    business_profile_id: payload.businessProfileId,
+    user_id: undefined,
+    messages: [],
+    stage: "fast",
+  } as any) as any;
 }

@@ -21,51 +21,12 @@ type CustomerMemoryField = {
 export async function processCustomerMemoryCaptureJob(
   job: CustomerMemoryCaptureJob,
 ): Promise<void> {
-  if (AgentClient.enabled()) {
-    return AgentClient.runAgent({
-      business_profile_id: job.businessProfileId,
-      user_id: undefined,
-      messages: [],
-      stage: "fast",
-    } as any) as any;
-  }
-
-  if (!job.conversationId) return;
-
-  const context = await loadMemoryContext(job);
-  if (!context) {
-    logger.info("customer.memory_capture.skipped", {
-      businessProfileId: job.businessProfileId,
-      conversationId: job.conversationId,
-      reason: "missing_context",
-    });
-    return;
-  }
-
-  const extracted = await extractCustomerMemoryWithAi(job, context);
-  if (!extracted) return;
-
-  const details = normalizeExtractedDetails(extracted);
-  if (Object.keys(details).length === 0) {
-    logger.info("customer.memory_capture.skipped", {
-      businessProfileId: job.businessProfileId,
-      conversationId: job.conversationId,
-      reason: "no_useful_details",
-    });
-    return;
-  }
-
-  await updateCustomerFromSavedDetails({
-    businessProfileId: job.businessProfileId,
-    conversationId: job.conversationId,
-    details,
-  });
-
-  logger.info("customer.memory_capture.saved", {
-    businessProfileId: job.businessProfileId,
-    conversationId: job.conversationId,
-    fields: Object.keys(details),
-  });
+  return AgentClient.runAgent({
+    business_profile_id: job.businessProfileId,
+    user_id: undefined,
+    messages: [],
+    stage: "fast",
+  } as any) as any;
 }
 
 async function loadMemoryContext(job: CustomerMemoryCaptureJob) {

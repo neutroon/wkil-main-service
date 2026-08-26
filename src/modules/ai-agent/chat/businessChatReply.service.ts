@@ -541,98 +541,12 @@ export async function computeBusinessChatReply(params: {
   allowedActionSourceIds?: number[];
   completedExternalLookup?: CompletedExternalLookup;
 }): Promise<AiRoutingDecision> {
-  if (AgentClient.enabled()) {
-    return AgentClient.runAgent({
-      business_profile_id: params.businessProfile.id,
-      user_id: params.businessProfile.userId,
-      messages: [],
-      stage: "fast",
-    } as any) as any;
-  }
-
-  const startedAt = Date.now();
-  const responseDeadlineAt = startedAt + env.AI_CHAT_RESPONSE_DEADLINE_MS;
-  const continuation = await findPendingMutationCorrectionContext(params);
-  const graphInputBase = {
-    ...params,
-    responseDeadlineAt,
-  };
-  const graphInput = continuation
-    ? {
-        ...graphInputBase,
-        activeWorkflowId: continuation.activeWorkflowId,
-        parentActionRunId: continuation.parentActionRunId,
-        actionStepKey: continuation.actionStepKey,
-        allowedActionSourceIds: continuation.allowedActionSourceIds,
-        completedExternalLookup: continuation.completedExternalLookup,
-      }
-    : graphInputBase;
-
-  const prepStartedAt = Date.now();
-  const prep = await prepareAgentParams(graphInput);
-  const prepMs = Date.now() - prepStartedAt;
-  if (prep.errorDecision) {
-    logger.info("ai.chat.reply_latency", {
-      businessProfileId: params.businessProfile.id,
-      channel: params.channel,
-      totalMs: Date.now() - startedAt,
-      prepMs,
-      ...(prep.prepTimings ?? {}),
-      graphMs: 0,
-      underFiveSeconds: Date.now() - startedAt < 5000,
-      path: "preflight_error_decision",
-    });
-    return prep.errorDecision;
-  }
-
-  let agentTurnId = params.agentTurnId;
-  if (!agentTurnId && params.conversationId) {
-    const turn = await createAgentTurn({
-      businessProfileId: params.businessProfile.id,
-      conversationId: params.conversationId,
-      inputMessageId: params.latestUserMessageId ?? null,
-      channel: params.channel,
-      mode: params.completedExternalLookup
-        ? "ACTION_RESULT"
-        : "CUSTOMER_MESSAGE",
-      customerText: params.messageText,
-      parentActionRunId:
-        params.parentActionRunId ?? continuation?.parentActionRunId ?? null,
-      activeWorkflowId:
-        params.activeWorkflowId ?? continuation?.activeWorkflowId ?? null,
-    });
-    agentTurnId = turn.id;
-  }
-
-  const graphStartedAt = Date.now();
-  const decision = await runAgentGraphV2({
-    ...prep.graphParams!,
-    agentTurnId: agentTurnId ?? Date.now(),
-  });
-  const graphMs = Date.now() - graphStartedAt;
-  if (agentTurnId) {
-    void updateAgentTurnStatus(
-      agentTurnId,
-      decision.agentTurnStatus || "COMPLETED",
-    );
-  }
-  if (!params.completedExternalLookup) {
-    enqueueCustomerMemoryCaptureFromChat(params);
-  }
-  logger.info("ai.chat.reply_latency", {
-    businessProfileId: params.businessProfile.id,
-    channel: params.channel,
-    conversationId: params.conversationId,
-    totalMs: Date.now() - startedAt,
-    prepMs,
-    ...(prep.prepTimings ?? {}),
-    graphMs,
-    underFiveSeconds: Date.now() - startedAt < 5000,
-    action: decision.action,
-    replyType: decision.replyType,
-    toolCount: prep.graphParams?.tools?.length ?? 0,
-  });
-  return decision;
+  return AgentClient.runAgent({
+    business_profile_id: params.businessProfile.id,
+    user_id: params.businessProfile.userId,
+    messages: [],
+    stage: "fast",
+  } as any) as any;
 }
 
 async function findPendingMutationCorrectionContext(params: {

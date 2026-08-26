@@ -98,129 +98,14 @@ export async function createGeminiVisual(params: {
   userId: number;
   businessProfileId: number;
   userPrompt: string;
-  postId?: number; 
+  postId?: number;
 }) {
-  if (AgentClient.enabled()) {
-    return AgentClient.runAgent({
-      business_profile_id: params.businessProfileId,
-      user_id: params.userId,
-      messages: [],
-      stage: "fast",
-    } as any) as any;
-  }
-
-  const { userId, businessProfileId, userPrompt, postId } = params;
-
-  // 1. Fetch Business Profile and Brand Kit
-  const profile = await prisma.businessProfile.findFirst({
-    where: { id: businessProfileId, userId },
-  });
-
-  if (!profile) throw new AppError("Business profile not found", 404);
-
-  // 2. Pre-flight quota check
-  await assertQuotaAvailable(userId, businessProfileId);
-
-  // 2b. Resilience: Set Post Status to 'generating' immediately
-  if (postId) {
-    await prisma.contentPlanPost.update({
-      where: { id: postId },
-      data: { status: "generating" },
-    });
-  }
-
-  try {
-    // 3. Grounding - Use Art Director to beautify the prompt with brand grounding
-    const finalPrompt = await groundingPromptWithBrand({ userPrompt, profile });
-
-    logger.info("gemini_visual.generating_branded", { userId, businessProfileId, finalPrompt });
-
-    // 4. Fetch Brand Logo for Multimodal injection
-    let brandLogoBuffer: Buffer | undefined;
-    if (profile.brandLogoUrl) {
-      try {
-        let logoUrl = profile.brandLogoUrl;
-        // Handle relative URLs by prepending the backend base URL
-        if (logoUrl.startsWith("/")) {
-          const baseUrl = env.BACKEND_URL || "http://localhost:8080";
-          logoUrl = `${baseUrl}${logoUrl}`;
-        }
-        
-        const resp = await internalClient.get(logoUrl, { responseType: "arraybuffer" });
-        brandLogoBuffer = Buffer.from(resp.data);
-      } catch (err) {
-        logger.warn("gemini_visual.logo_fetch_failed", { url: profile.brandLogoUrl });
-      }
-    }
-
-    // 5. Execution - Generate the Branded Pixels via the multi-provider
-    // image-gen pipeline. Google Imagen is the default; OpenAI DALL-E 3
-    // works too but does not support brand-logo multimodal injection,
-    // so the OpenAI tier naturally drops `brandLogoBuffer`.
-    const { imageBuffer, usage } = await invokePipelineImageGen({
-      pipeline: "image_gen",
-      prompt: finalPrompt,
-      brandLogoBuffer,
-      brandLogoMimeType: "image/png",
-    });
-
-    // 6. Persistence & Elite Fallback Watermarking
-    let finalImageBuffer = imageBuffer;
-    
-    if (profile.brandWatermarkEnabled && brandLogoBuffer) {
-      logger.info("gemini_visual.applying_manual_watermark", { businessProfileId, position: profile.watermarkPosition });
-      finalImageBuffer = await applyWatermark({
-        imageBuffer,
-        logoBuffer: brandLogoBuffer,
-        position: (profile.watermarkPosition as WatermarkPosition) || "BOTTOM_RIGHT"
-      });
-    }
-
-    const assetName = `AI_Branded_${Date.now()}`;
-    const asset = await createMediaAsset({
-      businessProfileId,
-      userId,
-      fileBuffer: finalImageBuffer,
-      originalName: `${assetName}.png`,
-      mimeType: "image/png",
-      name: assetName,
-      instructions: `Branded AI Image: ${userPrompt}`,
-      usageScope: "CONTENT_ASSET",
-    });
-
-    // 7. Link to Content Plan Post
-    if (postId) {
-      await prisma.contentPlanPost.update({
-        where: { id: postId },
-        data: {
-          imageUrl: asset.publicUrl,
-          mediaAssetId: asset.id,
-          status: "generated", 
-        },
-      });
-    }
-
-    // 8. Record Usage (Fixed: Explicitly map fields to match recordAiUsage expectations)
-    await recordAiUsage({
-      userId,
-      businessProfileId,
-      promptTokens: usage.promptTokens,
-      completionTokens: usage.completionTokens,
-      modelName: usage.model,
-      operation: "gemini_image_generation_branded",
-    });
-
-    return asset;
-  } catch (err: any) {
-    // Fallback: Restore status if it failed so user can try again
-    if (postId) {
-      await prisma.contentPlanPost.update({
-        where: { id: postId },
-        data: { status: "generated" }, // Back to ready state
-      });
-    }
-    throw err;
-  }
+  return AgentClient.runAgent({
+    business_profile_id: params.businessProfileId,
+    user_id: params.userId,
+    messages: [],
+    stage: "fast",
+  } as any) as any;
 }
 
 /**
@@ -233,135 +118,12 @@ export async function refineGeminiVisual(params: {
   instruction: string;
   postId?: number;
 }) {
-  if (AgentClient.enabled()) {
-    return AgentClient.runAgent({
-      business_profile_id: params.businessProfileId,
-      user_id: params.userId,
-      messages: [],
-      stage: "fast",
-    } as any) as any;
-  }
-
-  const { userId, businessProfileId, assetId, instruction, postId } = params;
-
-  // 1. Quota Check
-  await assertQuotaAvailable(userId, businessProfileId);
-
-  // 2. Fetch dependencies
-  const [profile, asset] = await Promise.all([
-    prisma.businessProfile.findFirst({ where: { id: businessProfileId, userId } }),
-    prisma.businessProfileMedia.findFirst({ where: { id: assetId, userId } })
-  ]);
-
-  if (!profile) throw new AppError("Business profile not found", 404);
-  if (!asset) throw new AppError("Source asset not found", 404);
-
-  // 2b. Resilience: Set Post Status to 'generating' immediately
-  if (postId) {
-    await prisma.contentPlanPost.update({
-      where: { id: postId },
-      data: { status: "generating" },
-    });
-  }
-
-  try {
-    // 3. Grounding - Art Director for refinement
-    const finalPrompt = await groundingPromptWithBrand({ 
-      userPrompt: instruction, 
-      profile, 
-      isRefine: true,
-      sourcePrompt: asset.instructions 
-    });
-
-    // 4. Fetch source image and brand logo
-    let imageBuffer: Buffer;
-    try {
-      const getObj = await r2Client.send(
-        new GetObjectCommand({ Bucket: R2_BUCKET, Key: asset.r2Key })
-      );
-      const bodyBytes = await getObj.Body?.transformToByteArray();
-      if (!bodyBytes) throw new AppError("Source asset data empty", 502);
-      imageBuffer = Buffer.from(bodyBytes);
-    } catch (err: any) {
-      logger.error("gemini_visual.refine_fetch_failed", { assetId, error: err.message });
-      throw new AppError("Failed to fetch source image for refinement.", 502);
-    }
-
-    let brandLogoBuffer: Buffer | undefined;
-    if (profile.brandLogoUrl) {
-      try {
-        const resp = await internalClient.get(profile.brandLogoUrl, { responseType: "arraybuffer" });
-        brandLogoBuffer = Buffer.from(resp.data);
-      } catch (err) {
-        // Non-critical, continue without logo
-      }
-    }
-
-    // 5. Command the pixels
-    const { imageBuffer: refinedBuffer, usage } = await invokePipelineImageGen({
-      pipeline: "image_gen",
-      prompt: finalPrompt,
-      imageBuffer,
-      brandLogoBuffer,
-      mimeType: asset.mimeType,
-    });
-
-    // 6. Persistence & Elite Fallback Watermarking
-    let finalImageBuffer = refinedBuffer;
-    if (profile.brandWatermarkEnabled && brandLogoBuffer) {
-      logger.info("gemini_visual.applying_manual_refine_watermark", { businessProfileId, position: profile.watermarkPosition });
-      finalImageBuffer = await applyWatermark({
-        imageBuffer: refinedBuffer,
-        logoBuffer: brandLogoBuffer,
-        position: (profile.watermarkPosition as WatermarkPosition) || "BOTTOM_RIGHT"
-      });
-    }
-
-    const refinedAssetName = `${asset.name}_Refined_${Date.now()}`;
-    const refinedAsset = await createMediaAsset({
-      businessProfileId,
-      userId,
-      fileBuffer: finalImageBuffer,
-      originalName: `${refinedAssetName}.png`,
-      mimeType: "image/png",
-      name: refinedAssetName,
-      instructions: `AI Refinement: ${instruction} (Source: ${asset.name})`,
-      usageScope: "CONTENT_ASSET",
-    });
-
-    // 7. Link to Content Plan Post
-    if (postId) {
-      await prisma.contentPlanPost.update({
-        where: { id: postId },
-        data: {
-          imageUrl: refinedAsset.publicUrl,
-          mediaAssetId: refinedAsset.id,
-          status: "generated",
-        },
-      });
-    }
-
-    // 8. Log Billing (Fixed: Explicitly map fields to match recordAiUsage expectations)
-    await recordAiUsage({
-      userId,
-      businessProfileId,
-      promptTokens: usage.promptTokens,
-      completionTokens: usage.completionTokens,
-      modelName: usage.model,
-      operation: "gemini_image_refine_e2e",
-    });
-
-    return refinedAsset;
-  } catch (err: any) {
-    // Fallback: Restore status if it failed
-    if (postId) {
-      await prisma.contentPlanPost.update({
-        where: { id: postId },
-        data: { status: "generated" },
-      });
-    }
-    throw err;
-  }
+  return AgentClient.runAgent({
+    business_profile_id: params.businessProfileId,
+    user_id: params.userId,
+    messages: [],
+    stage: "fast",
+  } as any) as any;
 }
 
 

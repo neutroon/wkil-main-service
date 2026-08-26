@@ -27,33 +27,12 @@ export async function createIntegrationActionRun(params: {
   jobId: string;
   requestPayload?: JsonRecord | null;
 }) {
-  if (AgentClient.enabled()) {
-    return AgentClient.runAgent({
-      business_profile_id: params.businessProfileId,
-      user_id: undefined,
-      messages: [],
-      stage: "fast",
-    } as any) as any;
-  }
-
-  return prisma.integrationActionRun.create({
-    data: {
-      businessProfileId: params.businessProfileId,
-      sourceId: params.sourceId,
-      conversationId: params.conversationId ?? null,
-      customerId: params.customerId ?? null,
-      agentTurnId: params.agentTurnId ?? null,
-      parentRunId: params.parentRunId ?? null,
-      workflowId: params.workflowId ?? null,
-      stepKey: params.stepKey ?? null,
-      trigger: params.trigger,
-      actionType: params.actionType ?? null,
-      toolName: params.toolName ?? null,
-      jobId: params.jobId,
-      requestPayload: params.requestPayload ?? undefined,
-      status: "QUEUED",
-    },
-  });
+  return AgentClient.runAgent({
+    business_profile_id: params.businessProfileId,
+    user_id: undefined,
+    messages: [],
+    stage: "fast",
+  } as any) as any;
 }
 
 export async function markIntegrationActionRunRunning(id?: number | null) {

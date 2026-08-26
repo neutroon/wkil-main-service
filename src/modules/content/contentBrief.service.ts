@@ -785,122 +785,13 @@ Return ONLY strict JSON:
 }`;
 }
 
-export async function* generateContentAuditStream(input: ContentAuditInput) {
-  if (AgentClient.enabled()) {
-    return AgentClient.runAgent({
-      business_profile_id: input.businessProfileId,
-      user_id: input.userId,
-      messages: [],
-      stage: "fast",
-    } as any) as any;
-  }
-
-  const signalWindowDays = input.signalWindowDays || 90;
-  const profile = await getOwnedProfile(input.businessProfileId, input.userId);
-  await assertQuotaAvailable(input.userId, input.businessProfileId);
-
-  const audit = await prisma.contentAudit.create({
-    data: {
-      businessProfileId: input.businessProfileId,
-      userId: input.userId,
-      signalWindowDays,
-      competitorDiscoveryScope:
-        input.competitorDiscoveryScope || "PROVIDED_AND_AI_SEARCH",
-      competitorAnalysisModes: input.competitorAnalysisModes || [
-        "WEBSITE_SEARCH",
-      ],
-      campaignGoal: input.goal || null,
-      startDate: input.startDate ? new Date(input.startDate) : null,
-      endDate: input.endDate ? new Date(input.endDate) : null,
-      status: "running",
-    },
-  });
-
-  try {
-    yield {
-      type: "status",
-      message: "Collecting first-party customer, comment, and content signals...",
-      auditId: audit.id,
-    };
-    const firstParty = await collectFirstPartySignals({
-      businessProfileId: input.businessProfileId,
-      userId: input.userId,
-      signalWindowDays,
-    });
-
-    yield {
-      type: "status",
-      message: "Analyzing competitor positioning and market gaps...",
-      auditId: audit.id,
-    };
-    const competitorSources = await collectCompetitorSignals({
-      auditId: audit.id,
-      profile,
-      input,
-    });
-
-    yield {
-      type: "status",
-      message: "Drafting signal-led content brief and gap questions...",
-      auditId: audit.id,
-    };
-
-    const prompt = buildAuditPrompt({
-      profile,
-      input,
-      firstParty,
-      competitorSources,
-    });
-    const { text, usage } = await invokePipelineText({
-      pipeline: "content_brief",
-      prompt,
-      temperature: 0.25,
-    });
-    recordAiUsage({
-      userId: input.userId,
-      businessProfileId: input.businessProfileId,
-      ...usage,
-      modelName: usage.model,
-      operation: "content_brief_audit",
-    }).catch(console.error);
-
-    const parsed = parseJsonObject(text || "{}");
-    const updatedAudit = await prisma.contentAudit.update({
-      where: { id: audit.id },
-      data: {
-        status: "completed",
-        findings: parsed.findings || [],
-        gapQuestions: parsed.gapQuestions || [],
-        draftBrief: parsed.draftBrief || {},
-        evidenceRefs: firstParty.evidenceRefs,
-        confidenceScore: Number(parsed.confidenceScore || 0),
-      },
-      include: {
-        competitorSources: true,
-      },
-    });
-
-    yield {
-      type: "result",
-      data: {
-        audit: updatedAudit,
-        findings: parsed.findings || [],
-        gapQuestions: parsed.gapQuestions || [],
-        draftBrief: parsed.draftBrief || {},
-        evidenceRefs: firstParty.evidenceRefs,
-        competitorSources: updatedAudit.competitorSources,
-      },
-    };
-  } catch (err: any) {
-    await prisma.contentAudit.update({
-      where: { id: audit.id },
-      data: {
-        status: "failed",
-        errorMessage: err.message || String(err),
-      },
-    });
-    throw err;
-  }
+export async function generateContentAuditStream(input: ContentAuditInput) {
+  return AgentClient.runAgent({
+    business_profile_id: input.businessProfileId,
+    user_id: input.userId,
+    messages: [],
+    stage: "fast",
+  } as any) as any;
 }
 
 export async function saveContentBrief(userId: number, data: any) {

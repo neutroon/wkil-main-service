@@ -1,11 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { invokePipelineEmbeddingQuery } from "@modules/ai-agent/core/pipelineRuntime";
+import { invokePipelineEmbedding, invokePipelineEmbeddingQuery } from "@modules/ai-agent/core/pipelineRuntime";
 import {
   assertQuotaAvailable,
   recordAiUsage,
 } from "@modules/billing/billing.service";
 import prisma from "@config/prisma";
-import { retrieveRelevantChunksWithEmbedding } from "./rag.service";
+import { AgentClient } from "@modules/ai-agent/client/agent.client";
+import {
+  ingestBusinessProfile,
+  retrieveRelevantChunksWithEmbedding,
+} from "./rag.service";
 
 vi.mock("@modules/ai-agent/core/pipelineRuntime", () => ({
   invokePipelineText: vi.fn(),
@@ -25,15 +29,26 @@ vi.mock("@config/prisma", () => ({
   default: {
     businessProfileChunk: {
       findMany: vi.fn(),
+      deleteMany: vi.fn(async () => ({ count: 0 })),
     },
     businessProfile: {
       findUnique: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
+      update: vi.fn(async () => undefined),
     },
     $queryRaw: vi.fn(),
+    $executeRaw: vi.fn(async () => 0),
   },
   Prisma: {
     join: vi.fn((items) => items),
     sql: vi.fn((strings, ...values) => ({ strings, values })),
+  },
+}));
+
+vi.mock("@modules/ai-agent/client/agent.client", () => ({
+  AgentClient: {
+    enabled: vi.fn(() => false),
+    ingestRag: vi.fn(async () => ({})),
   },
 }));
 
@@ -202,5 +217,74 @@ describe("retrieveRelevantChunksWithEmbedding", () => {
     expect(result.chunks).toEqual([
       expect.objectContaining({ chunkType: "identity" }),
     ]);
+  });
+});
+
+describe("rag dual-write", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("calls AgentClient.ingestRag with mode=full when enabled", async () => {
+    process.env.USE_AGENT_SERVICE = "true";
+    vi.mocked(AgentClient.enabled).mockReturnValue(true);
+    vi.mocked(prisma.businessProfile.findUniqueOrThrow).mockResolvedValue({
+      id: 1,
+      userId: 20,
+      name: "Acme",
+      faqs: [],
+      knowledgeSections: [],
+    } as any);
+    vi.mocked(invokePipelineEmbedding).mockResolvedValue({
+      embeddings: [[0.1, 0.2, 0.3]],
+      usage: {
+        promptTokens: 1,
+        completionTokens: 0,
+        totalTokens: 1,
+        groundingCalls: 0,
+        model: "gemini-embedding-001",
+        provider: "google",
+      },
+    });
+    const spy = vi.spyOn(AgentClient, "ingestRag").mockResolvedValue({} as any);
+
+    await ingestBusinessProfile(1);
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        business_profile_id: 1,
+        mode: "full",
+        collection: "rag",
+      }),
+    );
+  });
+
+  it("does not call AgentClient.ingestRag when disabled", async () => {
+    process.env.USE_AGENT_SERVICE = "false";
+    vi.mocked(AgentClient.enabled).mockReturnValue(false);
+    vi.mocked(prisma.businessProfile.findUniqueOrThrow).mockResolvedValue({
+      id: 2,
+      userId: 30,
+      name: "Beta",
+      faqs: [],
+      knowledgeSections: [],
+    } as any);
+    vi.mocked(invokePipelineEmbedding).mockResolvedValue({
+      embeddings: [[0.1, 0.2, 0.3]],
+      usage: {
+        promptTokens: 1,
+        completionTokens: 0,
+        totalTokens: 1,
+        groundingCalls: 0,
+        model: "gemini-embedding-001",
+        provider: "google",
+      },
+    });
+    const spy = vi.spyOn(AgentClient, "ingestRag").mockResolvedValue({} as any);
+
+    await ingestBusinessProfile(2);
+
+    expect(spy).not.toHaveBeenCalled();
   });
 });

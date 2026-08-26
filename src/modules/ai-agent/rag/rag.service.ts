@@ -9,6 +9,7 @@ import { chunkBusinessProfile } from "./chunker";
 import { CHUNK_TYPE_FIELDS } from "./chunkTypeFields";
 import { applySimilarityThreshold } from "./similarityThreshold";
 import { env } from "@config/env";
+import { AgentClient } from "@modules/ai-agent/client/agent.client";
 
 const MAX_CHUNK_CHARS = 2000;
 const CORE_CHUNK_TYPES = ["identity", "contact", "intents"];
@@ -237,6 +238,16 @@ export async function ingestBusinessProfile(businessProfileId: number) {
   });
   await insertChunks(businessProfileId, chunks, embeddings);
 
+  if (AgentClient.enabled()) {
+    await AgentClient.ingestRag({
+      business_profile_id: businessProfileId,
+      profile: { name: profile.name, faqs: profile.faqs, knowledgeSections: profile.knowledgeSections },
+      mode: "full",
+      qdrant_url: process.env.QDRANT_URL,
+      collection: process.env.QDRANT_COLLECTION ?? "rag",
+    });
+  }
+
   await prisma.businessProfile.update({
     where: { id: businessProfileId },
     data: { ragIngested: true, ragIngestedAt: new Date() },
@@ -296,6 +307,17 @@ export async function partialReIngestBusinessProfile(
   });
 
   await insertChunks(businessProfileId, chunksToUpdate, embeddings);
+
+  if (AgentClient.enabled()) {
+    await AgentClient.ingestRag({
+      business_profile_id: businessProfileId,
+      profile: { name: profile.name, faqs: profile.faqs, knowledgeSections: profile.knowledgeSections },
+      mode: "partial",
+      updated_fields: updatedFields,
+      qdrant_url: process.env.QDRANT_URL,
+      collection: process.env.QDRANT_COLLECTION ?? "rag",
+    });
+  }
 
   await prisma.businessProfile.update({
     where: { id: businessProfileId },

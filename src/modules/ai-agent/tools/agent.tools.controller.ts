@@ -106,7 +106,7 @@ router.get("/copilot/overview", async (req, res) => {
           { metric: "channels_live", value: `${activeChannels}/3` },
           { metric: "setup_complete", value: `${setupPct}%` },
         ],
-        cite: { ...cite("stats"), deepLink: "/ar/user/ai-analytics" },
+        cite: { ...cite("stats"), deepLink: "/ai-analytics" },
       });
     }
     if (sections.includes("leads")) {
@@ -122,7 +122,7 @@ router.get("/copilot/overview", async (req, res) => {
           status: c.status,
         })),
         total: l.meta?.total ?? l.data.length,
-        cite: { ...cite("leads"), deepLink: "/ar/user/customers" },
+        cite: { ...cite("leads"), deepLink: "/customers" },
       });
     }
     if (sections.includes("attention")) {
@@ -138,7 +138,7 @@ router.get("/copilot/overview", async (req, res) => {
           status: c.status,
         })),
         total: a.meta?.total ?? a.data.length,
-        cite: { ...cite("attention"), deepLink: "/ar/user/inbox" },
+        cite: { ...cite("attention"), deepLink: "/inbox" },
       });
     }
     res.json({ envelopes, data });

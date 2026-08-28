@@ -67,17 +67,67 @@ router.get("/copilot/overview", async (req, res) => {
   const limit = Math.min(Math.max(Number(req.query.limit) || 10, 1), 50);
   const sections = String(req.query.sections ?? "stats,leads,attention").split(",").filter(Boolean);
   try {
-    const out: Record<string, unknown> = {};
+    const data: Record<string, unknown> = {};
+    const envelopes: Record<string, unknown>[] = [];
+    const cite = (section: string) => ({
+      tool: "get_business_overview",
+      section,
+      fetchedAt: new Date().toISOString(),
+    });
+
     if (sections.includes("stats")) {
-      out.stats = await getUnifiedDashboardStats(userId, "user", days);
+      const s = await getUnifiedDashboardStats(userId, "user", days);
+      data.stats = s;
+      envelopes.push({
+        type: "stat-grid",
+        items: [
+          { label: "Connected accounts", value: s.connectedAccounts },
+          { label: "Connected pages", value: s.connectedPages },
+          { label: "Posts created", value: s.postsCreated },
+          { label: "Posts scheduled", value: s.postsScheduled },
+          { label: "Comments replied", value: s.commentsReplied },
+          { label: "Total reach", value: s.totalReach },
+          { label: "AI automation rate", value: s.aiAutomationRate },
+          { label: "AI accuracy", value: s.aiAccuracyScore },
+          { label: "Lead velocity", value: s.leadVelocity },
+          { label: "Avg response (min)", value: s.avgResponseTime },
+        ],
+        cite: { ...cite("stats"), deepLink: "/ar/user/ai-analytics" },
+      });
     }
     if (sections.includes("leads")) {
-      out.leads = await listCustomers({ userId, businessProfileId, page: 1, limit });
+      const l = await listCustomers({ userId, businessProfileId, page: 1, limit });
+      data.leads = l;
+      envelopes.push({
+        type: "lead-list",
+        leads: l.data.map((c: any) => ({
+          id: c.id,
+          displayName: c.displayName,
+          phone: c.phone,
+          primaryChannel: c.primaryChannel,
+          status: c.status,
+        })),
+        total: l.meta?.total ?? l.data.length,
+        cite: { ...cite("leads"), deepLink: "/ar/user/customers" },
+      });
     }
     if (sections.includes("attention")) {
-      out.attention = await listCustomers({ userId, status: "handoff", page: 1, limit });
+      const a = await listCustomers({ userId, status: "handoff", page: 1, limit });
+      data.attention = a;
+      envelopes.push({
+        type: "lead-list",
+        leads: a.data.map((c: any) => ({
+          id: c.id,
+          displayName: c.displayName,
+          phone: c.phone,
+          primaryChannel: c.primaryChannel,
+          status: c.status,
+        })),
+        total: a.meta?.total ?? a.data.length,
+        cite: { ...cite("attention"), deepLink: "/ar/user/inbox" },
+      });
     }
-    res.json(out);
+    res.json({ envelopes, data });
   } catch (e: any) {
     res.status(500).json({ error: e?.message ?? "overview_failed" });
   }

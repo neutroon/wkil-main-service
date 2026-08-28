@@ -78,19 +78,32 @@ router.get("/copilot/overview", async (req, res) => {
     if (sections.includes("stats")) {
       const s = await getUnifiedDashboardStats(userId, "user", days);
       data.stats = s;
+      const hint = `Last ${days} days`;
+      const totalEngagement = (s.recentPerformance ?? []).reduce(
+        (sum: number, p: { totalEngagement?: number }) => sum + (p.totalEngagement || 0),
+        0,
+      );
+      const ch = s.channelHealth ?? { facebook: false, whatsapp: false, web: false };
+      const activeChannels = [ch.facebook, ch.whatsapp, ch.web].filter(Boolean).length;
+      const steps = Object.values(s.setupProgress?.steps ?? {}).filter(
+        (st) => st && (st as { available?: boolean }).available,
+      );
+      const stepsDone = steps.filter((st) => (st as { complete?: boolean }).complete).length;
+      const setupPct = steps.length ? Math.round((stepsDone / steps.length) * 100) : 100;
       envelopes.push({
         type: "stat-grid",
         items: [
-          { label: "Connected accounts", value: s.connectedAccounts },
-          { label: "Connected pages", value: s.connectedPages },
-          { label: "Posts created", value: s.postsCreated },
-          { label: "Posts scheduled", value: s.postsScheduled },
-          { label: "Comments replied", value: s.commentsReplied },
-          { label: "Total reach", value: s.totalReach },
+          { label: `Posts created (${days}d)`, value: s.postsCreated },
+          { label: `Posts scheduled (${days}d)`, value: s.postsScheduled },
+          { label: `Comments replied (${days}d)`, value: s.commentsReplied },
+          { label: `Total reach (${days}d)`, value: s.totalReach, hint },
+          { label: `Total engagement (${days}d)`, value: totalEngagement, hint },
           { label: "AI automation rate", value: s.aiAutomationRate },
-          { label: "AI accuracy", value: s.aiAccuracyScore },
-          { label: "Lead velocity", value: s.leadVelocity },
-          { label: "Avg response (min)", value: s.avgResponseTime },
+          { label: "AI accuracy score", value: s.aiAccuracyScore },
+          { label: `Lead velocity (${days}d)`, value: s.leadVelocity, hint },
+          { label: "Avg AI response (min)", value: s.avgResponseTime },
+          { label: "Channels live", value: `${activeChannels}/3` },
+          { label: "Setup complete", value: `${setupPct}%` },
         ],
         cite: { ...cite("stats"), deepLink: "/ar/user/ai-analytics" },
       });

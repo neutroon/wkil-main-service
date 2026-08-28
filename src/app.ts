@@ -205,6 +205,11 @@ app.get("/v1/health", async (_req, res) => {
   }
 });
 
+// Service-to-service internal API — mounted BEFORE the global JWT auth: it is
+// protected by its own x-service-token middleware (agent.tools.controller).
+// Must not sit behind authenticateToken, or machine-to-machine calls 401.
+app.use("/internal/agent", agentTools);
+
 // Protected Enterprise Routes (Require Authentication & Email Verification)
 app.use(authenticateToken);
 app.use(requireVerified);
@@ -229,7 +234,6 @@ app.use("/v1/widget", widgetRoutes);
 app.use("/v1/analytics", aiAnalyticsRoutes);
 app.use("/v1/media", mediaLibraryRoutes);
 app.use("/v1/notifications", notificationsRoutes);
-app.use("/internal/agent", agentTools);
 
 // Admin-only detailed health (for admin dashboard)
 app.get(

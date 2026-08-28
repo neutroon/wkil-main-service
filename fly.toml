@@ -13,7 +13,8 @@ primary_region = 'cdg'
 
 [env]
   USE_AGENT_SERVICE = "true"
-  LANGGRAPH_API_URL = "https://wkil-agent-service.fly.dev"
+  # Private 6PN: the agent container runs an IPv6 forwarder ([::]:8123 -> 127.0.0.1:8123).
+  LANGGRAPH_API_URL = "http://wkil-agent-service.internal:8123"
 
 [http_service]
   internal_port = 8080

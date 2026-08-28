@@ -63,6 +63,11 @@ export const setAuthCookies = (
     secure: isProduction || isTunnel,
     sameSite: isProduction || isTunnel ? "none" : "lax",
     path: "/",
+    // Cross-subdomain session: the dashboard origin (go.wkil.app) runs a
+    // server-side BFF proxy for the LangGraph assistance traffic that must
+    // read this cookie. Host-only cookies (api.wkil.app) never reach it.
+    // ngrok tunnels use a foreign domain, so scope to .wkil.app in prod only.
+    ...(isProduction && !isTunnel ? { domain: ".wkil.app" } : {}),
   };
 
   // Access token cookie (short-lived)

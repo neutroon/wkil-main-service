@@ -63,7 +63,10 @@ void (async () => {
   // the PostgresSaver (the copilot graph wiring that used the checkpointer was
   // deleted in the ai-agent cutover).
 
-  server = httpServer.listen(PORT, "0.0.0.0", () => {
+  // Bind without an explicit host → Node listens on :: (dual-stack IPv4+IPv6).
+  // Fly's private network (6PN, used for .internal addresses between apps) is
+  // IPv6-only — binding "0.0.0.0" makes the app unreachable to other apps.
+  server = httpServer.listen(PORT, () => {
     logger.info(`Server running on port ${PORT}`);
 
     // Start the background queue loop for delayed/scheduled jobs

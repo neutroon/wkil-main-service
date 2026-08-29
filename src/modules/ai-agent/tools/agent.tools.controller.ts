@@ -108,6 +108,24 @@ router.get("/copilot/overview", async (req, res) => {
         ],
         cite: { ...cite("stats"), deepLink: "/ai-analytics" },
       });
+      // Daily engagement timeseries for the chart card (semantic keys only —
+      // the frontend localizes the title and formats the dates).
+      const perf = (s.recentPerformance ?? []) as { date: Date | string; totalEngagement?: number }[];
+      const points = perf
+        .map((p) => ({
+          d: new Date(p.date).toISOString().slice(0, 10),
+          v: Math.round(p.totalEngagement ?? 0),
+        }))
+        .sort((a, b) => a.d.localeCompare(b.d));
+      if (points.length >= 2) {
+        envelopes.push({
+          type: "chart",
+          chart: "engagement",
+          period: days,
+          points,
+          cite: { ...cite("chart"), deepLink: "/ai-analytics" },
+        });
+      }
     }
     if (sections.includes("leads")) {
       const l = await listCustomers({ userId, businessProfileId, page: 1, limit });

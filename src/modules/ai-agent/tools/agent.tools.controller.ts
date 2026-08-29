@@ -4,7 +4,7 @@ import { createIntegrationActionRun } from "../../integrations/external/integrat
 import { assertQuotaAvailable, recordAiUsage } from "../../billing/billing.service";
 import { getUnifiedDashboardStats } from "../../analytics/dashboard/dashboard.service";
 import { getAiPerformanceStats } from "../../analytics/ai/analytics.service";
-import { listCustomers, getCustomerForUser } from "../../business/customer/customer.service";
+import { listCustomers, getCustomerForUser, updateCustomerForUser } from "../../business/customer/customer.service";
 import prisma from "@config/prisma";
 
 const router = Router();
@@ -173,6 +173,26 @@ router.get("/copilot/customer", async (req, res) => {
     res.json({ customer: await getCustomerForUser(userId, customerId) });
   } catch (e: any) {
     res.status(404).json({ error: e?.message ?? "customer_not_found" });
+  }
+});
+
+// HITL continuation: the agent's execute_action node calls this AFTER the user
+// approved a proposal in the UI. Ownership is re-validated here — a proposal
+// for a customer the user does not own is rejected, never executed.
+router.post("/copilot/actions/execute", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  const action = String(req.body?.action ?? "");
+  const customerId = req.body?.customerId ? Number(req.body.customerId) : null;
+  if (!userId) return res.status(400).json({ error: "userId_required" });
+  try {
+    if (action === "mark_handled") {
+      if (!customerId) return res.status(400).json({ error: "customerId_required" });
+      const customer = await updateCustomerForUser(userId, customerId, { status: "RESOLVED" });
+      return res.json({ ok: true, customer });
+    }
+    return res.status(400).json({ error: "unknown_action", action });
+  } catch (e: any) {
+    res.status(404).json({ error: e?.message ?? "execute_failed" });
   }
 });
 

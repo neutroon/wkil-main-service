@@ -107,4 +107,8 @@ describe("app route mounts", () => {
   it("mounts the assistant feedback routes (new LangGraph copilot)", () => {
     expect(appSource).toContain('app.use("/v1/assistant", copilotRoutes)');
   });
+
+  it("mounts the shell routes", () => {
+    expect(appSource).toContain('app.use("/v1/shell", shellRoutes)');
+  });
 });

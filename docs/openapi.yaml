@@ -1180,6 +1180,33 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /v1/assistant/feedback:
+    post:
+      tags: [Auth]
+      operationId: submitCopilotFeedback
+      summary: Rate a wkil assistant message (thumbs up/down)
+      security:
+        - bearerAuth: []
+          csrfHeader: []
+        - accessTokenCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [messageId, rating]
+              properties:
+                threadId: { type: string }
+                messageId: { type: string }
+                rating: { type: string, enum: [positive, negative] }
+                comment: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/SuccessOk" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /v1/notifications/device-tokens:
     post:
       tags: [Auth]
@@ -1210,86 +1237,6 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
-  /v1/copilot/conversation:
-    get:
-      tags: [Copilot]
-      operationId: getCopilotConversation
-      summary: Get the current owner's copilot conversation
-      security:
-        - bearerAuth: []
-        - accessTokenCookie: []
-      responses:
-        "200":
-          description: The current conversation
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data: { $ref: "#/components/schemas/GenericObject" }
-        "401": { $ref: "#/components/responses/Unauthorized" }
-
-  /v1/copilot/conversation/messages:
-    get:
-      tags: [Copilot]
-      operationId: listCopilotMessages
-      summary: List messages for the current copilot conversation
-      security:
-        - bearerAuth: []
-        - accessTokenCookie: []
-      parameters:
-        - name: limit
-          in: query
-          schema: { type: integer, minimum: 1, maximum: 100 }
-      responses:
-        "200":
-          description: Array of messages (envelope JSON, role-tagged)
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: array
-                    items: { $ref: "#/components/schemas/GenericObject" }
-        "401": { $ref: "#/components/responses/Unauthorized" }
-    post:
-      tags: [Copilot]
-      operationId: postCopilotMessage
-      summary: Send a message to the owner copilot (REST fallback for the socket flow)
-      security:
-        - bearerAuth: []
-          csrfHeader: []
-        - accessTokenCookie: []
-          csrfHeader: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [text]
-              properties:
-                text: { type: string, minLength: 1, maxLength: 4000 }
-      responses:
-        "200":
-          description: Copilot reply envelopes
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      conversationId: { type: integer }
-                      envelopes:
-                        type: array
-                        items: { $ref: "#/components/schemas/GenericObject" }
-        "400": { $ref: "#/components/responses/BadRequest" }
-        "401": { $ref: "#/components/responses/Unauthorized" }
-        "402": { $ref: "#/components/responses/ServerError" }
-        "429": { $ref: "#/components/responses/ServerError" }
 
   /v1/widget/installs/{id}/identity-secret:
     get:

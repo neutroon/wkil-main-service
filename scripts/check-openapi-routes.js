@@ -187,7 +187,16 @@ function getExpectedRoutes() {
   }
 
   routes.push(...getAppLevelRoutes(appSource));
-  return new Set(routes);
+
+  // Internal service-to-service routes (x-service-token guarded, e.g.
+  // /internal/agent/* consumed by agent-svc) are not part of the public API
+  // contract — exclude them from the OpenAPI coverage audit.
+  const publicRoutes = routes.filter((route) => {
+    const [, routePath] = route.split(" ");
+    return !routePath.startsWith("/internal");
+  });
+
+  return new Set(publicRoutes);
 }
 
 function getDocumentedRoutes() {

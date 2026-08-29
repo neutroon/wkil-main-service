@@ -233,7 +233,7 @@ app.use("/v1/business-profile", businessProfileRoutes);
 app.use("/v1/agent-actions", agentActionRoutes);
 app.use("/v1/widget", widgetRoutes);
 app.use("/v1/analytics", aiAnalyticsRoutes);
-app.use("/v1/copilot", copilotRoutes);
+app.use("/v1/assistant", copilotRoutes);
 app.use("/v1/media", mediaLibraryRoutes);
 app.use("/v1/notifications", notificationsRoutes);
 

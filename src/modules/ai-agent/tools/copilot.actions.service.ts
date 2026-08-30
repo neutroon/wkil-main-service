@@ -13,6 +13,14 @@ import {
   updateCustomerForUser,
   reconcileCustomerStatusFromConversations,
 } from "@modules/business/customer/customer.service";
+import {
+  listKnowledgeDocuments,
+  createKnowledgeDocument,
+  updateKnowledgeDocument,
+  deleteKnowledgeDocument,
+} from "@modules/business/profile/knowledge.service";
+import { updateAgentSettingsForUser } from "@modules/business/profile/businessAccess.service";
+import { AppError } from "@middlewares/errorHandler.middleware";
 
 const AUTHORIZED = (userId: number, conversationId: number) =>
   conversationsController.getAuthorizedConversation(userId, conversationId);
@@ -220,4 +228,70 @@ export async function listCopilotCustomers(params: {
     page: 1,
     limit,
   });
+}
+
+const SETTINGS_SELECT = {
+  id: true, name: true, voice: true, tone: true, handoffEnabled: true,
+  corePolicies: true, aiBehaviorInstructions: true,
+} as const;
+
+async function resolveProfileId(userId: number, businessProfileId?: number) {
+  const profileIds = await getAccessibleProfileIds(userId);
+  const scoped = businessProfileId ? profileIds.filter((id: number) => id === businessProfileId) : profileIds;
+  if (!scoped.length) throw new AppError("Business profile not found.", 404);
+  return scoped[0];
+}
+
+export async function getAgentSettingsForUser(params: { userId: number; businessProfileId?: number }) {
+  const profile = await prisma.businessProfile.findFirst({
+    where: { userId: params.userId, ...(params.businessProfileId ? { id: params.businessProfileId } : {}) },
+    select: SETTINGS_SELECT,
+  });
+  if (!profile) throw new AppError("Business profile not found.", 404);
+  return {
+    settings: {
+      name: profile.name,
+      voice: profile.voice,
+      tone: profile.tone,
+      handoffEnabled: profile.handoffEnabled,
+      corePolicies: profile.corePolicies,
+      aiBehaviorInstructions: profile.aiBehaviorInstructions,
+    },
+  };
+}
+
+export async function updateAgentSettings(params: {
+  userId: number; businessProfileId?: number; patch: Record<string, unknown>;
+}) {
+  const profileId = await resolveProfileId(params.userId, params.businessProfileId);
+  const profile = await updateAgentSettingsForUser(params.userId, profileId, params.patch);
+  return { ok: true as const, profile };
+}
+
+export async function listCopilotKnowledge(params: {
+  userId: number; businessProfileId?: number; kind?: string; q?: string; limit?: number;
+}) {
+  const profileId = await resolveProfileId(params.userId, params.businessProfileId);
+  return listKnowledgeDocuments(profileId, { kind: params.kind, q: params.q, limit: params.limit });
+}
+
+export async function createCopilotKnowledge(params: {
+  userId: number; businessProfileId?: number; kind: string; title?: string; content: string;
+}) {
+  const profileId = await resolveProfileId(params.userId, params.businessProfileId);
+  const document = await createKnowledgeDocument(profileId, { kind: params.kind, title: params.title, content: params.content });
+  return { ok: true as const, document };
+}
+
+export async function updateCopilotKnowledge(params: {
+  userId: number; businessProfileId?: number; documentId: number; kind?: string; title?: string; content?: string;
+}) {
+  const profileId = await resolveProfileId(params.userId, params.businessProfileId);
+  const document = await updateKnowledgeDocument(profileId, params.documentId, { kind: params.kind, title: params.title, content: params.content });
+  return { ok: true as const, document };
+}
+
+export async function deleteCopilotKnowledge(params: { userId: number; businessProfileId?: number; documentId: number }) {
+  const profileId = await resolveProfileId(params.userId, params.businessProfileId);
+  return deleteKnowledgeDocument(profileId, params.documentId);
 }

@@ -15,6 +15,12 @@ import {
   toggleCopilotConversationAi,
   markCopilotConversationRead,
   updateCopilotCustomer,
+  getAgentSettingsForUser,
+  updateAgentSettings,
+  listCopilotKnowledge,
+  createCopilotKnowledge,
+  updateCopilotKnowledge,
+  deleteCopilotKnowledge,
 } from "./copilot.actions.service";
 
 const router = Router();
@@ -58,7 +64,8 @@ router.post("/usage", async (req, res) => {
 
 router.get("/profile/:id", async (req, res) => {
   const profile = await prisma.businessProfile.findUniqueOrThrow({
-    where: { id: Number(req.params.id) }, include: { faqs: true, knowledgeSections: true },
+    where: { id: Number(req.params.id) },
+    include: { knowledgeDocuments: { select: { id: true, kind: true, title: true, content: true } } },
   });
   res.json(profile);
 });
@@ -331,6 +338,105 @@ router.get("/copilot/usage", async (req, res) => {
     res.json({ usage: await getAiPerformanceStats(String(userId), "user", days) });
   } catch (e: any) {
     res.status(500).json({ error: e?.message ?? "usage_failed" });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Copilot agent settings + knowledge tools (consumed by agent-svc
+// get_agent_settings / update_agent_settings / list_knowledge / add_knowledge /
+// update_knowledge / delete_knowledge). { userId } is injected by the channel
+// BFF into the run input — never model-supplied values.
+// ---------------------------------------------------------------------------
+
+router.get("/copilot/agent-settings", async (req, res) => {
+  const userId = Number(req.query.userId);
+  if (!userId) return res.status(400).json({ error: "userId_required" });
+  try {
+    res.json(await getAgentSettingsForUser({
+      userId,
+      businessProfileId: req.query.businessProfileId ? Number(req.query.businessProfileId) : undefined,
+    }));
+  } catch (e: any) {
+    res.status(404).json({ error: e?.message ?? "settings_not_found" });
+  }
+});
+
+router.post("/copilot/agent-settings", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  if (!userId) return res.status(400).json({ error: "userId_required" });
+  try {
+    res.json(await updateAgentSettings({
+      userId,
+      businessProfileId: req.body?.businessProfileId ? Number(req.body.businessProfileId) : undefined,
+      patch: req.body ?? {},
+    }));
+  } catch (e: any) {
+    res.status(400).json({ error: e?.message ?? "settings_update_failed" });
+  }
+});
+
+router.get("/copilot/knowledge", async (req, res) => {
+  const userId = Number(req.query.userId);
+  if (!userId) return res.status(400).json({ error: "userId_required" });
+  try {
+    res.json(await listCopilotKnowledge({
+      userId,
+      businessProfileId: req.query.businessProfileId ? Number(req.query.businessProfileId) : undefined,
+      kind: req.query.kind ? String(req.query.kind) : undefined,
+      q: req.query.q ? String(req.query.q) : undefined,
+      limit: req.query.limit ? Number(req.query.limit) : undefined,
+    }));
+  } catch (e: any) {
+    res.status(400).json({ error: e?.message ?? "list_knowledge_failed" });
+  }
+});
+
+router.post("/copilot/knowledge", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  if (!userId) return res.status(400).json({ error: "userId_required" });
+  try {
+    res.json(await createCopilotKnowledge({
+      userId,
+      businessProfileId: req.body?.businessProfileId ? Number(req.body.businessProfileId) : undefined,
+      kind: String(req.body?.kind ?? ""),
+      title: req.body?.title ? String(req.body.title) : undefined,
+      content: String(req.body?.content ?? ""),
+    }));
+  } catch (e: any) {
+    res.status(400).json({ error: e?.message ?? "create_knowledge_failed" });
+  }
+});
+
+router.put("/copilot/knowledge/:id", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  const documentId = Number(req.params.id);
+  if (!userId || !documentId) return res.status(400).json({ error: "userId_and_documentId_required" });
+  try {
+    res.json(await updateCopilotKnowledge({
+      userId,
+      businessProfileId: req.body?.businessProfileId ? Number(req.body.businessProfileId) : undefined,
+      documentId,
+      kind: req.body?.kind ? String(req.body.kind) : undefined,
+      title: req.body?.title ? String(req.body.title) : undefined,
+      content: req.body?.content ? String(req.body.content) : undefined,
+    }));
+  } catch (e: any) {
+    res.status(404).json({ error: e?.message ?? "update_knowledge_failed" });
+  }
+});
+
+router.post("/copilot/knowledge/:id/delete", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  const documentId = Number(req.params.id);
+  if (!userId || !documentId) return res.status(400).json({ error: "userId_and_documentId_required" });
+  try {
+    res.json(await deleteCopilotKnowledge({
+      userId,
+      businessProfileId: req.body?.businessProfileId ? Number(req.body.businessProfileId) : undefined,
+      documentId,
+    }));
+  } catch (e: any) {
+    res.status(404).json({ error: e?.message ?? "delete_knowledge_failed" });
   }
 });
 

@@ -8,6 +8,7 @@ const prismaMock = vi.hoisted(() => ({
   },
   whatsAppAccount: { findFirst: vi.fn() },
   facebookPage: { findFirst: vi.fn() },
+  businessProfile: { findFirst: vi.fn() },
 }));
 vi.mock("@config/prisma", () => ({ default: prismaMock }));
 
@@ -36,6 +37,17 @@ const metaSvc = vi.hoisted(() => ({
 vi.mock("@modules/meta/whatsapp/whatsapp.service", () => metaSvc);
 vi.mock("@modules/meta/messenger/messenger.service", () => metaSvc);
 
+const knowledgeSvc = vi.hoisted(() => ({
+  listKnowledgeDocuments: vi.fn(),
+  createKnowledgeDocument: vi.fn(),
+  updateKnowledgeDocument: vi.fn(),
+  deleteKnowledgeDocument: vi.fn(),
+}));
+vi.mock("@modules/business/profile/knowledge.service", () => knowledgeSvc);
+
+const businessAccess = vi.hoisted(() => ({ updateAgentSettingsForUser: vi.fn() }));
+vi.mock("@modules/business/profile/businessAccess.service", () => businessAccess);
+
 import {
   listCopilotConversations,
   getCopilotConversationMessages,
@@ -45,6 +57,12 @@ import {
   toggleCopilotConversationAi,
   markCopilotConversationRead,
   updateCopilotCustomer,
+  getAgentSettingsForUser,
+  updateAgentSettings,
+  listCopilotKnowledge,
+  createCopilotKnowledge,
+  updateCopilotKnowledge,
+  deleteCopilotKnowledge,
 } from "./copilot.actions.service";
 
 beforeEach(() => vi.clearAllMocks());
@@ -237,5 +255,49 @@ describe("updateCopilotCustomer", () => {
       status: "RESOLVED", notes: "VIP", displayName: "Sara A.",
     });
     expect(out).toMatchObject({ ok: true, customer: { id: 9 } });
+  });
+});
+
+describe("agent settings", () => {
+  it("returns the bounded prompt-facing settings shape", async () => {
+    prismaMock.businessProfile.findFirst.mockResolvedValue({
+      id: 3, name: "Acme", voice: "Friendly", tone: "Calm", handoffEnabled: true,
+      corePolicies: "No refunds.", aiBehaviorInstructions: "Be brief.",
+    });
+    const out = await getAgentSettingsForUser({ userId: 7 });
+    expect(out.settings).toEqual({
+      name: "Acme", voice: "Friendly", tone: "Calm", handoffEnabled: true,
+      corePolicies: "No refunds.", aiBehaviorInstructions: "Be brief.",
+    });
+  });
+
+  it("update delegates with resolved profile id", async () => {
+    userSvc.getAccessibleProfileIds.mockResolvedValue([3]);
+    businessAccess.updateAgentSettingsForUser.mockResolvedValue({ id: 3, voice: "Calm" });
+    const out = await updateAgentSettings({ userId: 7, businessProfileId: 3, patch: { voice: "Calm" } });
+    expect(businessAccess.updateAgentSettingsForUser).toHaveBeenCalledWith(7, 3, { voice: "Calm" });
+    expect(out.ok).toBe(true);
+  });
+});
+
+describe("knowledge passthrough", () => {
+  it("list scopes to an accessible profile", async () => {
+    userSvc.getAccessibleProfileIds.mockResolvedValue([3, 4]);
+    knowledgeSvc.listKnowledgeDocuments.mockResolvedValue({ documents: [], envelopes: [] });
+    await listCopilotKnowledge({ userId: 7, kind: "faq", limit: 5 });
+    expect(knowledgeSvc.listKnowledgeDocuments).toHaveBeenCalledWith(expect.any(Number), { kind: "faq", q: undefined, limit: 5 });
+  });
+
+  it("create/update/delete pass the resolved profile id", async () => {
+    userSvc.getAccessibleProfileIds.mockResolvedValue([3]);
+    knowledgeSvc.createKnowledgeDocument.mockResolvedValue({ id: 9 });
+    knowledgeSvc.updateKnowledgeDocument.mockResolvedValue({ id: 9 });
+    knowledgeSvc.deleteKnowledgeDocument.mockResolvedValue({ ok: true });
+    await createCopilotKnowledge({ userId: 7, kind: "faq", title: "Q", content: "A" });
+    await updateCopilotKnowledge({ userId: 7, documentId: 9, content: "new" });
+    await deleteCopilotKnowledge({ userId: 7, documentId: 9 });
+    expect(knowledgeSvc.createKnowledgeDocument).toHaveBeenCalledWith(expect.any(Number), { kind: "faq", title: "Q", content: "A" });
+    expect(knowledgeSvc.updateKnowledgeDocument).toHaveBeenCalledWith(expect.any(Number), 9, { content: "new" });
+    expect(knowledgeSvc.deleteKnowledgeDocument).toHaveBeenCalledWith(expect.any(Number), 9);
   });
 });

@@ -7,11 +7,19 @@ vi.mock("./copilot.actions.service", () => ({
   listCopilotConversations: vi.fn(),
   getCopilotConversationMessages: vi.fn(),
   listCopilotCustomers: vi.fn(),
+  getAgentSettingsForUser: vi.fn(),
+  updateAgentSettings: vi.fn(),
+  listCopilotKnowledge: vi.fn(),
+  createCopilotKnowledge: vi.fn(),
+  updateCopilotKnowledge: vi.fn(),
+  deleteCopilotKnowledge: vi.fn(),
 }));
 import {
   listCopilotConversations,
   getCopilotConversationMessages,
   listCopilotCustomers,
+  getAgentSettingsForUser,
+  listCopilotKnowledge,
 } from "./copilot.actions.service";
 
 function makeApp() {
@@ -50,4 +58,24 @@ it("GET /copilot/conversations returns envelopes", async () => {
   const res = await request(app).get("/internal/agent/copilot/conversations?userId=7").set("x-service-token", "test-token");
   expect(res.status).toBe(200);
   expect(res.body.envelopes).toEqual([]);
+});
+
+it("GET /copilot/agent-settings returns settings", async () => {
+  vi.mocked(getAgentSettingsForUser).mockResolvedValue({
+    settings: { name: "Acme", voice: "Friendly", tone: "Calm", handoffEnabled: true, corePolicies: null, aiBehaviorInstructions: null },
+  } as any);
+  const app = makeApp();
+  const res = await request(app).get("/internal/agent/copilot/agent-settings?userId=7").set("x-service-token", "test-token");
+  expect(res.status).toBe(200);
+  expect(res.body.settings).toMatchObject({ name: "Acme" });
+  expect(getAgentSettingsForUser).toHaveBeenCalledWith({ userId: 7, businessProfileId: undefined });
+});
+
+it("GET /copilot/knowledge delegates to listCopilotKnowledge", async () => {
+  vi.mocked(listCopilotKnowledge).mockResolvedValue({ documents: [], envelopes: [] } as any);
+  const app = makeApp();
+  const res = await request(app).get("/internal/agent/copilot/knowledge?userId=7&kind=faq&limit=5").set("x-service-token", "test-token");
+  expect(res.status).toBe(200);
+  expect(res.body.envelopes).toEqual([]);
+  expect(listCopilotKnowledge).toHaveBeenCalledWith({ userId: 7, businessProfileId: undefined, kind: "faq", q: undefined, limit: 5 });
 });

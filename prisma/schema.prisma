@@ -208,16 +208,10 @@ model BusinessProfile {
 
   name                String
   handoffEnabled      Boolean  @default(true)
-  identity            String
-  targetAudience      String
   voice               String   @default("Professional")
   tone                String   @default("Friendly")
-  productsServices    String[]
   expectedUserIntents String[]
   corePolicies        String?
-  phoneNumbers        String[]
-  workingHours        String?
-  address             String?
   customerDetailsInstructions String? @default("Saves useful customer details. Trigger this ONLY when the customer provides contact details, asks for follow-up, wants to proceed, gives preferences, or corrects saved information.")
   customerMemoryFields Json?
   aiBehaviorInstructions String?
@@ -234,30 +228,14 @@ model BusinessProfile {
   visualAesthetic       String?   // The Vibe (e.g., KHALEEJI_LUXURY)
   artStyle             String?   // The Rendering (e.g., REALISTIC)
   brandKitCompleted    Boolean   @default(false)
-  brandKitUpdatedAt    DateTime?
-  brandWatermarkEnabled Boolean   @default(true)
-  watermarkPosition     WatermarkPosition @default(BOTTOM_RIGHT)
 
-  // Facebook Comment Settings
-  facebookGreetingMode     String @default("AI") // "AI", "TEMPLATE"
-  facebookGreetingTemplate String @default("Thanks {{name}}! I've sent the full details to your inbox.")
-
-  scrapedWebsiteUrl String?
-  scrapedMarkdown   String?
-
-  ragIngested   Boolean   @default(false)
-  ragIngestedAt DateTime?
-
-  plan                String    @default("FREE") // "FREE", "PRO", "ENTERPRISE"
   monthlyTokensUsed   Int       @default(0)     // Rolling monthly usage for quota checks
   monthlyCreditsUsed  Int       @default(0)     // New Credit-based tracking
-  monthlyCreditQuota  Int?                      // Individual hard-ceiling override (Credits)
-  autoResetEnabled    Boolean   @default(false) // Whether usage resets automatically at month-start
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  faqs            BusinessProfileFaq[]
+  knowledgeDocuments KnowledgeDocument[]
   facebookPages   FacebookPage[]
   whatsAppAccounts WhatsAppAccount[]
   agentActionSources AgentActionSource[]
@@ -274,7 +252,6 @@ model BusinessProfile {
   contentAudits     ContentAudit[]
   contentBriefs     ContentBrief[]
   competitorSources CompetitorSource[]
-  knowledgeSections BusinessProfileKnowledgeSection[]
   mediaAssets       BusinessProfileMedia[]
   orderIntegrations  OrderIntegration[]
   orderEvents        OrderEvent[]
@@ -362,29 +339,17 @@ model AgentActionWorkflow {
   @@index([mutationSourceId])
 }
 
-model BusinessProfileFaq {
-  id         Int             @id @default(autoincrement())
-  businessId Int
-  business   BusinessProfile @relation(fields: [businessId], references: [id], onDelete: Cascade)
+model KnowledgeDocument {
+  id                Int             @id @default(autoincrement())
+  businessProfileId Int
+  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+  kind              String
+  title             String?
+  content           String          @db.Text
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
 
-  question String
-  answer   String
-
-  @@index([businessId])
-}
-
-model BusinessProfileKnowledgeSection {
-  id         Int             @id @default(autoincrement())
-  businessId Int
-  business   BusinessProfile @relation(fields: [businessId], references: [id], onDelete: Cascade)
-
-  title   String
-  content String @db.Text
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([businessId])
+  @@index([businessProfileId, kind])
 }
 
 model Customer {

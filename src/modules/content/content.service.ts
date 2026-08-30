@@ -11,11 +11,8 @@ export interface ContentGenerationRequest {
   generateImage?: boolean;
   businessProfile?: {
     name: string;
-    identity: string;
-    targetAudience: string;
     voice: string;
     tone: string;
-    productsServices?: string[];
     corePolicies?: string | null;
     aiBehaviorInstructions?: string | null;
   } | null;
@@ -86,11 +83,8 @@ ${
   businessProfile
     ? `<persona>
 - Agency/Business Name: ${businessProfile.name}
-- Identity/Industry: ${businessProfile.identity}
-- Target Audience: ${businessProfile.targetAudience}
 - Voice (REQUIRED LANGUAGE): ${businessProfile.voice}
 - Tone: ${businessProfile.tone}
-${businessProfile.productsServices?.length ? `- Products/Services: ${businessProfile.productsServices.join(", ")}` : ""}
 ${businessProfile.aiBehaviorInstructions ? `- Additional Writing Instructions: ${businessProfile.aiBehaviorInstructions}` : ""}
 ${businessProfile.corePolicies ? `- Factual Boundaries and Policies: ${businessProfile.corePolicies}` : ""}
 </persona>

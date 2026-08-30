@@ -7,8 +7,7 @@ import { toJsonSchema } from "@langchain/core/utils/json_schema";
  *
  * The model is told to return `{}` when nothing useful is in scope, so
  * every field is nullable and present in `required` — that is the
- * OpenAI strict-mode contract (see `ai.schemas.ts` and
- * `aiAgent.zodStrict.ts` for the test).
+ * OpenAI strict-mode contract (see `aiAgent.zodStrict.ts` for the test).
  */
 export const memoryExtractionSchema = z.object({
   profileUpdates: z

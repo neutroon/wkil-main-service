@@ -122,9 +122,6 @@ function contentPlanPostData(item: any) {
 export async function* generateContentStrategyStream(briefing: BriefingInput) {
   const profile = await prisma.businessProfile.findUnique({
     where: { id: briefing.businessProfileId },
-    include: {
-      faqs: true,
-    },
   });
 
   if (!profile) {

@@ -44,12 +44,12 @@
 
 ### 3.3 Business profile (core “knowledge product”)
 
-- **CRUD** for business profiles (authenticated): create, list (with FAQs + linked Facebook page ids), update, delete.
-- Rich fields: name, identity, target audience, **voice** & **tone**, products/services, expected intents, policies, phones, hours, address, optional **FAQs**.
-- On **create:** marks user as having a business profile and triggers **full RAG ingestion** (embedding + chunk storage).
-- On **update:** **partial re-ingestion** — only chunk types affected by changed fields are recomputed (efficiency + cost story).
+- **CRUD** for business profiles (authenticated): create, list (with knowledge documents + linked Facebook page ids), update, delete.
+- Rich fields: name, **voice** & **tone**, expected intents, policies, plus a documents-based knowledge base (typed **knowledge documents**: website, faq, product, policy, note, etc.).
+- On **create:** marks user as having a business profile and triggers **full RAG ingestion** (embedding + chunk storage from the profile's knowledge documents).
+- On **update:** **partial re-ingestion** — only chunk types affected by changed documents are recomputed (efficiency + cost story).
 - **RAG retrieval API** for a profile: `POST /v1/business-profile/:id/retrieve` with `{ query }` returns relevant chunks (for debugging, internal tools, or future UIs).
-- **RAG ingestion state:** `ragIngested` / `ragIngestedAt` on profile (AI channels can show a friendly “still setting up” message until ready).
+- **Knowledge document REST routes** for a profile: list/create under `:id/documents`, update/delete under `documents/:docId`.
 
 ### 3.4 RAG / knowledge base (technical selling points)
 

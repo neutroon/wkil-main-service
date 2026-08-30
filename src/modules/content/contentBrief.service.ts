@@ -124,8 +124,6 @@ async function getOwnedProfile(businessProfileId: number, userId: number) {
   const profile = await prisma.businessProfile.findFirst({
     where: { id: businessProfileId, userId },
     include: {
-      faqs: true,
-      knowledgeSections: true,
       facebookPages: {
         where: { isActive: true, isTokenValid: true },
         select: {
@@ -563,18 +561,11 @@ Business profile:
 ${JSON.stringify(
   {
     name: params.profile.name,
-    identity: params.profile.identity,
-    targetAudience: params.profile.targetAudience,
     voice: params.profile.voice,
     tone: params.profile.tone,
-    productsServices: params.profile.productsServices,
     expectedUserIntents: params.profile.expectedUserIntents,
     corePolicies: params.profile.corePolicies,
     aiBehaviorInstructions: params.profile.aiBehaviorInstructions,
-    faqs: params.profile.faqs?.map((f: any) => ({
-      question: f.question,
-      answer: f.answer,
-    })),
   },
   null,
   2,

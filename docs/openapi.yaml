@@ -2069,6 +2069,46 @@ paths:
       requestBody: { $ref: "#/components/requestBodies/GenericJson" }
       responses:
         "200": { $ref: "#/components/responses/Ok" }
+  /v1/business-profile/{id}/documents:
+    get:
+      tags: [Business Profile]
+      operationId: listKnowledgeDocuments
+      summary: List knowledge documents for a business profile
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+    post:
+      tags: [Business Profile]
+      operationId: createKnowledgeDocument
+      summary: Create a knowledge document
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      requestBody: { $ref: "#/components/requestBodies/GenericJson" }
+      responses:
+        "201": { $ref: "#/components/responses/Created" }
+  /v1/business-profile/documents/{docId}:
+    put:
+      tags: [Business Profile]
+      operationId: updateKnowledgeDocument
+      summary: Update a knowledge document
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - { name: docId, in: path, required: true, schema: { type: integer } }
+      requestBody: { $ref: "#/components/requestBodies/GenericJson" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+    delete:
+      tags: [Business Profile]
+      operationId: deleteKnowledgeDocument
+      summary: Delete a knowledge document
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - { name: docId, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
   /v1/business-profile/logo:
     post:
       tags: [Business Profile]
@@ -3448,37 +3488,24 @@ components:
         unit: { type: string, enum: [MINUTES, HOURS, DAYS] }
     BusinessProfileRequest:
       type: object
-      required: [name, identity, targetAudience, voice, tone, productsServices, expectedUserIntents]
+      required: [name, voice, tone, expectedUserIntents]
       properties:
         name: { type: string, minLength: 1 }
-        identity: { type: string, minLength: 1 }
-        targetAudience: { type: string, minLength: 1 }
         voice: { type: string, minLength: 1 }
         tone: { type: string, minLength: 1 }
-        productsServices: { type: array, minItems: 1, items: { type: string } }
         expectedUserIntents: { type: array, minItems: 1, items: { type: string } }
         corePolicies: { type: string }
-        phoneNumbers: { type: array, items: { type: string }, default: [] }
-        workingHours: { type: string }
-        address: { type: string }
-        faqs:
+        documents:
           type: array
           default: []
+          description: Initial knowledge documents (create only; updates are settings-only).
           items:
             type: object
-            required: [question, answer]
+            required: [kind, content]
             properties:
-              question: { type: string, minLength: 1 }
-              answer: { type: string, minLength: 1 }
-        knowledgeSections:
-          type: array
-          default: []
-          items:
-            type: object
-            required: [title, content]
-            properties:
-              title: { type: string, minLength: 1 }
-              content: { type: string, minLength: 1 }
+              kind: { type: string, pattern: "^[a-z][a-z0-9-]{0,31}$" }
+              title: { type: string, maxLength: 200 }
+              content: { type: string, minLength: 1, maxLength: 20000 }
         brandLogoUrl: { type: string, format: uri }
         brandPrimaryColor: { type: string, pattern: "^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$" }
         brandSecondaryColor: { type: string, pattern: "^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$" }
@@ -3486,8 +3513,6 @@ components:
         visualAesthetic: { type: string }
         artStyle: { type: string }
         brandKitCompleted: { type: boolean, default: false }
-        brandWatermarkEnabled: { type: boolean, default: false }
-        watermarkPosition: { type: string, enum: [TOP_LEFT, TOP_RIGHT, BOTTOM_LEFT, BOTTOM_RIGHT, CENTER], default: BOTTOM_RIGHT }
         customerDetailsInstructions: { type: string }
         customerMemoryFields:
           type: array
@@ -3505,8 +3530,6 @@ components:
         followUpMode: { type: string, enum: [AUTO, CUSTOM], default: AUTO }
         followUpDelays: { type: array, maxItems: 5, items: { $ref: "#/components/schemas/FollowUpDelay" }, default: [] }
         followUpInstructions: { type: string, maxLength: 2000 }
-        scrapedWebsiteUrl: { type: string, format: uri }
-        scrapedMarkdown: { type: string }
     BusinessProfileUpdateRequest:
       type: object
       description: Partial business profile update body. Accepts any subset of the create profile fields.

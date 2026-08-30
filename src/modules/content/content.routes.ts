@@ -120,11 +120,8 @@ contentRoutes.post(
         where: { id: parseInt(String(businessProfileId), 10), userId },
         select: {
           name: true,
-          identity: true,
-          targetAudience: true,
           voice: true,
           tone: true,
-          productsServices: true,
           corePolicies: true,
           aiBehaviorInstructions: true,
         },
@@ -134,11 +131,8 @@ contentRoutes.post(
         where: { userId },
         select: {
           name: true,
-          identity: true,
-          targetAudience: true,
           voice: true,
           tone: true,
-          productsServices: true,
           corePolicies: true,
           aiBehaviorInstructions: true,
         },
@@ -336,8 +330,6 @@ contentRoutes.get(
           select: {
             id: true,
             name: true,
-            identity: true,
-            targetAudience: true,
             voice: true,
             tone: true,
           },

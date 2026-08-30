@@ -32,7 +32,7 @@ async function computeBusinessChatReply(params: {
     ...params.historyTurns,
     { role: "user", content: params.messageText ?? "", media: params.mediaInfo },
   ];
-  const run = await AgentClient.runAgent({
+  const run = await AgentClient.runCustomerAgent({
     business_profile_id: params.businessProfile?.id ?? params.businessProfile?.businessProfileId,
     user_id: params.businessProfile?.userId,
     messages,

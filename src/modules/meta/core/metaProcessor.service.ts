@@ -429,11 +429,12 @@ export async function processMetaMessage(
   job: MetaMessageJob,
   traceOptions: MetaProcessorTraceOptions = {},
 ) {
-  return AgentClient.runAgent({
+  return AgentClient.runCustomerAgent({
     business_profile_id: job.businessProfileId,
     user_id: undefined,
     messages: [],
     stage: "fast",
+    channel: job.platform,
   } as any) as any;
 }
 

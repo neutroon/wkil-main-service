@@ -41,11 +41,12 @@ export async function processWidgetChatMessage(params: {
   conversationId: number;
   attachment?: { url: string; type: string; caption?: string | null } | null;
 }> {
-  return AgentClient.runAgent({
+  return AgentClient.runCustomerAgent({
     business_profile_id: params.install.businessProfileId,
     user_id: undefined,
     messages: [],
     stage: "fast",
+    channel: "web",
   } as any) as any;
 }
 
@@ -223,11 +224,12 @@ async function understandWidgetMedia(
     if (isAudio) {
       // Inbound media understanding moved to the sibling agent-svc microservice
       // in the ai-agent cutover. The platform routes the request via AgentClient.
-      const result = (await AgentClient.runAgent({
+      const result = (await AgentClient.runCustomerAgent({
         business_profile_id: 0,
         user_id: undefined,
         messages: [],
         stage: "fast",
+        channel: "web",
       } as any)) as {
         text?: string;
         modelName?: string;
@@ -245,11 +247,12 @@ async function understandWidgetMedia(
       };
     }
 
-    const result = (await AgentClient.runAgent({
+    const result = (await AgentClient.runCustomerAgent({
       business_profile_id: 0,
       user_id: undefined,
       messages: [],
       stage: "fast",
+      channel: "web",
     } as any)) as {
       text?: string;
       modelName?: string;

@@ -17,6 +17,7 @@ export type FollowUpJobPayload = {
   businessProfileId: number;
   triggerMessageId: number;
   delayIndex: number;
+  channel?: string | null;
 };
 
 const DIRECT_CHANNELS = new Set(["web", "messenger", "whatsapp"]);
@@ -163,7 +164,7 @@ async function generateFollowUpText(params: {
   void buildFollowUpPrompt;
   void cleanAiText;
   // Follow-up AI text generation moved to the sibling agent-svc microservice
-  // in the ai-agent cutover. The job is now routed via AgentClient.runAgent in
+  // in the ai-agent cutover. The job is now routed via AgentClient.runCustomerAgent in
   // processFollowUpJob below.
   throw new Error("Follow-up AI text generation moved to agent-svc microservice; this path is disabled.");
 }
@@ -222,6 +223,7 @@ export async function scheduleConversationFollowUps(params: {
               businessProfileId: params.businessProfileId,
               triggerMessageId: params.triggerMessageId,
               delayIndex,
+              channel: conversation.channel,
             } satisfies FollowUpJobPayload,
           },
           {
@@ -338,10 +340,11 @@ async function deliverFollowUp(conversation: any, businessProfile: any, text: st
 }
 
 export async function processFollowUpJob(payload: FollowUpJobPayload) {
-  return AgentClient.runAgent({
+  return AgentClient.runCustomerAgent({
     business_profile_id: payload.businessProfileId,
     user_id: undefined,
     messages: [],
     stage: "fast",
+    channel: payload.channel,
   } as any) as any;
 }

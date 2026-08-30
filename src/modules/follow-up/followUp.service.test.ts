@@ -51,7 +51,7 @@ vi.mock("@utils/logger", () => ({
 
 vi.mock("@modules/ai-agent/client/agent.client", () => ({
   AgentClient: {
-    runAgent: vi.fn().mockResolvedValue({ text: "" }),
+    runCustomerAgent: vi.fn().mockResolvedValue({ text: "" }),
   },
 }));
 
@@ -139,7 +139,7 @@ describe("follow-up service", () => {
     );
   });
 
-  it("routes through AgentClient.runAgent when the trigger is delivered", async () => {
+  it("routes through AgentClient.runCustomerAgent when the trigger is delivered", async () => {
     mockedPrisma.conversationMessage.findUnique.mockResolvedValueOnce({
       createdAt: new Date("2026-05-10T10:00:05Z"),
       role: "model",

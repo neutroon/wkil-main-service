@@ -20,7 +20,7 @@ type CustomerMemoryField = {
 export async function processCustomerMemoryCaptureJob(
   job: CustomerMemoryCaptureJob,
 ): Promise<void> {
-  return AgentClient.runAgent({
+  return AgentClient.runCopilot({
     business_profile_id: job.businessProfileId,
     user_id: undefined,
     messages: [],

@@ -35,7 +35,7 @@ export type IntegrationActionJob = {
 export async function processIntegrationActionJob(
   job: IntegrationActionJob,
 ): Promise<void> {
-  return AgentClient.runAgent({
+  return AgentClient.runCopilot({
     business_profile_id: job.businessProfileId,
     user_id: undefined,
     messages: [],

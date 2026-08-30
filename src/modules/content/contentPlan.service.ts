@@ -144,7 +144,7 @@ export async function* generateContentStrategyStream(briefing: BriefingInput) {
 }
 
 export async function generateContentStrategy(briefing: BriefingInput) {
-  return AgentClient.runAgent({
+  return AgentClient.runCopilot({
     business_profile_id: briefing.businessProfileId,
     user_id: briefing.userId,
     messages: [],

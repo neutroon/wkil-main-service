@@ -50,7 +50,7 @@ export async function createGeminiVisual(params: {
   userPrompt: string;
   postId?: number;
 }) {
-  return AgentClient.runAgent({
+  return AgentClient.runCopilot({
     business_profile_id: params.businessProfileId,
     user_id: params.userId,
     messages: [],
@@ -68,7 +68,7 @@ export async function refineGeminiVisual(params: {
   instruction: string;
   postId?: number;
 }) {
-  return AgentClient.runAgent({
+  return AgentClient.runCopilot({
     business_profile_id: params.businessProfileId,
     user_id: params.userId,
     messages: [],

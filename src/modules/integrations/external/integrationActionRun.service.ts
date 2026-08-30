@@ -27,7 +27,7 @@ export async function createIntegrationActionRun(params: {
   jobId: string;
   requestPayload?: JsonRecord | null;
 }) {
-  return AgentClient.runAgent({
+  return AgentClient.runCopilot({
     business_profile_id: params.businessProfileId,
     user_id: undefined,
     messages: [],

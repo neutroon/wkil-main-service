@@ -27,7 +27,7 @@ vi.mock("@utils/logger", () => ({
 
 vi.mock("@modules/ai-agent/client/agent.client", () => ({
   AgentClient: {
-    runAgent: vi.fn().mockResolvedValue({ text: "" }),
+    runCopilot: vi.fn().mockResolvedValue({ text: "" }),
   },
 }));
 
@@ -74,7 +74,7 @@ describe("customer memory capture job", () => {
     });
   });
 
-  it("routes through AgentClient.runAgent and never calls updateCustomerFromSavedDetails", async () => {
+  it("routes through AgentClient.runCopilot and never calls updateCustomerFromSavedDetails", async () => {
     // Memory-capture AI moved to the sibling agent-svc microservice; the
     // monolith only routes the request via AgentClient.
     await processCustomerMemoryCaptureJob({

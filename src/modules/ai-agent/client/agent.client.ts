@@ -11,14 +11,24 @@ export class AgentClient {
   static async createThread() {
     return this.client().threads.create();
   }
-  static async runAgent(input: Record<string, unknown>, opts: { stream?: boolean } = {}) {
+  private static readonly GRAPHS = {
+    copilot: "agent",
+    customer: "customer_agent",
+    ragIngest: "rag_ingest",
+  } as const;
+
+  private static async run(graph: string, input: Record<string, unknown>, opts: { stream?: boolean } = {}) {
     const client = this.client();
     const thread = await client.threads.create();
-    const run = await client.runs.create(thread.thread_id, "agent", {
-      input,
-      stream: opts.stream ?? false,
-    } as any);
-    return run;
+    return client.runs.create(thread.thread_id, graph, { input, stream: opts.stream ?? false } as any);
+  }
+
+  static runCopilot(input: Record<string, unknown>, opts: { stream?: boolean } = {}) {
+    return this.run(this.GRAPHS.copilot, input, opts);
+  }
+
+  static runCustomerAgent(input: Record<string, unknown>, opts: { stream?: boolean } = {}) {
+    return this.run(this.GRAPHS.customer, input, opts);
   }
   static async ingestRag(payload: Record<string, unknown>) {
     const client = this.client();

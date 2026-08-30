@@ -45,7 +45,7 @@ vi.mock("@utils/apiClient", () => ({
 
 vi.mock("@modules/ai-agent/client/agent.client", () => ({
   AgentClient: {
-    runAgent: vi.fn().mockResolvedValue({ text: "" }),
+    runCopilot: vi.fn().mockResolvedValue({ text: "" }),
   },
 }));
 

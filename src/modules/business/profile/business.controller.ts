@@ -351,7 +351,7 @@ export const retrieveBusinessProfile = async (req: Request, res: Response) => {
 };
 
 export const previewBusinessProfileChat = async (req: Request, res: Response) => {
-  return AgentClient.runAgent({
+  return AgentClient.runCopilot({
     business_profile_id: Number(req.params.id),
     user_id: (req as any).user.id,
     messages: [],

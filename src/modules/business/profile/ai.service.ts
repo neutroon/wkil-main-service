@@ -6,7 +6,7 @@ async function discoverStrategicLinks(
   baseUrl: string,
   pageContent: string,
 ) {
-  return AgentClient.runAgent({
+  return AgentClient.runCopilot({
     business_profile_id: businessProfileId,
     user_id: userId,
     messages: [],
@@ -19,7 +19,7 @@ async function extractBusinessIdentity(
   businessProfileId: number | null,
   markdown: string,
 ) {
-  return AgentClient.runAgent({
+  return AgentClient.runCopilot({
     business_profile_id: businessProfileId,
     user_id: userId,
     messages: [],

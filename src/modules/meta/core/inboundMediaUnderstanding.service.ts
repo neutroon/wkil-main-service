@@ -119,11 +119,12 @@ export async function understandInboundMedia(params: {
       // Inbound media understanding moved to the sibling agent-svc microservice
       // in the ai-agent cutover. The platform routes the request via AgentClient
       // and returns a structured understanding result.
-      const result = (await AgentClient.runAgent({
+      const result = (await AgentClient.runCustomerAgent({
         business_profile_id: 0,
         user_id: undefined,
         messages: [],
         stage: "fast",
+        channel: params.platform,
       } as any)) as { text?: string; modelName?: string; finishReason?: string | null };
 
       const text = String(result?.text || "").trim();
@@ -143,11 +144,12 @@ export async function understandInboundMedia(params: {
         : (declaredMimeType || "audio/ogg");
 
       // Inbound media understanding moved to the sibling agent-svc microservice.
-      const result = (await AgentClient.runAgent({
+      const result = (await AgentClient.runCustomerAgent({
         business_profile_id: 0,
         user_id: undefined,
         messages: [],
         stage: "fast",
+        channel: params.platform,
       } as any)) as { text?: string; modelName?: string; finishReason?: string | null };
 
       const transcript = String(result?.text || "").trim();

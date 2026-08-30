@@ -272,18 +272,6 @@ export async function authorizeBusinessRoomJoin(
   return canAccessBusinessProfile(identity, businessProfileId);
 }
 
-export async function authorizeCopilotRoomJoin(
-  identity: SocketIdentity | undefined,
-  userId: number,
-): Promise<boolean> {
-  if (!parsePositiveInt(userId) || !identity?.user) return false;
-  return (
-    identity.user.id === userId ||
-    identity.user.role === "super_admin" ||
-    identity.user.role === "admin"
-  );
-}
-
 export async function authorizeConversationRoomJoin(
   identity: SocketIdentity | undefined,
   conversationId: number,
@@ -413,15 +401,6 @@ function attachConnectionHandlers(socket: AppSocket): void {
     logger.info("socket.join_room", { socketId: socket.id, room });
   });
 
-  socket.on("join_copilot", async (userId: string | number) => {
-    const id = parsePositiveInt(userId);
-    if (!id || !(await authorizeCopilotRoomJoin(socket.data.identity, id))) {
-      logger.warn("socket.join_copilot_denied", { socketId: socket.id, userId });
-      return;
-    }
-    socket.join(`copilot:${id}`);
-  });
-
   socket.on("send_message", async (data: { visitorId: string; message: string; conversationId?: number }) => {
     const widgetIdentity = socket.data.identity?.widget;
     if (!widgetIdentity) return;
@@ -528,16 +507,6 @@ export function emitToConversation(conversationId: number, event: string, data: 
  */
 export function emitToBusiness(businessProfileId: number, event: string, data: unknown) {
   emitToRoom(`business:${businessProfileId}`, event, data);
-}
-
-/**
- * Emit a message to the owner's copilot room (`copilot:<userId>`).
- * Task 9 extends this with `authorizeCopilotRoomJoin` and a `join_copilot`
- * socket handler; for now the copilot graph (Task 8) just needs the room
- * emission so it can push progress/delta/text envelopes.
- */
-export function emitToCopilot(userId: number, event: string, data: unknown) {
-  emitToRoom(`copilot:${userId}`, event, data);
 }
 
 

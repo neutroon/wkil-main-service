@@ -101,20 +101,6 @@ export const adminLimiter = rateLimit({
   validate: { trustProxy: false },
 });
 
-// Owner copilot rate limiting (per user) — covers POST /v1/copilot/conversation/messages
-export const copilotLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 60, // 60 turns per user per hour
-  message: {
-    error: "Too many copilot requests, please try again later",
-    code: "COPILOT_RATE_LIMIT",
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-  validate: { trustProxy: false },
-  keyGenerator: getRateLimitKey,
-});
-
 // Manager operations rate limiting
 export const managerLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes

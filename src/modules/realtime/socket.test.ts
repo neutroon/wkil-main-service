@@ -24,7 +24,6 @@ import prisma from "@config/prisma";
 import {
   authorizeBusinessRoomJoin,
   authorizeConversationRoomJoin,
-  authorizeCopilotRoomJoin,
   type SocketIdentity,
 } from "./socket";
 
@@ -113,16 +112,5 @@ describe("socket room authorization", () => {
     await expect(
       authorizeConversationRoomJoin({ user: { id: 10, role: "user" } }, 55),
     ).resolves.toBe(false);
-  });
-});
-
-describe("authorizeCopilotRoomJoin", () => {
-  it("allows only the owning user or admins", async () => {
-    await expect(authorizeCopilotRoomJoin({ user: { id: 5, role: "user" } }, 5)).resolves.toBe(true);
-    await expect(authorizeCopilotRoomJoin({ user: { id: 6, role: "user" } }, 5)).resolves.toBe(false);
-    await expect(authorizeCopilotRoomJoin({ user: { id: 6, role: "super_admin" } }, 5)).resolves.toBe(true);
-    await expect(authorizeCopilotRoomJoin({ user: { id: 6, role: "admin" } }, 5)).resolves.toBe(true);
-    await expect(authorizeCopilotRoomJoin(undefined, 5)).resolves.toBe(false);
-    await expect(authorizeCopilotRoomJoin({ user: { id: 5, role: "user" } }, 0)).resolves.toBe(false);
   });
 });

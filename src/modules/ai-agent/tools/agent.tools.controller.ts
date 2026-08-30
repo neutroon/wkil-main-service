@@ -4,8 +4,18 @@ import { createIntegrationActionRun } from "../../integrations/external/integrat
 import { assertQuotaAvailable, recordAiUsage } from "../../billing/billing.service";
 import { getUnifiedDashboardStats } from "../../analytics/dashboard/dashboard.service";
 import { getAiPerformanceStats } from "../../analytics/ai/analytics.service";
-import { listCustomers, getCustomerForUser, updateCustomerForUser } from "../../business/customer/customer.service";
+import { listCustomers, getCustomerForUser } from "../../business/customer/customer.service";
 import prisma from "@config/prisma";
+import {
+  listCopilotConversations,
+  getCopilotConversationMessages,
+  listCopilotCustomers,
+  sendCopilotMessage,
+  setCopilotConversationStatus,
+  toggleCopilotConversationAi,
+  markCopilotConversationRead,
+  updateCopilotCustomer,
+} from "./copilot.actions.service";
 
 const router = Router();
 
@@ -176,23 +186,140 @@ router.get("/copilot/customer", async (req, res) => {
   }
 });
 
-// HITL continuation: the agent's execute_action node calls this AFTER the user
-// approved a proposal in the UI. Ownership is re-validated here — a proposal
-// for a customer the user does not own is rejected, never executed.
-router.post("/copilot/actions/execute", async (req, res) => {
-  const userId = Number(req.body?.userId);
-  const action = String(req.body?.action ?? "");
-  const customerId = req.body?.customerId ? Number(req.body.customerId) : null;
+router.get("/copilot/conversations", async (req, res) => {
+  const userId = Number(req.query.userId);
   if (!userId) return res.status(400).json({ error: "userId_required" });
   try {
-    if (action === "mark_handled") {
-      if (!customerId) return res.status(400).json({ error: "customerId_required" });
-      const customer = await updateCustomerForUser(userId, customerId, { status: "RESOLVED" });
-      return res.json({ ok: true, customer });
-    }
-    return res.status(400).json({ error: "unknown_action", action });
+    const out = await listCopilotConversations({
+      userId,
+      businessProfileId: req.query.businessProfileId ? Number(req.query.businessProfileId) : undefined,
+      status: req.query.status ? String(req.query.status) : undefined,
+      channel: req.query.channel ? String(req.query.channel) : undefined,
+      q: req.query.q ? String(req.query.q) : undefined,
+      limit: req.query.limit ? Number(req.query.limit) : undefined,
+    });
+    res.json(out);
   } catch (e: any) {
-    res.status(404).json({ error: e?.message ?? "execute_failed" });
+    res.status(500).json({ error: e?.message ?? "list_conversations_failed" });
+  }
+});
+
+router.get("/copilot/conversations/:id/messages", async (req, res) => {
+  const userId = Number(req.query.userId);
+  const conversationId = Number(req.params.id);
+  if (!userId || !conversationId) return res.status(400).json({ error: "userId_and_conversationId_required" });
+  try {
+    const out = await getCopilotConversationMessages({
+      userId,
+      conversationId,
+      limit: req.query.limit ? Number(req.query.limit) : undefined,
+      cursor: req.query.cursor ? Number(req.query.cursor) : undefined,
+    });
+    res.json(out);
+  } catch (e: any) {
+    res.status(404).json({ error: e?.message ?? "conversation_not_found" });
+  }
+});
+
+router.get("/copilot/customers", async (req, res) => {
+  const userId = Number(req.query.userId);
+  if (!userId) return res.status(400).json({ error: "userId_required" });
+  try {
+    const out = await listCopilotCustomers({
+      userId,
+      q: req.query.q ? String(req.query.q) : undefined,
+      status: req.query.status ? String(req.query.status) : undefined,
+      limit: req.query.limit ? Number(req.query.limit) : undefined,
+    });
+    res.json(out);
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "list_customers_failed" });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Copilot WRITE tools. The agent-svc graph pauses each write behind the
+// official LangGraph interrupt() and only calls these AFTER the owner
+// approved in the UI. Ownership is re-validated here (getAuthorizedConversation
+// / updateCustomerForUser) — an approved-but-foreign resource is rejected.
+// ---------------------------------------------------------------------------
+
+router.post("/copilot/conversations/:id/messages", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  const conversationId = Number(req.params.id);
+  const text = String(req.body?.text ?? "");
+  if (!userId || !conversationId) return res.status(400).json({ error: "userId_and_conversationId_required" });
+  try {
+    res.json(await sendCopilotMessage({ userId, conversationId, text }));
+  } catch (e: any) {
+    res.status(400).json({ error: e?.message ?? "send_failed" });
+  }
+});
+
+router.post("/copilot/conversations/:id/status", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  const conversationId = Number(req.params.id);
+  const status = String(req.body?.status ?? "");
+  if (!userId || !conversationId) return res.status(400).json({ error: "userId_and_conversationId_required" });
+  if (!["OPEN", "RESOLVED", "ARCHIVED"].includes(status)) return res.status(400).json({ error: "invalid_status" });
+  try {
+    res.json(await setCopilotConversationStatus({ userId, conversationId, status: status as "OPEN" | "RESOLVED" | "ARCHIVED" }));
+  } catch (e: any) {
+    res.status(404).json({ error: e?.message ?? "status_update_failed" });
+  }
+});
+
+router.post("/copilot/conversations/:id/ai-toggle", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  const conversationId = Number(req.params.id);
+  const enabled = Boolean(req.body?.enabled);
+  if (!userId || !conversationId) return res.status(400).json({ error: "userId_and_conversationId_required" });
+  try {
+    res.json(await toggleCopilotConversationAi({ userId, conversationId, enabled }));
+  } catch (e: any) {
+    res.status(404).json({ error: e?.message ?? "ai_toggle_failed" });
+  }
+});
+
+router.post("/copilot/conversations/:id/read", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  const conversationId = Number(req.params.id);
+  if (!userId || !conversationId) return res.status(400).json({ error: "userId_and_conversationId_required" });
+  try {
+    res.json(await markCopilotConversationRead({ userId, conversationId }));
+  } catch (e: any) {
+    res.status(404).json({ error: e?.message ?? "mark_read_failed" });
+  }
+});
+
+router.post("/copilot/customers/:id/status", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  const customerId = Number(req.params.id);
+  const status = String(req.body?.status ?? "");
+  if (!userId || !customerId) return res.status(400).json({ error: "userId_and_customerId_required" });
+  if (!status) return res.status(400).json({ error: "status_required" });
+  try {
+    res.json(await updateCopilotCustomer({ userId, customerId, data: { status } }));
+  } catch (e: any) {
+    res.status(404).json({ error: e?.message ?? "customer_update_failed" });
+  }
+});
+
+router.post("/copilot/customers/:id/update", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  const customerId = Number(req.params.id);
+  if (!userId || !customerId) return res.status(400).json({ error: "userId_and_customerId_required" });
+  try {
+    res.json(await updateCopilotCustomer({
+      userId,
+      customerId,
+      data: {
+        ...(req.body?.notes !== undefined ? { notes: req.body.notes } : {}),
+        ...(req.body?.displayName ? { displayName: String(req.body.displayName) } : {}),
+      },
+    }));
+  } catch (e: any) {
+    res.status(404).json({ error: e?.message ?? "customer_update_failed" });
   }
 });
 

@@ -37,7 +37,7 @@ export async function sendCopilotMessage(params: {
     externalId = sent?.messages?.[0]?.id;
   } else if (channel === "messenger" || channel === "facebook_comment") {
     const page = await prisma.facebookPage.findFirst({
-      where: { pageId: conversation.pageId, userId: params.userId, isActive: true },
+      where: { pageId: conversation.pageId, isActive: true, facebookAccount: { userId: params.userId } },
     });
     if (!page) throw new Error("facebook_page_not_found");
     const pageAccessToken = decryptFacebookSecret(page.pageAccessToken);

@@ -1,20 +1,9 @@
 import prisma from "@config/prisma";
 import { AppError } from "@middlewares/errorHandler.middleware";
 import { canManageUser } from "@modules/auth/user/user.service";
-import { AgentClient } from "@modules/ai-agent/client/agent.client";
+import type { BusinessProfile } from "@prisma/client";
 import { businessProfileWithOwnerSelect } from "./businessProfile.select";
-
-interface Faq {
-  id?: number;
-  question: string;
-  answer: string;
-}
-
-interface KnowledgeSection {
-  id?: number;
-  title: string;
-  content: string;
-}
+import { ingestProfileDocuments } from "./knowledge.service";
 
 interface CustomerMemoryFieldInput {
   key?: string;
@@ -24,18 +13,10 @@ interface CustomerMemoryFieldInput {
 
 export interface BusinessProfileUpdateBody {
   name?: string;
-  identity?: string;
-  targetAudience?: string;
   voice?: string;
   tone?: string;
-  productsServices?: string[];
   expectedUserIntents?: string[];
   corePolicies?: string;
-  phoneNumbers?: string[];
-  workingHours?: string;
-  address?: string;
-  faqs?: Faq[];
-  knowledgeSections?: KnowledgeSection[];
   brandLogoUrl?: string;
   brandPrimaryColor?: string;
   brandSecondaryColor?: string;
@@ -43,8 +24,6 @@ export interface BusinessProfileUpdateBody {
   visualAesthetic?: string;
   artStyle?: string;
   brandKitCompleted?: boolean;
-  brandWatermarkEnabled?: boolean;
-  watermarkPosition?: "TOP_LEFT" | "TOP_RIGHT" | "BOTTOM_LEFT" | "BOTTOM_RIGHT" | "CENTER";
   customerDetailsInstructions?: string;
   customerMemoryFields?: CustomerMemoryFieldInput[];
   aiBehaviorInstructions?: string;
@@ -53,8 +32,6 @@ export interface BusinessProfileUpdateBody {
   followUpMode?: "AUTO" | "CUSTOM";
   followUpDelays?: { amount: number; unit: "MINUTES" | "HOURS" | "DAYS" }[];
   followUpInstructions?: string;
-  scrapedWebsiteUrl?: string;
-  scrapedMarkdown?: string;
 }
 
 function cleanProfileString(value: unknown): string {
@@ -94,6 +71,18 @@ function normalizeCustomerMemoryFields(
   });
 }
 
+const AGENT_SETTINGS_FIELDS = [
+  "voice",
+  "tone",
+  "handoffEnabled",
+  "aiBehaviorInstructions",
+  "corePolicies",
+  "customerDetailsInstructions",
+  "followUpEnabled",
+  "followUpMode",
+  "followUpInstructions",
+] as const;
+
 async function getProfileOwnerId(profileId: number): Promise<number> {
   if (!Number.isFinite(profileId)) {
     throw new AppError("Invalid business profile id", 400);
@@ -131,16 +120,10 @@ async function updateBusinessProfileRecord(
     where: { id: profileId },
     data: {
       name: body.name,
-      identity: body.identity,
-      targetAudience: body.targetAudience,
       voice: body.voice,
       tone: body.tone,
-      productsServices: body.productsServices,
       expectedUserIntents: body.expectedUserIntents,
       corePolicies: body.corePolicies,
-      phoneNumbers: body.phoneNumbers,
-      workingHours: body.workingHours,
-      address: body.address,
       customerDetailsInstructions: body.customerDetailsInstructions,
       customerMemoryFields:
         body.customerMemoryFields !== undefined
@@ -152,8 +135,6 @@ async function updateBusinessProfileRecord(
       followUpMode: body.followUpMode,
       followUpDelays: body.followUpDelays,
       followUpInstructions: body.followUpInstructions,
-      scrapedWebsiteUrl: body.scrapedWebsiteUrl,
-      scrapedMarkdown: body.scrapedMarkdown,
       brandLogoUrl: body.brandLogoUrl,
       brandPrimaryColor: body.brandPrimaryColor,
       brandSecondaryColor: body.brandSecondaryColor,
@@ -161,42 +142,49 @@ async function updateBusinessProfileRecord(
       visualAesthetic: body.visualAesthetic,
       artStyle: body.artStyle,
       brandKitCompleted: body.brandKitCompleted,
-      brandWatermarkEnabled: body.brandWatermarkEnabled,
-      watermarkPosition: body.watermarkPosition,
-      ...(body.faqs && {
-        faqs: {
-          deleteMany: {},
-          create: body.faqs.map((faq) => ({
-            question: faq.question,
-            answer: faq.answer,
-          })),
-        },
-      }),
-      ...(body.knowledgeSections && {
-        knowledgeSections: {
-          deleteMany: {},
-          create: body.knowledgeSections.map((section) => ({
-            title: section.title,
-            content: section.content,
-          })),
-        },
-      }),
     },
     select: businessProfileWithOwnerSelect,
   });
 
   const updatedFields = Object.keys(body) as (keyof BusinessProfileUpdateBody)[];
   if (updatedFields.length > 0) {
-    // RAG lives in agent-svc now — route partial re-ingest through AgentClient.
-    await AgentClient.ingestRag({
-      business_profile_id: profileId,
-      profile: businessProfile,
-      mode: "partial",
-      updated_fields: updatedFields,
-    } as any);
+    // RAG lives in agent-svc now — re-ingest the profile's knowledge documents.
+    await ingestProfileDocuments(profileId);
   }
 
   return businessProfile;
+}
+
+export async function updateAgentSettingsForUser(
+  userId: number,
+  profileId: number | undefined,
+  data: Record<string, unknown>,
+): Promise<BusinessProfile> {
+  const profile =
+    profileId !== undefined
+      ? await prisma.businessProfile.findFirst({
+          where: { id: profileId, userId },
+        })
+      : await prisma.businessProfile.findFirst({
+          where: { userId },
+          orderBy: { createdAt: "asc" },
+        });
+
+  if (!profile) {
+    throw new AppError("Business profile not found", 404);
+  }
+
+  const settings: Record<string, unknown> = {};
+  for (const field of AGENT_SETTINGS_FIELDS) {
+    if (data[field] !== undefined) {
+      settings[field] = data[field];
+    }
+  }
+
+  return prisma.businessProfile.update({
+    where: { id: profile.id },
+    data: settings,
+  });
 }
 
 export async function getBusinessProfileForAdmin(profileId: number) {

@@ -34,7 +34,6 @@ async function loadMemoryContext(job: CustomerMemoryCaptureJob) {
       where: { id: job.businessProfileId },
       select: {
         name: true,
-        identity: true,
         voice: true,
         tone: true,
         customerDetailsInstructions: true,
@@ -134,7 +133,6 @@ function buildExtractionPrompt(
     {
       business: {
         name: context.businessProfile.name,
-        identity: context.businessProfile.identity,
         voice: context.businessProfile.voice,
         tone: context.businessProfile.tone,
       },

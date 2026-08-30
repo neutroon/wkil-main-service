@@ -6,33 +6,20 @@ import { randomUUID } from "crypto";
 import path from "path";
 
 import { AppError } from "@middlewares/errorHandler.middleware";
+import { ingestProfileDocuments } from "./knowledge.service";
 
-interface Faq {
-  id?: number;
-  question: string;
-  answer: string;
-}
-
-interface KnowledgeSection {
-  id?: number;
-  title: string;
+interface KnowledgeDocumentInput {
+  kind: string;
+  title?: string;
   content: string;
 }
 
 interface BusinessProfileBody {
   name: string;
-  identity: string;
-  targetAudience: string;
   voice: string;
   tone: string;
-  productsServices: string[];
   expectedUserIntents: string[];
   corePolicies?: string;
-  phoneNumbers: string[];
-  workingHours?: string;
-  address?: string;
-  faqs?: Faq[];
-  knowledgeSections?: KnowledgeSection[];
   brandLogoUrl?: string;
   brandPrimaryColor?: string;
   brandSecondaryColor?: string;
@@ -40,8 +27,6 @@ interface BusinessProfileBody {
   visualAesthetic?: string;
   artStyle?: string;
   brandKitCompleted?: boolean;
-  brandWatermarkEnabled?: boolean;
-  watermarkPosition?: "TOP_LEFT" | "TOP_RIGHT" | "BOTTOM_LEFT" | "BOTTOM_RIGHT" | "CENTER";
   customerDetailsInstructions?: string;
   customerMemoryFields?: CustomerMemoryFieldInput[];
   aiBehaviorInstructions?: string;
@@ -50,8 +35,7 @@ interface BusinessProfileBody {
   followUpMode?: "AUTO" | "CUSTOM";
   followUpDelays?: { amount: number; unit: "MINUTES" | "HOURS" | "DAYS" }[];
   followUpInstructions?: string;
-  scrapedWebsiteUrl?: string;
-  scrapedMarkdown?: string;
+  documents?: KnowledgeDocumentInput[];
 }
 
 interface CustomerMemoryFieldInput {
@@ -100,18 +84,10 @@ function generateMemoryFieldKey(label: string, index: number): string {
 export const createBusinessProfile = async (req: Request, res: Response) => {
   const {
     name,
-    identity,
-    targetAudience,
     voice,
     tone,
-    productsServices,
     expectedUserIntents,
     corePolicies,
-    phoneNumbers,
-    workingHours,
-    address,
-    faqs,
-    knowledgeSections,
     customerDetailsInstructions,
     customerMemoryFields,
     aiBehaviorInstructions,
@@ -120,8 +96,7 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
     followUpMode,
     followUpDelays,
     followUpInstructions,
-    scrapedWebsiteUrl,
-    scrapedMarkdown,
+    documents,
     brandLogoUrl,
     brandPrimaryColor,
     brandSecondaryColor,
@@ -129,8 +104,6 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
     visualAesthetic,
     artStyle,
     brandKitCompleted,
-    brandWatermarkEnabled,
-    watermarkPosition,
   }: BusinessProfileBody = req.body;
 
   const userId = (req as any).user.id;
@@ -139,16 +112,10 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
     data: {
       userId,
       name,
-      identity,
-      targetAudience,
       voice,
       tone,
-      productsServices,
       expectedUserIntents,
       corePolicies,
-      phoneNumbers,
-      workingHours,
-      address,
       customerDetailsInstructions,
       customerMemoryFields: normalizeCustomerMemoryFields(customerMemoryFields),
       aiBehaviorInstructions,
@@ -157,8 +124,6 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
       followUpMode,
       followUpDelays,
       followUpInstructions,
-      scrapedWebsiteUrl,
-      scrapedMarkdown,
       brandLogoUrl,
       brandPrimaryColor,
       brandSecondaryColor,
@@ -166,33 +131,23 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
       visualAesthetic,
       artStyle,
       brandKitCompleted,
-      brandWatermarkEnabled,
-      watermarkPosition,
-      ...(faqs &&
-        faqs.length > 0 && {
-          faqs: {
-            create: faqs.map((faq) => ({
-              question: faq.question,
-              answer: faq.answer,
-            })),
-          },
-        }),
-      ...(knowledgeSections &&
-        knowledgeSections.length > 0 && {
-          knowledgeSections: {
-            create: knowledgeSections.map((ks) => ({
-              title: ks.title,
-              content: ks.content,
-            })),
-          },
-        }),
     },
     include: {
-      faqs: true,
-      knowledgeSections: true,
+      knowledgeDocuments: true,
       whatsAppAccounts: true,
     },
   });
+
+  if (documents && documents.length > 0) {
+    await prisma.knowledgeDocument.createMany({
+      data: documents.map((d) => ({
+        businessProfileId: businessProfile.id,
+        kind: d.kind,
+        title: d.title ?? null,
+        content: d.content,
+      })),
+    });
+  }
 
   // mark user as having a business profile
   await prisma.user.update({
@@ -207,7 +162,10 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
   // trigger full ingestion via AgentClient — RAG lives in agent-svc now.
   await AgentClient.ingestRag({
     business_profile_id: businessProfile.id,
-    profile: businessProfile,
+    documents: await prisma.knowledgeDocument.findMany({
+      where: { businessProfileId: businessProfile.id },
+      select: { id: true, businessProfileId: true, kind: true, title: true, content: true },
+    }),
     mode: "full",
   } as any);
 
@@ -232,8 +190,7 @@ export const getBusinessProfiles = async (req: Request, res: Response) => {
       userId,
     },
     include: {
-      faqs: true,
-      knowledgeSections: true,
+      knowledgeDocuments: true,
       whatsAppAccounts: true,
       facebookPages: {
         select: {
@@ -258,18 +215,10 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
 
   const {
     name,
-    identity,
-    targetAudience,
     voice,
     tone,
-    productsServices,
     expectedUserIntents,
     corePolicies,
-    phoneNumbers,
-    workingHours,
-    address,
-    faqs,
-    knowledgeSections,
     customerDetailsInstructions,
     customerMemoryFields,
     aiBehaviorInstructions,
@@ -278,8 +227,6 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
     followUpMode,
     followUpDelays,
     followUpInstructions,
-    scrapedWebsiteUrl,
-    scrapedMarkdown,
     brandLogoUrl,
     brandPrimaryColor,
     brandSecondaryColor,
@@ -287,8 +234,6 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
     visualAesthetic,
     artStyle,
     brandKitCompleted,
-    brandWatermarkEnabled,
-    watermarkPosition,
   }: BusinessProfileBody = req.body;
 
   // Verify the profile exists AND belongs to this user
@@ -304,16 +249,10 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
     where: { id: profileId },
     data: {
       name,
-      identity,
-      targetAudience,
       voice,
       tone,
-      productsServices,
       expectedUserIntents,
       corePolicies,
-      phoneNumbers,
-      workingHours,
-      address,
       customerDetailsInstructions,
       customerMemoryFields:
         customerMemoryFields !== undefined
@@ -325,8 +264,6 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
       followUpMode,
       followUpDelays,
       followUpInstructions,
-      scrapedWebsiteUrl,
-      scrapedMarkdown,
       brandLogoUrl,
       brandPrimaryColor,
       brandSecondaryColor,
@@ -334,31 +271,9 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
       visualAesthetic,
       artStyle,
       brandKitCompleted,
-      brandWatermarkEnabled,
-      watermarkPosition,
-      // Delete existing FAQs and recreate — avoids needing IDs in the payload
-      ...(faqs && {
-        faqs: {
-          deleteMany: {},
-          create: faqs.map((faq) => ({
-            question: faq.question,
-            answer: faq.answer,
-          })),
-        },
-      }),
-      ...(knowledgeSections && {
-        knowledgeSections: {
-          deleteMany: {},
-          create: knowledgeSections.map((ks) => ({
-            title: ks.title,
-            content: ks.content,
-          })),
-        },
-      }),
     },
     include: {
-      faqs: true,
-      knowledgeSections: true,
+      knowledgeDocuments: true,
       whatsAppAccounts: true,
       facebookPages: {
         select: {
@@ -368,16 +283,8 @@ export const updateBusinessProfile = async (req: Request, res: Response) => {
     },
   });
 
-  // trigger partial re-ingestion via AgentClient — RAG lives in agent-svc now.
-  const updatedFields = Object.keys(
-    req.body as BusinessProfileBody,
-  ) as (keyof BusinessProfileBody)[];
-  await AgentClient.ingestRag({
-    business_profile_id: profileId,
-    profile: businessProfile,
-    mode: "partial",
-    updated_fields: updatedFields,
-  } as any);
+  // re-ingest the profile's knowledge documents — RAG lives in agent-svc now.
+  await ingestProfileDocuments(profileId);
 
   const { facebookPages = [], ...rest } = businessProfile as typeof businessProfile & {
     facebookPages?: { pageId: string }[];
@@ -469,9 +376,3 @@ export const uploadLogo = async (req: Request, res: Response) => {
     url: publicUrl,
   });
 };
-
-
-
-
-
-

@@ -40,7 +40,6 @@ export async function analyzeWebsiteForUser(userId: number, url: string) {
 
   return {
     ...businessProfile,
-    scrapedWebsiteUrl: url,
-    scrapedMarkdown: finalCombinedMarkdown,
+    websiteDocument: { kind: "website", title: "Website", content: url },
   };
 }

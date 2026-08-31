@@ -48,6 +48,16 @@ vi.mock("@modules/business/profile/knowledge.service", () => knowledgeSvc);
 const businessAccess = vi.hoisted(() => ({ updateAgentSettingsForUser: vi.fn() }));
 vi.mock("@modules/business/profile/businessAccess.service", () => businessAccess);
 
+const contentCopilot = vi.hoisted(() => ({
+  listCopilotContentPlans: vi.fn(),
+  getCopilotContentPlan: vi.fn(),
+  generateCopilotContentPlan: vi.fn(),
+  generateCopilotPostContent: vi.fn(),
+  approveContentPost: vi.fn(),
+  deleteCopilotContentPlan: vi.fn(),
+}));
+vi.mock("@modules/content/contentCopilot.service", () => contentCopilot);
+
 import {
   listCopilotConversations,
   getCopilotConversationMessages,
@@ -63,6 +73,12 @@ import {
   createCopilotKnowledge,
   updateCopilotKnowledge,
   deleteCopilotKnowledge,
+  copilotListContentPlans,
+  copilotGetContentPlan,
+  copilotGenerateContentPlan,
+  copilotGeneratePostContent,
+  copilotApproveContentPost,
+  copilotDeleteContentPlan,
 } from "./copilot.actions.service";
 
 beforeEach(() => vi.clearAllMocks());
@@ -299,5 +315,40 @@ describe("knowledge passthrough", () => {
     expect(knowledgeSvc.createKnowledgeDocument).toHaveBeenCalledWith(expect.any(Number), { kind: "faq", title: "Q", content: "A" });
     expect(knowledgeSvc.updateKnowledgeDocument).toHaveBeenCalledWith(expect.any(Number), 9, { content: "new" });
     expect(knowledgeSvc.deleteKnowledgeDocument).toHaveBeenCalledWith(expect.any(Number), 9);
+  });
+});
+
+describe("content passthrough", () => {
+  it("list/get/generate/post/approve/delete delegate to the content copilot service", async () => {
+    contentCopilot.listCopilotContentPlans.mockResolvedValue({ plans: [], meta: { total: 0 } });
+    contentCopilot.getCopilotContentPlan.mockResolvedValue({ id: 3, posts: [] });
+    contentCopilot.generateCopilotContentPlan.mockResolvedValue({ planId: 11, envelopes: [{ type: "content-plan" }] });
+    contentCopilot.generateCopilotPostContent.mockResolvedValue({ ok: true, post: { id: 5, status: "generated" } });
+    contentCopilot.approveContentPost.mockResolvedValue({ ok: true, post: { id: 5, status: "approved" } });
+    contentCopilot.deleteCopilotContentPlan.mockResolvedValue({ ok: true });
+
+    await copilotListContentPlans({ userId: 7, limit: 5 });
+    await copilotGetContentPlan({ userId: 7, planId: 3 });
+    await copilotGenerateContentPlan({
+      userId: 7, businessProfileId: 1, goal: "g", platform: "facebook",
+      draft: { posts: [{ scheduled_at: "2026-09-07", topic: "t" }] },
+    });
+    await copilotGeneratePostContent({ userId: 7, postId: 5, caption: "c", imagePrompt: "i" });
+    await copilotApproveContentPost({ userId: 7, postId: 5 });
+    await copilotDeleteContentPlan({ userId: 7, planId: 3 });
+
+    expect(contentCopilot.listCopilotContentPlans).toHaveBeenCalledWith({ userId: 7, limit: 5 });
+    expect(contentCopilot.getCopilotContentPlan).toHaveBeenCalledWith({ userId: 7, planId: 3 });
+    expect(contentCopilot.generateCopilotContentPlan).toHaveBeenCalledWith(expect.objectContaining({ userId: 7, businessProfileId: 1 }));
+    expect(contentCopilot.generateCopilotPostContent).toHaveBeenCalledWith({ userId: 7, postId: 5, caption: "c", imagePrompt: "i" });
+    expect(contentCopilot.approveContentPost).toHaveBeenCalledWith({ userId: 7, postId: 5 });
+    expect(contentCopilot.deleteCopilotContentPlan).toHaveBeenCalledWith({ userId: 7, planId: 3 });
+  });
+
+  it("propagates ownership rejections", async () => {
+    contentCopilot.getCopilotContentPlan.mockRejectedValue(new Error("Content plan not found"));
+    contentCopilot.deleteCopilotContentPlan.mockRejectedValue(new Error("Content plan not found"));
+    await expect(copilotGetContentPlan({ userId: 7, planId: 999 })).rejects.toThrow("not found");
+    await expect(copilotDeleteContentPlan({ userId: 7, planId: 999 })).rejects.toThrow("not found");
   });
 });

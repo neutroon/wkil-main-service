@@ -1,21 +1,12 @@
 import { AgentClient } from "@modules/ai-agent/client/agent.client";
 import prisma from "@config/prisma";
-import { env } from "@config/env";
-import { internalClient } from "@utils/apiClient";
 import { logger } from "@utils/logger";
 import { AppError } from "@middlewares/errorHandler.middleware";
-import {
-  competitorDiscoverySchema,
-  type CompetitorDiscoveryResult,
-} from "./contentBrief.schemas";
-import { assertQuotaAvailable, recordAiUsage } from "../billing/billing.service";
+import { assertQuotaAvailable } from "../billing/billing.service";
 import {
   getPagePosts,
   getPostComments,
 } from "../meta/facebook/facebook.service";
-
-const SCRAPING_SERVICE_URL =
-  env.SCRAPING_SERVICE_URL || "https://scraper.wkil.app/api/scrape";
 
 type CompetitorDiscoveryScope =
   | "PROVIDED_ONLY"
@@ -77,21 +68,6 @@ function asArray<T = any>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : [];
 }
 
-function stripJsonFences(text: string) {
-  return text.replace(/```json/g, "").replace(/```/g, "").trim();
-}
-
-function parseJsonObject(text: string) {
-  const cleanText = stripJsonFences(text);
-  try {
-    return JSON.parse(cleanText);
-  } catch {
-    const match = cleanText.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error("No JSON object found");
-    return JSON.parse(match[0]);
-  }
-}
-
 function trimForPrompt(text: string | null | undefined, max = 280) {
   const normalized = String(text || "")
     .replace(/\s+/g, " ")
@@ -99,25 +75,6 @@ function trimForPrompt(text: string | null | undefined, max = 280) {
   return normalized.length > max
     ? `${normalized.slice(0, max - 1)}...`
     : normalized;
-}
-
-function uniqueCompetitors(
-  competitors: Array<{ name?: string; url?: string }>,
-) {
-  const seen = new Set<string>();
-  return competitors
-    .map((c) => ({
-      name: trimForPrompt(c.name, 120),
-      url: c.url?.trim(),
-    }))
-    .filter((c) => c.name || c.url)
-    .filter((c) => {
-      const key = (c.url || c.name || "").toLowerCase();
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    })
-    .slice(0, 10);
 }
 
 async function getOwnedProfile(businessProfileId: number, userId: number) {
@@ -393,118 +350,14 @@ export async function collectFirstPartySignals(params: {
   };
 }
 
-async function scrapeUrl(url: string) {
-  const response = await internalClient.post(SCRAPING_SERVICE_URL, { url });
-  return response.data?.content?.markdown || "";
-}
-
-async function discoverCompetitorsWithSearch(params: {
-  profile: any;
-  goal?: string;
-}) {
-  // Competitor discovery AI moved to the sibling agent-svc microservice in the
-  // ai-agent cutover. Return an empty list until the agent-svc endpoint is wired.
-  void params;
-  void competitorDiscoverySchema;
-  return [] as Array<{ name?: string; url?: string }>;
-}
-
-async function summarizeCompetitor(params: {
-  auditId: number;
-  businessProfileId: number;
-  userId: number;
-  competitor: { name?: string; url?: string };
-  mode: CompetitorAnalysisMode;
-  sourceType: string;
-  profile: any;
-}) {
-  // Competitor summarization AI moved to the sibling agent-svc microservice.
-  // Persist a single "failed" competitor source so the audit endpoint can
-  // surface a clear status until the agent-svc endpoint is wired.
-  void params;
-  void scrapeUrl;
-  void parseJsonObject;
-  void trimForPrompt;
-  const source = await prisma.competitorSource.create({
-    data: {
-      businessProfileId: params.businessProfileId,
-      contentAuditId: params.auditId,
-      name: params.competitor.name || null,
-      url: params.competitor.url || null,
-      mode: params.mode,
-      sourceType: params.sourceType,
-      status: "failed",
-      errorMessage:
-        "competitor_summary moved to agent-svc microservice; this path is disabled",
-    },
-  });
-  return source;
-}
-
 async function collectCompetitorSignals(params: {
   auditId: number;
   profile: any;
   input: ContentAuditInput;
 }) {
   const modes = params.input.competitorAnalysisModes || ["WEBSITE_SEARCH"];
-  let competitors = uniqueCompetitors(params.input.competitors || []);
-
-  if (
-    params.input.competitorDiscoveryScope === "AI_DISCOVERY" ||
-    params.input.competitorDiscoveryScope === "PROVIDED_AND_AI_SEARCH"
-  ) {
-    try {
-      const discovered = await discoverCompetitorsWithSearch({
-        profile: params.profile,
-        goal: params.input.goal,
-      });
-      competitors = uniqueCompetitors([...competitors, ...discovered]);
-    } catch (err) {
-      logger.warn("content_audit.competitor_discovery_failed", {
-        businessProfileId: params.profile.id,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
 
   const sources: any[] = [];
-  if (modes.includes("WEBSITE_SEARCH")) {
-    for (const competitor of competitors.slice(0, 8)) {
-      sources.push(
-        await summarizeCompetitor({
-          auditId: params.auditId,
-          businessProfileId: params.profile.id,
-          userId: params.profile.userId,
-          competitor,
-          mode: "WEBSITE_SEARCH",
-          sourceType: "website",
-          profile: params.profile,
-        }),
-      );
-    }
-  }
-
-  if (modes.includes("PUBLIC_SOCIAL_SCRAPE")) {
-    const socialUrls = competitors.filter((c) =>
-      /(facebook|instagram|linkedin|tiktok|x\.com|twitter)\.com/i.test(
-        c.url || "",
-      ),
-    );
-    for (const competitor of socialUrls.slice(0, 6)) {
-      sources.push(
-        await summarizeCompetitor({
-          auditId: params.auditId,
-          businessProfileId: params.profile.id,
-          userId: params.profile.userId,
-          competitor,
-          mode: "PUBLIC_SOCIAL_SCRAPE",
-          sourceType: "public_social",
-          profile: params.profile,
-        }),
-      );
-    }
-  }
-
   if (modes.includes("SOCIAL_SAMPLES")) {
     for (const sample of (params.input.socialSamples || []).slice(0, 20)) {
       const source = await prisma.competitorSource.create({
@@ -538,137 +391,140 @@ async function collectCompetitorSignals(params: {
   return sources;
 }
 
-function buildAuditPrompt(params: {
-  profile: any;
-  input: ContentAuditInput;
-  firstParty: SignalBundle;
-  competitorSources: any[];
-}) {
-  const competitorSummaries = params.competitorSources.map((source) => ({
-    id: `competitor-source:${source.id}`,
-    name: source.name,
-    url: source.url,
-    mode: source.mode,
-    status: source.status,
-    summary: source.summary,
-    error: source.errorMessage,
-  }));
-
-  return `You are a senior social media strategist auditing a business before generating content.
-Do not trust shallow owner answers blindly. If the owner says broad things like "everyone" or "price and quality", use the real signals to sharpen or challenge the brief.
-
-Business profile:
-${JSON.stringify(
-  {
-    name: params.profile.name,
-    voice: params.profile.voice,
-    tone: params.profile.tone,
-    expectedUserIntents: params.profile.expectedUserIntents,
-    corePolicies: params.profile.corePolicies,
-    aiBehaviorInstructions: params.profile.aiBehaviorInstructions,
-  },
-  null,
-  2,
-)}
-
-Owner campaign context:
-${JSON.stringify(
-  {
-    goal: params.input.goal,
-    currentTrends: params.input.currentTrends,
-    startDate: params.input.startDate,
-    endDate: params.input.endDate,
-  },
-  null,
-  2,
-)}
-
-First-party signal summary:
-${JSON.stringify(params.firstParty.summary, null, 2)}
-
-Customer/inbox/comment signals:
-${params.firstParty.customerQuestionSignals.join("\n")}
-
-Public/live social signals:
-${params.firstParty.liveSocialSignals.join("\n")}
-
-Customer record signals:
-${params.firstParty.customerSignals.join("\n")}
-
-Existing content signals:
-${params.firstParty.contentSignals.join("\n")}
-
-Competitor intelligence:
-${JSON.stringify(competitorSummaries, null, 2)}
-
-Evidence refs available:
-${JSON.stringify(params.firstParty.evidenceRefs.slice(0, 80), null, 2)}
-
-Voice and tone rules:
-- Write findings, gap questions, and draftBrief fields in the business profile voice/language/dialect and tone.
-- The profile voice/tone are the source of truth. draftBrief.tonePreferences may add a campaign-specific note, but it must stay compatible with the profile voice/tone and must not change the language/dialect.
-- Do not invent proof, claims, prices, guarantees, policies, statistics, or locations.
-
-Return ONLY strict JSON:
-{
-  "confidenceScore": 0,
-  "findings": [
-    {
-      "type": "audience|objection|content_gap|competitor_gap|offer|trust|cta",
-      "title": "Short insight title",
-      "insight": "Consultant-level insight tied to business impact",
-      "businessImpact": "Why this matters",
-      "confidence": 0.0,
-      "evidenceRefs": ["message:1", "competitor-source:2"]
-    }
-  ],
-  "gapQuestions": [
-    {
-      "id": "short_key",
-      "question": "Only ask what cannot be inferred from signals",
-      "reason": "Why this answer improves content quality",
-      "priority": "high|medium|low"
-    }
-  ],
-  "draftBrief": {
-    "goal": "Specific campaign/business outcome",
-    "audienceSegments": ["Sharpened audience segment"],
-    "painPoints": ["Real customer pain point"],
-    "objections": ["Real objection or buying friction"],
-    "buyingTriggers": ["What makes people act now"],
-    "offers": ["Offer or service angle to promote"],
-    "proofPoints": ["Trust proof that exists or should be requested"],
-    "cta": "Recommended call to action",
-    "funnelFocus": "awareness|education|trust|conversion|retention|mixed",
-    "tonePreferences": "Secondary campaign tone note that stays compatible with the business profile voice/tone",
-    "forbiddenTopics": [],
-    "competitorInsights": {
-      "positioningGaps": ["Gap we can own"],
-      "contentOpportunities": ["Content opportunity"],
-      "risks": ["Risk or similarity to avoid"]
-    }
+// snake_case -> camelCase (the agent-svc capability drafts use snake_case keys)
+function toCamel(value: any): any {
+  if (Array.isArray(value)) return value.map(toCamel);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [
+        k.replace(/_([a-z0-9])/g, (_, c: string) => c.toUpperCase()),
+        toCamel(v),
+      ]),
+    );
   }
-}`;
+  return value;
+}
+
+// The capability returns string findings / gap questions; the wizard renders
+// objects ({ title } / { id, question }). Map minimally so it keeps working.
+function normalizeAuditDraft(draft: any) {
+  const raw = draft || {};
+  const findings = (raw.findings || []).map((f: any) =>
+    typeof f === "string" ? { title: f } : f,
+  );
+  const gapQuestions = (raw.gap_questions || raw.gapQuestions || []).map(
+    (q: any, i: number) =>
+      typeof q === "string" ? { id: `gap_${i + 1}`, question: q } : q,
+  );
+  const draftBrief = toCamel(raw.draft_brief || raw.draftBrief || {});
+  const confidenceScore = Number(raw.confidence_score ?? raw.confidenceScore ?? 0);
+  return { findings, gapQuestions, draftBrief, confidenceScore };
 }
 
 export async function* generateContentAuditStream(input: ContentAuditInput) {
-  // Content-audit AI generation moved to the sibling agent-svc microservice in
-  // the ai-agent cutover. Yield a single status event so callers receive a
-  // consistent stream shape before the generator ends.
-  void input;
-  void AgentClient;
-  yield {
-    type: "status",
-    message:
-      "Content audit generation moved to agent-svc microservice; this stream is disabled.",
-  };
-  yield {
-    type: "error",
-    message:
-      "content_audit_stream moved to agent-svc microservice; this path is disabled.",
-  };
-}
+  const signalWindowDays = input.signalWindowDays || 90;
+  const profile = await getOwnedProfile(input.businessProfileId, input.userId);
+  await assertQuotaAvailable(input.userId, input.businessProfileId);
 
+  const audit = await prisma.contentAudit.create({
+    data: {
+      businessProfileId: input.businessProfileId,
+      userId: input.userId,
+      signalWindowDays,
+      competitorDiscoveryScope:
+        input.competitorDiscoveryScope || "PROVIDED_AND_AI_SEARCH",
+      competitorAnalysisModes: input.competitorAnalysisModes || [
+        "WEBSITE_SEARCH",
+      ],
+      campaignGoal: input.goal || null,
+      startDate: input.startDate ? new Date(input.startDate) : null,
+      endDate: input.endDate ? new Date(input.endDate) : null,
+      status: "running",
+    },
+  });
+
+  try {
+    yield {
+      type: "status",
+      message: "Collecting first-party customer, comment, and content signals...",
+      auditId: audit.id,
+    };
+    const firstParty = await collectFirstPartySignals({
+      businessProfileId: input.businessProfileId,
+      userId: input.userId,
+      signalWindowDays,
+    });
+
+    yield {
+      type: "status",
+      message: "Analyzing competitor positioning and market gaps...",
+      auditId: audit.id,
+    };
+    const competitorSources = await collectCompetitorSignals({
+      auditId: audit.id,
+      profile,
+      input,
+    });
+
+    yield {
+      type: "status",
+      message: "Drafting signal-led content brief via the agent service...",
+      auditId: audit.id,
+    };
+
+    const result = await AgentClient.runContentGeneration("audit", {
+      business_profile_id: input.businessProfileId,
+      user_id: input.userId,
+      goal: input.goal,
+      start_date: input.startDate,
+      end_date: input.endDate,
+      current_trends: input.currentTrends,
+      settings: {
+        name: profile.name,
+        voice: profile.voice,
+        tone: profile.tone,
+      },
+      signals: firstParty,
+    });
+    const draft = normalizeAuditDraft(result?.content_generation ?? result);
+
+    const updatedAudit = await prisma.contentAudit.update({
+      where: { id: audit.id },
+      data: {
+        status: "completed",
+        findings: draft.findings,
+        gapQuestions: draft.gapQuestions,
+        draftBrief: draft.draftBrief,
+        evidenceRefs: firstParty.evidenceRefs,
+        confidenceScore: draft.confidenceScore,
+      },
+      include: {
+        competitorSources: true,
+      },
+    });
+
+    yield {
+      type: "result",
+      data: {
+        audit: updatedAudit,
+        findings: draft.findings,
+        gapQuestions: draft.gapQuestions,
+        draftBrief: draft.draftBrief,
+        evidenceRefs: firstParty.evidenceRefs,
+        competitorSources: updatedAudit.competitorSources,
+      },
+    };
+  } catch (err: any) {
+    await prisma.contentAudit.update({
+      where: { id: audit.id },
+      data: {
+        status: "failed",
+        errorMessage: err.message || String(err),
+      },
+    });
+    throw err;
+  }
+}
 export async function saveContentBrief(userId: number, data: any) {
   const profile = await getOwnedProfile(Number(data.businessProfileId), userId);
 

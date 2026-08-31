@@ -27,6 +27,13 @@ export class AgentClient {
     return this.run(this.GRAPHS.copilot, input, opts);
   }
 
+  // The capability draft lives in the run result's final state; the SDK's
+  // `Run` typing doesn't reflect that, so callers consume it as a record.
+  static async runContentGeneration(kind: string, context: Record<string, unknown>): Promise<any> {
+    const result = await this.run(this.GRAPHS.copilot, { content_generation: { kind, context } }, { stream: false });
+    return result;
+  }
+
   static runCustomerAgent(input: Record<string, unknown>, opts: { stream?: boolean } = {}) {
     return this.run(this.GRAPHS.customer, input, opts);
   }

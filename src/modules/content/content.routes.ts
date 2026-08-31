@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { generatePostContent } from "./content.service";
 import { generatePostExecution } from "./contentPlan.service";
+import { approveContentPost, deleteCopilotContentPlan } from "./contentCopilot.service";
 import {
   generateContentAuditStream,
   getContentBrief,
@@ -236,40 +237,12 @@ contentRoutes.patch(
     const { manual } = req.body;
     const userId = (req as any).user.id;
 
-    const post = await prisma.contentPlanPost.findUnique({
-      where: { id: parseInt(postId, 10) },
-      include: { contentPlan: true },
+    const out = await approveContentPost({
+      userId,
+      postId: parseInt(postId, 10),
+      manual,
     });
-
-    if (!post || post.contentPlan.userId !== userId) {
-      throw new AppError("Unauthorized or post not found", 403);
-    }
-
-    const updated = await prisma.contentPlanPost.update({
-      where: { id: parseInt(postId, 10) },
-      data: { status: manual ? "approved_manual" : "approved" },
-      include: { contentPlan: true },
-    });
-
-    if (!manual && updated.scheduledAt) {
-      const { socialQueue } = await import("../content/social.queue");
-      const delay = Math.max(
-        0,
-        new Date(updated.scheduledAt).getTime() - Date.now(),
-      );
-
-      await socialQueue.add(
-        `publish-${updated.id}`,
-        {
-          postId: updated.id,
-          platform: updated.platform,
-          businessProfileId: updated.contentPlan.businessProfileId,
-        },
-        { delay, jobId: `post-${updated.id}` },
-      );
-    }
-
-    res.json(updated);
+    res.json(out.post);
   },
 );
 
@@ -309,6 +282,20 @@ contentRoutes.get(
       total,
       hasMore: skip + take < total,
     });
+  },
+);
+
+// Delete Content Plan (frontend calls DELETE /plan/list/active/:id)
+contentRoutes.delete(
+  "/plan/list/active/:id",
+  authenticateToken,
+  async (req: Request, res: Response) => {
+    const userId = (req as any).user.id;
+    const out = await deleteCopilotContentPlan({
+      userId,
+      planId: parseInt(req.params.id, 10),
+    });
+    res.json(out);
   },
 );
 

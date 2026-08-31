@@ -1,6 +1,4 @@
 import { AgentClient } from "@modules/ai-agent/client/agent.client";
-import { imageModel } from "@modules/ai-agent/vertexai.config";
-import cloudinary from "@modules/media/cloudinary.config";
 import { AppError } from "@middlewares/errorHandler.middleware";
 
 export interface ContentGenerationRequest {
@@ -33,7 +31,9 @@ export const generatePostContent = async (
   const {
     topic,
     length = "medium",
-    generateImage: _generateImage = false,
+    keywords,
+    context,
+    businessProfile,
   } = request;
 
   if (!topic) {
@@ -48,168 +48,32 @@ export const generatePostContent = async (
     );
   }
 
-  // Post content generation moved to the sibling agent-svc microservice in the
-  // ai-agent cutover. The monolith keeps the request shape for API compatibility
-  // and surfaces a clear error until a new caller is wired through AgentClient.
-  void request;
-  void buildPostPrompt;
-  void parseGeminiResponse;
-  void generateImageWithImagen;
-  void uploadBufferToCloudinary;
-  void AgentClient;
-  throw new AppError(
-    "Post content generation moved to agent-svc microservice; this path is disabled.",
-    503,
-  );
-};
-
-// Helper function to build effective prompts
-function buildPostPrompt(req: ContentGenerationRequest): string {
-  const { topic, length, keywords, context, businessProfile } = req;
-
-  const lengthGuidelines = {
-    short: "Keep it under 100 characters, be concise and punchy",
-    medium: "Write 1-2 sentences, around 100-200 characters",
-    long: "Write 2-3 sentences, around 200-300 characters",
-  };
-
-  const selectedLength =
-    lengthGuidelines[(length || "medium") as keyof typeof lengthGuidelines] ||
-    lengthGuidelines.medium;
-
-  return `You are a senior social media strategist, conversion-focused content writer, and Facebook-native copywriter. Generate a high-performing Facebook post about "${topic}".
-
-${
-  businessProfile
-    ? `<persona>
-- Agency/Business Name: ${businessProfile.name}
-- Voice (REQUIRED LANGUAGE): ${businessProfile.voice}
-- Tone: ${businessProfile.tone}
-${businessProfile.aiBehaviorInstructions ? `- Additional Writing Instructions: ${businessProfile.aiBehaviorInstructions}` : ""}
-${businessProfile.corePolicies ? `- Factual Boundaries and Policies: ${businessProfile.corePolicies}` : ""}
-</persona>
-
-CRITICAL: The business profile voice and tone are the source of truth. All generated content (post text and hashtags) MUST be written strictly in the language and dialect specified in the "Voice" field above (e.g., if Voice is Egyptian Arabic, you MUST write in Egyptian Arabic). The tone MUST match the "Tone" field. Additional context may refine the topic and details, but must not override the profile voice, language, dialect, tone, or factual boundaries. Do not use English unless the Voice field explicitly allows it.`
-    : `<tone>\nUse a friendly, professional tone optimized for high social media engagement.\n</tone>`
-}
-
-<post_requirements>
-1. Length: ${selectedLength}
-${keywords && keywords.length > 0 ? `2. Keywords to include naturally: ${keywords.join(", ")}` : ""}
-${context ? `3. Additional Context: ${context}` : ""}
-4. Output format: Must be raw, strictly valid JSON without markdown wrapping.
-</post_requirements>
-
-<copywriting_standards>
-- Start with a specific hook tied to the target audience's pain point, desire, timely opportunity, or curiosity gap.
-- Write like a real social media specialist: clear angle, useful insight, brand-fit wording, and a natural call-to-action.
-- Make the post platform-native for Facebook: conversational, scannable, and engaging without sounding like an ad unless the context asks for sales copy.
-- Use concrete benefits and business-specific details from the persona/context. Do not invent prices, guarantees, statistics, locations, or claims that were not provided.
-- Keep emojis tasteful and relevant. Avoid generic AI phrases, filler, repeated slogans, and overused hashtags.
-- Hashtags must be relevant, concise, and in the same language/dialect style as the post unless the persona requires otherwise.
-- The suggested image should be a brand-aware visual concept that supports the post angle and would stop the target audience while scrolling.
-</copywriting_standards>
-
-<json_structure>
-{
-  "content": "The main post text including emojis and line breaks if appropriate",
-  "hashtags": ["#hashtag1", "#hashtag2"],
-  "suggestedImage": "Brief visual description of an ideal AI-generated image to attach to this post"
-}
-</json_structure>
-
-Return ONLY the JSON.`;
-}
-
-// Helper function to parse Gemini response
-function parseGeminiResponse(text: string): GeneratedContent {
-  try {
-    // Try to extract JSON from the response
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
-      return {
-        content: parsed.content || text,
-        hashtags: parsed.hashtags || [],
-        suggestedImage: parsed.suggestedImage || null,
-      };
-    }
-  } catch (error) {
-    console.log("Could not parse JSON from Gemini response, using raw text");
-  }
-
-  // Fallback: return the raw text as content
-  return {
-    content: text,
-    hashtags: [],
-    suggestedImage: null,
-  };
-}
-
-// Helper function to generate image with Imagen
-async function generateImageWithImagen(prompt: string): Promise<Buffer> {
-  try {
-    console.log(
-      `[ContentService] Generating image for prompt: ${prompt.substring(
-        0,
-        50,
-      )}...`,
-    );
-
-    const result = await imageModel.generateContent(prompt);
-
-    if (
-      !result.response ||
-      !result.response.candidates ||
-      result.response.candidates.length === 0
-    ) {
-      throw new AppError("No image generated from Imagen", 502);
-    }
-
-    const imageBase64 =
-      result.response.candidates[0].content.parts[0].inlineData?.data;
-
-    if (!imageBase64) {
-      throw new AppError("No image data returned from Imagen", 502);
-    }
-
-    const imageBuffer = Buffer.from(imageBase64, "base64");
-
-    if (!imageBuffer || imageBuffer.length === 0) {
-      throw new AppError("Empty image buffer returned", 502);
-    }
-
-    console.log(
-      `[ContentService] Image generated successfully (${imageBuffer.length} bytes)`,
-    );
-    return imageBuffer;
-  } catch (error: any) {
-    throw new AppError(`Failed to generate image: ${error.message}`, 502);
-  }
-}
-
-// Helper function to upload buffer to Cloudinary
-async function uploadBufferToCloudinary(
-  buffer: Buffer,
-): Promise<{ url: string; publicId: string }> {
-  return new Promise((resolve, reject) => {
-    const uploadStream = cloudinary.uploader.upload_stream(
-      { folder: "wkil-ai-generated" },
-      (error, result) => {
-        if (error) {
-          console.error("Cloudinary upload error:", error.message);
-          reject(error);
-        } else if (result) {
-          resolve({ url: result.secure_url, publicId: result.public_id });
-        } else {
-          reject(new AppError("No result from Cloudinary upload", 502));
+  const result = await AgentClient.runContentGeneration("post", {
+    topic,
+    length,
+    keywords: keywords || [],
+    context: context || "",
+    settings: businessProfile
+      ? {
+          name: businessProfile.name,
+          voice: businessProfile.voice,
+          tone: businessProfile.tone,
+          core_policies: businessProfile.corePolicies,
+          ai_behavior_instructions: businessProfile.aiBehaviorInstructions,
         }
-      },
-    );
-    uploadStream.end(buffer);
+      : {},
   });
-}
 
+  const draft = (result as any)?.content_generation ?? result ?? {};
+  const content = draft.caption ?? draft.content;
+  if (!content) {
+    throw new AppError("Post content generation returned no content", 502);
+  }
 
-
-
+  return {
+    content,
+    hashtags: draft.hashtags || [],
+    suggestedImage:
+      draft.image_prompt ?? draft.imagePrompt ?? draft.suggestedImage ?? null,
+  };
+};

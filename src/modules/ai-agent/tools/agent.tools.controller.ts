@@ -21,6 +21,12 @@ import {
   createCopilotKnowledge,
   updateCopilotKnowledge,
   deleteCopilotKnowledge,
+  copilotListContentPlans,
+  copilotGetContentPlan,
+  copilotGenerateContentPlan,
+  copilotGeneratePostContent,
+  copilotApproveContentPost,
+  copilotDeleteContentPlan,
 } from "./copilot.actions.service";
 
 const router = Router();
@@ -437,6 +443,97 @@ router.post("/copilot/knowledge/:id/delete", async (req, res) => {
     }));
   } catch (e: any) {
     res.status(404).json({ error: e?.message ?? "delete_knowledge_failed" });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Copilot content tools (list/get/generate/approve/delete content plans and
+// posts). { userId } is injected by the channel BFF into the run input — never
+// model-supplied values. Ownership is re-validated in the content service.
+// ---------------------------------------------------------------------------
+
+router.get("/copilot/content/plans", async (req, res) => {
+  const userId = Number(req.query.userId);
+  if (!userId) return res.status(400).json({ error: "userId_required" });
+  try {
+    res.json(await copilotListContentPlans({
+      userId,
+      businessProfileId: req.query.businessProfileId ? Number(req.query.businessProfileId) : undefined,
+      status: req.query.status ? String(req.query.status) : undefined,
+      limit: req.query.limit ? Number(req.query.limit) : undefined,
+    }));
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message ?? "list_content_plans_failed" });
+  }
+});
+
+router.get("/copilot/content/plans/:id", async (req, res) => {
+  const userId = Number(req.query.userId);
+  const planId = Number(req.params.id);
+  if (!userId || !planId) return res.status(400).json({ error: "userId_and_planId_required" });
+  try {
+    res.json(await copilotGetContentPlan({ userId, planId }));
+  } catch (e: any) {
+    res.status(404).json({ error: e?.message ?? "content_plan_not_found" });
+  }
+});
+
+router.post("/copilot/content/plans/generate", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  const businessProfileId = Number(req.body?.businessProfileId);
+  const draft = req.body?.draft;
+  if (!userId || !businessProfileId) return res.status(400).json({ error: "userId_and_businessProfileId_required" });
+  if (!draft || !Array.isArray(draft.posts) || draft.posts.length === 0) return res.status(400).json({ error: "draft_posts_required" });
+  try {
+    res.json(await copilotGenerateContentPlan({
+      userId,
+      businessProfileId,
+      draft,
+      goal: req.body?.goal ? String(req.body.goal) : undefined,
+      platform: req.body?.platform ? String(req.body.platform) : undefined,
+    }));
+  } catch (e: any) {
+    res.status(400).json({ error: e?.message ?? "generate_content_plan_failed" });
+  }
+});
+
+router.post("/copilot/content/posts/:id/generate", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  const postId = Number(req.params.id);
+  const caption = String(req.body?.caption ?? "");
+  if (!userId || !postId) return res.status(400).json({ error: "userId_and_postId_required" });
+  if (!caption) return res.status(400).json({ error: "caption_required" });
+  try {
+    res.json(await copilotGeneratePostContent({
+      userId,
+      postId,
+      caption,
+      imagePrompt: req.body?.imagePrompt ? String(req.body.imagePrompt) : undefined,
+    }));
+  } catch (e: any) {
+    res.status(404).json({ error: e?.message ?? "generate_post_content_failed" });
+  }
+});
+
+router.post("/copilot/content/posts/:id/approve", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  const postId = Number(req.params.id);
+  if (!userId || !postId) return res.status(400).json({ error: "userId_and_postId_required" });
+  try {
+    res.json(await copilotApproveContentPost({ userId, postId }));
+  } catch (e: any) {
+    res.status(403).json({ error: e?.message ?? "approve_post_failed" });
+  }
+});
+
+router.post("/copilot/content/plans/:id/delete", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  const planId = Number(req.params.id);
+  if (!userId || !planId) return res.status(400).json({ error: "userId_and_planId_required" });
+  try {
+    res.json(await copilotDeleteContentPlan({ userId, planId }));
+  } catch (e: any) {
+    res.status(404).json({ error: e?.message ?? "delete_content_plan_failed" });
   }
 });
 

@@ -1,9 +1,8 @@
 import { AgentClient } from "@modules/ai-agent/client/agent.client";
-import { recordAiUsage, assertQuotaAvailable } from "../billing/billing.service";
-import { logger } from "@utils/logger";
-import { getContentBriefForStrategy } from "./contentBrief.service";
 import prisma from "@config/prisma";
 import { AppError } from "@middlewares/errorHandler.middleware";
+import { getContentBriefForStrategy } from "./contentBrief.service";
+import { generateCopilotContentPlan } from "./contentCopilot.service";
 
 export interface BriefingInput {
   businessProfileId: number;
@@ -15,70 +14,9 @@ export interface BriefingInput {
   currentTrends?: string | string[];
 }
 
-const SOCIAL_MEDIA_SPECIALIST_ROLE = `You are a senior social media specialist, market-aware content strategist, and brand copywriter. Your job is to turn business context into platform-native content that attracts attention, builds trust, and supports measurable campaign goals.`;
-
-function formatJsonForPrompt(value: unknown): string {
-  if (!value) return "Not specified";
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
-
 function normalizeOptionalText(value: string | string[] | undefined): string | undefined {
   if (Array.isArray(value)) return value.filter(Boolean).join(", ");
   return value;
-}
-
-function buildVoiceToneGuard(
-  profile: {
-    voice?: string | null;
-    tone?: string | null;
-    aiBehaviorInstructions?: string | null;
-    corePolicies?: string | null;
-  },
-  brief?: { tonePreferences?: string | null } | null,
-) {
-  const voice = profile.voice || "the business profile voice";
-  const tone = profile.tone || "the business profile tone";
-
-  return `
---- BUSINESS VOICE AND TONE RULES ---
-- Primary language/dialect: ${voice}
-- Business tone: ${tone}
-${profile.aiBehaviorInstructions ? `- Additional writing instructions: ${profile.aiBehaviorInstructions}` : ""}
-${profile.corePolicies ? `- Factual boundaries and policies: ${profile.corePolicies}` : ""}
-${brief?.tonePreferences ? `- Campaign tone note (secondary): ${brief.tonePreferences}` : ""}
-Rules:
-1. The business profile voice and tone are the source of truth for all generated content.
-2. Campaign tone notes, goals, research, trends, and user context may refine the angle, but must not override the profile voice, language, dialect, or tone.
-3. Keep captions, topics, slide text, scripts, CTAs, hashtags, and review summaries in this voice and language unless the profile explicitly allows otherwise.
-4. Do not invent claims, prices, guarantees, policies, statistics, or locations.
-5. Avoid generic AI-style marketing phrasing; write like a real brand operator.
--------------------------------------
-  `.trim();
-}
-
-function buildBriefContext(brief: any) {
-  if (!brief) return "";
-
-  return `
---- CONFIRMED SIGNAL-LED CONTENT BRIEF ---
-- Goal: ${brief.goal || "Not specified"}
-- Audience Segments: ${formatJsonForPrompt(brief.audienceSegments)}
-- Pain Points: ${formatJsonForPrompt(brief.painPoints)}
-- Objections / Buying Friction: ${formatJsonForPrompt(brief.objections)}
-- Buying Triggers: ${formatJsonForPrompt(brief.buyingTriggers)}
-- Offers / Services to Prioritize: ${formatJsonForPrompt(brief.offers)}
-- Proof Points: ${formatJsonForPrompt(brief.proofPoints)}
-- CTA: ${brief.cta || "Not specified"}
-- Funnel Focus: ${brief.funnelFocus || "mixed"}
-- Campaign Tone Preferences (secondary only; must stay compatible with business profile voice/tone): ${brief.tonePreferences || "Use the business profile voice and tone"}
-- Forbidden Topics: ${formatJsonForPrompt(brief.forbiddenTopics)}
-- Competitor Insights: ${formatJsonForPrompt(brief.competitorInsights)}
-------------------------------------------
-  `.trim();
 }
 
 function buildBriefSnapshot(brief: any) {
@@ -101,22 +39,11 @@ function buildBriefSnapshot(brief: any) {
   };
 }
 
-function contentPlanPostData(item: any) {
-  return {
-    scheduledAt: new Date(item.scheduledAt),
-    platform: item.platform,
-    pillar: item.pillar,
-    topic: item.topic,
-    format: item.format,
-    funnelStage: item.funnelStage || null,
-    contentGoal: item.contentGoal || null,
-    targetPainPoint: item.targetPainPoint || null,
-    objectionHandled: item.objectionHandled || null,
-    cta: item.cta || null,
-    rationale: item.rationale || null,
-    evidenceRefs: item.evidenceRefs || [],
-    status: "pending",
-  };
+// Extracts the generated draft from an AgentClient.runContentGeneration run
+// result. The agent graph returns its final state; the capability draft lives
+// under the "content_generation" key, with a fallback to the raw value.
+function extractGenerationDraft(result: any) {
+  return result?.content_generation ?? result ?? {};
 }
 
 export async function* generateContentStrategyStream(briefing: BriefingInput) {
@@ -128,48 +55,116 @@ export async function* generateContentStrategyStream(briefing: BriefingInput) {
     throw new AppError("Business profile not found", 404);
   }
 
-  // Content-plan AI generation (RAG + pipeline) moved to the sibling agent-svc
-  // microservice in the ai-agent cutover. Surface a clear status so callers see
-  // a single, consistent event before the generator ends.
+  const contentBrief = await getContentBriefForStrategy({
+    userId: briefing.userId,
+    businessProfileId: briefing.businessProfileId,
+    contentBriefId: briefing.contentBriefId,
+  });
+
   yield {
     type: "status",
-    message:
-      "Content strategy generation moved to agent-svc microservice; this stream is disabled.",
+    message: "Generating your strategy via the agent service...",
   };
-  yield {
-    type: "error",
-    message:
-      "content_plan_strategy moved to agent-svc microservice; this path is disabled.",
-  };
-}
 
-export async function generateContentStrategy(briefing: BriefingInput) {
-  return AgentClient.runCopilot({
+  const result = await AgentClient.runContentGeneration("plan", {
     business_profile_id: briefing.businessProfileId,
     user_id: briefing.userId,
-    messages: [],
-    stage: "fast",
-  } as any) as any;
+    goal: briefing.goals,
+    start_date: briefing.startDate,
+    end_date: briefing.endDate,
+    current_trends: normalizeOptionalText(briefing.currentTrends),
+    platform: "facebook",
+    settings: {
+      name: profile.name,
+      voice: profile.voice,
+      tone: profile.tone,
+    },
+    brief: contentBrief
+      ? {
+          goal: contentBrief.goal,
+          audienceSegments: contentBrief.audienceSegments,
+          painPoints: contentBrief.painPoints,
+          objections: contentBrief.objections,
+          buyingTriggers: contentBrief.buyingTriggers,
+          offers: contentBrief.offers,
+          proofPoints: contentBrief.proofPoints,
+          cta: contentBrief.cta,
+          funnelFocus: contentBrief.funnelFocus,
+          tonePreferences: contentBrief.tonePreferences,
+          forbiddenTopics: contentBrief.forbiddenTopics,
+        }
+      : null,
+  });
+
+  const draft = extractGenerationDraft(result);
+
+  const generated = await generateCopilotContentPlan({
+    userId: briefing.userId,
+    businessProfileId: briefing.businessProfileId,
+    draft: {
+      goals: draft.goals || (briefing.goals ? [briefing.goals] : []),
+      posts: draft.posts || [],
+    },
+    goal: briefing.goals,
+    platform: "facebook",
+  });
+
+  await prisma.contentPlan.update({
+    where: { id: generated.planId },
+    data: {
+      contentBriefId: contentBrief?.id || null,
+      startDate: new Date(briefing.startDate),
+      endDate: new Date(briefing.endDate),
+      currentTrends: normalizeOptionalText(briefing.currentTrends) || null,
+      briefSnapshot: buildBriefSnapshot(contentBrief) || undefined,
+    },
+  });
+
+  const plan = await prisma.contentPlan.findUnique({
+    where: { id: generated.planId },
+    include: { posts: { orderBy: { scheduledAt: "asc" } } },
+  });
+
+  yield { type: "result", data: plan };
 }
 
 export async function generatePostExecution(postId: number, userId: number) {
-  // Post-execution AI generation (RAG + pipeline) moved to the sibling agent-svc
-  // microservice in the ai-agent cutover. Reset the post to pending and surface
-  // a clear error so callers can retry once the agent-svc endpoint is wired.
-  const post = await prisma.contentPlanPost.findUnique({
-    where: { id: postId },
-    select: { id: true },
+  const post = await prisma.contentPlanPost.findFirst({
+    where: { id: postId, contentPlan: { userId } },
+    include: { contentPlan: true },
   });
-  if (post) {
-    await prisma.contentPlanPost.update({
-      where: { id: postId },
-      data: { status: "pending" },
-    });
+  if (!post) {
+    throw new AppError("Post not found", 404);
   }
-  void postId;
-  void userId;
-  throw new AppError(
-    "Post execution AI moved to agent-svc microservice; this path is disabled.",
-    503,
-  );
+
+  const profile = await prisma.businessProfile.findUnique({
+    where: { id: post.contentPlan.businessProfileId },
+    select: { name: true, voice: true, tone: true },
+  });
+
+  const result = await AgentClient.runContentGeneration("post", {
+    business_profile_id: post.contentPlan.businessProfileId,
+    user_id: userId,
+    topic: post.topic,
+    pillar: post.pillar,
+    platform: post.platform,
+    funnel_stage: post.funnelStage,
+    settings: profile || {},
+  });
+
+  const draft = extractGenerationDraft(result);
+  const caption = draft.caption ?? draft.post?.caption;
+  const imagePrompt = draft.image_prompt ?? draft.imagePrompt ?? draft.post?.image_prompt;
+  if (!caption) {
+    throw new AppError("Post content generation returned no caption", 502);
+  }
+
+  return prisma.contentPlanPost.update({
+    where: { id: postId },
+    data: {
+      caption,
+      imagePrompt: imagePrompt || null,
+      status: "generated",
+    },
+  });
 }

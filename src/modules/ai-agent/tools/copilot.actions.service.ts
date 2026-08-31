@@ -20,6 +20,14 @@ import {
   deleteKnowledgeDocument,
 } from "@modules/business/profile/knowledge.service";
 import { updateAgentSettingsForUser } from "@modules/business/profile/businessAccess.service";
+import {
+  listCopilotContentPlans,
+  getCopilotContentPlan,
+  generateCopilotContentPlan,
+  generateCopilotPostContent,
+  approveContentPost,
+  deleteCopilotContentPlan,
+} from "@modules/content/contentCopilot.service";
 import { AppError } from "@middlewares/errorHandler.middleware";
 
 const AUTHORIZED = (userId: number, conversationId: number) =>
@@ -294,4 +302,43 @@ export async function updateCopilotKnowledge(params: {
 export async function deleteCopilotKnowledge(params: { userId: number; businessProfileId?: number; documentId: number }) {
   const profileId = await resolveProfileId(params.userId, params.businessProfileId);
   return deleteKnowledgeDocument(profileId, params.documentId);
+}
+
+// ---------------------------------------------------------------------------
+// Copilot content tools (consumed by agent-svc list_content_plans /
+// get_content_plan / generate_content_plan / generate_post_content /
+// approve_content_post / delete_content_plan). Thin passthroughs to the
+// content copilot service, which owns ownership checks + persistence.
+// ---------------------------------------------------------------------------
+
+export function copilotListContentPlans(params: {
+  userId: number; businessProfileId?: number; status?: string; limit?: number;
+}) {
+  return listCopilotContentPlans(params);
+}
+
+export function copilotGetContentPlan(params: { userId: number; planId: number }) {
+  return getCopilotContentPlan(params);
+}
+
+export function copilotGenerateContentPlan(params: {
+  userId: number; businessProfileId: number;
+  draft: { goals?: string[]; posts: Array<Record<string, unknown>> };
+  goal?: string; platform?: string;
+}) {
+  return generateCopilotContentPlan(params as any);
+}
+
+export function copilotGeneratePostContent(params: {
+  userId: number; postId: number; caption: string; imagePrompt?: string;
+}) {
+  return generateCopilotPostContent(params);
+}
+
+export function copilotApproveContentPost(params: { userId: number; postId: number }) {
+  return approveContentPost(params);
+}
+
+export function copilotDeleteContentPlan(params: { userId: number; planId: number }) {
+  return deleteCopilotContentPlan(params);
 }

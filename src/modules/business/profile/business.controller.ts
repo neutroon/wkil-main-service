@@ -1,11 +1,13 @@
 import { AgentClient } from "@modules/ai-agent/client/agent.client";
 import { Request, Response } from "express";
+import { Prisma } from "@prisma/client";
 import prisma from "@config/prisma";
 import { uploadToR2 } from "@modules/media/services/r2Storage.service";
 import { randomUUID } from "crypto";
 import path from "path";
 
 import { AppError } from "@middlewares/errorHandler.middleware";
+import { provisionWorkspaceForUser } from "@modules/workspace/workspace.service";
 import { ingestProfileDocuments } from "./knowledge.service";
 
 interface KnowledgeDocumentInput {
@@ -108,35 +110,58 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
 
   const userId = (req as any).user.id;
 
-  const businessProfile = await prisma.businessProfile.create({
-    data: {
-      userId,
-      name,
-      voice,
-      tone,
-      expectedUserIntents,
-      corePolicies,
-      customerDetailsInstructions,
-      customerMemoryFields: normalizeCustomerMemoryFields(customerMemoryFields),
-      aiBehaviorInstructions,
-      handoffEnabled,
-      followUpEnabled,
-      followUpMode,
-      followUpDelays,
-      followUpInstructions,
-      brandLogoUrl,
-      brandPrimaryColor,
-      brandSecondaryColor,
-      brandAccentColor,
-      visualAesthetic,
-      artStyle,
-      brandKitCompleted,
-    },
-    include: {
-      knowledgeDocuments: true,
-      whatsAppAccounts: true,
-    },
+  // The dashboard form completes the auto-provisioned skeleton profile
+  // instead of creating a second one. BusinessProfile has no isActive
+  // column — ownership scoping by userId is sufficient here.
+  const existing = await prisma.businessProfile.findFirst({
+    where: { userId },
+    orderBy: { id: "asc" },
   });
+
+  const profileData = {
+    name: cleanProfileString(name) || "My Business",
+    voice,
+    tone,
+    expectedUserIntents,
+    corePolicies,
+    customerDetailsInstructions,
+    customerMemoryFields: normalizeCustomerMemoryFields(customerMemoryFields),
+    aiBehaviorInstructions,
+    handoffEnabled,
+    followUpEnabled,
+    followUpMode,
+    followUpDelays,
+    followUpInstructions,
+    brandLogoUrl,
+    brandPrimaryColor,
+    brandSecondaryColor,
+    brandAccentColor,
+    visualAesthetic,
+    artStyle,
+    brandKitCompleted,
+    setupCompletedAt: new Date(),
+  };
+
+  let businessProfile;
+  if (existing) {
+    businessProfile = await prisma.businessProfile.update({
+      where: { id: existing.id },
+      data: profileData,
+      include: { knowledgeDocuments: true, whatsAppAccounts: true },
+    });
+  } else {
+    // Defensive no-profile branch: provision the workspace trio (workspace +
+    // skeleton profile + owner membership) so the required 1:1 workspace
+    // relation is satisfied, then complete the freshly created skeleton.
+    const { profileId } = await prisma.$transaction((tx) =>
+      provisionWorkspaceForUser(tx as unknown as Prisma.TransactionClient, userId, profileData.name),
+    );
+    businessProfile = await prisma.businessProfile.update({
+      where: { id: profileId },
+      data: profileData,
+      include: { knowledgeDocuments: true, whatsAppAccounts: true },
+    });
+  }
 
   if (documents && documents.length > 0) {
     await prisma.knowledgeDocument.createMany({

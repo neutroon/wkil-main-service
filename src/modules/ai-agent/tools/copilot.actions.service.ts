@@ -273,7 +273,7 @@ export async function listCopilotCustomers(params: {
 
 const SETTINGS_SELECT = {
   id: true, name: true, voice: true, tone: true, handoffEnabled: true,
-  corePolicies: true, aiBehaviorInstructions: true,
+  corePolicies: true, aiBehaviorInstructions: true, setupCompletedAt: true,
 } as const;
 
 export async function resolveProfileId(userId: number, businessProfileId?: number) {
@@ -305,6 +305,7 @@ export async function getAgentSettingsForUser(params: { userId: number; business
       handoffEnabled: profile.handoffEnabled,
       corePolicies: profile.corePolicies,
       aiBehaviorInstructions: profile.aiBehaviorInstructions,
+      setupCompleted: profile.setupCompletedAt != null,
     },
   };
 }

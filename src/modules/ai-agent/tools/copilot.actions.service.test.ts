@@ -464,12 +464,29 @@ describe("agent settings", () => {
     prismaMock.businessProfile.findFirst.mockResolvedValue({
       id: 3, name: "Acme", voice: "Friendly", tone: "Calm", handoffEnabled: true,
       corePolicies: "No refunds.", aiBehaviorInstructions: "Be brief.",
+      setupCompletedAt: null,
     });
     const out = await getAgentSettingsForUser({ userId: 7 });
+    expect(out.settings).toEqual(
+      expect.objectContaining({ setupCompleted: false }),
+    );
     expect(out.settings).toEqual({
       name: "Acme", voice: "Friendly", tone: "Calm", handoffEnabled: true,
       corePolicies: "No refunds.", aiBehaviorInstructions: "Be brief.",
+      setupCompleted: false,
     });
+  });
+
+  it("reports setupCompleted when setup is complete", async () => {
+    prismaMock.businessProfile.findFirst.mockResolvedValue({
+      id: 3, name: "Acme", voice: "Friendly", tone: "Calm", handoffEnabled: true,
+      corePolicies: "No refunds.", aiBehaviorInstructions: "Be brief.",
+      setupCompletedAt: new Date(),
+    });
+    const out = await getAgentSettingsForUser({ userId: 7 });
+    expect(out.settings).toEqual(
+      expect.objectContaining({ setupCompleted: true }),
+    );
   });
 
   it("update delegates with resolved profile id", async () => {

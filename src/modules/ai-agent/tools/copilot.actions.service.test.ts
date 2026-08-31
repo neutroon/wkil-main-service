@@ -168,6 +168,7 @@ import {
   copilotListWidgetInstalls,
   copilotWidgetAction,
   copilotUpdateAccount,
+  resolveProfileId,
 } from "./copilot.actions.service";
 import {
   listCopilotFacebookPages,
@@ -371,6 +372,13 @@ describe("updateCopilotCustomer", () => {
   });
 });
 
+describe("resolveProfileId", () => {
+  it("resolveProfileId surfaces ambiguity instead of silently taking the first profile", async () => {
+    userSvc.getAccessibleProfileIds.mockResolvedValue([3, 4]);
+    await expect(resolveProfileId(7)).rejects.toThrow("Multiple business profiles");
+  });
+});
+
 describe("agent settings", () => {
   it("returns the bounded prompt-facing settings shape", async () => {
     prismaMock.businessProfile.findFirst.mockResolvedValue({
@@ -394,11 +402,12 @@ describe("agent settings", () => {
 });
 
 describe("knowledge passthrough", () => {
-  it("list scopes to an accessible profile", async () => {
+  it("list surfaces profile ambiguity instead of silently guessing", async () => {
     userSvc.getAccessibleProfileIds.mockResolvedValue([3, 4]);
-    knowledgeSvc.listKnowledgeDocuments.mockResolvedValue({ documents: [], envelopes: [] });
-    await listCopilotKnowledge({ userId: 7, kind: "faq", limit: 5 });
-    expect(knowledgeSvc.listKnowledgeDocuments).toHaveBeenCalledWith(expect.any(Number), { kind: "faq", q: undefined, limit: 5 });
+    await expect(listCopilotKnowledge({ userId: 7, kind: "faq", limit: 5 })).rejects.toThrow(
+      "Multiple business profiles",
+    );
+    expect(knowledgeSvc.listKnowledgeDocuments).not.toHaveBeenCalled();
   });
 
   it("create/update/delete pass the resolved profile id", async () => {

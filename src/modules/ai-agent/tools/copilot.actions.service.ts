@@ -274,10 +274,18 @@ const SETTINGS_SELECT = {
   corePolicies: true, aiBehaviorInstructions: true,
 } as const;
 
-async function resolveProfileId(userId: number, businessProfileId?: number) {
+export async function resolveProfileId(userId: number, businessProfileId?: number) {
   const profileIds = await getAccessibleProfileIds(userId);
-  const scoped = businessProfileId ? profileIds.filter((id: number) => id === businessProfileId) : profileIds;
+  const scoped = businessProfileId
+    ? profileIds.filter((id: number) => id === businessProfileId)
+    : profileIds;
   if (!scoped.length) throw new AppError("Business profile not found.", 404);
+  if (scoped.length > 1) {
+    throw new AppError(
+      "Multiple business profiles found — select one.",
+      400,
+    );
+  }
   return scoped[0];
 }
 

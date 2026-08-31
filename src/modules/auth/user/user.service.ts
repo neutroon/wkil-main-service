@@ -973,11 +973,12 @@ export const getAccessibleProfileIds = async (
     return profiles.map((p) => p.id);
   }
 
-  // Regular users see only their own
-  const profiles = await prisma.businessProfile.findMany({
-    where: { userId },
-    select: { id: true },
+  // Regular users see profiles of workspaces they are active members of.
+  const memberships = await prisma.workspaceMember.findMany({
+    where: { userId, isActive: true },
+    select: { workspace: { select: { profile: { select: { id: true } } } } },
   });
-
-  return profiles.map((p) => p.id);
+  return memberships
+    .map((m) => m.workspace?.profile?.id)
+    .filter((id): id is number => typeof id === "number");
 };

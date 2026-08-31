@@ -44,6 +44,8 @@ import {
   copilotListWidgetInstalls,
   copilotWidgetAction,
   copilotUpdateAccount,
+  copilotAnalyzeBusinessWebsite,
+  copilotApplyBusinessProfileDraft,
 } from "./copilot.actions.service";
 import {
   listCopilotFacebookPages,
@@ -471,6 +473,32 @@ router.post("/copilot/knowledge/:id/delete", async (req, res) => {
     }));
   } catch (e: any) {
     res.status(404).json({ error: e?.message ?? "delete_knowledge_failed" });
+  }
+});
+
+router.post("/copilot/onboarding/analyze", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  if (!userId) return res.status(400).json({ error: "userId_required" });
+  if (!req.body?.url) return res.status(400).json({ error: "url_required" });
+  try {
+    res.json(await copilotAnalyzeBusinessWebsite({ userId, url: String(req.body.url) }));
+  } catch (e: any) {
+    res.status(errStatus(e, 400)).json({ error: e?.message ?? "analyze_failed" });
+  }
+});
+
+router.post("/copilot/onboarding/apply", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  if (!userId) return res.status(400).json({ error: "userId_required" });
+  if (!req.body?.draft?.name) return res.status(400).json({ error: "draft_name_required" });
+  try {
+    res.json(await copilotApplyBusinessProfileDraft({
+      userId,
+      draft: req.body.draft ?? {},
+      documents: Array.isArray(req.body?.documents) ? req.body.documents : undefined,
+    }));
+  } catch (e: any) {
+    res.status(errStatus(e, 400)).json({ error: e?.message ?? "apply_failed" });
   }
 });
 

@@ -36,6 +36,8 @@ vi.mock("./copilot.actions.service", () => ({
   copilotListWidgetInstalls: vi.fn(),
   copilotWidgetAction: vi.fn(),
   copilotUpdateAccount: vi.fn(),
+  copilotAnalyzeBusinessWebsite: vi.fn(),
+  copilotApplyBusinessProfileDraft: vi.fn(),
 }));
 vi.mock("./socialCopilot.service", () => ({
   listCopilotFacebookPages: vi.fn(),
@@ -63,6 +65,8 @@ import {
   copilotWhatsAppAccountAction,
   copilotWidgetAction,
   copilotUpdateAccount,
+  copilotAnalyzeBusinessWebsite,
+  copilotApplyBusinessProfileDraft,
 } from "./copilot.actions.service";
 import {
   createCopilotPost,
@@ -326,4 +330,76 @@ it("POST /copilot/account requires userId", async () => {
   const res = await request(app).post("/internal/agent/copilot/account").set("x-service-token", "test-token")
     .send({ name: "Hesham" });
   expect(res.status).toBe(400);
+});
+
+// --- copilot onboarding tools ---
+
+it("POST /copilot/onboarding/analyze delegates to copilotAnalyzeBusinessWebsite", async () => {
+  vi.mocked(copilotAnalyzeBusinessWebsite).mockResolvedValue({
+    name: "Nile Coffee", voice: "Warm", tone: "Casual",
+    expectedUserIntents: [], websiteDocument: { kind: "website", title: "Website", content: "https://x" },
+  } as any);
+  const app = makeApp();
+  const res = await request(app)
+    .post("/internal/agent/copilot/onboarding/analyze")
+    .set("x-service-token", "test-token")
+    .send({ userId: 7, url: "https://nilecoffee.example" });
+  expect(res.status).toBe(200);
+  expect(res.body.name).toBe("Nile Coffee");
+  expect(copilotAnalyzeBusinessWebsite).toHaveBeenCalledWith({ userId: 7, url: "https://nilecoffee.example" });
+});
+
+it("POST /copilot/onboarding/analyze requires userId and url", async () => {
+  const app = makeApp();
+  const resNoUser = await request(app)
+    .post("/internal/agent/copilot/onboarding/analyze")
+    .set("x-service-token", "test-token")
+    .send({ url: "https://nilecoffee.example" });
+  expect(resNoUser.status).toBe(400);
+  const resNoUrl = await request(app)
+    .post("/internal/agent/copilot/onboarding/analyze")
+    .set("x-service-token", "test-token")
+    .send({ userId: 7 });
+  expect(resNoUrl.status).toBe(400);
+});
+
+it("POST /copilot/onboarding/apply delegates the draft and documents", async () => {
+  vi.mocked(copilotApplyBusinessProfileDraft).mockResolvedValue({ ok: true, profile: { id: 3, name: "Nile Coffee" } } as any);
+  const app = makeApp();
+  const res = await request(app)
+    .post("/internal/agent/copilot/onboarding/apply")
+    .set("x-service-token", "test-token")
+    .send({
+      userId: 7,
+      draft: { name: "Nile Coffee", voice: "Warm", tone: "Casual", expectedUserIntents: [], corePolicies: "No refunds." },
+      documents: [{ kind: "website", title: "Website", content: "https://nilecoffee.example" }],
+    });
+  expect(res.status).toBe(200);
+  expect(res.body.ok).toBe(true);
+  expect(copilotApplyBusinessProfileDraft).toHaveBeenCalledWith({
+    userId: 7,
+    draft: { name: "Nile Coffee", voice: "Warm", tone: "Casual", expectedUserIntents: [], corePolicies: "No refunds." },
+    documents: [{ kind: "website", title: "Website", content: "https://nilecoffee.example" }],
+  });
+});
+
+it("POST /copilot/onboarding/apply requires draft.name", async () => {
+  const app = makeApp();
+  const res = await request(app)
+    .post("/internal/agent/copilot/onboarding/apply")
+    .set("x-service-token", "test-token")
+    .send({ userId: 7, draft: { voice: "Warm" } });
+  expect(res.status).toBe(400);
+});
+
+it("POST /copilot/onboarding/apply surfaces already-onboarded as 409", async () => {
+  vi.mocked(copilotApplyBusinessProfileDraft).mockRejectedValue(
+    Object.assign(new Error("Business profile already onboarded."), { statusCode: 409 }),
+  );
+  const app = makeApp();
+  const res = await request(app)
+    .post("/internal/agent/copilot/onboarding/apply")
+    .set("x-service-token", "test-token")
+    .send({ userId: 7, draft: { name: "X" } });
+  expect(res.status).toBe(409);
 });

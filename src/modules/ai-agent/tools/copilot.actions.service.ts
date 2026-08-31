@@ -33,6 +33,8 @@ import {
   deleteCopilotContentPlan,
 } from "@modules/content/contentCopilot.service";
 import { AppError } from "@middlewares/errorHandler.middleware";
+import { analyzeWebsiteForUser } from "@modules/scraping/scraping.service";
+import { AgentClient } from "@modules/ai-agent/client/agent.client";
 import {
   listMediaAssets,
   updateMediaAssetMeta,
@@ -341,6 +343,81 @@ export async function updateCopilotKnowledge(params: {
 export async function deleteCopilotKnowledge(params: { userId: number; businessProfileId?: number; documentId: number }) {
   const profileId = await resolveProfileId(params.userId, params.businessProfileId);
   return deleteKnowledgeDocument(profileId, params.documentId);
+}
+
+// ---------------------------------------------------------------------------
+// Copilot onboarding tools (analyze_website / apply_profile_draft). Both wrap
+// the services the dashboard onboarding form already uses — the copilot is a
+// second frontend to the same flow, not a separate implementation.
+// ---------------------------------------------------------------------------
+
+export function copilotAnalyzeBusinessWebsite(params: { userId: number; url: string }) {
+  const url = params.url.trim();
+  if (!/^https?:\/\//.test(url)) throw new AppError("Valid website URL required.", 400);
+  return analyzeWebsiteForUser(params.userId, url);
+}
+
+const ONBOARDING_FIELDS = [
+  "name", "voice", "tone", "expectedUserIntents", "corePolicies",
+  "aiBehaviorInstructions", "customerDetailsInstructions",
+] as const;
+
+export async function copilotApplyBusinessProfileDraft(params: {
+  userId: number;
+  draft: Record<string, unknown>;
+  documents?: { kind: string; title?: string; content: string }[];
+}) {
+  const profileId = await resolveProfileId(params.userId);
+  const profile = await prisma.businessProfile.findFirst({
+    where: { id: profileId },
+    select: { id: true, setupCompletedAt: true },
+  });
+  if (!profile) throw new AppError("Business profile not found.", 404);
+  if (profile.setupCompletedAt) {
+    throw new AppError("Business profile already onboarded.", 409);
+  }
+
+  const data: Record<string, unknown> = {
+    setupCompletedAt: new Date(),
+  };
+  for (const field of ONBOARDING_FIELDS) {
+    const value = params.draft[field];
+    if (value !== undefined && value !== null && value !== "") data[field] = value;
+  }
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const updatedProfile = await tx.businessProfile.update({
+      where: { id: profileId },
+      data,
+    });
+    // isBusinessProfileCreated is a User column (schema line 132).
+    await tx.user.update({
+      where: { id: params.userId },
+      data: { isBusinessProfileCreated: true },
+    });
+    if (params.documents?.length) {
+      await tx.knowledgeDocument.createMany({
+        data: params.documents.map((d) => ({
+          businessProfileId: profileId,
+          kind: d.kind,
+          title: d.title ?? null,
+          content: d.content,
+        })),
+      });
+    }
+    return updatedProfile;
+  });
+
+  await AgentClient.ingestRag({
+    business_profile_id: profileId,
+    documents: await prisma.knowledgeDocument.findMany({
+      where: { businessProfileId: profileId },
+      select: { id: true, businessProfileId: true, kind: true, title: true, content: true },
+    }),
+    mode: "full",
+  });
+
+  return { ok: true as const, profile: updated };
 }
 
 // ---------------------------------------------------------------------------

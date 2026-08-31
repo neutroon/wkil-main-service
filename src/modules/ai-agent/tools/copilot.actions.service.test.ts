@@ -8,7 +8,7 @@ const prismaMock = vi.hoisted(() => ({
   },
   whatsAppAccount: { findFirst: vi.fn(), findMany: vi.fn(), update: vi.fn() },
   facebookPage: { findFirst: vi.fn(), findMany: vi.fn(), update: vi.fn() },
-  businessProfile: { findFirst: vi.fn(), findMany: vi.fn() },
+  businessProfile: { findFirst: vi.fn(), findMany: vi.fn(), update: vi.fn() },
   businessProfileMedia: { findFirst: vi.fn() },
   contentPlanPost: { findFirst: vi.fn(), update: vi.fn() },
   widgetInstall: {
@@ -18,9 +18,17 @@ const prismaMock = vi.hoisted(() => ({
     update: vi.fn(),
     delete: vi.fn(),
   },
-  user: { updateMany: vi.fn() },
+  knowledgeDocument: { createMany: vi.fn(), findMany: vi.fn() },
+  user: { update: vi.fn(), updateMany: vi.fn() },
 }));
 vi.mock("@config/prisma", () => ({ default: prismaMock }));
+(prismaMock as any).$transaction = vi.fn(async (fn: (tx: any) => unknown) => fn(prismaMock));
+
+const scraping = vi.hoisted(() => ({ analyzeWebsiteForUser: vi.fn() }));
+vi.mock("@modules/scraping/scraping.service", () => scraping);
+
+const agentClient = vi.hoisted(() => ({ AgentClient: { ingestRag: vi.fn() } }));
+vi.mock("@modules/ai-agent/client/agent.client", () => agentClient);
 
 const userSvc = vi.hoisted(() => ({
   getAccessibleProfileIds: vi.fn(),
@@ -169,6 +177,8 @@ import {
   copilotWidgetAction,
   copilotUpdateAccount,
   resolveProfileId,
+  copilotAnalyzeBusinessWebsite,
+  copilotApplyBusinessProfileDraft,
 } from "./copilot.actions.service";
 import {
   listCopilotFacebookPages,
@@ -376,6 +386,76 @@ describe("resolveProfileId", () => {
   it("resolveProfileId surfaces ambiguity instead of silently taking the first profile", async () => {
     userSvc.getAccessibleProfileIds.mockResolvedValue([3, 4]);
     await expect(resolveProfileId(7)).rejects.toThrow("Multiple business profiles");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Copilot onboarding tools (analyze_website / apply_profile_draft). Both wrap
+// the services the dashboard onboarding form already uses — the copilot is a
+// second frontend to the same flow, not a separate implementation.
+// ---------------------------------------------------------------------------
+
+describe("copilot onboarding", () => {
+  it("copilotAnalyzeBusinessWebsite delegates to analyzeWebsiteForUser", async () => {
+    scraping.analyzeWebsiteForUser.mockResolvedValue({
+      name: "Nile Coffee", voice: "Warm", tone: "Casual",
+      expectedUserIntents: [], websiteDocument: { kind: "website", title: "Website", content: "https://x" },
+    });
+    const out = await copilotAnalyzeBusinessWebsite({ userId: 7, url: "https://nilecoffee.example" });
+    expect(out).toMatchObject({ name: "Nile Coffee" });
+    expect(scraping.analyzeWebsiteForUser).toHaveBeenCalledWith(7, "https://nilecoffee.example");
+  });
+
+  it("copilotAnalyzeBusinessWebsite rejects non-http urls", () => {
+    expect(() =>
+      copilotAnalyzeBusinessWebsite({ userId: 7, url: "nilecoffee.example" }),
+    ).toThrow("Valid website URL required.");
+    expect(scraping.analyzeWebsiteForUser).not.toHaveBeenCalled();
+  });
+
+  it("copilotApplyBusinessProfileDraft completes the skeleton and ingests", async () => {
+    userSvc.getAccessibleProfileIds.mockResolvedValue([3]);
+    prismaMock.businessProfile.findFirst.mockResolvedValue({ id: 3, userId: 7, setupCompletedAt: null });
+    prismaMock.businessProfile.update.mockResolvedValue({ id: 3, name: "Nile Coffee", setupCompletedAt: new Date() });
+    prismaMock.knowledgeDocument.createMany.mockResolvedValue({ count: 1 });
+    agentClient.AgentClient.ingestRag.mockResolvedValue({});
+
+    const out = await copilotApplyBusinessProfileDraft({
+      userId: 7,
+      draft: { name: "Nile Coffee", voice: "Warm", tone: "Casual", expectedUserIntents: [], corePolicies: "No refunds." },
+      documents: [{ kind: "website", title: "Website", content: "https://nilecoffee.example" }],
+    });
+
+    expect(out.ok).toBe(true);
+    expect(prismaMock.businessProfile.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 3 },
+        data: expect.objectContaining({
+          name: "Nile Coffee",
+          setupCompletedAt: expect.any(Date),
+        }),
+      }),
+    );
+    expect(prismaMock.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 7 },
+        data: expect.objectContaining({ isBusinessProfileCreated: true }),
+      }),
+    );
+    expect(prismaMock.knowledgeDocument.createMany).toHaveBeenCalledWith({
+      data: [{ businessProfileId: 3, kind: "website", title: "Website", content: "https://nilecoffee.example" }],
+    });
+    expect(agentClient.AgentClient.ingestRag).toHaveBeenCalledWith(
+      expect.objectContaining({ business_profile_id: 3, mode: "full" }),
+    );
+  });
+
+  it("copilotApplyBusinessProfileDraft rejects a completed profile", async () => {
+    userSvc.getAccessibleProfileIds.mockResolvedValue([3]);
+    prismaMock.businessProfile.findFirst.mockResolvedValue({ id: 3, userId: 7, setupCompletedAt: new Date() });
+    await expect(
+      copilotApplyBusinessProfileDraft({ userId: 7, draft: { name: "X" } }),
+    ).rejects.toMatchObject({ statusCode: 409 });
   });
 });
 

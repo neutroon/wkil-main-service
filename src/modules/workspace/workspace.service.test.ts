@@ -4,9 +4,34 @@ const prisma = vi.hoisted(() => ({
   workspace: { create: vi.fn(), findUnique: vi.fn() },
   workspaceMember: { create: vi.fn(), findFirst: vi.fn(), findMany: vi.fn() },
   businessProfile: { findFirst: vi.fn() },
+  user: { findUnique: vi.fn(), create: vi.fn() },
+  $transaction: vi.fn(),
 }));
 
 vi.mock("@config/prisma", () => ({ default: prisma }));
+
+vi.mock("@modules/auth/core/tokenCrypto", () => ({
+  generateRandomToken: () => "tok",
+  hashToken: (t: string) => `h_${t}`,
+}));
+
+vi.mock("@modules/mail/mail.service", () => ({
+  sendVerificationEmail: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("bcrypt", () => ({ default: { hash: vi.fn().mockResolvedValue("h") } }));
+
+vi.mock("@modules/settings/settings.service", () => ({
+  getBillingMultiplier: vi.fn(),
+}));
+
+vi.mock("@modules/billing/billing.service", () => ({
+  clearQuotaCache: vi.fn(),
+}));
+
+vi.mock("@modules/auth/core/auth.service", () => ({
+  verifyCredentials: vi.fn(),
+}));
 
 import {
   getActiveProfileId,
@@ -37,6 +62,45 @@ describe("provisionWorkspaceForUser", () => {
       data: { workspaceId: 11, userId: 3, role: "owner" },
     });
     expect(out).toEqual({ workspaceId: 11, profileId: 7 });
+  });
+});
+
+describe("signup wiring", () => {
+  it("password signup provisions the tenant trio", async () => {
+    const { createUser } = await import("@modules/auth/user/user.service");
+    prisma.user.findUnique.mockResolvedValue(null);
+    prisma.user.create.mockResolvedValue({
+      id: 42,
+      email: "a@b.c",
+      name: "Hesham",
+    });
+    // createUser must run provisioning inside a transaction — assert
+    // prisma.$transaction is used and that the tenant trio lands in it.
+    const tx = {
+      user: { create: prisma.user.create },
+      workspace: { create: vi.fn().mockResolvedValue({ id: 1 }) },
+      businessProfile: { create: vi.fn().mockResolvedValue({ id: 2 }) },
+      workspaceMember: { create: vi.fn() },
+    };
+    prisma.$transaction.mockImplementation(async (fn: any) => fn(tx));
+
+    await createUser("Hesham", "a@b.c", "pw");
+
+    expect(prisma.$transaction).toHaveBeenCalled();
+    expect(tx.workspace.create).toHaveBeenCalledWith({
+      data: { name: "My Workspace" },
+    });
+    expect(tx.businessProfile.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        userId: 42,
+        workspaceId: 1,
+        name: "My Business",
+        setupCompletedAt: null,
+      }),
+    });
+    expect(tx.workspaceMember.create).toHaveBeenCalledWith({
+      data: { workspaceId: 1, userId: 42, role: "owner" },
+    });
   });
 });
 

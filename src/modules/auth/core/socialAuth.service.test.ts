@@ -24,6 +24,15 @@ vi.mock("@config/prisma", () => ({
       create: vi.fn(),
       update: vi.fn(),
     },
+    workspace: {
+      create: vi.fn().mockResolvedValue({ id: 1 }),
+    },
+    businessProfile: {
+      create: vi.fn().mockResolvedValue({ id: 1 }),
+    },
+    workspaceMember: {
+      create: vi.fn().mockResolvedValue({}),
+    },
     $transaction: vi.fn(),
   },
 }));
@@ -58,6 +67,9 @@ describe("social auth service", () => {
       callback({
         user: mockedPrisma.user,
         socialIdentity: mockedPrisma.socialIdentity,
+        workspace: mockedPrisma.workspace,
+        businessProfile: mockedPrisma.businessProfile,
+        workspaceMember: mockedPrisma.workspaceMember,
       }),
     );
   });

@@ -5,6 +5,7 @@ import prisma from "@config/prisma";
 import { env } from "@config/env";
 import { AppError } from "@middlewares/errorHandler.middleware";
 import { logger } from "@utils/logger";
+import { provisionWorkspaceForUser } from "@modules/workspace/workspace.service";
 
 export type SocialProvider = "google" | "facebook";
 
@@ -257,6 +258,12 @@ export const authenticateSocialUser = async (
           userId: user.id,
         },
       });
+
+      await provisionWorkspaceForUser(
+        tx as unknown as Prisma.TransactionClient,
+        user.id,
+        displayName,
+      );
 
       return user;
     });

@@ -7,6 +7,7 @@ import { generateRandomToken, hashToken } from "@modules/auth/core/tokenCrypto";
 import { sendVerificationEmail } from "@modules/mail/mail.service";
 import { AppError } from "@middlewares/errorHandler.middleware";
 import { verifyCredentials } from "@modules/auth/core/auth.service";
+import { provisionWorkspaceForUser } from "@modules/workspace/workspace.service";
 
 export const createUser = async (
   name: string,
@@ -29,25 +30,33 @@ export const createUser = async (
   const verificationToken = generateRandomToken();
   const hashedVerificationToken = hashToken(verificationToken);
 
-  const user = await prisma.user.create({
-    data: {
+  const user = await prisma.$transaction(async (tx) => {
+    const created = await tx.user.create({
+      data: {
+        name,
+        email: normalizedEmail,
+        password: hashed,
+        role: role as "user" | "admin" | "manager" | "super_admin",
+        isEmailVerified: false,
+        emailVerificationToken: hashedVerificationToken,
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        isEmailVerified: true,
+        lastVerificationSentAt: true,
+        isBusinessProfileCreated: true,
+        createdAt: true,
+      },
+    });
+    await provisionWorkspaceForUser(
+      tx as unknown as Prisma.TransactionClient,
+      created.id,
       name,
-      email: normalizedEmail,
-      password: hashed,
-      role: role as "user" | "admin" | "manager" | "super_admin",
-      isEmailVerified: false,
-      emailVerificationToken: hashedVerificationToken,
-    },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      role: true,
-      isEmailVerified: true,
-      lastVerificationSentAt: true,
-      isBusinessProfileCreated: true,
-      createdAt: true,
-    },
+    );
+    return created;
   });
 
   // Send verification email asynchronously

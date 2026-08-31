@@ -27,9 +27,37 @@ import {
   copilotGeneratePostContent,
   copilotApproveContentPost,
   copilotDeleteContentPlan,
+  copilotListMedia,
+  copilotUpdateMediaAsset,
+  copilotDeleteMediaAsset,
+  copilotRetryMediaSync,
+  copilotGenerateVisual,
+  copilotListOrders,
+  copilotListOrderIntegrations,
+  copilotUpdateOrderIntegration,
+  copilotRetryOrderNotification,
+  copilotRetryOrderSync,
+  copilotListWhatsAppAccounts,
+  copilotWhatsAppAccountAction,
+  copilotListFacebookPages,
+  copilotFacebookPageAction,
+  copilotListWidgetInstalls,
+  copilotWidgetAction,
+  copilotUpdateAccount,
 } from "./copilot.actions.service";
+import {
+  listCopilotFacebookPages,
+  listCopilotPagePosts,
+  listCopilotPostComments,
+  createCopilotPost,
+  deleteCopilotPost,
+  replyCopilotComment,
+} from "./socialCopilot.service";
 
 const router = Router();
+
+const errStatus = (e: any, fallback: number) =>
+  typeof e?.statusCode === "number" ? e.statusCode : fallback;
 
 router.use((req, res, next) => {
   const TOKEN = process.env.MONOLITH_SERVICE_TOKEN ?? "";
@@ -534,6 +562,342 @@ router.post("/copilot/content/plans/:id/delete", async (req, res) => {
     res.json(await copilotDeleteContentPlan({ userId, planId }));
   } catch (e: any) {
     res.status(404).json({ error: e?.message ?? "delete_content_plan_failed" });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Copilot social tools (list_facebook_posts / list_post_comments /
+// create_facebook_post / schedule_facebook_post / delete_facebook_post /
+// reply_to_comment). The socialCopilot wrapper asserts page ownership
+// (facebookAccount.userId) before any facebook.service delegation.
+// ---------------------------------------------------------------------------
+
+router.get("/copilot/social/pages", async (req, res) => {
+  const userId = Number(req.query.userId);
+  if (!userId) return res.status(400).json({ error: "userId_required" });
+  try {
+    res.json(await listCopilotFacebookPages(userId));
+  } catch (e: any) {
+    res.status(errStatus(e, 500)).json({ error: e?.message ?? "list_pages_failed" });
+  }
+});
+
+router.get("/copilot/social/pages/:pageId/posts", async (req, res) => {
+  const userId = Number(req.query.userId);
+  const pageId = String(req.params.pageId ?? "");
+  if (!userId || !pageId) return res.status(400).json({ error: "userId_and_pageId_required" });
+  try {
+    res.json(await listCopilotPagePosts({ userId, pageId }));
+  } catch (e: any) {
+    res.status(errStatus(e, 404)).json({ error: e?.message ?? "list_posts_failed" });
+  }
+});
+
+router.get("/copilot/social/posts/:postId/comments", async (req, res) => {
+  const userId = Number(req.query.userId);
+  const postId = String(req.params.postId ?? "");
+  if (!userId || !postId) return res.status(400).json({ error: "userId_and_postId_required" });
+  try {
+    res.json(await listCopilotPostComments({ userId, postId }));
+  } catch (e: any) {
+    res.status(errStatus(e, 404)).json({ error: e?.message ?? "list_comments_failed" });
+  }
+});
+
+router.post("/copilot/social/posts", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  const pageId = req.body?.pageId != null ? String(req.body.pageId) : "";
+  const text = String(req.body?.text ?? "");
+  if (!userId || !pageId) return res.status(400).json({ error: "userId_and_pageId_required" });
+  if (!text) return res.status(400).json({ error: "text_required" });
+  try {
+    res.json(await createCopilotPost({
+      userId,
+      pageId,
+      text,
+      imageUrl: req.body?.imageUrl ? String(req.body.imageUrl) : undefined,
+      scheduledAt: req.body?.scheduledAt ? String(req.body.scheduledAt) : undefined,
+    }));
+  } catch (e: any) {
+    res.status(errStatus(e, 400)).json({ error: e?.message ?? "create_post_failed" });
+  }
+});
+
+router.post("/copilot/social/posts/:postId/delete", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  const postId = String(req.params.postId ?? "");
+  if (!userId || !postId) return res.status(400).json({ error: "userId_and_postId_required" });
+  try {
+    res.json(await deleteCopilotPost({ userId, postId }));
+  } catch (e: any) {
+    res.status(errStatus(e, 404)).json({ error: e?.message ?? "delete_post_failed" });
+  }
+});
+
+router.post("/copilot/social/comments/:commentId/reply", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  const commentId = String(req.params.commentId ?? "");
+  const text = String(req.body?.text ?? "");
+  if (!userId || !commentId) return res.status(400).json({ error: "userId_and_commentId_required" });
+  if (!text) return res.status(400).json({ error: "text_required" });
+  try {
+    res.json(await replyCopilotComment({ userId, commentId, text }));
+  } catch (e: any) {
+    res.status(errStatus(e, 400)).json({ error: e?.message ?? "reply_failed" });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Copilot media tools (list_media_assets / update_media_asset /
+// delete_media_asset / retry_media_sync / generate_media_visual). Ownership is
+// re-validated before enqueueing AI work.
+// ---------------------------------------------------------------------------
+
+router.get("/copilot/media", async (req, res) => {
+  const userId = Number(req.query.userId);
+  if (!userId) return res.status(400).json({ error: "userId_required" });
+  try {
+    res.json(await copilotListMedia({
+      userId,
+      usageScope: req.query.usageScope ? String(req.query.usageScope) : undefined,
+    }));
+  } catch (e: any) {
+    res.status(errStatus(e, 500)).json({ error: e?.message ?? "list_media_failed" });
+  }
+});
+
+router.patch("/copilot/media/:id", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  const assetId = Number(req.params.id);
+  if (!userId || !assetId) return res.status(400).json({ error: "userId_and_assetId_required" });
+  try {
+    res.json(await copilotUpdateMediaAsset({
+      userId,
+      assetId,
+      name: req.body?.name !== undefined ? String(req.body.name) : undefined,
+      instructions: req.body?.instructions !== undefined ? String(req.body.instructions) : undefined,
+    }));
+  } catch (e: any) {
+    res.status(errStatus(e, 404)).json({ error: e?.message ?? "update_media_failed" });
+  }
+});
+
+router.post("/copilot/media/:id/delete", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  const assetId = Number(req.params.id);
+  if (!userId || !assetId) return res.status(400).json({ error: "userId_and_assetId_required" });
+  try {
+    res.json(await copilotDeleteMediaAsset({ userId, assetId }));
+  } catch (e: any) {
+    res.status(errStatus(e, 404)).json({ error: e?.message ?? "delete_media_failed" });
+  }
+});
+
+router.post("/copilot/media/:id/retry", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  const assetId = Number(req.params.id);
+  if (!userId || !assetId) return res.status(400).json({ error: "userId_and_assetId_required" });
+  try {
+    res.json(await copilotRetryMediaSync({ userId, assetId }));
+  } catch (e: any) {
+    res.status(errStatus(e, 404)).json({ error: e?.message ?? "retry_media_sync_failed" });
+  }
+});
+
+router.post("/copilot/media/ai", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  const prompt = String(req.body?.prompt ?? "");
+  const action = String(req.body?.action ?? "");
+  if (!userId || !prompt) return res.status(400).json({ error: "userId_and_prompt_required" });
+  if (!["generate", "refine"].includes(action)) return res.status(400).json({ error: "invalid_action" });
+  try {
+    res.json(await copilotGenerateVisual({
+      userId,
+      prompt,
+      action: action as "generate" | "refine",
+      assetId: req.body?.assetId ? Number(req.body.assetId) : undefined,
+      postId: req.body?.postId ? Number(req.body.postId) : undefined,
+    }));
+  } catch (e: any) {
+    res.status(errStatus(e, 400)).json({ error: e?.message ?? "media_ai_failed" });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Copilot order tools (list_orders / list_order_integrations /
+// update_order_integration / retry_order_notification / retry_order_sync).
+// Scoped via getAccessibleProfileIds; idempotent retries surface as 409.
+// ---------------------------------------------------------------------------
+
+router.get("/copilot/orders", async (req, res) => {
+  const userId = Number(req.query.userId);
+  if (!userId) return res.status(400).json({ error: "userId_required" });
+  try {
+    res.json(await copilotListOrders({
+      userId,
+      status: req.query.status ? String(req.query.status) : undefined,
+      page: req.query.page ? Number(req.query.page) : undefined,
+      limit: req.query.limit ? Number(req.query.limit) : undefined,
+    }));
+  } catch (e: any) {
+    res.status(errStatus(e, 500)).json({ error: e?.message ?? "list_orders_failed" });
+  }
+});
+
+router.get("/copilot/orders/integrations", async (req, res) => {
+  const userId = Number(req.query.userId);
+  if (!userId) return res.status(400).json({ error: "userId_required" });
+  try {
+    res.json(await copilotListOrderIntegrations({ userId }));
+  } catch (e: any) {
+    res.status(errStatus(e, 500)).json({ error: e?.message ?? "list_order_integrations_failed" });
+  }
+});
+
+router.patch("/copilot/orders/integrations/:id", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  const integrationId = Number(req.params.id);
+  if (!userId || !integrationId) return res.status(400).json({ error: "userId_and_integrationId_required" });
+  try {
+    res.json(await copilotUpdateOrderIntegration({
+      userId,
+      integrationId,
+      isActive: req.body?.isActive !== undefined ? Boolean(req.body.isActive) : undefined,
+      storeSyncEnabled: req.body?.storeSyncEnabled !== undefined ? Boolean(req.body.storeSyncEnabled) : undefined,
+      defaultLocale: req.body?.defaultLocale !== undefined ? String(req.body.defaultLocale) : undefined,
+    }));
+  } catch (e: any) {
+    res.status(errStatus(e, 404)).json({ error: e?.message ?? "update_order_integration_failed" });
+  }
+});
+
+router.post("/copilot/orders/notifications/:id/retry", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  const notificationId = Number(req.params.id);
+  if (!userId || !notificationId) return res.status(400).json({ error: "userId_and_notificationId_required" });
+  try {
+    res.json(await copilotRetryOrderNotification({ userId, notificationId }));
+  } catch (e: any) {
+    res.status(errStatus(e, 404)).json({ error: e?.message ?? "retry_notification_failed" });
+  }
+});
+
+router.post("/copilot/orders/sync/:id/retry", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  const syncId = Number(req.params.id);
+  if (!userId || !syncId) return res.status(400).json({ error: "userId_and_syncId_required" });
+  try {
+    res.json(await copilotRetryOrderSync({ userId, syncId }));
+  } catch (e: any) {
+    res.status(errStatus(e, 404)).json({ error: e?.message ?? "retry_sync_failed" });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Copilot channel tools (WhatsApp accounts / Facebook pages / web widgets).
+// Inline-prisma patterns cloned from the channel controllers with ownership
+// re-validated before every mutation.
+// ---------------------------------------------------------------------------
+
+router.get("/copilot/channels/whatsapp", async (req, res) => {
+  const userId = Number(req.query.userId);
+  if (!userId) return res.status(400).json({ error: "userId_required" });
+  try {
+    res.json(await copilotListWhatsAppAccounts(userId));
+  } catch (e: any) {
+    res.status(errStatus(e, 500)).json({ error: e?.message ?? "list_whatsapp_failed" });
+  }
+});
+
+router.post("/copilot/channels/whatsapp/:id/action", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  const accountId = Number(req.params.id);
+  const action = String(req.body?.action ?? "");
+  if (!userId || !accountId) return res.status(400).json({ error: "userId_and_accountId_required" });
+  try {
+    res.json(await copilotWhatsAppAccountAction({
+      userId,
+      accountId,
+      action,
+      businessProfileId: req.body?.businessProfileId ? Number(req.body.businessProfileId) : undefined,
+    }));
+  } catch (e: any) {
+    res.status(errStatus(e, 404)).json({ error: e?.message ?? "whatsapp_action_failed" });
+  }
+});
+
+router.get("/copilot/channels/facebook", async (req, res) => {
+  const userId = Number(req.query.userId);
+  if (!userId) return res.status(400).json({ error: "userId_required" });
+  try {
+    res.json(await copilotListFacebookPages(userId));
+  } catch (e: any) {
+    res.status(errStatus(e, 500)).json({ error: e?.message ?? "list_facebook_pages_failed" });
+  }
+});
+
+router.post("/copilot/channels/facebook/:pageId/action", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  const pageId = String(req.params.pageId ?? "");
+  const action = String(req.body?.action ?? "");
+  if (!userId || !pageId) return res.status(400).json({ error: "userId_and_pageId_required" });
+  try {
+    res.json(await copilotFacebookPageAction({
+      userId,
+      pageId,
+      action,
+      businessProfileId: req.body?.businessProfileId ? Number(req.body.businessProfileId) : undefined,
+      commentAutoDmEnabled: req.body?.commentAutoDmEnabled !== undefined ? Boolean(req.body.commentAutoDmEnabled) : undefined,
+      commentPublicGreeting: req.body?.commentPublicGreeting !== undefined ? String(req.body.commentPublicGreeting) : undefined,
+    }));
+  } catch (e: any) {
+    res.status(errStatus(e, 404)).json({ error: e?.message ?? "facebook_action_failed" });
+  }
+});
+
+router.get("/copilot/channels/widgets", async (req, res) => {
+  const userId = Number(req.query.userId);
+  if (!userId) return res.status(400).json({ error: "userId_required" });
+  try {
+    res.json(await copilotListWidgetInstalls(userId));
+  } catch (e: any) {
+    res.status(errStatus(e, 500)).json({ error: e?.message ?? "list_widgets_failed" });
+  }
+});
+
+router.post("/copilot/channels/widgets/action", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  const action = String(req.body?.action ?? "");
+  if (!userId) return res.status(400).json({ error: "userId_required" });
+  try {
+    res.json(await copilotWidgetAction({
+      userId,
+      action,
+      installId: req.body?.installId ? Number(req.body.installId) : undefined,
+      allowedOrigins: Array.isArray(req.body?.allowedOrigins) ? req.body.allowedOrigins.map(String) : undefined,
+      isActive: req.body?.isActive !== undefined ? Boolean(req.body.isActive) : undefined,
+      businessProfileId: req.body?.businessProfileId ? Number(req.body.businessProfileId) : undefined,
+    }));
+  } catch (e: any) {
+    res.status(errStatus(e, 404)).json({ error: e?.message ?? "widget_action_failed" });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Copilot account tool (update_account) — name/avatarUrl → profile update.
+// ---------------------------------------------------------------------------
+
+router.post("/copilot/account", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  if (!userId) return res.status(400).json({ error: "userId_required" });
+  try {
+    res.json(await copilotUpdateAccount({
+      userId,
+      name: req.body?.name !== undefined ? String(req.body.name) : undefined,
+      avatarUrl: req.body?.avatarUrl !== undefined ? String(req.body.avatarUrl) : undefined,
+    }));
+  } catch (e: any) {
+    res.status(errStatus(e, 404)).json({ error: e?.message ?? "account_update_failed" });
   }
 });
 

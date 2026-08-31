@@ -224,6 +224,16 @@ router.post(
     const userId = (req as any).user.id;
     const { businessProfileId, prompt, postId } = req.body;
 
+    // 0. Ownership: the post's content plan must belong to the caller before
+    // any status flip or enqueue happens.
+    if (postId) {
+      const owned = await prisma.contentPlanPost.findFirst({
+        where: { id: postId, contentPlan: { userId } },
+        select: { id: true },
+      });
+      if (!owned) throw new AppError("Post not found", 404);
+    }
+
     // 1. Resilience: Set status to 'generating' immediately
     if (postId) {
       await prisma.contentPlanPost.update({
@@ -261,6 +271,21 @@ router.post(
   async (req: Request, res: Response) => {
     const userId = (req as any).user.id;
     const { businessProfileId, assetId, instruction, postId } = req.body;
+
+    // 0. Ownership: the asset must belong to the caller, and any target post's
+    // content plan must too — before any status flip or enqueue happens.
+    const asset = await prisma.businessProfileMedia.findFirst({
+      where: { id: assetId, userId },
+      select: { id: true },
+    });
+    if (!asset) throw new AppError("Asset not found", 404);
+    if (postId) {
+      const owned = await prisma.contentPlanPost.findFirst({
+        where: { id: postId, contentPlan: { userId } },
+        select: { id: true },
+      });
+      if (!owned) throw new AppError("Post not found", 404);
+    }
 
     // 1. Resilience: Set status to 'generating' immediately
     if (postId) {

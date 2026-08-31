@@ -63,7 +63,7 @@ export async function listCopilotContentPlans(params: {
   });
   return {
     plans,
-    meta: { total: plans.length, limit, cite: { tool: "list_content_plans", fetchedAt: new Date().toISOString(), deepLink: "/content-plan" } },
+    meta: { total: plans.length, limit, cite: { tool: "list_content_plans", fetchedAt: new Date().toISOString(), deepLink: "/content-library" } },
   };
 }
 
@@ -124,7 +124,7 @@ export async function generateCopilotContentPlan(params: {
         goal: params.goal || null,
         total: posts.length,
         posts: posts.map((p) => ({ topic: p.topic, scheduledAt: p.scheduled_at })),
-        cite: { tool: "generate_content_plan", fetchedAt: new Date().toISOString(), deepLink: "/content-plan" },
+        cite: { tool: "generate_content_plan", fetchedAt: new Date().toISOString(), deepLink: "/content-library" },
       },
     ],
   };

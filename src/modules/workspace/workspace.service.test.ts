@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const prisma = vi.hoisted(() => ({
   workspace: { create: vi.fn(), findUnique: vi.fn() },
@@ -66,6 +66,10 @@ describe("provisionWorkspaceForUser", () => {
 });
 
 describe("signup wiring", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("password signup provisions the tenant trio", async () => {
     const { createUser } = await import("@modules/auth/user/user.service");
     prisma.user.findUnique.mockResolvedValue(null);

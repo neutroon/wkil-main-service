@@ -7,7 +7,7 @@ import { randomUUID } from "crypto";
 import path from "path";
 
 import { AppError } from "@middlewares/errorHandler.middleware";
-import { provisionWorkspaceForUser } from "@modules/workspace/workspace.service";
+import { provisionWorkspaceForUser, SKELETON_PROFILE_NAME } from "@modules/workspace/workspace.service";
 import { ingestProfileDocuments } from "./knowledge.service";
 
 interface KnowledgeDocumentInput {
@@ -119,7 +119,7 @@ export const createBusinessProfile = async (req: Request, res: Response) => {
   });
 
   const profileData = {
-    name: cleanProfileString(name) || "My Business",
+    name: cleanProfileString(name) || SKELETON_PROFILE_NAME,
     voice,
     tone,
     expectedUserIntents,

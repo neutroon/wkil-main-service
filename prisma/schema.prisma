@@ -123,13 +123,13 @@ model User {
   assignedUsers UserManagement[] @relation("AssignerRelations")
 
   // Existing relations
-  facebookAccounts  FacebookAccount[]
-  socialIdentities  SocialIdentity[]
-  analytics         UserAnalytics[]
-  whatsAppAccounts  WhatsAppAccount[]
+  facebookAccounts FacebookAccount[]
+  socialIdentities SocialIdentity[]
+  analytics        UserAnalytics[]
+  whatsAppAccounts WhatsAppAccount[]
 
   // Business profile creation
-  isBusinessProfileCreated Boolean           @default(false)
+  isBusinessProfileCreated Boolean                @default(false)
   setupInboxOpenedAt       DateTime?
   setupAgentConfiguredAt   DateTime?
   businessProfiles         BusinessProfile[]
@@ -143,18 +143,18 @@ model User {
   mediaAssets              BusinessProfileMedia[]
 
   // User-Centric Billing (Production Grade)
-  plan                String    @default("FREE") // "FREE", "PRO", "ENTERPRISE"
-  monthlyTokensUsed   Int       @default(0)     // Aggregated usage across all businesses
-  monthlyCreditsUsed  Int       @default(0)     // New Credit-based tracking
-  monthlyQuota        Int?                      // Individual hard-ceiling override (tokens)
-  monthlyCreditQuota  Int?                      // Individual hard-ceiling override (Credits)
-  autoResetEnabled    Boolean   @default(true)  // Resets usage at start of month
-  
+  plan               String  @default("FREE") // "FREE", "PRO", "ENTERPRISE"
+  monthlyTokensUsed  Int     @default(0) // Aggregated usage across all businesses
+  monthlyCreditsUsed Int     @default(0) // New Credit-based tracking
+  monthlyQuota       Int? // Individual hard-ceiling override (tokens)
+  monthlyCreditQuota Int? // Individual hard-ceiling override (Credits)
+  autoResetEnabled   Boolean @default(true) // Resets usage at start of month
+
   // Refresh Token Rotation (Production Grade)
   refreshTokenHash         String?   @unique
   refreshTokenExpiresAt    DateTime?
   previousRefreshTokenHash String?   @unique
-  rotatedAt               DateTime?
+  rotatedAt                DateTime?
 
   // Mobile push notification device tokens (FCM)
   deviceTokens DeviceToken[]
@@ -163,6 +163,9 @@ model User {
 
   // Workspace tenancy
   workspaces WorkspaceMember[]
+
+  // Workspace invitations sent by this user
+  sentInvitations WorkspaceInvitation[]
 }
 
 /// One row per mobile app install that has registered for push
@@ -170,13 +173,13 @@ model User {
 /// The token is the FCM registration token; `lastSeenAt` is refreshed
 /// every time the device comes online so stale rows can be garbage-collected.
 model DeviceToken {
-  id         Int      @id @default(autoincrement())
+  id         Int            @id @default(autoincrement())
   userId     Int
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  token      String   @unique
+  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token      String         @unique
   platform   DevicePlatform
-  lastSeenAt DateTime @updatedAt
-  createdAt  DateTime @default(now())
+  lastSeenAt DateTime       @updatedAt
+  createdAt  DateTime       @default(now())
 
   @@index([userId])
   @@index([userId, platform])
@@ -213,69 +216,70 @@ model BusinessProfile {
   workspace        Workspace @relation(fields: [workspaceId], references: [id])
   setupCompletedAt DateTime?
 
-  name                String
-  handoffEnabled      Boolean  @default(true)
-  voice               String   @default("Professional")
-  tone                String   @default("Friendly")
-  expectedUserIntents String[]
-  corePolicies        String?
-  customerDetailsInstructions String? @default("Saves useful customer details. Trigger this ONLY when the customer provides contact details, asks for follow-up, wants to proceed, gives preferences, or corrects saved information.")
-  customerMemoryFields Json?
-  aiBehaviorInstructions String?
-  followUpEnabled      Boolean  @default(false)
-  followUpMode         String   @default("AUTO") // "AUTO" = AI decides from chat context, "CUSTOM" = use extra admin guidance
-  followUpDelays       Json?
-  followUpInstructions String?
-  
-  // Brand Kit & Visual DNA
-  brandLogoUrl           String?
-  brandPrimaryColor     String?
-  brandSecondaryColor   String?
-  brandAccentColor      String?
-  visualAesthetic       String?   // The Vibe (e.g., KHALEEJI_LUXURY)
-  artStyle             String?   // The Rendering (e.g., REALISTIC)
-  brandKitCompleted    Boolean   @default(false)
+  name                        String
+  handoffEnabled              Boolean  @default(true)
+  voice                       String   @default("Professional")
+  tone                        String   @default("Friendly")
+  expectedUserIntents         String[]
+  corePolicies                String?
+  customerDetailsInstructions String?  @default("Saves useful customer details. Trigger this ONLY when the customer provides contact details, asks for follow-up, wants to proceed, gives preferences, or corrects saved information.")
+  customerMemoryFields        Json?
+  aiBehaviorInstructions      String?
+  followUpEnabled             Boolean  @default(false)
+  followUpMode                String   @default("AUTO") // "AUTO" = AI decides from chat context, "CUSTOM" = use extra admin guidance
+  followUpDelays              Json?
+  followUpInstructions        String?
 
-  monthlyTokensUsed   Int       @default(0)     // Rolling monthly usage for quota checks
-  monthlyCreditsUsed  Int       @default(0)     // New Credit-based tracking
+  // Brand Kit & Visual DNA
+  brandLogoUrl        String?
+  brandPrimaryColor   String?
+  brandSecondaryColor String?
+  brandAccentColor    String?
+  visualAesthetic     String? // The Vibe (e.g., KHALEEJI_LUXURY)
+  artStyle            String? // The Rendering (e.g., REALISTIC)
+  brandKitCompleted   Boolean @default(false)
+
+  monthlyTokensUsed  Int @default(0) // Rolling monthly usage for quota checks
+  monthlyCreditsUsed Int @default(0) // New Credit-based tracking
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  knowledgeDocuments KnowledgeDocument[]
-  facebookPages   FacebookPage[]
-  whatsAppAccounts WhatsAppAccount[]
-  agentActionSources AgentActionSource[]
-  agentActionWorkflows AgentActionWorkflow[]
-  agentTurns       AgentTurn[]
+  knowledgeDocuments    KnowledgeDocument[]
+  facebookPages         FacebookPage[]
+  whatsAppAccounts      WhatsAppAccount[]
+  agentActionSources    AgentActionSource[]
+  agentActionWorkflows  AgentActionWorkflow[]
+  agentTurns            AgentTurn[]
   integrationActionRuns IntegrationActionRun[]
-  widgetInstalls    WidgetInstall[]
-  conversations     Conversation[]
-  customers         Customer[]
-  aiUsageStats      AiUsageStat[]
-  aiCallLogs        AiCallLog[]
-  billingFailureLogs BillingFailureLog[]
-  contentPlans      ContentPlan[]
-  contentAudits     ContentAudit[]
-  contentBriefs     ContentBrief[]
-  competitorSources CompetitorSource[]
-  mediaAssets       BusinessProfileMedia[]
-  orderIntegrations  OrderIntegration[]
-  orderEvents        OrderEvent[]
-  orders             Order[]
-  orderNotifications OrderNotification[]
-  orderActionTokens  OrderActionToken[]
-  orderStoreSyncs    OrderStoreSync[]
-  orderTemplateConfigs OrderTemplateConfig[]
-  whatsAppSuppressions WhatsAppSuppression[]
+  widgetInstalls        WidgetInstall[]
+  conversations         Conversation[]
+  customers             Customer[]
+  aiUsageStats          AiUsageStat[]
+  aiCallLogs            AiCallLog[]
+  billingFailureLogs    BillingFailureLog[]
+  contentPlans          ContentPlan[]
+  contentAudits         ContentAudit[]
+  contentBriefs         ContentBrief[]
+  competitorSources     CompetitorSource[]
+  mediaAssets           BusinessProfileMedia[]
+  orderIntegrations     OrderIntegration[]
+  orderEvents           OrderEvent[]
+  orders                Order[]
+  orderNotifications    OrderNotification[]
+  orderActionTokens     OrderActionToken[]
+  orderStoreSyncs       OrderStoreSync[]
+  orderTemplateConfigs  OrderTemplateConfig[]
+  whatsAppSuppressions  WhatsAppSuppression[]
 }
 
 model Workspace {
-  id        Int               @id @default(autoincrement())
-  name      String
-  createdAt DateTime          @default(now())
-  profile   BusinessProfile?
-  members   WorkspaceMember[]
+  id          Int                   @id @default(autoincrement())
+  name        String
+  createdAt   DateTime              @default(now())
+  profile     BusinessProfile?
+  members     WorkspaceMember[]
+  invitations WorkspaceInvitation[]
 }
 
 model WorkspaceMember {
@@ -284,6 +288,8 @@ model WorkspaceMember {
   userId      Int
   role        String    @default("owner") // "owner", "admin", "member"
   isActive    Boolean   @default(true)
+  invitedBy   Int?
+  invitedAt   DateTime?
   createdAt   DateTime  @default(now())
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -291,6 +297,23 @@ model WorkspaceMember {
 
   @@unique([workspaceId, userId])
   @@index([userId])
+}
+
+model WorkspaceInvitation {
+  id          Int      @id @default(autoincrement())
+  workspaceId Int
+  email       String
+  role        String   @default("member")
+  token       String   @unique
+  invitedBy   Int
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  inviter   User      @relation(fields: [invitedBy], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([workspaceId, email])
 }
 
 /// Embeddable web chat widget: publicSiteKey is sent from the browser; allowedOrigins is a JSON array of exact Origin strings (e.g. ["https://shop.example.com"]).
@@ -316,30 +339,30 @@ model AgentActionSource {
   id                Int             @id @default(autoincrement())
   businessProfileId Int
   businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
-  
-  name              String          // e.g., "Product Catalog", "Room Availability"
-  description       String          // e.g., "Search for available tech products" - Used by Gemini to know when to use the tool
-  apiUrl            String          // The GET endpoint, e.g., "https://api.store.com/products"
-  method            String          @default("GET")
-  headers           Json?           // Optional API keys or Bearer tokens
-  trigger           AgentActionTrigger @default(CHAT_REQUESTED) // V2: chat-requested workflows only
-  actionType        AgentActionType    @default(LOOKUP) // LOOKUP | MUTATION
-  executionMode     String          @default("BACKGROUND") // External actions always run through BullMQ
-  failureBehavior   String          @default("AUTO") // AUTO = AI classifier, HANDOFF_ON_FAILURE, ANSWER_WITH_CONTEXT_ON_FAILURE, SILENT_ON_FAILURE
-  confirmationPolicy String         @default("REQUIRE_VERIFIED_RESULT") // REQUIRE_VERIFIED_RESULT | ACCEPT_HTTP_SUCCESS
-  requestMapping    Json?
-  responseMapping   Json?
-  
-  // Defines the schema the AI is allowed to pass to the API (e.g. { category: "string", limit: "integer" })
-  expectedParamsSchema Json?        
 
-  isActive          Boolean         @default(true)
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
+  name               String // e.g., "Product Catalog", "Room Availability"
+  description        String // e.g., "Search for available tech products" - Used by Gemini to know when to use the tool
+  apiUrl             String // The GET endpoint, e.g., "https://api.store.com/products"
+  method             String             @default("GET")
+  headers            Json? // Optional API keys or Bearer tokens
+  trigger            AgentActionTrigger @default(CHAT_REQUESTED) // V2: chat-requested workflows only
+  actionType         AgentActionType    @default(LOOKUP) // LOOKUP | MUTATION
+  executionMode      String             @default("BACKGROUND") // External actions always run through BullMQ
+  failureBehavior    String             @default("AUTO") // AUTO = AI classifier, HANDOFF_ON_FAILURE, ANSWER_WITH_CONTEXT_ON_FAILURE, SILENT_ON_FAILURE
+  confirmationPolicy String             @default("REQUIRE_VERIFIED_RESULT") // REQUIRE_VERIFIED_RESULT | ACCEPT_HTTP_SUCCESS
+  requestMapping     Json?
+  responseMapping    Json?
+
+  // Defines the schema the AI is allowed to pass to the API (e.g. { category: "string", limit: "integer" })
+  expectedParamsSchema Json?
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   runs              IntegrationActionRun[]
-  lookupWorkflows   AgentActionWorkflow[] @relation("WorkflowLookupSource")
-  mutationWorkflows AgentActionWorkflow[] @relation("WorkflowMutationSource")
+  lookupWorkflows   AgentActionWorkflow[]  @relation("WorkflowLookupSource")
+  mutationWorkflows AgentActionWorkflow[]  @relation("WorkflowMutationSource")
 
   @@index([businessProfileId])
   @@index([businessProfileId, trigger, isActive])
@@ -350,19 +373,19 @@ model AgentActionWorkflow {
   businessProfileId Int
   businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
 
-  name              String
-  description       String?
-  lookupSourceId    Int?
-  lookupSource      AgentActionSource? @relation("WorkflowLookupSource", fields: [lookupSourceId], references: [id], onDelete: SetNull)
-  mutationSourceId  Int?
-  mutationSource    AgentActionSource? @relation("WorkflowMutationSource", fields: [mutationSourceId], references: [id], onDelete: SetNull)
-  inputBindings     Json?
-  isActive          Boolean         @default(true)
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
+  name             String
+  description      String?
+  lookupSourceId   Int?
+  lookupSource     AgentActionSource? @relation("WorkflowLookupSource", fields: [lookupSourceId], references: [id], onDelete: SetNull)
+  mutationSourceId Int?
+  mutationSource   AgentActionSource? @relation("WorkflowMutationSource", fields: [mutationSourceId], references: [id], onDelete: SetNull)
+  inputBindings    Json?
+  isActive         Boolean            @default(true)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
 
-  turns             AgentTurn[]
-  runs              IntegrationActionRun[]
+  turns AgentTurn[]
+  runs  IntegrationActionRun[]
 
   @@index([businessProfileId, isActive])
   @@index([lookupSourceId])
@@ -383,27 +406,27 @@ model KnowledgeDocument {
 }
 
 model Customer {
-  id                 Int             @id @default(autoincrement())
-  businessProfileId  Int
-  businessProfile    BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+  id                Int             @id @default(autoincrement())
+  businessProfileId Int
+  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
 
-  displayName        String
-  phone              String?
-  normalizedPhone    String?
-  email              String?
-  normalizedEmail    String?
-  avatarUrl          String?
-  primaryChannel     String?
-  externalIds        Json?
-  capturedFields     Json?
-  metadata           Json?
-  status             String          @default("ACTIVE") // ACTIVE | NEEDS_FOLLOW_UP | RESOLVED | ARCHIVED
-  resolvedAt         DateTime?
-  resolvedByUserId   Int?
-  notes              String?         @db.Text
-  lastInteractionAt  DateTime        @default(now())
-  createdAt          DateTime        @default(now())
-  updatedAt          DateTime        @updatedAt
+  displayName       String
+  phone             String?
+  normalizedPhone   String?
+  email             String?
+  normalizedEmail   String?
+  avatarUrl         String?
+  primaryChannel    String?
+  externalIds       Json?
+  capturedFields    Json?
+  metadata          Json?
+  status            String    @default("ACTIVE") // ACTIVE | NEEDS_FOLLOW_UP | RESOLVED | ARCHIVED
+  resolvedAt        DateTime?
+  resolvedByUserId  Int?
+  notes             String?   @db.Text
+  lastInteractionAt DateTime  @default(now())
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   conversations      Conversation[]
   externalIdentities CustomerExternalIdentity[]
@@ -430,39 +453,39 @@ model CustomerExternalIdentity {
 }
 
 model Conversation {
-  id                Int      @id @default(autoincrement())
+  id                Int             @id @default(autoincrement())
   pageId            String
-  senderId          String   // Facebook PSID or WhatsApp phone (raw)
+  senderId          String // Facebook PSID or WhatsApp phone (raw)
   businessProfileId Int
   businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
-  customerId         Int?
-  customer           Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customerId        Int?
+  customer          Customer?       @relation(fields: [customerId], references: [id], onDelete: SetNull)
   /// "whatsapp" | "messenger" | "web" | "facebook_comment" — null means legacy/untagged
   channel           String?
   /// Human-readable customer phone for WhatsApp conversations
   customerPhone     String?
   customerName      String?
   customerAvatar    String?
-  status            String   @default("OPEN") // "OPEN", "RESOLVED", "SNOOZED"
-  aiEnabled         Boolean  @default(true)   // Toggle automation for this specific thread
-  
+  status            String          @default("OPEN") // "OPEN", "RESOLVED", "SNOOZED"
+  aiEnabled         Boolean         @default(true) // Toggle automation for this specific thread
+
   // Facebook Comments / Thread Continuity
-  externalId        String?  @unique // Facebook comment_id or similar
-  postId            String?  // The source post ID (for context header)
-  postUrl           String?  // Clickable link to original FB post
-  sourceCommentText String?  // The raw triggering comment text (for agent context)
-  processingStatus  String   @default("COMPLETED") // "PENDING", "COMPLETED", "FAILED"
+  externalId           String?        @unique // Facebook comment_id or similar
+  postId               String? // The source post ID (for context header)
+  postUrl              String? // Clickable link to original FB post
+  sourceCommentText    String? // The raw triggering comment text (for agent context)
+  processingStatus     String         @default("COMPLETED") // "PENDING", "COMPLETED", "FAILED"
   parentConversationId Int?
-  parentConversation   Conversation? @relation("ThreadContinuity", fields: [parentConversationId], references: [id])
+  parentConversation   Conversation?  @relation("ThreadContinuity", fields: [parentConversationId], references: [id])
   childConversations   Conversation[] @relation("ThreadContinuity")
 
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-  readAt            DateTime? // When the business team last read this conversation
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  readAt    DateTime? // When the business team last read this conversation
 
-  messages ConversationMessage[]
+  messages              ConversationMessage[]
   integrationActionRuns IntegrationActionRun[]
-  agentTurns AgentTurn[]
+  agentTurns            AgentTurn[]
 
   @@index([pageId, senderId])
   @@index([pageId, senderId, updatedAt])
@@ -473,24 +496,24 @@ model Conversation {
 }
 
 model AgentTurn {
-  id                Int                 @id @default(autoincrement())
+  id                Int                   @id @default(autoincrement())
   businessProfileId Int
-  businessProfile   BusinessProfile     @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+  businessProfile   BusinessProfile       @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
   conversationId    Int
-  conversation      Conversation        @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversation      Conversation          @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   inputMessageId    Int?
   channel           String
   mode              AgentTurnMode
-  status            AgentTurnStatus     @default(RUNNING)
-  customerText      String              @db.Text
+  status            AgentTurnStatus       @default(RUNNING)
+  customerText      String                @db.Text
   parentActionRunId Int?
   parentActionRun   IntegrationActionRun? @relation("ParentActionRunTurns", fields: [parentActionRunId], references: [id], onDelete: SetNull)
   activeWorkflowId  Int?
-  activeWorkflow    AgentActionWorkflow? @relation(fields: [activeWorkflowId], references: [id], onDelete: SetNull)
-  createdAt         DateTime            @default(now())
-  updatedAt         DateTime            @updatedAt
+  activeWorkflow    AgentActionWorkflow?  @relation(fields: [activeWorkflowId], references: [id], onDelete: SetNull)
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
 
-  actionRuns        IntegrationActionRun[] @relation("AgentTurnActionRuns")
+  actionRuns IntegrationActionRun[] @relation("AgentTurnActionRuns")
 
   @@index([businessProfileId, status, createdAt])
   @@index([conversationId, createdAt])
@@ -499,21 +522,21 @@ model AgentTurn {
 }
 
 model IntegrationActionRun {
-  id                Int                 @id @default(autoincrement())
+  id                Int                        @id @default(autoincrement())
   businessProfileId Int
-  businessProfile   BusinessProfile     @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+  businessProfile   BusinessProfile            @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
   sourceId          Int
-  source            AgentActionSource   @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  source            AgentActionSource          @relation(fields: [sourceId], references: [id], onDelete: Cascade)
   conversationId    Int?
-  conversation      Conversation?       @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  conversation      Conversation?              @relation(fields: [conversationId], references: [id], onDelete: SetNull)
   customerId        Int?
   agentTurnId       Int?
-  agentTurn         AgentTurn?          @relation("AgentTurnActionRuns", fields: [agentTurnId], references: [id], onDelete: SetNull)
+  agentTurn         AgentTurn?                 @relation("AgentTurnActionRuns", fields: [agentTurnId], references: [id], onDelete: SetNull)
   parentRunId       Int?
-  parentRun         IntegrationActionRun? @relation("IntegrationActionRunParent", fields: [parentRunId], references: [id], onDelete: SetNull)
-  childRuns         IntegrationActionRun[] @relation("IntegrationActionRunParent")
+  parentRun         IntegrationActionRun?      @relation("IntegrationActionRunParent", fields: [parentRunId], references: [id], onDelete: SetNull)
+  childRuns         IntegrationActionRun[]     @relation("IntegrationActionRunParent")
   workflowId        Int?
-  workflow          AgentActionWorkflow? @relation(fields: [workflowId], references: [id], onDelete: SetNull)
+  workflow          AgentActionWorkflow?       @relation(fields: [workflowId], references: [id], onDelete: SetNull)
   stepKey           String?
   trigger           AgentActionTrigger
   actionType        AgentActionType?
@@ -525,13 +548,13 @@ model IntegrationActionRun {
   verification      String?
   failureReason     String?
   resultMessageId   Int?
-  queuedAt          DateTime            @default(now())
+  queuedAt          DateTime                   @default(now())
   startedAt         DateTime?
   completedAt       DateTime?
   failedAt          DateTime?
-  createdAt         DateTime            @default(now())
-  updatedAt         DateTime            @updatedAt
-  parentTurns       AgentTurn[]         @relation("ParentActionRunTurns")
+  createdAt         DateTime                   @default(now())
+  updatedAt         DateTime                   @updatedAt
+  parentTurns       AgentTurn[]                @relation("ParentActionRunTurns")
 
   @@index([businessProfileId, status, createdAt])
   @@index([conversationId, createdAt])
@@ -544,22 +567,22 @@ model IntegrationActionRun {
 }
 
 model ConversationMessage {
-  id             Int          @id @default(autoincrement())
-  conversationId Int
-  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  role           String // "user" | "model" | "agent"
-  content        String
-  type           String       @default("text") // "text", "image", "video", "audio", "voice", "document", "sticker"
-  mediaId        String?      // Meta media_id
-  mediaMetadata  Json?        // Stores duration, filename, mimeType, size etc.
-  externalId     String?      @unique // Meta message ID (wamid or mid) for status tracking
-  status         ConversationMessageStatus @default(SENT)
-  aiReasoning    String?      // Storing the AI's thought process for routing
-  handoffCategory String?     // e.g. "SALES", "SUPPORT", "ANGRY_CUSTOMER"
-  intent          String?     // AI-detected intent (e.g. "SALES_DM", "GREET_ONLY")
-  isPrivate       Boolean     @default(false)
-  origin          String?     // Context tag for converged history (e.g. "facebook_comment_reply")
-  createdAt       DateTime    @default(now())
+  id              Int                       @id @default(autoincrement())
+  conversationId  Int
+  conversation    Conversation              @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role            String // "user" | "model" | "agent"
+  content         String
+  type            String                    @default("text") // "text", "image", "video", "audio", "voice", "document", "sticker"
+  mediaId         String? // Meta media_id
+  mediaMetadata   Json? // Stores duration, filename, mimeType, size etc.
+  externalId      String?                   @unique // Meta message ID (wamid or mid) for status tracking
+  status          ConversationMessageStatus @default(SENT)
+  aiReasoning     String? // Storing the AI's thought process for routing
+  handoffCategory String? // e.g. "SALES", "SUPPORT", "ANGRY_CUSTOMER"
+  intent          String? // AI-detected intent (e.g. "SALES_DM", "GREET_ONLY")
+  isPrivate       Boolean                   @default(false)
+  origin          String? // Context tag for converged history (e.g. "facebook_comment_reply")
+  createdAt       DateTime                  @default(now())
 
   orderNotifications OrderNotification[]
 
@@ -572,23 +595,23 @@ model ConversationMessage {
 
 /// WhatsApp Business phone number linked to a user
 model WhatsAppAccount {
-  id                  Int             @id @default(autoincrement())
-  userId              Int
-  user                User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  phoneNumberId       String          // Meta's permanent phone-number ID
-  displayPhoneNumber  String          // Human-readable, e.g. "+1 555 000 1234"
-  wabaId              String          // WhatsApp Business Account ID
-  accessToken         String          // Encrypted system-user or page access token
-  businessProfileId   Int?
-  businessProfile     BusinessProfile? @relation(fields: [businessProfileId], references: [id], onDelete: SetNull)
-  isActive            Boolean         @default(true)
+  id                 Int              @id @default(autoincrement())
+  userId             Int
+  user               User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  phoneNumberId      String // Meta's permanent phone-number ID
+  displayPhoneNumber String // Human-readable, e.g. "+1 555 000 1234"
+  wabaId             String // WhatsApp Business Account ID
+  accessToken        String // Encrypted system-user or page access token
+  businessProfileId  Int?
+  businessProfile    BusinessProfile? @relation(fields: [businessProfileId], references: [id], onDelete: SetNull)
+  isActive           Boolean          @default(true)
   /// How the number was onboarded: "COEXISTENCE" = stays on WBA app simultaneously;
   /// "BUSINESS_API" = full migration away from the WhatsApp Business App.
-  connectionMode      String          @default("BUSINESS_API") // "BUSINESS_API" | "COEXISTENCE"
-  isTokenValid        Boolean         @default(true)  // Result of the last /debug_token check
-  lastValidatedAt     DateTime?       // When the token was last checked for health
-  createdAt           DateTime        @default(now())
-  updatedAt           DateTime        @updatedAt
+  connectionMode     String           @default("BUSINESS_API") // "BUSINESS_API" | "COEXISTENCE"
+  isTokenValid       Boolean          @default(true) // Result of the last /debug_token check
+  lastValidatedAt    DateTime? // When the token was last checked for health
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
 
   orderIntegrations    OrderIntegration[]
   orderTemplateConfigs OrderTemplateConfig[]
@@ -618,8 +641,8 @@ model OrderIntegration {
   createdAt                    DateTime         @default(now())
   updatedAt                    DateTime         @updatedAt
 
-  events                       OrderEvent[]
-  orders                       Order[]
+  events OrderEvent[]
+  orders Order[]
 
   @@index([businessProfileId, isActive])
   @@index([whatsappAccountId])
@@ -677,10 +700,10 @@ model Order {
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
 
-  events            OrderEvent[]
-  notifications     OrderNotification[]
-  actionTokens      OrderActionToken[]
-  storeSyncs        OrderStoreSync[]
+  events        OrderEvent[]
+  notifications OrderNotification[]
+  actionTokens  OrderActionToken[]
+  storeSyncs    OrderStoreSync[]
 
   @@unique([integrationId, externalOrderId])
   @@index([businessProfileId, status, updatedAt])
@@ -834,24 +857,24 @@ model Lead {
 }
 
 model FacebookAccount {
-  id             Int       @id @default(autoincrement())
-  userId         Int
-  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  facebookUserId String    @unique
-  name           String?
-  pictureUrl     String?
-  accessToken    String
-  tokenType      String    @default("bearer")
-  expiresAt      DateTime?
-  refreshToken   String?
-  scope          String?
-  isActive       Boolean   @default(true)
-  isTokenValid   Boolean   @default(true)
+  id              Int       @id @default(autoincrement())
+  userId          Int
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  facebookUserId  String    @unique
+  name            String?
+  pictureUrl      String?
+  accessToken     String
+  tokenType       String    @default("bearer")
+  expiresAt       DateTime?
+  refreshToken    String?
+  scope           String?
+  isActive        Boolean   @default(true)
+  isTokenValid    Boolean   @default(true)
   lastValidatedAt DateTime?
-  lastUsedAt     DateTime?
-  deviceInfo     String? // Store device/browser info for device management
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  lastUsedAt      DateTime?
+  deviceInfo      String? // Store device/browser info for device management
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   // Relations
   pages      FacebookPage[]
@@ -866,25 +889,25 @@ model FacebookPage {
   facebookAccountId Int
   facebookAccount   FacebookAccount @relation(fields: [facebookAccountId], references: [id], onDelete: Cascade)
 
-  pageId          String
-  pageName        String
-  pageAccessToken String
-  category        String?
-  pictureUrl      String?
-  followersCount  Int       @default(0)
-  isActive        Boolean   @default(true)
-  isTokenValid    Boolean   @default(true)
-  webhookStatus   String    @default("PENDING") // PENDING | SUBSCRIBED | FAILED
+  pageId           String
+  pageName         String
+  pageAccessToken  String
+  category         String?
+  pictureUrl       String?
+  followersCount   Int       @default(0)
+  isActive         Boolean   @default(true)
+  isTokenValid     Boolean   @default(true)
+  webhookStatus    String    @default("PENDING") // PENDING | SUBSCRIBED | FAILED
   webhookCheckedAt DateTime?
-  lastValidatedAt DateTime?
-  lastUsedAt      DateTime?
+  lastValidatedAt  DateTime?
+  lastUsedAt       DateTime?
 
   // Per-Page comment automation overrides
-  commentAutoDmEnabled  Boolean  @default(false)  // Automatic private DM to commenters
-  commentPublicGreeting String   @default("Thanks {{name}}! I've sent the details to your inbox.")
+  commentAutoDmEnabled  Boolean @default(false) // Automatic private DM to commenters
+  commentPublicGreeting String  @default("Thanks {{name}}! I've sent the details to your inbox.")
 
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Relations
   activities        FacebookActivity[]
@@ -932,28 +955,28 @@ model UserAnalytics {
 }
 
 model AiUsageStat {
-  id                Int             @id @default(autoincrement())
+  id                Int              @id @default(autoincrement())
   userId            Int
-  user              User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  businessProfileId Int             @default(0)
+  user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  businessProfileId Int              @default(0)
   businessProfile   BusinessProfile? @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
-  date              DateTime        @db.Date
-  modelName         String          @default("gemini-2.0-flash")
-  
-  promptTokens      Int             @default(0)
-  completionTokens  Int             @default(0)
-  totalTokens       Int             @default(0)
-  apiCalls          Int             @default(0)
-  
-  // Production-grade additions
-  groundingCalls    Int             @default(0) 
-  embeddingTokens   Int             @default(0)
-  systemCost        Float           @default(0) // Locked-in cost at time of usage (your cost)
-  customerCost      Float           @default(0) // What you charged the workspace
-  multiplier        Float           @default(1.0) // Snapshot of the multiplier at record time
+  date              DateTime         @db.Date
+  modelName         String           @default("gemini-2.0-flash")
 
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
+  promptTokens     Int @default(0)
+  completionTokens Int @default(0)
+  totalTokens      Int @default(0)
+  apiCalls         Int @default(0)
+
+  // Production-grade additions
+  groundingCalls  Int   @default(0)
+  embeddingTokens Int   @default(0)
+  systemCost      Float @default(0) // Locked-in cost at time of usage (your cost)
+  customerCost    Float @default(0) // What you charged the workspace
+  multiplier      Float @default(1.0) // Snapshot of the multiplier at record time
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([userId, businessProfileId, date, modelName])
   @@index([userId])
@@ -962,26 +985,26 @@ model AiUsageStat {
 }
 
 model AiCallLog {
-  id                String   @id @default(cuid())
+  id                String           @id @default(cuid())
   userId            Int
-  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  businessProfileId Int      @default(0)
+  user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  businessProfileId Int              @default(0)
   businessProfile   BusinessProfile? @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
-  
-  conversationId    String?
-  modelName         String
-  operation         String   // "messenger_reply", "whatsapp_reply", "rag_embedding", "crm_enrichment"
-  
-  promptTokens      Int      @default(0)
-  completionTokens  Int      @default(0)
-  embeddingTokens   Int      @default(0)
-  groundingCalls    Int      @default(0)
-  
-  systemCost        Float    @default(0)
-  customerCost      Float    @default(0)
-  multiplier        Float    @default(0)
-  
-  createdAt         DateTime @default(now())
+
+  conversationId String?
+  modelName      String
+  operation      String // "messenger_reply", "whatsapp_reply", "rag_embedding", "crm_enrichment"
+
+  promptTokens     Int @default(0)
+  completionTokens Int @default(0)
+  embeddingTokens  Int @default(0)
+  groundingCalls   Int @default(0)
+
+  systemCost   Float @default(0)
+  customerCost Float @default(0)
+  multiplier   Float @default(0)
+
+  createdAt DateTime @default(now())
 
   @@index([userId, createdAt])
   @@index([businessProfileId, createdAt])
@@ -989,22 +1012,22 @@ model AiCallLog {
 }
 
 model BillingFailureLog {
-  id                Int      @id @default(autoincrement())
+  id                Int              @id @default(autoincrement())
   userId            Int
-  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  businessProfileId Int      @default(0)
+  user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  businessProfileId Int              @default(0)
   businessProfile   BusinessProfile? @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
-  
-  modelName         String?
-  promptTokens      Int?
-  completionTokens  Int?
-  embeddingTokens   Int?
-  groundingCalls    Int?
-  
-  error             String
-  operation         String?
-  
-  createdAt         DateTime @default(now())
+
+  modelName        String?
+  promptTokens     Int?
+  completionTokens Int?
+  embeddingTokens  Int?
+  groundingCalls   Int?
+
+  error     String
+  operation String?
+
+  createdAt DateTime @default(now())
 
   @@index([userId])
   @@index([businessProfileId])
@@ -1076,29 +1099,29 @@ model AiPipeline {
 }
 
 model ContentAudit {
-  id                         Int      @id @default(autoincrement())
-  businessProfileId          Int
-  businessProfile            BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
-  userId                     Int
-  user                       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  status                     String   @default("running") // running, completed, failed
-  signalWindowDays           Int      @default(90)
-  competitorDiscoveryScope   String   @default("PROVIDED_ONLY") // PROVIDED_ONLY, PROVIDED_AND_AI_SEARCH, AI_DISCOVERY
-  competitorAnalysisModes    String[]
-  campaignGoal               String?
-  startDate                  DateTime?
-  endDate                    DateTime?
-  findings                   Json?
-  gapQuestions               Json?
-  draftBrief                 Json?
-  evidenceRefs               Json?
-  confidenceScore            Float?
-  errorMessage               String?  @db.Text
-  createdAt                  DateTime @default(now())
-  updatedAt                  DateTime @updatedAt
+  id                       Int             @id @default(autoincrement())
+  businessProfileId        Int
+  businessProfile          BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+  userId                   Int
+  user                     User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status                   String          @default("running") // running, completed, failed
+  signalWindowDays         Int             @default(90)
+  competitorDiscoveryScope String          @default("PROVIDED_ONLY") // PROVIDED_ONLY, PROVIDED_AND_AI_SEARCH, AI_DISCOVERY
+  competitorAnalysisModes  String[]
+  campaignGoal             String?
+  startDate                DateTime?
+  endDate                  DateTime?
+  findings                 Json?
+  gapQuestions             Json?
+  draftBrief               Json?
+  evidenceRefs             Json?
+  confidenceScore          Float?
+  errorMessage             String?         @db.Text
+  createdAt                DateTime        @default(now())
+  updatedAt                DateTime        @updatedAt
 
-  competitorSources          CompetitorSource[]
-  contentBriefs              ContentBrief[]
+  competitorSources CompetitorSource[]
+  contentBriefs     ContentBrief[]
 
   @@index([businessProfileId, createdAt])
   @@index([userId, createdAt])
@@ -1106,31 +1129,31 @@ model ContentAudit {
 }
 
 model ContentBrief {
-  id                Int      @id @default(autoincrement())
-  businessProfileId Int
-  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
-  userId            Int
-  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  sourceAuditId     Int?
-  sourceAudit       ContentAudit? @relation(fields: [sourceAuditId], references: [id], onDelete: SetNull)
-  status            String   @default("confirmed") // draft, confirmed, archived
-  goal              String?
-  audienceSegments  Json?
-  painPoints        Json?
-  objections        Json?
-  buyingTriggers    Json?
-  offers            Json?
-  proofPoints       Json?
-  cta               String?
-  funnelFocus       String?
-  tonePreferences   String?
-  forbiddenTopics   Json?
+  id                 Int             @id @default(autoincrement())
+  businessProfileId  Int
+  businessProfile    BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+  userId             Int
+  user               User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sourceAuditId      Int?
+  sourceAudit        ContentAudit?   @relation(fields: [sourceAuditId], references: [id], onDelete: SetNull)
+  status             String          @default("confirmed") // draft, confirmed, archived
+  goal               String?
+  audienceSegments   Json?
+  painPoints         Json?
+  objections         Json?
+  buyingTriggers     Json?
+  offers             Json?
+  proofPoints        Json?
+  cta                String?
+  funnelFocus        String?
+  tonePreferences    String?
+  forbiddenTopics    Json?
   competitorInsights Json?
-  ownerAnswers      Json?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  ownerAnswers       Json?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
 
-  contentPlans      ContentPlan[]
+  contentPlans ContentPlan[]
 
   @@index([businessProfileId, createdAt])
   @@index([userId, createdAt])
@@ -1138,21 +1161,21 @@ model ContentBrief {
 }
 
 model CompetitorSource {
-  id                Int      @id @default(autoincrement())
+  id                Int             @id @default(autoincrement())
   businessProfileId Int
   businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
   contentAuditId    Int?
-  contentAudit      ContentAudit? @relation(fields: [contentAuditId], references: [id], onDelete: Cascade)
+  contentAudit      ContentAudit?   @relation(fields: [contentAuditId], references: [id], onDelete: Cascade)
   name              String?
   url               String?
-  sourceType        String   @default("website") // website, social_sample, public_social, search
+  sourceType        String          @default("website") // website, social_sample, public_social, search
   mode              String
-  status            String   @default("pending") // pending, completed, failed, skipped
+  status            String          @default("pending") // pending, completed, failed, skipped
   summary           Json?
   evidenceRefs      Json?
-  errorMessage      String?  @db.Text
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  errorMessage      String?         @db.Text
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
 
   @@index([businessProfileId, createdAt])
   @@index([contentAuditId])
@@ -1160,94 +1183,94 @@ model CompetitorSource {
 }
 
 model ContentPlan {
-  id                Int      @id @default(autoincrement())
+  id                Int               @id @default(autoincrement())
   businessProfileId Int
-  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+  businessProfile   BusinessProfile   @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
   userId            Int
-  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user              User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   contentBriefId    Int?
-  contentBrief      ContentBrief? @relation(fields: [contentBriefId], references: [id], onDelete: SetNull)
+  contentBrief      ContentBrief?     @relation(fields: [contentBriefId], references: [id], onDelete: SetNull)
   startDate         DateTime
   endDate           DateTime
-  goals             String?  // JSON or string (e.g., "Awareness, Lead Gen")
-  currentTrends     String?  // Custom context for this specific month/campaign
+  goals             String? // JSON or string (e.g., "Awareness, Lead Gen")
+  currentTrends     String? // Custom context for this specific month/campaign
   briefSnapshot     Json?
-  status            String   @default("draft") // draft, approved, active, completed
-  isGrounded        Boolean  @default(false)
-  researchSummary   String?  @db.Text
+  status            String            @default("draft") // draft, approved, active, completed
+  isGrounded        Boolean           @default(false)
+  researchSummary   String?           @db.Text
   posts             ContentPlanPost[]
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
 }
 
 model ContentPlanPost {
-  id                Int      @id @default(autoincrement())
-  contentPlanId     Int
-  contentPlan       ContentPlan @relation(fields: [contentPlanId], references: [id], onDelete: Cascade)
-  scheduledAt       DateTime
-  platform          String   // "facebook", "instagram", "linkedin"
-  pillar            String   // The content pillar (e.g. "Behind the scenes")
-  topic             String
-  format            String   // "image_post", "carousel", "reel", "story"
-  funnelStage       String?
-  contentGoal       String?
-  targetPainPoint   String?
-  objectionHandled  String?
-  cta               String?
-  rationale         String?  @db.Text
-  evidenceRefs      Json?
-  caption           String?  @db.Text
-  imagePrompt       String?  @db.Text
-  imageUrl          String?
-  mediaAssetId      Int?
-  mediaAsset        BusinessProfileMedia? @relation(fields: [mediaAssetId], references: [id], onDelete: SetNull)
-  reelScript        String?  @db.Text // Script for reels/video
-  carouselSlides    Json?    // Array of { slideText, slideImagePrompt } for carousels
-  status            String   @default("pending") // pending, generated, approved, approved_manual, scheduled, posted
-  postedAt          DateTime?
-  facebookPostId    String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  id               Int                   @id @default(autoincrement())
+  contentPlanId    Int
+  contentPlan      ContentPlan           @relation(fields: [contentPlanId], references: [id], onDelete: Cascade)
+  scheduledAt      DateTime
+  platform         String // "facebook", "instagram", "linkedin"
+  pillar           String // The content pillar (e.g. "Behind the scenes")
+  topic            String
+  format           String // "image_post", "carousel", "reel", "story"
+  funnelStage      String?
+  contentGoal      String?
+  targetPainPoint  String?
+  objectionHandled String?
+  cta              String?
+  rationale        String?               @db.Text
+  evidenceRefs     Json?
+  caption          String?               @db.Text
+  imagePrompt      String?               @db.Text
+  imageUrl         String?
+  mediaAssetId     Int?
+  mediaAsset       BusinessProfileMedia? @relation(fields: [mediaAssetId], references: [id], onDelete: SetNull)
+  reelScript       String?               @db.Text // Script for reels/video
+  carouselSlides   Json? // Array of { slideText, slideImagePrompt } for carousels
+  status           String                @default("pending") // pending, generated, approved, approved_manual, scheduled, posted
+  postedAt         DateTime?
+  facebookPostId   String?
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
 }
 
 /// AI-sendable media assets uploaded by users, stored on Cloudflare R2
 model BusinessProfileMedia {
-  id                    Int             @id @default(autoincrement())
-  businessProfileId     Int
-  businessProfile       BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
-  userId                Int
-  user                  User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                Int             @id @default(autoincrement())
+  businessProfileId Int
+  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+  userId            Int
+  user              User            @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   // Human-facing & AI metadata
-  name                  String          // e.g. "2025 Product Catalog"
-  instructions          String          @db.Text // e.g. "Send when customer asks for pricing"
-  mediaType             String          // "image" | "document" | "video"
-  usageScope            String          @default("CHAT_ATTACHMENT") // CHAT_ATTACHMENT | CONTENT_ASSET
-  mimeType              String          // e.g. "application/pdf", "image/jpeg"
-  fileSizeBytes         Int
+  name          String // e.g. "2025 Product Catalog"
+  instructions  String @db.Text // e.g. "Send when customer asks for pricing"
+  mediaType     String // "image" | "document" | "video"
+  usageScope    String @default("CHAT_ATTACHMENT") // CHAT_ATTACHMENT | CONTENT_ASSET
+  mimeType      String // e.g. "application/pdf", "image/jpeg"
+  fileSizeBytes Int
 
   // Storage: Cloudflare R2
-  r2Key                 String          // e.g. "media/bp_42/uuid_filename.pdf"
-  publicUrl             String          // Public URL for Web Widget delivery
+  r2Key     String // e.g. "media/bp_42/uuid_filename.pdf"
+  publicUrl String // Public URL for Web Widget delivery
 
   // Storage: Meta Platform IDs (populated by background job)
-  whatsappMediaId       String?
-  whatsappMediaExpiresAt DateTime?       // WhatsApp IDs expire after ~30 days
-  messengerAttachmentId String?         // Reusable — does not expire
+  whatsappMediaId        String?
+  whatsappMediaExpiresAt DateTime? // WhatsApp IDs expire after ~30 days
+  messengerAttachmentId  String? // Reusable — does not expire
 
   // Sync status per platform (Legacy — migrated to BusinessProfileMediaSync)
-  whatsappSyncStatus    String          @default("PENDING") // PENDING | SYNCED | FAILED | EXPIRED
-  messengerSyncStatus   String          @default("PENDING")
+  whatsappSyncStatus  String @default("PENDING") // PENDING | SYNCED | FAILED | EXPIRED
+  messengerSyncStatus String @default("PENDING")
 
   // Lifecycle (soft-delete — never hard-delete to preserve historical messages)
-  isActive              Boolean         @default(true)
-  deletedAt             DateTime?
+  isActive  Boolean   @default(true)
+  deletedAt DateTime?
 
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  syncs                 BusinessProfileMediaSync[]
-  contentPlanPosts      ContentPlanPost[]
+  syncs            BusinessProfileMediaSync[]
+  contentPlanPosts ContentPlanPost[]
 
   @@index([businessProfileId])
   @@index([userId])
@@ -1258,20 +1281,20 @@ model BusinessProfileMedia {
 
 /// Stores specific media IDs per platform identity (PageID or PhoneID)
 model BusinessProfileMediaSync {
-  id                    Int                  @id @default(autoincrement())
-  mediaId               Int
-  media                 BusinessProfileMedia @relation(fields: [mediaId], references: [id], onDelete: Cascade)
-  
-  platform              String               // "messenger" | "whatsapp"
-  identifier            String               // PageID or PhoneNumberId (e.g. 1029384756)
-  externalMediaId       String               
-  expiresAt             DateTime?            // Optional: for WhatsApp IDs
-  
-  status                String               @default("SYNCED") // SYNCED | FAILED
-  lastError             String?              @db.Text
-  
-  createdAt             DateTime             @default(now())
-  updatedAt             DateTime             @updatedAt
+  id      Int                  @id @default(autoincrement())
+  mediaId Int
+  media   BusinessProfileMedia @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+
+  platform        String // "messenger" | "whatsapp"
+  identifier      String // PageID or PhoneNumberId (e.g. 1029384756)
+  externalMediaId String
+  expiresAt       DateTime? // Optional: for WhatsApp IDs
+
+  status    String  @default("SYNCED") // SYNCED | FAILED
+  lastError String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([mediaId, platform, identifier])
   @@index([mediaId])

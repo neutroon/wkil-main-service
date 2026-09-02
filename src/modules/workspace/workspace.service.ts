@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { randomBytes } from "crypto";
 import prisma from "@config/prisma";
 import { AppError } from "@middlewares/errorHandler.middleware";
 
@@ -82,4 +83,284 @@ export async function getActiveProfileId(
     );
   }
   return memberships[0].id;
+}
+
+export async function createWorkspace(
+  userId: number,
+  name: string,
+): Promise<{ workspaceId: number; profileId: number }> {
+  return prisma.$transaction(async (tx) => {
+    const workspace = await tx.workspace.create({
+      data: { name: name.trim() || SKELETON_WORKSPACE_NAME },
+    });
+    const profile = await tx.businessProfile.create({
+      data: {
+        userId,
+        workspaceId: workspace.id,
+        name: SKELETON_PROFILE_NAME,
+        setupCompletedAt: null,
+      },
+    });
+    await tx.workspaceMember.create({
+      data: { workspaceId: workspace.id, userId, role: "owner" },
+    });
+    return { workspaceId: workspace.id, profileId: profile.id };
+  });
+}
+
+export async function renameWorkspace(
+  userId: number,
+  workspaceId: number,
+  name: string,
+): Promise<void> {
+  const member = await prisma.workspaceMember.findFirst({
+    where: { workspaceId, userId, isActive: true, role: "owner" },
+  });
+  if (!member)
+    throw new AppError("Only the workspace owner can rename it.", 403);
+
+  const trimmed = name.trim();
+  if (!trimmed || trimmed.length > 100) {
+    throw new AppError("Workspace name must be 1-100 characters.", 400);
+  }
+
+  await prisma.workspace.update({
+    where: { id: workspaceId },
+    data: { name: trimmed },
+  });
+}
+
+export async function listMembers(
+  userId: number,
+  workspaceId: number,
+): Promise<
+  Array<{
+    id: number;
+    userId: number;
+    name: string;
+    email: string;
+    role: string;
+    isActive: boolean;
+    invitedAt: Date | null;
+    createdAt: Date;
+  }>
+> {
+  const membership = await prisma.workspaceMember.findFirst({
+    where: { workspaceId, userId, isActive: true },
+  });
+  if (!membership) throw new AppError("Access denied.", 403);
+
+  const members = await prisma.workspaceMember.findMany({
+    where: { workspaceId },
+    include: { user: { select: { id: true, name: true, email: true } } },
+    orderBy: [{ role: "asc" }, { createdAt: "asc" }],
+  });
+
+  return members.map((m) => ({
+    id: m.id,
+    userId: m.user.id,
+    name: m.user.name,
+    email: m.user.email ?? "",
+    role: m.role,
+    isActive: m.isActive,
+    invitedAt: m.invitedAt,
+    createdAt: m.createdAt,
+  }));
+}
+
+export async function inviteMember(
+  userId: number,
+  workspaceId: number,
+  email: string,
+  role: string = "member",
+): Promise<{ token: string; expiresAt: Date }> {
+  const membership = await prisma.workspaceMember.findFirst({
+    where: {
+      workspaceId,
+      userId,
+      isActive: true,
+      role: { in: ["owner", "admin"] },
+    },
+  });
+  if (!membership)
+    throw new AppError(
+      "Only owners and admins can invite members.",
+      403,
+    );
+
+  const trimmed = email.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+    throw new AppError("Invalid email address.", 400);
+  }
+
+  // Check if user is already a member
+  const existingUser = await prisma.user.findUnique({
+    where: { email: trimmed },
+    select: { id: true },
+  });
+  if (existingUser) {
+    const existingMember = await prisma.workspaceMember.findFirst({
+      where: { workspaceId, userId: existingUser.id, isActive: true },
+    });
+    if (existingMember)
+      throw new AppError("User is already a member.", 409);
+  }
+
+  // Check for pending invite
+  const pendingInvite = await prisma.workspaceInvitation.findFirst({
+    where: { workspaceId, email: trimmed, expiresAt: { gt: new Date() } },
+  });
+  if (pendingInvite)
+    throw new AppError(
+      "Invitation already pending for this email.",
+      409,
+    );
+
+  const token = randomBytes(32).toString("hex");
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+
+  await prisma.workspaceInvitation.create({
+    data: {
+      workspaceId,
+      email: trimmed,
+      role,
+      token,
+      invitedBy: userId,
+      expiresAt,
+    },
+  });
+
+  return { token, expiresAt };
+}
+
+export async function acceptInvite(
+  token: string,
+  userId: number,
+): Promise<{ workspaceId: number }> {
+  const invitation = await prisma.workspaceInvitation.findUnique({
+    where: { token },
+  });
+
+  if (!invitation) throw new AppError("Invalid invitation.", 404);
+  if (invitation.expiresAt < new Date()) {
+    throw new AppError("Invitation has expired.", 410);
+  }
+
+  // Check if user's email matches invitation
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { email: true },
+  });
+  if (!user || (user.email ?? "").toLowerCase() !== invitation.email.toLowerCase()) {
+    throw new AppError(
+      "This invitation was sent to a different email address.",
+      403,
+    );
+  }
+
+  // Check if already a member
+  const existing = await prisma.workspaceMember.findFirst({
+    where: { workspaceId: invitation.workspaceId, userId, isActive: true },
+  });
+  if (existing)
+    throw new AppError(
+      "You are already a member of this workspace.",
+      409,
+    );
+
+  await prisma.$transaction(async (tx) => {
+    // Upsert membership (reactivate if was removed, or create new)
+    await tx.workspaceMember.upsert({
+      where: {
+        workspaceId_userId: {
+          workspaceId: invitation.workspaceId,
+          userId,
+        },
+      },
+      create: {
+        workspaceId: invitation.workspaceId,
+        userId,
+        role: invitation.role,
+        invitedBy: invitation.invitedBy,
+        invitedAt: invitation.createdAt,
+      },
+      update: {
+        isActive: true,
+        role: invitation.role,
+        invitedBy: invitation.invitedBy,
+        invitedAt: invitation.createdAt,
+      },
+    });
+    // Delete the invitation
+    await tx.workspaceInvitation.delete({ where: { id: invitation.id } });
+  });
+
+  return { workspaceId: invitation.workspaceId };
+}
+
+export async function removeMember(
+  userId: number,
+  workspaceId: number,
+  targetMemberId: number,
+): Promise<void> {
+  const requester = await prisma.workspaceMember.findFirst({
+    where: { workspaceId, userId, isActive: true },
+  });
+  if (!requester) throw new AppError("Access denied.", 403);
+
+  const target = await prisma.workspaceMember.findUnique({
+    where: { id: targetMemberId },
+  });
+  if (!target || target.workspaceId !== workspaceId) {
+    throw new AppError("Member not found.", 404);
+  }
+
+  // Owners cannot be removed
+  if (target.role === "owner") {
+    throw new AppError(
+      "The workspace owner cannot be removed.",
+      403,
+    );
+  }
+
+  // Only owner or admin can remove; or self (leave)
+  const isSelf = target.userId === userId;
+  const isAdminOrOwner =
+    requester.role === "owner" || requester.role === "admin";
+  if (!isSelf && !isAdminOrOwner) {
+    throw new AppError(
+      "Only the owner or admin can remove members.",
+      403,
+    );
+  }
+
+  await prisma.workspaceMember.update({
+    where: { id: targetMemberId },
+    data: { isActive: false },
+  });
+}
+
+export async function leaveWorkspace(
+  userId: number,
+  workspaceId: number,
+): Promise<void> {
+  const membership = await prisma.workspaceMember.findFirst({
+    where: { workspaceId, userId, isActive: true },
+  });
+  if (!membership)
+    throw new AppError(
+      "You are not a member of this workspace.",
+      404,
+    );
+  if (membership.role === "owner") {
+    throw new AppError(
+      "The workspace owner cannot leave. Transfer ownership or delete the workspace.",
+      403,
+    );
+  }
+
+  await prisma.workspaceMember.update({
+    where: { id: membership.id },
+    data: { isActive: false },
+  });
 }

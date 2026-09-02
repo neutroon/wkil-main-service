@@ -6,6 +6,28 @@ import { AppError } from "@middlewares/errorHandler.middleware";
 export const SKELETON_PROFILE_NAME = "My Business";
 export const SKELETON_WORKSPACE_NAME = "My Workspace";
 
+export async function listWorkspacesForUser(
+  userId: number,
+): Promise<Array<{ workspaceId: number; profileId: number; name: string }>> {
+  const memberships = await prisma.workspaceMember.findMany({
+    where: { userId, isActive: true },
+    include: {
+      workspace: {
+        include: { profile: { select: { id: true, name: true } } },
+      },
+    },
+    orderBy: { workspaceId: "asc" },
+  });
+
+  return memberships
+    .filter((m) => m.workspace?.profile)
+    .map((m) => ({
+      workspaceId: m.workspaceId,
+      profileId: m.workspace!.profile!.id,
+      name: m.workspace!.profile!.name,
+    }));
+}
+
 /**
  * Creates the tenant trio for a brand-new user inside the caller's
  * transaction: one workspace (1:1 with its profile), the skeleton

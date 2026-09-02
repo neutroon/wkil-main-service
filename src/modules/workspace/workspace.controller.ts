@@ -1,5 +1,6 @@
 import { Router } from "express";
 import {
+  listWorkspacesForUser,
   createWorkspace,
   renameWorkspace,
   getWorkspace,
@@ -35,6 +36,13 @@ workspaceController.post("/", async (req, res) => {
     const status = typeof e?.statusCode === "number" ? e.statusCode : 500;
     res.status(status).json({ error: e?.message ?? "create_failed" });
   }
+});
+
+// GET /v1/workspace — list workspaces for user
+workspaceController.get("/", async (req, res) => {
+  const userId = Number((req as any).user.id);
+  const workspaces = await listWorkspacesForUser(userId);
+  res.json({ workspaces });
 });
 
 // GET /v1/workspace/:id — get workspace details

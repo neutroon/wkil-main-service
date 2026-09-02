@@ -213,7 +213,7 @@ model BusinessProfile {
   user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   workspaceId      Int       @unique
-  workspace        Workspace @relation(fields: [workspaceId], references: [id])
+  workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   setupCompletedAt DateTime?
 
   name                        String

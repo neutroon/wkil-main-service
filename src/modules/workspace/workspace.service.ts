@@ -476,5 +476,10 @@ export async function deleteWorkspace(
     throw new AppError("Workspace name does not match.", 400);
   }
 
+  const profile = await prisma.businessProfile.findUnique({ where: { workspaceId } });
+  if (profile) {
+    await prisma.businessProfile.delete({ where: { id: profile.id } });
+  }
+
   await prisma.workspace.delete({ where: { id: workspaceId } });
 }

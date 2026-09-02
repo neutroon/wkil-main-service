@@ -13,7 +13,7 @@ export async function listWorkspacesForUser(
     where: { userId, isActive: true },
     include: {
       workspace: {
-        include: { profile: { select: { id: true, name: true } } },
+        select: { id: true, name: true, profile: { select: { id: true } } },
       },
     },
     orderBy: { workspaceId: "asc" },
@@ -24,7 +24,7 @@ export async function listWorkspacesForUser(
     .map((m) => ({
       workspaceId: m.workspaceId,
       profileId: m.workspace!.profile!.id,
-      name: m.workspace!.profile!.name,
+      name: m.workspace!.name,
     }));
 }
 

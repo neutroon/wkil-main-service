@@ -248,6 +248,57 @@ export async function inviteMember(
   return { token, expiresAt };
 }
 
+export async function listInvitations(
+  userId: number,
+  workspaceId: number,
+): Promise<
+  Array<{
+    id: number;
+    email: string;
+    role: string;
+    token: string;
+    expiresAt: Date;
+    createdAt: Date;
+  }>
+> {
+  const membership = await prisma.workspaceMember.findFirst({
+    where: { workspaceId, userId, isActive: true },
+  });
+  if (!membership) throw new AppError("Access denied.", 403);
+
+  const invitations = await prisma.workspaceInvitation.findMany({
+    where: { workspaceId, expiresAt: { gt: new Date() } },
+    orderBy: { createdAt: "desc" },
+  });
+
+  return invitations.map((inv) => ({
+    id: inv.id,
+    email: inv.email,
+    role: inv.role,
+    token: inv.token,
+    expiresAt: inv.expiresAt,
+    createdAt: inv.createdAt,
+  }));
+}
+
+export async function deleteInvitation(
+  userId: number,
+  workspaceId: number,
+  invitationId: number,
+): Promise<void> {
+  const membership = await prisma.workspaceMember.findFirst({
+    where: { workspaceId, userId, isActive: true, role: { in: ["owner", "admin"] } },
+  });
+  if (!membership) throw new AppError("Only owners and admins can revoke invitations.", 403);
+
+  const invitation = await prisma.workspaceInvitation.findFirst({
+    where: { id: invitationId, workspaceId },
+  });
+  if (!invitation) throw new AppError("Invitation not found.", 404);
+
+  await prisma.workspaceInvitation.delete({ where: { id: invitationId } });
+}
+
 export async function acceptInvite(
   token: string,
   userId: number,

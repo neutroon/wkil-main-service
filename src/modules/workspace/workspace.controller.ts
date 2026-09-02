@@ -5,6 +5,8 @@ import {
   getWorkspace,
   listMembers,
   inviteMember,
+  listInvitations,
+  deleteInvitation,
   acceptInvite,
   removeMember,
   leaveWorkspace,
@@ -94,6 +96,42 @@ workspaceController.get("/:id/members", async (req, res) => {
   } catch (e: any) {
     const status = typeof e?.statusCode === "number" ? e.statusCode : 500;
     res.status(status).json({ error: e?.message ?? "list_failed" });
+  }
+});
+
+// GET /v1/workspace/:id/invitations — list pending invitations
+workspaceController.get("/:id/invitations", async (req, res) => {
+  const userId = (req as any).user?.id;
+  if (!userId) return res.status(401).json({ error: "unauthorized" });
+
+  const workspaceId = Number(req.params.id);
+  if (!Number.isFinite(workspaceId) || workspaceId <= 0) {
+    return res.status(400).json({ error: "invalid_workspace_id" });
+  }
+
+  try {
+    const invitations = await listInvitations(userId, workspaceId);
+    res.json({ invitations });
+  } catch (e: any) {
+    const status = typeof e?.statusCode === "number" ? e.statusCode : 500;
+    res.status(status).json({ error: e?.message ?? "list_failed" });
+  }
+});
+
+// DELETE /v1/workspace/:id/invitations/:invitationId — revoke invitation
+workspaceController.delete("/:id/invitations/:invitationId", async (req, res) => {
+  const userId = (req as any).user?.id;
+  if (!userId) return res.status(401).json({ error: "unauthorized" });
+
+  const workspaceId = Number(req.params.id);
+  const invitationId = Number(req.params.invitationId);
+
+  try {
+    await deleteInvitation(userId, workspaceId, invitationId);
+    res.json({ ok: true });
+  } catch (e: any) {
+    const status = typeof e?.statusCode === "number" ? e.statusCode : 500;
+    res.status(status).json({ error: e?.message ?? "delete_failed" });
   }
 });
 

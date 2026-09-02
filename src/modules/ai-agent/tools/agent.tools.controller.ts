@@ -886,8 +886,9 @@ router.post("/copilot/channels/facebook/:pageId/action", async (req, res) => {
 router.get("/copilot/channels/widgets", async (req, res) => {
   const userId = Number(req.query.userId);
   if (!userId) return res.status(400).json({ error: "userId_required" });
+  const businessProfileId = req.query.businessProfileId ? Number(req.query.businessProfileId) : undefined;
   try {
-    res.json(await copilotListWidgetInstalls(userId));
+    res.json(await copilotListWidgetInstalls(userId, businessProfileId));
   } catch (e: any) {
     res.status(errStatus(e, 500)).json({ error: e?.message ?? "list_widgets_failed" });
   }

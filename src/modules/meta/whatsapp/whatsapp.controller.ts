@@ -301,8 +301,15 @@ export class WhatsAppController {
    */
   async listAccounts(req: Request, res: Response) {
     const userId = (req as any).user.id;
+    const profileId = req.query.businessProfileId ? Number(req.query.businessProfileId) : undefined;
     const accounts = await prisma.whatsAppAccount.findMany({
-      where: { userId, isActive: true },
+      where: {
+        userId,
+        isActive: true,
+        ...(profileId
+          ? { OR: [{ businessProfileId: profileId }, { businessProfileId: null }] }
+          : {}),
+      },
       select: {
         id: true,
         phoneNumberId: true,

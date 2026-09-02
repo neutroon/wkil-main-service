@@ -125,9 +125,16 @@ export class FacebookController {
    */
   async listPages(req: Request, res: Response) {
     const userId = (req as any).user.id;
+    const profileId = req.query.businessProfileId ? Number(req.query.businessProfileId) : undefined;
 
     const accounts = await prisma.facebookAccount.findMany({
-      where: { userId, isActive: true },
+      where: {
+        userId,
+        isActive: true,
+        ...(profileId
+          ? { pages: { some: { OR: [{ businessProfileId: profileId }, { businessProfileId: null }], isActive: true } } }
+          : {}),
+      },
       include: {
         pages: {
           where: { isActive: true },

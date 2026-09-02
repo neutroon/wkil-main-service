@@ -824,9 +824,14 @@ async function findOwnedWidgetInstall(userId: number, installId: number) {
   return install;
 }
 
-export async function copilotListWidgetInstalls(userId: number) {
+export async function copilotListWidgetInstalls(userId: number, businessProfileId?: number) {
   const installs = await prisma.widgetInstall.findMany({
-    where: { userId },
+    where: {
+      userId,
+      ...(businessProfileId
+        ? { businessProfileId }
+        : {}),
+    },
     orderBy: { createdAt: "desc" },
   });
   return { installs };

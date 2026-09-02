@@ -364,3 +364,29 @@ export async function leaveWorkspace(
     data: { isActive: false },
   });
 }
+
+export async function deleteWorkspace(
+  userId: number,
+  workspaceId: number,
+  confirmationName: string,
+): Promise<void> {
+  const workspace = await prisma.workspace.findUnique({ where: { id: workspaceId } });
+  if (!workspace) throw new AppError("Workspace not found.", 404);
+
+  const membership = await prisma.workspaceMember.findFirst({
+    where: { workspaceId, userId, role: "owner" },
+  });
+  if (!membership)
+    throw new AppError("Only the workspace owner can delete it.", 403);
+
+  const membershipCount = await prisma.workspaceMember.count({ where: { userId } });
+  if (membershipCount <= 1) {
+    throw new AppError("Cannot delete your only workspace.", 400);
+  }
+
+  if (confirmationName !== workspace.name) {
+    throw new AppError("Workspace name does not match.", 400);
+  }
+
+  await prisma.workspace.delete({ where: { id: workspaceId } });
+}

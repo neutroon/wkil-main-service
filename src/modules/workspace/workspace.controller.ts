@@ -7,6 +7,7 @@ import {
   acceptInvite,
   removeMember,
   leaveWorkspace,
+  deleteWorkspace,
 } from "./workspace.service";
 
 const workspaceController = Router();
@@ -156,6 +157,30 @@ workspaceController.post("/:id/leave", async (req, res) => {
   } catch (e: any) {
     const status = typeof e?.statusCode === "number" ? e.statusCode : 500;
     res.status(status).json({ error: e?.message ?? "leave_failed" });
+  }
+});
+
+// DELETE /v1/workspace/:id — delete workspace
+workspaceController.delete("/:id", async (req, res) => {
+  const userId = (req as any).user?.id;
+  if (!userId) return res.status(401).json({ error: "unauthorized" });
+
+  const workspaceId = Number(req.params.id);
+  if (!Number.isFinite(workspaceId) || workspaceId <= 0) {
+    return res.status(400).json({ error: "invalid_workspace_id" });
+  }
+
+  const { confirmationName } = req.body ?? {};
+  if (typeof confirmationName !== "string" || !confirmationName.trim()) {
+    return res.status(400).json({ error: "confirmation_required" });
+  }
+
+  try {
+    await deleteWorkspace(userId, workspaceId, confirmationName);
+    res.json({ ok: true });
+  } catch (e: any) {
+    const status = typeof e?.statusCode === "number" ? e.statusCode : 500;
+    res.status(status).json({ error: e?.message ?? "delete_failed" });
   }
 });
 

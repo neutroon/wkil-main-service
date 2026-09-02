@@ -2,6 +2,7 @@ import { Router } from "express";
 import {
   createWorkspace,
   renameWorkspace,
+  getWorkspace,
   listMembers,
   inviteMember,
   acceptInvite,
@@ -31,6 +32,25 @@ workspaceController.post("/", async (req, res) => {
   } catch (e: any) {
     const status = typeof e?.statusCode === "number" ? e.statusCode : 500;
     res.status(status).json({ error: e?.message ?? "create_failed" });
+  }
+});
+
+// GET /v1/workspace/:id — get workspace details
+workspaceController.get("/:id", async (req, res) => {
+  const userId = Number((req as any).user?.id);
+  if (!userId) return res.status(401).json({ error: "unauthorized" });
+
+  const workspaceId = Number(req.params.id);
+  if (!Number.isFinite(workspaceId) || workspaceId <= 0) {
+    return res.status(400).json({ error: "invalid_workspace_id" });
+  }
+
+  try {
+    const workspace = await getWorkspace(userId, workspaceId);
+    res.json(workspace);
+  } catch (e: any) {
+    const status = typeof e?.statusCode === "number" ? e.statusCode : 500;
+    res.status(status).json({ error: e?.message ?? "get_failed" });
   }
 });
 

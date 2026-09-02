@@ -130,6 +130,21 @@ export async function renameWorkspace(
   });
 }
 
+export async function getWorkspace(
+  userId: number,
+  workspaceId: number,
+): Promise<{ id: number; name: string }> {
+  const membership = await prisma.workspaceMember.findFirst({
+    where: { workspaceId, userId, isActive: true },
+  });
+  if (!membership) throw new AppError("Access denied.", 403);
+
+  const workspace = await prisma.workspace.findUnique({ where: { id: workspaceId } });
+  if (!workspace) throw new AppError("Workspace not found.", 404);
+
+  return { id: workspace.id, name: workspace.name };
+}
+
 export async function listMembers(
   userId: number,
   workspaceId: number,

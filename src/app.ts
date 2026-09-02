@@ -43,6 +43,7 @@ import mediaRoutes from "@modules/media/meta-media.routes";
 import mediaLibraryRoutes from "@modules/media/media.routes";
 import docsRoutes from "@modules/docs/docs.routes";
 import notificationsRoutes from "@modules/notifications/notifications.routes";
+import workspaceController from "@modules/workspace/workspace.controller";
 import agentTools from "@modules/ai-agent/tools/agent.tools.controller";
 import copilotRoutes from "@modules/ai-agent/copilot.routes";
 import { identifyUserForRateLimit } from "@middlewares/identify.middleware";
@@ -236,6 +237,7 @@ app.use("/v1/analytics", aiAnalyticsRoutes);
 app.use("/v1/assistant", copilotRoutes);
 app.use("/v1/media", mediaLibraryRoutes);
 app.use("/v1/notifications", notificationsRoutes);
+app.use("/v1/workspace", workspaceController);
 
 // Admin-only detailed health (for admin dashboard)
 app.get(

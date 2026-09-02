@@ -180,3 +180,17 @@ export const widgetChatLimiter = rateLimit({
     return `${ip}:${sk}`;
   },
 });
+
+// Public invite info endpoint rate limiting: 10 requests per minute per IP
+export const publicInviteInfoLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 10, // 10 requests per minute per IP
+  message: {
+    error: "Too many requests, please try again later",
+    code: "PUBLIC_INVITE_INFO_RATE_LIMIT_EXCEEDED",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: { trustProxy: false },
+  keyGenerator: (req) => ipKeyGenerator(req.ip || req.socket.remoteAddress || "unknown"),
+});

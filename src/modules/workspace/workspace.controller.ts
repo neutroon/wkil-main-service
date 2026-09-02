@@ -12,12 +12,25 @@ import {
   removeMember,
   leaveWorkspace,
   deleteWorkspace,
+  getInviteInfoByToken,
 } from "./workspace.service";
 
 const workspaceController = Router();
 
 // All routes are behind authenticateToken + requireVerified + validateCsrfToken
 // (mounted in app.ts after those middlewares)
+
+// Public route: GET /v1/workspace/invite/:token/info — get invite info by token (no auth)
+workspaceController.get("/invite/:token/info", async (req, res) => {
+  const token = req.params.token;
+  if (!token) return res.status(400).json({ error: "token_required" });
+
+  const invite = await getInviteInfoByToken(token);
+  if (!invite) return res.status(404).json({ error: "invite_not_found" });
+
+  // Return all fields including isExpired if present
+  res.json(invite);
+});
 
 // POST /v1/workspace — create new workspace
 workspaceController.post("/", async (req, res) => {

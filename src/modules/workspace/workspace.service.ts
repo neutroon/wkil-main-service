@@ -303,6 +303,62 @@ export async function listInvitations(
   }));
 }
 
+export async function getInviteInfoByToken(
+  token: string,
+): Promise<{
+  id: number;
+  workspaceId: number;
+  workspaceName: string;
+  email: string;
+  role: string;
+  invitedBy: number;
+  inviterName: string | null;
+  expiresAt: Date;
+  createdAt: Date;
+  isExpired?: boolean;
+} | null> {
+  const invitation = await prisma.workspaceInvitation.findUnique({
+    where: { token },
+    include: {
+      workspace: {
+        include: {
+          profile: { select: { name: true } },
+        },
+      },
+      inviter: { select: { name: true } },
+    },
+  });
+
+  if (!invitation) return null;
+
+  if (invitation.expiresAt < new Date()) {
+    return {
+      id: invitation.id,
+      workspaceId: invitation.workspaceId,
+      workspaceName: invitation.workspace?.profile?.name ?? "Workspace",
+      email: invitation.email,
+      role: invitation.role,
+      invitedBy: invitation.invitedBy,
+      inviterName: invitation.inviter?.name ?? null,
+      expiresAt: invitation.expiresAt,
+      createdAt: invitation.createdAt,
+      isExpired: true,
+    };
+  }
+
+  return {
+    id: invitation.id,
+    workspaceId: invitation.workspaceId,
+    workspaceName: invitation.workspace?.profile?.name ?? "Workspace",
+    email: invitation.email,
+    role: invitation.role,
+    invitedBy: invitation.invitedBy,
+    inviterName: invitation.inviter?.name ?? null,
+    expiresAt: invitation.expiresAt,
+    createdAt: invitation.createdAt,
+  };
+}
+
 export async function deleteInvitation(
   userId: number,
   workspaceId: number,

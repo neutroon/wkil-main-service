@@ -1,5 +1,5 @@
 import * as Sentry from "@sentry/node";
-import express from "express";
+import express, { Router } from "express";
 import { env } from "@config/env";
 import cors from "cors";
 import cookieParser from "cookie-parser";
@@ -24,6 +24,7 @@ import {
   orderWebhookLimiter,
   whatsappWebhookLimiter,
   widgetChatLimiter,
+  publicInviteInfoLimiter,
 } from "@middlewares/rateLimit.middleware";
 import authRoutes from "@modules/auth/core/auth.routes";
 import mobileAuthRoutes from "@modules/auth/mobile/mobileAuth.routes";
@@ -206,6 +207,21 @@ app.get("/v1/health", async (_req, res) => {
     res.status(503).json({ status: "degraded", database: "DOWN" });
   }
 });
+
+// Public workspace invite info endpoint (no auth required)
+const publicWorkspaceRouter = Router();
+publicWorkspaceRouter.use(publicInviteInfoLimiter);
+publicWorkspaceRouter.get("/invite/:token/info", async (req, res) => {
+  const { getInviteInfoByToken } = await import("@modules/workspace/workspace.service");
+  const token = req.params.token;
+  if (!token) return res.status(400).json({ error: "token_required" });
+
+  const invite = await getInviteInfoByToken(token);
+  if (!invite) return res.status(404).json({ error: "invite_not_found" });
+
+  res.json(invite);
+});
+app.use("/v1/workspace", publicWorkspaceRouter);
 
 // Service-to-service internal API — mounted BEFORE the global JWT auth: it is
 // protected by its own x-service-token middleware (agent.tools.controller).

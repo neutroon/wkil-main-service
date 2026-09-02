@@ -6,6 +6,7 @@ import { listConversationMessages } from "@modules/meta/core/conversation.servic
 import { sendMessengerAction } from "@modules/meta/messenger/messenger.service";
 import { reconcileCustomerStatusFromConversations } from "@modules/business/customer/customer.service";
 import { AppError } from "@middlewares/errorHandler.middleware";
+import { getAccessibleProfileIds } from "@modules/auth/user/user.service";
 
 export class ConversationsController {
   /**
@@ -14,14 +15,12 @@ export class ConversationsController {
    * Throws 404 if not found or not owned.
    */
   async getAuthorizedConversation(userId: number, conversationId: number) {
-    const profiles = await prisma.businessProfile.findMany({
-      where: { userId },
-      select: { id: true },
-    });
-    const profileIds = profiles.map((p) => p.id);
+    const allowedProfileIds = await getAccessibleProfileIds(userId);
+    if (allowedProfileIds.length === 0)
+      throw new AppError("Conversation not found or access denied.", 404);
 
     const conversation = await prisma.conversation.findFirst({
-      where: { id: conversationId, businessProfileId: { in: profileIds } },
+      where: { id: conversationId, businessProfileId: { in: allowedProfileIds } },
     });
 
     if (!conversation)

@@ -1,5 +1,7 @@
 import { decryptFacebookSecret } from "@modules/auth/core/tokenCrypto";
+import { AppError } from "@middlewares/errorHandler.middleware";
 import { getSystemSetting } from "@modules/settings/settings.service";
+import { logger } from "@utils/logger";
 import {
   getOrCreateConversation,
   saveMessage,
@@ -51,6 +53,16 @@ export class OrderConfirmationSuppressedError extends Error {
   constructor(reason: string) {
     super(reason || "WhatsApp recipient is suppressed");
     this.name = "OrderConfirmationSuppressedError";
+  }
+}
+
+export class OrderConfirmationAmbiguousDeliveryError extends Error {
+  readonly code = "AMBIGUOUS_PROVIDER_DELIVERY";
+
+  constructor(cause?: unknown) {
+    super("WhatsApp provider delivery could not be determined");
+    this.name = "OrderConfirmationAmbiguousDeliveryError";
+    (this as Error & { cause?: unknown }).cause = cause;
   }
 }
 
@@ -118,6 +130,50 @@ function providerMessageId(response: unknown): string {
   return id;
 }
 
+async function sendToWhatsApp<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    // A non-2xx Graph response is a definite rejection and can be retried by
+    // policy. A transport/parse failure may have happened after Meta accepted
+    // the request, so automatic retry could send a duplicate confirmation.
+    if (error instanceof AppError) throw error;
+    throw new OrderConfirmationAmbiguousDeliveryError(error);
+  }
+}
+
+async function saveOutboundConversationMessage(params: {
+  notification: OrderNotificationForSending;
+  phoneNumberId: string;
+  providerMessageId: string;
+  previewText: string;
+}): Promise<void> {
+  try {
+    const conversation = await getOrCreateConversation(
+      params.phoneNumberId,
+      params.notification.order.customerPhone,
+      params.notification.businessProfileId,
+      {
+        channel: "whatsapp",
+        customerPhone: params.notification.order.customerPhone,
+        customerName: params.notification.order.customerName ?? undefined,
+      },
+    );
+    await saveMessage(conversation.id, "agent", params.previewText, {
+      externalId: params.providerMessageId,
+      origin: "order_confirmation",
+    });
+  } catch (error) {
+    // Meta already accepted the message. Inbox mirroring is secondary and must
+    // never turn a successful provider send into an automatic duplicate.
+    logger.error("order_confirmation.outbound_conversation_persist_failed", {
+      notificationId: params.notification.id,
+      providerMessageId: params.providerMessageId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 function orderPreview(
   notification: OrderNotificationForSending,
   body: string[],
@@ -182,37 +238,32 @@ export async function sendConfirmationNotification(notificationId: number): Prom
     body: rendered.body,
     previewText: orderPreview(notification, rendered.body),
     buttonMapping: ["confirmToken", "cancelToken"],
-  });
+  }, templateConfig.id);
 
   const retryAfterMs = await acquireBusinessSendPermit(notification.businessProfileId);
   if (retryAfterMs !== null) {
     throw new OrderConfirmationRateLimitError(retryAfterMs);
   }
   await markNotificationAttempted(notificationId);
-  const response = await sendWhatsAppTemplate(
-    notification.order.customerPhone,
-    templateConfig.templateName,
-    templateConfig.languageCode,
-    components,
-    account.phoneNumberId,
-    accessToken,
+  const providerId = await sendToWhatsApp(async () =>
+    providerMessageId(
+      await sendWhatsAppTemplate(
+        notification.order.customerPhone,
+        templateConfig.templateName,
+        templateConfig.languageCode,
+        components,
+        account.phoneNumberId,
+        accessToken,
+      ),
+    ),
   );
-  const providerId = providerMessageId(response);
   const previewText = orderPreview(notification, rendered.body);
 
-  const conversation = await getOrCreateConversation(
-    account.phoneNumberId,
-    notification.order.customerPhone,
-    notification.businessProfileId,
-    {
-      channel: "whatsapp",
-      customerPhone: notification.order.customerPhone,
-      customerName: notification.order.customerName ?? undefined,
-    },
-  );
-  await saveMessage(conversation.id, "agent", previewText, {
-    externalId: providerId,
-    origin: "order_confirmation",
+  await saveOutboundConversationMessage({
+    notification,
+    phoneNumberId: account.phoneNumberId,
+    providerMessageId: providerId,
+    previewText,
   });
 
   return { providerMessageId: providerId, previewText };
@@ -246,27 +297,22 @@ export async function sendAcknowledgementNotification(notificationId: number): P
     throw new OrderConfirmationRateLimitError(retryAfterMs);
   }
   await markNotificationAttempted(notificationId);
-  const response = await sendWhatsAppReply(
-    notification.order.customerPhone,
-    previewText,
-    account.phoneNumberId,
-    accessToken,
+  const providerId = await sendToWhatsApp(async () =>
+    providerMessageId(
+      await sendWhatsAppReply(
+        notification.order.customerPhone,
+        previewText,
+        account.phoneNumberId,
+        accessToken,
+      ),
+    ),
   );
-  const providerId = providerMessageId(response);
 
-  const conversation = await getOrCreateConversation(
-    account.phoneNumberId,
-    notification.order.customerPhone,
-    notification.businessProfileId,
-    {
-      channel: "whatsapp",
-      customerPhone: notification.order.customerPhone,
-      customerName: notification.order.customerName ?? undefined,
-    },
-  );
-  await saveMessage(conversation.id, "agent", previewText, {
-    externalId: providerId,
-    origin: "order_confirmation",
+  await saveOutboundConversationMessage({
+    notification,
+    phoneNumberId: account.phoneNumberId,
+    providerMessageId: providerId,
+    previewText,
   });
 
   return { providerMessageId: providerId, previewText };

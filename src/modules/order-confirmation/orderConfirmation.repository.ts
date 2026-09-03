@@ -477,6 +477,46 @@ export async function markNotificationSent(
   });
 }
 
+export async function reconcileNotificationDeliveryStatus(params: {
+  providerMessageId: string;
+  status: "SENT" | "DELIVERED" | "READ" | "FAILED";
+  error?: string;
+  occurredAt?: Date;
+}): Promise<void> {
+  const occurredAt = params.occurredAt ?? new Date();
+  const where: Prisma.OrderNotificationWhereInput =
+    params.status === "READ"
+      ? {
+          providerMessageId: params.providerMessageId,
+          status: { in: ["SENT", "DELIVERED", "READ"] },
+        }
+      : params.status === "DELIVERED"
+        ? {
+            providerMessageId: params.providerMessageId,
+            status: { in: ["SENT", "DELIVERED"] },
+          }
+        : params.status === "FAILED"
+          ? {
+              providerMessageId: params.providerMessageId,
+              status: { in: ["SENDING", "SENT"] },
+            }
+          : { providerMessageId: params.providerMessageId, status: "SENDING" as const };
+  const data =
+    params.status === "READ"
+      ? { status: "READ" as const, readAt: occurredAt }
+      : params.status === "DELIVERED"
+        ? { status: "DELIVERED" as const, deliveredAt: occurredAt }
+        : params.status === "FAILED"
+          ? {
+              status: "FAILED" as const,
+              failedAt: occurredAt,
+              lastError: params.error || "META_DELIVERY_FAILED",
+            }
+          : { status: "SENT" as const, sentAt: occurredAt };
+
+  await prisma.orderNotification.updateMany({ where, data });
+}
+
 export async function markNotificationFailed(
   notificationId: number,
   errorMessage: string,
@@ -490,10 +530,14 @@ export async function markNotificationFailed(
 export async function saveNotificationRenderedVariables(
   notificationId: number,
   renderedVariables: unknown,
+  templateConfigId?: number,
 ): Promise<void> {
   await prisma.orderNotification.update({
     where: { id: notificationId },
-    data: { renderedVariables: renderedVariables as Prisma.InputJsonValue },
+    data: {
+      renderedVariables: renderedVariables as Prisma.InputJsonValue,
+      ...(templateConfigId === undefined ? {} : { templateConfigId }),
+    },
   });
 }
 
@@ -1210,6 +1254,11 @@ const managedOrderSelect = {
   locale: true,
   total: true,
   currency: true,
+  lineItems: true,
+  shippingAddress: true,
+  metadata: true,
+  sourceStatus: true,
+  paymentMethod: true,
   sourceCreatedAt: true,
   sourceUpdatedAt: true,
   createdAt: true,

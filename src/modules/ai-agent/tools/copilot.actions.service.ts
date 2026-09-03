@@ -9,9 +9,13 @@ import {
   listConversationMessages,
   saveMessage,
 } from "@modules/meta/core/conversation.service";
-import { sendWhatsAppReply } from "@modules/meta/whatsapp/whatsapp.service";
+import { listWhatsAppTemplates, sendWhatsAppReply } from "@modules/meta/whatsapp/whatsapp.service";
 import { sendMessengerReply } from "@modules/meta/messenger/messenger.service";
-import { decryptFacebookSecret } from "@modules/auth/core/tokenCrypto";
+import {
+  decryptFacebookSecret,
+  encryptFacebookSecret,
+  generateRandomToken,
+} from "@modules/auth/core/tokenCrypto";
 import {
   listCustomers,
   updateCustomerForUser,
@@ -50,14 +54,29 @@ import { parseAllowedOrigins } from "@modules/widget/widgetInstall.middleware";
 import { generateIdentitySecret } from "@modules/widget/services/widgetIdentity.service";
 import {
   listManagedOrders,
+  findManagedOrder,
   listOrderIntegrations,
   findOrderIntegrationForProfiles,
+  createOrderIntegration,
   updateOrderIntegration,
+  rotateOrderIntegrationSecret,
+  findWhatsAppAccountForProfile,
+  listOrderTemplateConfigs,
+  findOrderTemplateConfigByIdForProfiles,
+  findOrderTemplateConfigForTest,
+  createOrderTemplateConfig,
+  updateOrderTemplateConfig,
   findNotificationForManagementRetry,
   requeueNotificationForRetry,
   findStoreSyncForManagementRetry,
   requeueStoreSyncForRetry,
 } from "@modules/order-confirmation/orderConfirmation.repository";
+import {
+  renderOrderTemplateVariables,
+  validateOrderTemplateMapping,
+  type OrderTemplateMapping,
+} from "@modules/order-confirmation/orderConfirmation.template.service";
+import { normalizeCanonicalOrderEvent } from "@modules/order-confirmation/orderConfirmation.normalizer";
 import {
   enqueueNotificationRetry,
   enqueueStoreSyncRetry,
@@ -549,6 +568,127 @@ export async function copilotGenerateVisual(params: {
 // Scoped via getAccessibleProfileIds; idempotent retries surface as clean 409s.
 // ---------------------------------------------------------------------------
 
+const ORDER_EVENT_TYPE = "order.created";
+
+function assertOrderLocale(locale: string): "ar" | "en" {
+  if (locale !== "ar" && locale !== "en") throw new AppError("Locale must be ar or en", 400);
+  return locale;
+}
+
+function parseOrderCallbackUrl(value: string | null | undefined): string | null {
+  if (value == null || value.trim() === "") return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(value.trim());
+  } catch {
+    throw new AppError("Invalid status callback URL", 400);
+  }
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.hash) {
+    throw new AppError("Status callback URL must be HTTPS without credentials or fragments", 400);
+  }
+  return parsed.toString();
+}
+
+function encryptOrderSecret(secret: string): string {
+  const value = secret.trim();
+  if (!value) throw new AppError("Secret must not be blank", 400);
+  const encrypted = encryptFacebookSecret(value);
+  if (encrypted === value) throw new AppError("Order-confirmation secret encryption is not configured", 500);
+  return encrypted;
+}
+
+function safeOrderIntegration(record: any) {
+  if (!record) return record;
+  const {
+    signingSecret: _signingSecret,
+    previousSigningSecret: _previousSigningSecret,
+    statusCallbackSecret: _statusCallbackSecret,
+    previousStatusCallbackSecret: _previousStatusCallbackSecret,
+    ...safe
+  } = record;
+  return safe;
+}
+
+function templateLanguage(template: any): string {
+  const language = template?.languageCode ?? template?.language ?? template?.language_code ?? "";
+  return typeof language === "object" && language !== null ? String(language.code ?? "") : String(language);
+}
+
+function templateStatus(template: any): string {
+  return String(template?.status ?? "").toUpperCase();
+}
+
+function templateComponents(template: any): any[] {
+  return Array.isArray(template?.components) ? template.components : [];
+}
+
+function safeMetaTemplate(template: any) {
+  return {
+    ...(typeof template?.id === "string" ? { id: template.id } : {}),
+    name: String(template?.name ?? ""),
+    languageCode: templateLanguage(template),
+    status: templateStatus(template),
+    category: template?.category ?? null,
+    components: templateComponents(template).map((component) => ({
+      type: component?.type,
+      ...(component?.text === undefined ? {} : { text: component.text }),
+      ...(Array.isArray(component?.buttons)
+        ? { buttons: component.buttons.map((button: any) => ({ type: button?.type, text: button?.text })) }
+        : {}),
+    })),
+  };
+}
+
+async function ownedOrderIntegration(userId: number, integrationId: number) {
+  const profileIds = await getAccessibleProfileIds(userId);
+  const integration = await findOrderIntegrationForProfiles(integrationId, profileIds);
+  if (!integration) throw new AppError("Order integration not found", 404);
+  return { profileIds, integration };
+}
+
+async function approvedTemplatesForAccount(userId: number, accountId: number) {
+  const profileIds = await getAccessibleProfileIds(userId);
+  let account = null;
+  for (const profileId of profileIds) {
+    account = await findWhatsAppAccountForProfile(accountId, profileId);
+    if (account) break;
+  }
+  if (!account) throw new AppError("WhatsApp account not found", 404);
+  let accessToken: string;
+  try {
+    accessToken = decryptFacebookSecret(account.accessToken);
+  } catch {
+    throw new AppError("WhatsApp account credentials are unavailable", 502);
+  }
+  const templates = await listWhatsAppTemplates(account.wabaId, accessToken);
+  return { account, templates: templates.filter((item) => templateStatus(item) === "APPROVED") };
+}
+
+function requireQuickReplyTemplate(template: any, mappingValue: unknown): OrderTemplateMapping {
+  const mapping = validateOrderTemplateMapping(mappingValue, true);
+  const buttons = templateComponents(template).find(
+    (component) => String(component?.type ?? "").toUpperCase() === "BUTTONS",
+  )?.buttons;
+  if (!Array.isArray(buttons) || buttons.length !== 2 || buttons.some((button: any) => String(button?.type ?? "").toUpperCase() !== "QUICK_REPLY")) {
+    throw new AppError("Template must contain Confirm and Cancel quick replies in order", 400);
+  }
+  const bodyText = templateComponents(template).find(
+    (component) => String(component?.type ?? "").toUpperCase() === "BODY",
+  )?.text;
+  if (typeof bodyText === "string") {
+    const indexes = [...bodyText.matchAll(/\{\{(\d+)\}\}/g)].map((match) => Number(match[1]));
+    const placeholderCount = indexes.length === 0 ? 0 : Math.max(...indexes);
+    const rawBody = Array.isArray(mappingValue)
+      ? mappingValue
+      : (mappingValue as any)?.body ?? mappingValue;
+    const mappedCount = Array.isArray(rawBody)
+      ? rawBody.length
+      : rawBody && typeof rawBody === "object" ? Object.keys(rawBody).length : 0;
+    if (placeholderCount !== mappedCount) throw new AppError("Template placeholders must match variable mapping", 400);
+  }
+  return mapping;
+}
+
 export async function copilotListOrders(params: {
   userId: number; businessProfileId?: number; status?: string; page?: number; limit?: number;
 }) {
@@ -562,6 +702,13 @@ export async function copilotListOrders(params: {
   });
 }
 
+export async function copilotGetOrder(params: { userId: number; orderId: number }) {
+  const profileIds = await getAccessibleProfileIds(params.userId);
+  const order = await findManagedOrder(params.orderId, profileIds);
+  if (!order) throw new AppError("Order confirmation not found", 404);
+  return { order };
+}
+
 export async function copilotListOrderIntegrations(params: {
   userId: number; businessProfileId?: number;
 }) {
@@ -573,23 +720,252 @@ export async function copilotListOrderIntegrations(params: {
   return { integrations };
 }
 
-export async function copilotUpdateOrderIntegration(params: {
-  userId: number; integrationId: number;
-  isActive?: boolean; storeSyncEnabled?: boolean; defaultLocale?: string;
+export async function copilotCreateOrderIntegration(params: {
+  userId: number;
+  businessProfileId: number;
+  whatsappAccountId?: number | null;
+  defaultLocale?: string;
+  isActive?: boolean;
+  storeSyncEnabled?: boolean;
+  statusCallbackUrl?: string | null;
+  statusCallbackSecret?: string | null;
 }) {
   const profileIds = await getAccessibleProfileIds(params.userId);
-  const integration = await findOrderIntegrationForProfiles(params.integrationId, profileIds);
-  if (!integration) throw new AppError("Order integration not found", 404);
+  if (!profileIds.includes(params.businessProfileId)) throw new AppError("Business profile not found", 404);
+  if (params.whatsappAccountId != null) {
+    const account = await findWhatsAppAccountForProfile(params.whatsappAccountId, params.businessProfileId);
+    if (!account) throw new AppError("WhatsApp account not found", 404);
+  }
+  const locale = assertOrderLocale(params.defaultLocale ?? "en");
+  const callbackUrl = parseOrderCallbackUrl(params.statusCallbackUrl);
+  const callbackSecret = params.statusCallbackSecret?.trim() || null;
+  if (params.storeSyncEnabled && (!callbackUrl || !callbackSecret)) {
+    throw new AppError("Store sync requires an HTTPS callback URL and callback secret", 400);
+  }
+  const secret = generateRandomToken();
+  const record = await createOrderIntegration({
+    businessProfileId: params.businessProfileId,
+    whatsappAccountId: params.whatsappAccountId ?? null,
+    kind: "GENERIC",
+    integrationKey: generateRandomToken(),
+    signingSecret: encryptOrderSecret(secret),
+    statusCallbackUrl: callbackUrl,
+    statusCallbackSecret: callbackSecret ? encryptOrderSecret(callbackSecret) : null,
+    isActive: params.isActive ?? false,
+    storeSyncEnabled: params.storeSyncEnabled ?? false,
+    defaultLocale: locale,
+  });
+  return { ok: true as const, integration: safeOrderIntegration(record), secret };
+}
+
+export async function copilotUpdateOrderIntegration(params: {
+  userId: number; integrationId: number;
+  whatsappAccountId?: number | null;
+  isActive?: boolean; storeSyncEnabled?: boolean; defaultLocale?: string;
+  statusCallbackUrl?: string | null; statusCallbackSecret?: string | null;
+  rotateStatusCallbackSecret?: boolean;
+}) {
+  const { integration } = await ownedOrderIntegration(params.userId, params.integrationId);
   const data: Record<string, unknown> = {};
   if (params.isActive !== undefined) data.isActive = params.isActive;
   if (params.storeSyncEnabled !== undefined) data.storeSyncEnabled = params.storeSyncEnabled;
-  if (params.defaultLocale !== undefined) data.defaultLocale = params.defaultLocale;
+  if (params.defaultLocale !== undefined) data.defaultLocale = assertOrderLocale(params.defaultLocale);
+  if (params.whatsappAccountId !== undefined) {
+    if (params.whatsappAccountId !== null) {
+      const account = await findWhatsAppAccountForProfile(params.whatsappAccountId, integration.businessProfileId);
+      if (!account) throw new AppError("WhatsApp account not found", 404);
+    }
+    data.whatsappAccountId = params.whatsappAccountId;
+  }
+  if (params.statusCallbackUrl !== undefined) data.statusCallbackUrl = parseOrderCallbackUrl(params.statusCallbackUrl);
+  let oneTimeCallbackSecret: string | undefined;
+  if (params.rotateStatusCallbackSecret) {
+    oneTimeCallbackSecret = generateRandomToken();
+    data.previousStatusCallbackSecret = integration.statusCallbackSecret;
+    data.statusCallbackSecret = encryptOrderSecret(oneTimeCallbackSecret);
+  } else if (params.statusCallbackSecret !== undefined) {
+    data.previousStatusCallbackSecret = integration.statusCallbackSecret;
+    data.statusCallbackSecret = params.statusCallbackSecret === null ? null : encryptOrderSecret(params.statusCallbackSecret);
+  }
+  const syncEnabled = params.storeSyncEnabled ?? integration.storeSyncEnabled;
+  const finalUrl = params.statusCallbackUrl !== undefined ? parseOrderCallbackUrl(params.statusCallbackUrl) : integration.statusCallbackUrl;
+  const hasCallbackSecret = oneTimeCallbackSecret != null || (params.statusCallbackSecret !== undefined
+    ? params.statusCallbackSecret !== null && params.statusCallbackSecret.trim() !== ""
+    : integration.statusCallbackSecret != null);
+  if (syncEnabled && (!finalUrl || !hasCallbackSecret)) {
+    throw new AppError("Store sync requires an HTTPS callback URL and callback secret", 400);
+  }
+  if (Object.keys(data).length === 0) throw new AppError("At least one integration field is required", 400);
   const record = await updateOrderIntegration({
     id: params.integrationId,
     businessProfileId: integration.businessProfileId,
     data: data as any,
   });
-  return { ok: true as const, integration: record };
+  return {
+    ok: true as const,
+    integration: safeOrderIntegration(record),
+    ...(oneTimeCallbackSecret ? { statusCallbackSecret: oneTimeCallbackSecret } : {}),
+  };
+}
+
+export async function copilotRotateOrderIntegrationSecret(params: { userId: number; integrationId: number }) {
+  const { integration } = await ownedOrderIntegration(params.userId, params.integrationId);
+  const secret = generateRandomToken();
+  const record = await rotateOrderIntegrationSecret({
+    id: integration.id,
+    businessProfileId: integration.businessProfileId,
+    signingSecret: encryptOrderSecret(secret),
+    previousSigningSecret: integration.signingSecret,
+  });
+  return { ok: true as const, integration: safeOrderIntegration(record), secret };
+}
+
+export async function copilotListApprovedOrderTemplates(params: { userId: number; whatsappAccountId: number }) {
+  const { templates } = await approvedTemplatesForAccount(params.userId, params.whatsappAccountId);
+  return { templates: templates.map(safeMetaTemplate) };
+}
+
+export async function copilotListOrderTemplateConfigs(params: { userId: number; integrationId: number; locale?: string }) {
+  const { profileIds, integration } = await ownedOrderIntegration(params.userId, params.integrationId);
+  if (!integration.whatsappAccountId) throw new AppError("Select a WhatsApp account before configuring templates", 400);
+  const configs = await listOrderTemplateConfigs({
+    profileIds,
+    integrationId: integration.id,
+    businessProfileId: integration.businessProfileId,
+    whatsappAccountId: integration.whatsappAccountId,
+    eventType: ORDER_EVENT_TYPE,
+    ...(params.locale ? { locale: assertOrderLocale(params.locale) } : {}),
+  });
+  return { configs };
+}
+
+async function resolveOrderTemplate(params: {
+  userId: number; integrationId: number; templateName: string; languageCode: string; variableMapping: unknown;
+}) {
+  const { integration } = await ownedOrderIntegration(params.userId, params.integrationId);
+  if (!integration.whatsappAccountId) throw new AppError("Select a WhatsApp account before configuring templates", 400);
+  const { templates } = await approvedTemplatesForAccount(params.userId, integration.whatsappAccountId);
+  const template = templates.find((item) => item?.name === params.templateName && templateLanguage(item) === params.languageCode);
+  if (!template) throw new AppError("Selected WhatsApp template is not currently approved", 400);
+  return { integration, mapping: requireQuickReplyTemplate(template, params.variableMapping) };
+}
+
+export async function copilotCreateOrderTemplateConfig(params: {
+  userId: number; integrationId: number; locale: string; templateName: string;
+  languageCode: string; variableMapping: unknown; templateVersion?: number; isActive?: boolean;
+}) {
+  const { integration, mapping } = await resolveOrderTemplate(params);
+  const record = await createOrderTemplateConfig({
+    integrationId: integration.id,
+    businessProfileId: integration.businessProfileId,
+    whatsappAccountId: integration.whatsappAccountId!,
+    eventType: ORDER_EVENT_TYPE,
+    locale: assertOrderLocale(params.locale),
+    templateName: params.templateName,
+    languageCode: params.languageCode,
+    templateVersion: params.templateVersion ?? 1,
+    variableMapping: mapping as any,
+    approvalStatus: "APPROVED",
+    isActive: params.isActive ?? true,
+  });
+  return { ok: true as const, config: record };
+}
+
+export async function copilotUpdateOrderTemplateConfig(params: {
+  userId: number; integrationId: number; configId: number; locale?: string; templateName?: string;
+  languageCode?: string; variableMapping?: unknown; templateVersion?: number; isActive?: boolean;
+}) {
+  const { profileIds, integration } = await ownedOrderIntegration(params.userId, params.integrationId);
+  if (!integration.whatsappAccountId) throw new AppError("Select a WhatsApp account before configuring templates", 400);
+  const current = await findOrderTemplateConfigByIdForProfiles(params.configId, profileIds, integration.id);
+  if (!current || current.businessProfileId !== integration.businessProfileId) throw new AppError("Order template configuration not found", 404);
+  const finalName = params.templateName ?? current.templateName;
+  const finalLanguage = params.languageCode ?? current.languageCode;
+  const finalMapping = params.variableMapping ?? current.variableMapping;
+  const finalActive = params.isActive ?? current.isActive;
+  let mapping = finalMapping as OrderTemplateMapping;
+  if (finalActive || params.templateName !== undefined || params.languageCode !== undefined || params.variableMapping !== undefined) {
+    mapping = (await resolveOrderTemplate({
+      userId: params.userId,
+      integrationId: params.integrationId,
+      templateName: finalName,
+      languageCode: finalLanguage,
+      variableMapping: finalMapping,
+    })).mapping;
+  }
+  const locale = params.locale ? assertOrderLocale(params.locale) : current.locale;
+  const data: Record<string, unknown> = {};
+  if (params.locale !== undefined) data.locale = locale;
+  if (params.templateName !== undefined) data.templateName = finalName;
+  if (params.languageCode !== undefined) data.languageCode = finalLanguage;
+  if (params.variableMapping !== undefined || finalActive) data.variableMapping = mapping as any;
+  if (params.templateVersion !== undefined) data.templateVersion = params.templateVersion;
+  if (params.isActive !== undefined) data.isActive = params.isActive;
+  if (finalActive) data.approvalStatus = "APPROVED";
+  if (Object.keys(data).length === 0) throw new AppError("At least one template field is required", 400);
+  const record = await updateOrderTemplateConfig({
+    id: current.id,
+    integrationId: integration.id,
+    businessProfileId: integration.businessProfileId,
+    whatsappAccountId: integration.whatsappAccountId,
+    data: data as any,
+    ...(finalActive ? { activateKey: { whatsappAccountId: integration.whatsappAccountId, eventType: current.eventType, locale } } : {}),
+  });
+  return { ok: true as const, config: record };
+}
+
+export async function copilotPreviewOrderConfirmation(params: {
+  userId: number; integrationId: number; event: unknown; locale?: string; templateConfigId?: number;
+}) {
+  const { integration } = await ownedOrderIntegration(params.userId, params.integrationId);
+  if (!integration.whatsappAccountId) throw new AppError("Select a WhatsApp account before previewing", 400);
+  let event;
+  try {
+    event = normalizeCanonicalOrderEvent(params.event);
+  } catch (error) {
+    throw new AppError(error instanceof Error ? error.message : "Invalid canonical order event", 400);
+  }
+  const locale = assertOrderLocale(params.locale ?? event.order.customer.locale ?? integration.defaultLocale);
+  const config = await findOrderTemplateConfigForTest({
+    id: params.templateConfigId,
+    integrationId: integration.id,
+    businessProfileId: integration.businessProfileId,
+    whatsappAccountId: integration.whatsappAccountId,
+    eventType: ORDER_EVENT_TYPE,
+    locale,
+  });
+  if (!config || !config.isActive || config.approvalStatus !== "APPROVED") throw new AppError("No active approved template is configured for this locale", 404);
+  const rendered = renderOrderTemplateVariables(
+    event.order,
+    validateOrderTemplateMapping(config.variableMapping, true),
+    { confirm: "preview-confirm", cancel: "preview-cancel" },
+    locale,
+  );
+  return { preview: { templateConfigId: config.id, templateName: config.templateName, languageCode: config.languageCode, locale, ...rendered } };
+}
+
+export async function copilotListWhatsAppSuppressions(params: { userId: number; businessProfileId?: number; activeOnly?: boolean }) {
+  const profileIds = await getAccessibleProfileIds(params.userId);
+  if (params.businessProfileId !== undefined && !profileIds.includes(params.businessProfileId)) throw new AppError("Business profile not found", 404);
+  const rows = await prisma.whatsAppSuppression.findMany({
+    where: {
+      businessProfileId: params.businessProfileId ?? { in: profileIds },
+      ...(params.activeOnly === false ? {} : { clearedAt: null }),
+    },
+    orderBy: { createdAt: "desc" },
+    take: 100,
+  });
+  return { suppressions: rows.map((row) => ({ ...row, normalizedPhone: row.normalizedPhone.length <= 5 ? "***" : `${row.normalizedPhone.slice(0, 3)}***${row.normalizedPhone.slice(-2)}` })) };
+}
+
+export async function copilotClearWhatsAppSuppression(params: { userId: number; suppressionId: number }) {
+  const profileIds = await getAccessibleProfileIds(params.userId);
+  const result = await prisma.whatsAppSuppression.updateMany({
+    where: { id: params.suppressionId, businessProfileId: { in: profileIds }, clearedAt: null },
+    data: { clearedAt: new Date() },
+  });
+  if (result.count === 0) throw new AppError("Active WhatsApp suppression not found", 404);
+  return { ok: true as const, suppressionId: params.suppressionId, cleared: true as const };
 }
 
 export async function copilotRetryOrderNotification(params: { userId: number; notificationId: number }) {

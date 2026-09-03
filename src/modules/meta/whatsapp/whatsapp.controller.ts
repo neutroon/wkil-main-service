@@ -69,16 +69,13 @@ export class WhatsAppController {
    * Handle incoming Meta events
    */
   async handleWebhook(req: Request, res: Response) {
-    // Always ACK first
-    res.status(200).send("EVENT_RECEIVED");
-
     try {
       const rawBody = req.body as Buffer | unknown;
       const signature = req.headers["x-hub-signature-256"] as string | undefined;
 
       if (!verifyMetaWebhookSignature(rawBody as Buffer, signature, env.FB_APP_SECRET)) {
         logger.error("whatsapp.webhook.invalid_signature");
-        return;
+        return res.status(401).send("INVALID_SIGNATURE");
       }
 
       let body: any;
@@ -87,10 +84,12 @@ export class WhatsAppController {
         body = JSON.parse(str);
       } catch {
         logger.error("whatsapp.webhook.invalid_json");
-        return;
+        return res.status(400).send("INVALID_JSON");
       }
 
-      if (body.object !== "whatsapp_business_account" || !Array.isArray(body.entry)) return;
+      if (body.object !== "whatsapp_business_account" || !Array.isArray(body.entry)) {
+        return res.status(200).send("EVENT_RECEIVED");
+      }
 
       for (const entry of body.entry) {
         if (!Array.isArray(entry.changes)) continue;
@@ -108,12 +107,28 @@ export class WhatsAppController {
           if (Array.isArray(statuses)) {
             for (const status of statuses) {
               const { id: wamid, status: newStatus } = status;
-              enqueueMetaJob({
+              const normalizedStatus = String(newStatus || "").toUpperCase();
+              if (
+                typeof wamid !== "string" ||
+                !["SENT", "DELIVERED", "READ", "FAILED"].includes(normalizedStatus)
+              ) {
+                logger.warn("whatsapp.webhook.unknown_status_ignored", {
+                  wamid,
+                  status: normalizedStatus,
+                });
+                continue;
+              }
+              const firstError = Array.isArray(status.errors) ? status.errors[0] : undefined;
+              const statusError = firstError
+                ? [firstError.code, firstError.title].filter(Boolean).join(": ")
+                : undefined;
+              await enqueueMetaJob({
                 platform: "whatsapp",
                 type: "status_update",
                 externalId: wamid,
-                statusEvent: newStatus.toUpperCase()
-              } as any);
+                statusEvent: normalizedStatus,
+                statusError,
+              });
             }
           }
 
@@ -169,7 +184,7 @@ export class WhatsAppController {
             if (!actualCustomerId) continue;
 
             if (interactiveReply && !isFromBusiness) {
-              enqueueInboundMetaEvent({
+              await enqueueInboundMetaEvent({
                 platform: "whatsapp",
                 eventId: wamid,
                 payload: {
@@ -196,7 +211,7 @@ export class WhatsAppController {
             if (type === "text" && !messageText) continue;
             if (type !== "text" && !mediaId) continue;
 
-            enqueueInboundMetaEvent({
+            await enqueueInboundMetaEvent({
               platform: "whatsapp",
               eventId: wamid,
               payload: {
@@ -219,8 +234,12 @@ export class WhatsAppController {
           }
         }
       }
+      return res.status(200).send("EVENT_RECEIVED");
     } catch (error: any) {
       logger.error("whatsapp.webhook.handler_error", { error: error.message });
+      if (!res.headersSent) {
+        return res.status(500).send("WEBHOOK_PROCESSING_FAILED");
+      }
     }
   }
 
@@ -614,7 +633,6 @@ export class WhatsAppController {
 }
 
 export const whatsappController = new WhatsAppController();
-
 
 
 

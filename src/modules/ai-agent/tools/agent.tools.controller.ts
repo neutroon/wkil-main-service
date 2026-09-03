@@ -33,8 +33,18 @@ import {
   copilotRetryMediaSync,
   copilotGenerateVisual,
   copilotListOrders,
+  copilotGetOrder,
   copilotListOrderIntegrations,
+  copilotCreateOrderIntegration,
   copilotUpdateOrderIntegration,
+  copilotRotateOrderIntegrationSecret,
+  copilotListApprovedOrderTemplates,
+  copilotListOrderTemplateConfigs,
+  copilotCreateOrderTemplateConfig,
+  copilotUpdateOrderTemplateConfig,
+  copilotPreviewOrderConfirmation,
+  copilotListWhatsAppSuppressions,
+  copilotClearWhatsAppSuppression,
   copilotRetryOrderNotification,
   copilotRetryOrderSync,
   copilotListWhatsAppAccounts,
@@ -763,6 +773,7 @@ router.get("/copilot/orders", async (req, res) => {
   try {
     res.json(await copilotListOrders({
       userId,
+      businessProfileId: req.query.businessProfileId ? Number(req.query.businessProfileId) : undefined,
       status: req.query.status ? String(req.query.status) : undefined,
       page: req.query.page ? Number(req.query.page) : undefined,
       limit: req.query.limit ? Number(req.query.limit) : undefined,
@@ -772,13 +783,47 @@ router.get("/copilot/orders", async (req, res) => {
   }
 });
 
+router.get("/copilot/orders/by-id/:id", async (req, res) => {
+  const userId = Number(req.query.userId);
+  const orderId = Number(req.params.id);
+  if (!userId || !orderId) return res.status(400).json({ error: "userId_and_orderId_required" });
+  try {
+    res.json(await copilotGetOrder({ userId, orderId }));
+  } catch (e: any) {
+    res.status(errStatus(e, 404)).json({ error: e?.message ?? "get_order_failed" });
+  }
+});
+
 router.get("/copilot/orders/integrations", async (req, res) => {
   const userId = Number(req.query.userId);
   if (!userId) return res.status(400).json({ error: "userId_required" });
   try {
-    res.json(await copilotListOrderIntegrations({ userId }));
+    res.json(await copilotListOrderIntegrations({
+      userId,
+      businessProfileId: req.query.businessProfileId ? Number(req.query.businessProfileId) : undefined,
+    }));
   } catch (e: any) {
     res.status(errStatus(e, 500)).json({ error: e?.message ?? "list_order_integrations_failed" });
+  }
+});
+
+router.post("/copilot/orders/integrations", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  const businessProfileId = Number(req.body?.businessProfileId);
+  if (!userId || !businessProfileId) return res.status(400).json({ error: "userId_and_businessProfileId_required" });
+  try {
+    res.json(await copilotCreateOrderIntegration({
+      userId,
+      businessProfileId,
+      whatsappAccountId: req.body?.whatsappAccountId === null ? null : req.body?.whatsappAccountId ? Number(req.body.whatsappAccountId) : undefined,
+      defaultLocale: req.body?.defaultLocale !== undefined ? String(req.body.defaultLocale) : undefined,
+      isActive: req.body?.isActive,
+      storeSyncEnabled: req.body?.storeSyncEnabled,
+      statusCallbackUrl: req.body?.statusCallbackUrl,
+      statusCallbackSecret: req.body?.statusCallbackSecret,
+    }));
+  } catch (e: any) {
+    res.status(errStatus(e, 400)).json({ error: e?.message ?? "create_order_integration_failed" });
   }
 });
 
@@ -790,12 +835,139 @@ router.patch("/copilot/orders/integrations/:id", async (req, res) => {
     res.json(await copilotUpdateOrderIntegration({
       userId,
       integrationId,
+      whatsappAccountId: req.body?.whatsappAccountId === null ? null : req.body?.whatsappAccountId ? Number(req.body.whatsappAccountId) : undefined,
       isActive: req.body?.isActive !== undefined ? Boolean(req.body.isActive) : undefined,
       storeSyncEnabled: req.body?.storeSyncEnabled !== undefined ? Boolean(req.body.storeSyncEnabled) : undefined,
       defaultLocale: req.body?.defaultLocale !== undefined ? String(req.body.defaultLocale) : undefined,
+      statusCallbackUrl: req.body?.statusCallbackUrl,
+      statusCallbackSecret: req.body?.statusCallbackSecret,
+      rotateStatusCallbackSecret: req.body?.rotateStatusCallbackSecret === true,
     }));
   } catch (e: any) {
     res.status(errStatus(e, 404)).json({ error: e?.message ?? "update_order_integration_failed" });
+  }
+});
+
+router.post("/copilot/orders/integrations/:id/rotate-secret", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  const integrationId = Number(req.params.id);
+  if (!userId || !integrationId) return res.status(400).json({ error: "userId_and_integrationId_required" });
+  try {
+    res.json(await copilotRotateOrderIntegrationSecret({ userId, integrationId }));
+  } catch (e: any) {
+    res.status(errStatus(e, 404)).json({ error: e?.message ?? "rotate_order_secret_failed" });
+  }
+});
+
+router.get("/copilot/orders/templates", async (req, res) => {
+  const userId = Number(req.query.userId);
+  const whatsappAccountId = Number(req.query.whatsappAccountId);
+  if (!userId || !whatsappAccountId) return res.status(400).json({ error: "userId_and_whatsappAccountId_required" });
+  try {
+    res.json(await copilotListApprovedOrderTemplates({ userId, whatsappAccountId }));
+  } catch (e: any) {
+    res.status(errStatus(e, 404)).json({ error: e?.message ?? "list_order_templates_failed" });
+  }
+});
+
+router.get("/copilot/orders/template-configs", async (req, res) => {
+  const userId = Number(req.query.userId);
+  const integrationId = Number(req.query.integrationId);
+  if (!userId || !integrationId) return res.status(400).json({ error: "userId_and_integrationId_required" });
+  try {
+    res.json(await copilotListOrderTemplateConfigs({
+      userId,
+      integrationId,
+      locale: req.query.locale ? String(req.query.locale) : undefined,
+    }));
+  } catch (e: any) {
+    res.status(errStatus(e, 404)).json({ error: e?.message ?? "list_order_template_configs_failed" });
+  }
+});
+
+router.post("/copilot/orders/template-configs", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  const integrationId = Number(req.body?.integrationId);
+  if (!userId || !integrationId || !req.body?.locale || !req.body?.templateName || !req.body?.languageCode || req.body?.variableMapping === undefined) {
+    return res.status(400).json({ error: "template_config_fields_required" });
+  }
+  try {
+    res.json(await copilotCreateOrderTemplateConfig({
+      userId,
+      integrationId,
+      locale: String(req.body.locale),
+      templateName: String(req.body.templateName),
+      languageCode: String(req.body.languageCode),
+      variableMapping: req.body.variableMapping,
+      templateVersion: req.body?.templateVersion ? Number(req.body.templateVersion) : undefined,
+      isActive: req.body?.isActive,
+    }));
+  } catch (e: any) {
+    res.status(errStatus(e, 400)).json({ error: e?.message ?? "create_order_template_config_failed" });
+  }
+});
+
+router.patch("/copilot/orders/template-configs/:id", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  const integrationId = Number(req.body?.integrationId);
+  const configId = Number(req.params.id);
+  if (!userId || !integrationId || !configId) return res.status(400).json({ error: "userId_integrationId_and_configId_required" });
+  try {
+    res.json(await copilotUpdateOrderTemplateConfig({
+      userId,
+      integrationId,
+      configId,
+      locale: req.body?.locale,
+      templateName: req.body?.templateName,
+      languageCode: req.body?.languageCode,
+      variableMapping: req.body?.variableMapping,
+      templateVersion: req.body?.templateVersion ? Number(req.body.templateVersion) : undefined,
+      isActive: req.body?.isActive,
+    }));
+  } catch (e: any) {
+    res.status(errStatus(e, 400)).json({ error: e?.message ?? "update_order_template_config_failed" });
+  }
+});
+
+router.post("/copilot/orders/integrations/:id/preview", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  const integrationId = Number(req.params.id);
+  if (!userId || !integrationId || req.body?.event === undefined) return res.status(400).json({ error: "userId_integrationId_and_event_required" });
+  try {
+    res.json(await copilotPreviewOrderConfirmation({
+      userId,
+      integrationId,
+      event: req.body.event,
+      locale: req.body?.locale,
+      templateConfigId: req.body?.templateConfigId ? Number(req.body.templateConfigId) : undefined,
+    }));
+  } catch (e: any) {
+    res.status(errStatus(e, 400)).json({ error: e?.message ?? "preview_order_confirmation_failed" });
+  }
+});
+
+router.get("/copilot/orders/suppressions", async (req, res) => {
+  const userId = Number(req.query.userId);
+  if (!userId) return res.status(400).json({ error: "userId_required" });
+  try {
+    res.json(await copilotListWhatsAppSuppressions({
+      userId,
+      businessProfileId: req.query.businessProfileId ? Number(req.query.businessProfileId) : undefined,
+      activeOnly: req.query.activeOnly === "false" ? false : true,
+    }));
+  } catch (e: any) {
+    res.status(errStatus(e, 404)).json({ error: e?.message ?? "list_whatsapp_suppressions_failed" });
+  }
+});
+
+router.post("/copilot/orders/suppressions/:id/clear", async (req, res) => {
+  const userId = Number(req.body?.userId);
+  const suppressionId = Number(req.params.id);
+  if (!userId || !suppressionId) return res.status(400).json({ error: "userId_and_suppressionId_required" });
+  try {
+    res.json(await copilotClearWhatsAppSuppression({ userId, suppressionId }));
+  } catch (e: any) {
+    res.status(errStatus(e, 404)).json({ error: e?.message ?? "clear_whatsapp_suppression_failed" });
   }
 });
 

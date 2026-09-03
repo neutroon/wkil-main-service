@@ -20,6 +20,7 @@ import {
   enqueueStoreSync,
 } from "./orderConfirmation.queue";
 import {
+  OrderConfirmationAmbiguousDeliveryError,
   OrderConfirmationGlobalKillSwitchError,
   OrderConfirmationRateLimitError,
   OrderConfirmationSuppressedError,
@@ -130,6 +131,17 @@ export async function sendOrderNotification(notificationId: number): Promise<voi
     if (error instanceof OrderConfirmationRateLimitError || code === "ORDER_CONFIRMATION_RATE_LIMIT") {
       await markNotificationQueued(notificationId);
       throw error;
+    }
+
+    if (
+      error instanceof OrderConfirmationAmbiguousDeliveryError ||
+      code === "AMBIGUOUS_PROVIDER_DELIVERY"
+    ) {
+      await markNotificationFailed(notificationId, "AMBIGUOUS_PROVIDER_DELIVERY");
+      logger.error("order_confirmation.provider_delivery_ambiguous", {
+        notificationId,
+      });
+      return;
     }
 
     if (

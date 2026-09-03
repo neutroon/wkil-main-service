@@ -158,6 +158,7 @@ describe("WhatsApp webhook controller wiring", () => {
       displayPhoneNumber: "+15551234567",
     });
     mocks.verifyMetaWebhookSignature.mockReturnValue(true);
+    mocks.enqueueMetaJob.mockResolvedValue(undefined);
     mocks.enqueueInboundMetaEvent.mockResolvedValue(undefined);
   });
 
@@ -219,5 +220,62 @@ describe("WhatsApp webhook controller wiring", () => {
         isFromBusiness: false,
       }),
     });
+  });
+
+  it("rejects an invalid signature before acknowledging or queueing the webhook", async () => {
+    mocks.verifyMetaWebhookSignature.mockReturnValue(false);
+    const response = {
+      status: vi.fn().mockReturnThis(),
+      send: vi.fn().mockReturnThis(),
+    } as any;
+
+    await whatsappController.handleWebhook(webhookRequest(), response);
+
+    expect(response.status).toHaveBeenCalledWith(401);
+    expect(response.send).toHaveBeenCalledWith("INVALID_SIGNATURE");
+    expect(mocks.enqueueMetaJob).not.toHaveBeenCalled();
+    expect(mocks.enqueueInboundMetaEvent).not.toHaveBeenCalled();
+  });
+
+  it("durably queues recognized delivery receipts with a safe provider error summary", async () => {
+    const request = webhookRequest();
+    request.body.entry[0].changes[0].value.messages = [];
+    request.body.entry[0].changes[0].value.statuses = [
+      {
+        id: "wamid-outbound-1",
+        status: "failed",
+        errors: [{ code: 131026, title: "Message undeliverable", details: "private detail" }],
+      },
+    ];
+    const response = {
+      status: vi.fn().mockReturnThis(),
+      send: vi.fn().mockReturnThis(),
+    } as any;
+
+    await whatsappController.handleWebhook(request, response);
+
+    expect(mocks.enqueueMetaJob).toHaveBeenCalledWith({
+      platform: "whatsapp",
+      type: "status_update",
+      externalId: "wamid-outbound-1",
+      statusEvent: "FAILED",
+      statusError: "131026: Message undeliverable",
+    });
+    expect(response.status).toHaveBeenCalledWith(200);
+    expect(response.send).toHaveBeenCalledWith("EVENT_RECEIVED");
+  });
+
+  it("returns a retryable error when durable queueing fails", async () => {
+    mocks.enqueueInboundMetaEvent.mockRejectedValueOnce(new Error("queue unavailable"));
+    const response = {
+      headersSent: false,
+      status: vi.fn().mockReturnThis(),
+      send: vi.fn().mockReturnThis(),
+    } as any;
+
+    await whatsappController.handleWebhook(webhookRequest(), response);
+
+    expect(response.status).toHaveBeenCalledWith(500);
+    expect(response.send).toHaveBeenCalledWith("WEBHOOK_PROCESSING_FAILED");
   });
 });

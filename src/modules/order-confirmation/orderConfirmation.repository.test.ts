@@ -49,6 +49,7 @@ import {
   insertOrderEventIfNew,
   markNotificationSending,
   markNotificationSent,
+  reconcileNotificationDeliveryStatus,
   markStaleSendingNotificationsFailed,
   findPendingOrderStoreSyncs,
   findUnattemptedQueuedOrderNotifications,
@@ -293,6 +294,43 @@ describe("order confirmation repository", () => {
     expect(matches("FAILED", null)).toBe(true);
     expect(matches("FAILED", "Meta unavailable")).toBe(true);
     expect(matches("FAILED", "AMBIGUOUS_PROVIDER_DELIVERY")).toBe(false);
+  });
+
+  it("reconciles delivery receipts monotonically", async () => {
+    const occurredAt = new Date("2026-08-13T10:30:00.000Z");
+
+    await reconcileNotificationDeliveryStatus({
+      providerMessageId: "wamid-18",
+      status: "READ",
+      occurredAt,
+    });
+
+    expect(mocks.notificationUpdateMany).toHaveBeenLastCalledWith({
+      where: {
+        providerMessageId: "wamid-18",
+        status: { in: ["SENT", "DELIVERED", "READ"] },
+      },
+      data: { status: "READ", readAt: occurredAt },
+    });
+
+    await reconcileNotificationDeliveryStatus({
+      providerMessageId: "wamid-18",
+      status: "FAILED",
+      error: "131026: Message undeliverable",
+      occurredAt,
+    });
+
+    expect(mocks.notificationUpdateMany).toHaveBeenLastCalledWith({
+      where: {
+        providerMessageId: "wamid-18",
+        status: { in: ["SENDING", "SENT"] },
+      },
+      data: {
+        status: "FAILED",
+        failedAt: occurredAt,
+        lastError: "131026: Message undeliverable",
+      },
+    });
   });
 
   it("finds stale pending store syncs whose retry time is due", async () => {

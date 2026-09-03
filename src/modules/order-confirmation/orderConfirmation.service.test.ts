@@ -55,6 +55,7 @@ vi.mock("./orderConfirmation.queue", () => ({
 
 vi.mock("./orderConfirmation.whatsapp.adapter", () => ({
   OrderConfirmationRateLimitError: class OrderConfirmationRateLimitError extends Error {},
+  OrderConfirmationAmbiguousDeliveryError: class OrderConfirmationAmbiguousDeliveryError extends Error {},
   OrderConfirmationGlobalKillSwitchError: class OrderConfirmationGlobalKillSwitchError extends Error {},
   OrderConfirmationSuppressedError: class OrderConfirmationSuppressedError extends Error {},
   sendConfirmationNotification: mocks.sendConfirmationNotification,
@@ -319,6 +320,25 @@ describe("order confirmation workflow", () => {
 
     expect(mocks.markNotificationFailed).toHaveBeenCalledWith(18, "Meta unavailable");
     expect(mocks.claimOrderAction).not.toHaveBeenCalled();
+  });
+
+  it("quarantines ambiguous provider delivery without an automatic retry", async () => {
+    mocks.findNotificationForSending.mockResolvedValue({
+      id: 18,
+      status: "QUEUED",
+      kind: "CONFIRMATION_REQUEST",
+    });
+    mocks.sendConfirmationNotification.mockRejectedValue({
+      code: "AMBIGUOUS_PROVIDER_DELIVERY",
+    });
+
+    await expect(sendOrderNotification(18)).resolves.toBeUndefined();
+
+    expect(mocks.markNotificationFailed).toHaveBeenCalledWith(
+      18,
+      "AMBIGUOUS_PROVIDER_DELIVERY",
+    );
+    expect(mocks.markNotificationQueued).not.toHaveBeenCalled();
   });
 
   it("processes a store sync without changing the local order state", async () => {

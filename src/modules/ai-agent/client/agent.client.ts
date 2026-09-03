@@ -1,10 +1,9 @@
 import { Client } from "@langchain/langgraph-sdk";
 
-const ENABLED = process.env.USE_AGENT_SERVICE === "true";
 const API_URL = process.env.LANGGRAPH_API_URL ?? "http://localhost:8123";
 
 export class AgentClient {
-  static enabled() { return ENABLED; }
+  static enabled() { return process.env.USE_AGENT_SERVICE === "true"; }
   private static client(): Client {
     return new Client({ apiUrl: API_URL, apiKey: process.env.LANGGRAPH_API_KEY ?? "" });
   }

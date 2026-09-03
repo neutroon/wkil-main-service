@@ -5,12 +5,17 @@ import { logger } from "@utils/logger";
 import { decryptFacebookSecret } from "@modules/auth/core/tokenCrypto";
 import { cache } from "@utils/cache";
 import {
+  getOrCreateConversation,
+  saveMessage,
+} from "../core/conversation.service";
+import {
   getFacebookUserProfile,
   likeComment,
 } from "../facebook/facebook.service";
 import { understandInboundMedia } from "./inboundMediaUnderstanding.service";
 import { createLatencyTrace } from "@utils/latencyTrace";
 import { enqueueOrderAction } from "@modules/order-confirmation/orderConfirmation.queue";
+import { reconcileNotificationDeliveryStatus } from "@modules/order-confirmation/orderConfirmation.repository";
 import {
   isWhatsAppOptOut,
   normalizeOptOutText,
@@ -44,7 +49,8 @@ export interface MetaMessageJob {
   isFromBusiness?: boolean;
   
   // Status & Typing fields
-  statusEvent?: "DELIVERED" | "READ";
+  statusEvent?: "SENT" | "DELIVERED" | "READ" | "FAILED";
+  statusError?: string;
   mids?: string[];
   watermark?: number;
   isTyping?: boolean;
@@ -429,6 +435,137 @@ export async function processMetaMessage(
   job: MetaMessageJob,
   traceOptions: MetaProcessorTraceOptions = {},
 ) {
+  const { platform, identifier, senderId, messageText, externalId, type } = job;
+
+  // Delivery receipts and order actions must never enter the AI path. Besides
+  // wasting a model call, doing so delays or completely drops state changes
+  // that customers expect to be immediate and idempotent.
+  if (type === "status_update") {
+    if (platform === "whatsapp" && externalId && job.statusEvent) {
+      const status = job.statusEvent;
+
+      await Promise.all([
+        prisma.conversationMessage.updateMany({
+          where: {
+            externalId,
+            ...(status === "FAILED" ? { status: { notIn: ["DELIVERED", "READ"] } } : {}),
+          },
+          data: { status },
+        }),
+        reconcileNotificationDeliveryStatus({
+          providerMessageId: externalId,
+          status,
+          error: job.statusError,
+        }),
+      ]);
+    }
+    return;
+  }
+
+  if (type === "ORDER_ACTION") {
+    const phoneNumberId = job.phoneNumberId || identifier;
+    const customerPhone = job.customerPhone || senderId;
+    const businessProfileId = job.businessProfileId;
+    if (
+      platform !== "whatsapp" ||
+      !job.orderActionId ||
+      typeof businessProfileId !== "number" ||
+      !Number.isInteger(businessProfileId) ||
+      !phoneNumberId ||
+      !customerPhone
+    ) {
+      logger.warn("meta.processor.order_action_invalid", {
+        platform,
+        identifier,
+        businessProfileId,
+        inboundMessageId: externalId,
+      });
+      return;
+    }
+
+    const correlationId = `meta-order-action-${externalId || "unknown"}`;
+    await enqueueOrderAction({
+      businessProfileId,
+      phoneNumberId,
+      customerPhone: normalizeWhatsAppPhone(customerPhone),
+      actionToken: job.orderActionId,
+      inboundMessageId: externalId,
+      buttonTitle: job.buttonTitle,
+      correlationId,
+    });
+    logger.info("meta.processor.order_action_enqueued", {
+      businessProfileId,
+      phoneNumberId,
+      inboundMessageId: externalId,
+      buttonTitle: job.buttonTitle,
+    });
+    return;
+  }
+
+  const shouldRecordWhatsAppOptOut =
+    platform === "whatsapp" &&
+    !job.isFromBusiness &&
+    (type === "text" || type === undefined) &&
+    isWhatsAppOptOut(messageText || "");
+
+  if (shouldRecordWhatsAppOptOut) {
+    const { businessProfileId } = await resolveAccountIdentity(job);
+    const normalizedPhone = normalizeWhatsAppPhone(job.customerPhone || senderId);
+    const existing = externalId
+      ? await prisma.conversationMessage.findFirst({
+          where: { externalId },
+          select: { id: true },
+        })
+      : null;
+    let conversationId: number | undefined;
+
+    if (!existing) {
+      const conversation = await getOrCreateConversation(
+        identifier,
+        senderId,
+        businessProfileId,
+        {
+          channel: "whatsapp",
+          customerPhone: normalizedPhone,
+          customerName: job.customerName,
+        },
+      );
+      conversationId = conversation.id;
+      await saveMessage(conversation.id, "user", messageText || "", {
+        externalId,
+        type: type || "text",
+        mediaId: job.mediaId,
+        mediaMetadata: job.mediaMetadata,
+      });
+    }
+
+    // Keep this after message persistence. If suppression storage fails, the
+    // webhook retry sees the existing message but still retries the upsert.
+    await prisma.whatsAppSuppression.upsert({
+      where: {
+        businessProfileId_normalizedPhone: {
+          businessProfileId,
+          normalizedPhone,
+        },
+      },
+      update: { reason: "CUSTOMER_OPT_OUT", source: "WHATSAPP", clearedAt: null },
+      create: {
+        businessProfileId,
+        normalizedPhone,
+        reason: "CUSTOMER_OPT_OUT",
+        source: "WHATSAPP",
+      },
+    });
+    logger.info("meta.processor.whatsapp_opt_out_recorded", {
+      businessProfileId,
+      normalizedPhone,
+      conversationId,
+      externalId,
+      normalizedText: normalizeOptOutText(messageText || ""),
+    });
+    return;
+  }
+
   return AgentClient.runCustomerAgent({
     business_profile_id: job.businessProfileId,
     user_id: undefined,

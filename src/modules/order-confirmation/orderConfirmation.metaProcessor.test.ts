@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   whatsappAccountFindFirst: vi.fn(),
   conversationMessageFindFirst: vi.fn(),
   conversationMessageUpdate: vi.fn(),
+  conversationMessageUpdateMany: vi.fn(),
+  reconcileNotificationDeliveryStatus: vi.fn(),
   suppressionUpsert: vi.fn(),
   getOrCreateConversation: vi.fn(),
   saveMessage: vi.fn(),
@@ -36,6 +38,7 @@ vi.mock("@config/prisma", () => ({
     conversationMessage: {
       findFirst: mocks.conversationMessageFindFirst,
       update: mocks.conversationMessageUpdate,
+      updateMany: mocks.conversationMessageUpdateMany,
     },
     whatsAppSuppression: { upsert: mocks.suppressionUpsert },
   },
@@ -79,6 +82,10 @@ vi.mock("@modules/meta/core/conversation.service", () => ({
 
 vi.mock("@modules/order-confirmation/orderConfirmation.queue", () => ({
   enqueueOrderAction: mocks.enqueueOrderAction,
+}));
+
+vi.mock("@modules/order-confirmation/orderConfirmation.repository", () => ({
+  reconcileNotificationDeliveryStatus: mocks.reconcileNotificationDeliveryStatus,
 }));
 
 vi.mock("@modules/ai-agent/chat/businessChatReply.service", () => ({
@@ -148,6 +155,8 @@ describe("WhatsApp order action routing and suppression", () => {
     mocks.getOrCreateConversation.mockResolvedValue({ id: 77, aiEnabled: false });
     mocks.saveMessage.mockResolvedValue({ id: 88 });
     mocks.suppressionUpsert.mockResolvedValue({ id: 99 });
+    mocks.conversationMessageUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.reconcileNotificationDeliveryStatus.mockResolvedValue(undefined);
     mocks.enqueueOrderAction.mockResolvedValue(undefined);
     mocks.classifyInboundMessageSignal.mockReturnValue({
       shouldTriggerAi: true,
@@ -255,5 +264,28 @@ describe("WhatsApp order action routing and suppression", () => {
     expect(mocks.suppressionUpsert).toHaveBeenCalledTimes(2);
     expect(mocks.computeBusinessChatReply).not.toHaveBeenCalled();
     expect(mocks.startConversationAiRun).not.toHaveBeenCalled();
+  });
+
+  it("reconciles WhatsApp delivery receipts without allowing status downgrades", async () => {
+    await processMetaMessage({
+      platform: "whatsapp",
+      identifier: "",
+      senderId: "",
+      messageText: "",
+      type: "status_update",
+      externalId: "wamid-outbound-1",
+      statusEvent: "READ",
+    });
+
+    expect(mocks.conversationMessageUpdateMany).toHaveBeenCalledWith({
+      where: { externalId: "wamid-outbound-1" },
+      data: { status: "READ" },
+    });
+    expect(mocks.reconcileNotificationDeliveryStatus).toHaveBeenCalledWith({
+      providerMessageId: "wamid-outbound-1",
+      status: "READ",
+      error: undefined,
+    });
+    expect(mocks.computeBusinessChatReply).not.toHaveBeenCalled();
   });
 });

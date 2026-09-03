@@ -9,6 +9,8 @@ import {
 import { AppError } from "@middlewares/errorHandler.middleware";
 import { AgentClient } from "@modules/ai-agent/client/agent.client";
 
+const WHATSAPP_REQUEST_TIMEOUT_MS = 15_000;
+
 // ── Local shims (formerly @modules/ai-agent/chat/*, migrated to agent-svc) ──
 function classifyInboundMessageSignal(p: { type?: string; messageText?: string; mediaId?: string; mediaMetadata?: unknown; [k: string]: unknown }) {
   return { shouldTriggerAi: !!p.messageText || !!p.mediaId, reason: "migrated-to-agent-svc" };
@@ -68,6 +70,7 @@ export async function sendWhatsAppReply(
         type: "text",
         text: { body: text },
       }),
+      signal: AbortSignal.timeout(WHATSAPP_REQUEST_TIMEOUT_MS),
     },
   );
 
@@ -114,6 +117,7 @@ export async function sendWhatsAppMedia(
         type: type,
         [type]: mediaBody,
       }),
+      signal: AbortSignal.timeout(WHATSAPP_REQUEST_TIMEOUT_MS),
     },
   );
 
@@ -144,6 +148,7 @@ export async function sendWhatsAppAction(
         message_id: messageId,
         typing_indicator: { type: "text" },
       }),
+      signal: AbortSignal.timeout(WHATSAPP_REQUEST_TIMEOUT_MS),
     },
   );
   if (!response.ok) {
@@ -168,6 +173,7 @@ export async function listWhatsAppTemplates(
       headers: {
         Authorization: `Bearer ${accessToken}`,
       },
+      signal: AbortSignal.timeout(WHATSAPP_REQUEST_TIMEOUT_MS),
     },
   );
 
@@ -210,6 +216,7 @@ export async function sendWhatsAppTemplate(
           components,
         },
       }),
+      signal: AbortSignal.timeout(WHATSAPP_REQUEST_TIMEOUT_MS),
     },
   );
 

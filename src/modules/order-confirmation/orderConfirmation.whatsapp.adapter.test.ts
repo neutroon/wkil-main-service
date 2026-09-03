@@ -157,6 +157,11 @@ describe("WhatsApp confirmation adapter", () => {
     expect(JSON.stringify(mocks.saveNotificationRenderedVariables.mock.calls)).not.toContain(
       "raw-confirm-token",
     );
+    expect(mocks.saveNotificationRenderedVariables).toHaveBeenCalledWith(
+      18,
+      expect.objectContaining({ buttonMapping: ["confirmToken", "cancelToken"] }),
+      8,
+    );
   });
 
   it("resolves and validates the current template before consuming the send permit", async () => {
@@ -187,5 +192,23 @@ describe("WhatsApp confirmation adapter", () => {
 
     expect(mocks.acquireBusinessSendPermit).not.toHaveBeenCalled();
     expect(mocks.sendWhatsAppTemplate).not.toHaveBeenCalled();
+  });
+
+  it("classifies a transport failure as ambiguous to prevent duplicate sends", async () => {
+    mocks.sendWhatsAppTemplate.mockRejectedValueOnce(new TypeError("fetch failed"));
+
+    await expect(sendConfirmationNotification(18)).rejects.toMatchObject({
+      code: "AMBIGUOUS_PROVIDER_DELIVERY",
+    });
+  });
+
+  it("does not resend when inbox mirroring fails after Meta accepted the message", async () => {
+    mocks.saveMessage.mockRejectedValueOnce(new Error("database unavailable"));
+
+    await expect(sendConfirmationNotification(18)).resolves.toEqual({
+      providerMessageId: "wamid-1",
+      previewText: "Order #100: Mona | USD 10.00",
+    });
+    expect(mocks.sendWhatsAppTemplate).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,11 +1,13 @@
 import { Client } from "@langchain/langgraph-sdk";
 
 const API_URL = process.env.LANGGRAPH_API_URL ?? "http://localhost:8123";
+const API_KEY = () =>
+  process.env.MONOLITH_AGENT_API_KEY ?? process.env.LANGGRAPH_API_KEY ?? "";
 
 export class AgentClient {
   static enabled() { return process.env.USE_AGENT_SERVICE === "true"; }
   private static client(): Client {
-    return new Client({ apiUrl: API_URL, apiKey: process.env.LANGGRAPH_API_KEY ?? "" });
+    return new Client({ apiUrl: API_URL, apiKey: API_KEY() });
   }
   static async createThread() {
     return this.client().threads.create();

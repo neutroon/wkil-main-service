@@ -41,13 +41,61 @@ export async function processWidgetChatMessage(params: {
   conversationId: number;
   attachment?: { url: string; type: string; caption?: string | null } | null;
 }> {
-  return AgentClient.runCustomerAgent({
-    business_profile_id: params.install.businessProfileId,
-    user_id: undefined,
-    messages: [],
-    stage: "fast",
-    channel: "web",
-  } as any) as any;
+  const prepared = await setupWidgetChat(params, createLatencyTrace());
+  if (prepared.conversation.aiEnabled === false) {
+    return { reply: "", conversationId: prepared.conversation.id };
+  }
+  const rows = await prisma.conversationMessage.findMany({
+    where: { conversationId: prepared.conversation.id },
+    orderBy: { createdAt: "asc" },
+    take: 40,
+    select: { role: true, content: true },
+  });
+  const result = await AgentClient.runCapability({
+    userId: prepared.businessProfile.userId,
+    businessProfileId: prepared.businessProfile.id,
+    operation: "customer_reply",
+    context: {
+      channel: "web",
+      messageText: params.message,
+      business: prepared.businessProfile,
+      historyTurns: rows.map((row) => ({
+        role: row.role === "user" ? "customer" : "agent",
+        content: row.content || "",
+      })),
+      mediaInfo: null,
+      conversationId: prepared.conversation.id,
+    },
+  });
+  if (result.action === "RESOLVE_CONVERSATION") {
+    await prisma.conversation.update({
+      where: { id: prepared.conversation.id }, data: { status: "RESOLVED" },
+    });
+    return { reply: "", conversationId: prepared.conversation.id };
+  }
+  const reply = (result.content || "").trim();
+  if (reply) {
+    await saveMessage(prepared.conversation.id, "model", reply, {
+      status: "SENT",
+      aiReasoning: result.reasoning,
+      handoffCategory: result.handoff_category,
+    });
+  }
+  let attachment: { url: string; type: string; caption?: string | null } | null = null;
+  if (result.attachment?.asset_name) {
+    const { resolveAssetForChannel } = await import("@modules/media/services/mediaLibrary.service");
+    const resolved = await resolveAssetForChannel(
+      result.attachment.asset_name, prepared.businessProfile.id, "web",
+    );
+    if (resolved?.url) {
+      attachment = {
+        url: resolved.url,
+        type: resolved.mediaType,
+        caption: result.attachment.caption ?? null,
+      };
+    }
+  }
+  return { reply, conversationId: prepared.conversation.id, attachment };
 }
 
 /**
@@ -151,8 +199,9 @@ async function setupWidgetChat(
   );
 
   const mediaPayload = media
-    ? await prepareWidgetMediaPayload({
+      ? await prepareWidgetMediaPayload({
         businessProfileId: install.businessProfileId,
+        userId: businessProfile.userId,
         media,
         latency,
       })
@@ -170,6 +219,7 @@ async function setupWidgetChat(
 
 async function prepareWidgetMediaPayload(params: {
   businessProfileId: number;
+  userId: number;
   media: WidgetInboundMedia;
   latency: LatencyTrace;
 }) {
@@ -182,7 +232,7 @@ async function prepareWidgetMediaPayload(params: {
     uploadToR2(key, params.media.buffer, params.media.mimeType),
   );
   const analysis = await params.latency.measure("mediaUnderstandingMs", () =>
-    understandWidgetMedia(params.media),
+    understandWidgetMedia(params.media, params.businessProfileId, params.userId),
   );
 
   return {
@@ -208,6 +258,8 @@ function mediaTypeFromMime(mimeType: string): string {
 
 async function understandWidgetMedia(
   media: WidgetInboundMedia,
+  businessProfileId: number,
+  userId: number,
 ): Promise<Record<string, unknown>> {
   const isImage = media.mimeType.startsWith("image/");
   const isAudio = media.mimeType.startsWith("audio/");
@@ -224,47 +276,37 @@ async function understandWidgetMedia(
     if (isAudio) {
       // Inbound media understanding moved to the sibling agent-svc microservice
       // in the ai-agent cutover. The platform routes the request via AgentClient.
-      const result = (await AgentClient.runCustomerAgent({
-        business_profile_id: 0,
-        user_id: undefined,
-        messages: [],
-        stage: "fast",
-        channel: "web",
-      } as any)) as {
-        text?: string;
-        modelName?: string;
-        finishReason?: string | null;
-      };
+      const result = await AgentClient.runCapability({
+        userId,
+        businessProfileId,
+        operation: "media_understanding",
+        context: { mode: "audio", mimeType: media.mimeType, dataBase64: media.buffer.toString("base64") },
+      });
       const transcript = String(result?.text || "").trim();
       return {
         status: transcript ? "completed" : "failed",
         text: transcript || undefined,
         transcript: transcript || undefined,
         mimeType: media.mimeType,
-        modelName: result?.modelName,
-        finishReason: result?.finishReason ?? null,
+        modelName: undefined,
+        finishReason: null,
         ...(transcript ? {} : { errorCode: "media_understanding_disabled" }),
       };
     }
 
-    const result = (await AgentClient.runCustomerAgent({
-      business_profile_id: 0,
-      user_id: undefined,
-      messages: [],
-      stage: "fast",
-      channel: "web",
-    } as any)) as {
-      text?: string;
-      modelName?: string;
-      finishReason?: string | null;
-    };
+    const result = await AgentClient.runCapability({
+      userId,
+      businessProfileId,
+      operation: "media_understanding",
+      context: { mode: "image", mimeType: media.mimeType, dataBase64: media.buffer.toString("base64") },
+    });
     const text = String(result?.text || "").trim();
     return {
       status: text ? "completed" : "failed",
       text: text || undefined,
       mimeType: media.mimeType,
-      modelName: result?.modelName,
-      finishReason: result?.finishReason ?? null,
+      modelName: undefined,
+      finishReason: null,
       ...(text ? {} : { errorCode: "media_understanding_disabled" }),
     };
   } catch (error: unknown) {

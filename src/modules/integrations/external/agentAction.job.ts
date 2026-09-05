@@ -3,11 +3,15 @@ import prisma from "@config/prisma";
 import { logger } from "@utils/logger";
 import { decryptFacebookSecret } from "@modules/auth/core/tokenCrypto";
 import { executeExternalQuery } from "./agentActionExecutor.service";
+import { getConversationHistory, saveMessage } from "@modules/meta/core/conversation.service";
+import { scheduleConversationFollowUps } from "@modules/follow-up/followUp.service";
 import {
   listActiveAgentActionWorkflows,
   nextMutationSourceForCompletedLookup,
 } from "./agentActionWorkflow.service";
 import {
+  markIntegrationActionRunRunning,
+  markIntegrationActionRunSkipped,
   markIntegrationActionRunFailed,
   markIntegrationActionRunSucceeded,
 } from "./integrationActionRun.service";
@@ -35,12 +39,58 @@ export type IntegrationActionJob = {
 export async function processIntegrationActionJob(
   job: IntegrationActionJob,
 ): Promise<void> {
-  return AgentClient.runCopilot({
-    business_profile_id: job.businessProfileId,
-    user_id: undefined,
-    messages: [],
-    stage: "fast",
-  } as any) as any;
+  await markIntegrationActionRunRunning(job.actionRunId);
+  const source = await prisma.agentActionSource.findFirst({ where: { id: job.sourceId, businessProfileId: job.businessProfileId, isActive: true, trigger: job.trigger } });
+  if (!source) { await markIntegrationActionRunSkipped({ id: job.actionRunId, reason: "source_missing_or_inactive" }); return; }
+  if (!job.conversationId) { await markIntegrationActionRunSkipped({ id: job.actionRunId, reason: "chat_conversation_missing" }); return; }
+  const conversation = await prisma.conversation.findFirst({ where: { id: job.conversationId, businessProfileId: job.businessProfileId }, include: { businessProfile: { include: { agentActionSources: { where: { isActive: true } } } } } });
+  if (!conversation) { await markIntegrationActionRunSkipped({ id: job.actionRunId, reason: "conversation_missing" }); return; }
+  const staleBefore = await findNewerCustomerMessageAfterActionStart(job);
+  if (staleBefore) { await markIntegrationActionRunSkipped({ id: job.actionRunId, reason: "stale_customer_message" }); return; }
+  let envelope: Awaited<ReturnType<typeof executeExternalQuery>>;
+  try {
+    const [parentRun, workflow] = await Promise.all([
+      job.parentRunId ? prisma.integrationActionRun.findUnique({ where: { id: job.parentRunId }, select: { responsePayload: true } }) : Promise.resolve(null),
+      job.workflowId ? prisma.agentActionWorkflow.findFirst({ where: { id: job.workflowId, businessProfileId: job.businessProfileId }, select: { inputBindings: true } }) : Promise.resolve(null),
+    ]);
+    envelope = await executeExternalQuery(job.businessProfileId, job.sourceId, job.args ?? {}, { customerPhone: job.customerPhone, conversationId: job.conversationId, latestUserText: job.latestUserText, historyText: job.historyText, parentActionResponse: parentRun?.responsePayload, workflowInputBindings: workflow?.inputBindings });
+  } catch (error: any) {
+    await markIntegrationActionRunFailed({ id: job.actionRunId, reason: error?.message || "integration_action_failed" });
+    throw error;
+  }
+  const staleAfter = await findNewerCustomerMessageAfterActionStart(job);
+  if (staleAfter) { await markActionRunFromEnvelope({ actionRunId: job.actionRunId, envelope }); return; }
+  const historyRows = await getConversationHistory(job.conversationId);
+  const historyTurns = historyRows.map((row: any) => ({ role: row.role === "user" ? "user" as const : "model" as const, text: String(row.content || "") }));
+  const capabilityHistory = historyTurns.map((turn) => ({ role: turn.role === "user" ? "customer" as const : "agent" as const, content: turn.text }));
+  const channel = normalizeChannel(conversation.channel);
+  const actionMessage = completedActionOriginalRequest(job, historyTurns);
+  const workflows = await listActiveAgentActionWorkflows(job.businessProfileId);
+  const workflow = (job.workflowId ? workflows.find((item) => item.id === job.workflowId) : workflows.find((item) => item.lookupSourceId === source.id)) || null;
+  const nextMutationSource = envelope.success && envelope.verification === "verified" ? nextMutationSourceForCompletedLookup(workflow, source) : null;
+  const replyResult = await AgentClient.runCapability({
+    userId: conversation.businessProfile.userId,
+    businessProfileId: job.businessProfileId,
+    operation: "customer_reply",
+    context: {
+      channel,
+      messageText: actionMessage,
+      business: { name: conversation.businessProfile.name, voice: conversation.businessProfile.voice, tone: conversation.businessProfile.tone, corePolicies: conversation.businessProfile.corePolicies, aiBehaviorInstructions: conversation.businessProfile.aiBehaviorInstructions },
+      historyTurns: capabilityHistory,
+      conversationId: job.conversationId,
+    },
+  });
+  const reply: any = { ...replyResult, handoffCategory: replyResult.handoff_category, content: replyResult.content || "" };
+  if (reply.action === "RESOLVE_CONVERSATION") { await prisma.conversation.update({ where: { id: job.conversationId }, data: { status: "RESOLVED" } }); await markActionRunFromEnvelope({ actionRunId: job.actionRunId, envelope }); return; }
+  const content = (reply.privateContent || reply.content || "").trim();
+  if (reply.action === "REPLY_AUTO" && !content && !reply.attachment) { await markActionRunFromEnvelope({ actionRunId: job.actionRunId, envelope }); return; }
+  const status: string = content ? "SENDING" : "FAILED";
+  const saved = await saveMessage(job.conversationId, "model", content, { status: status as any, aiReasoning: reply.reasoning, handoffCategory: reply.handoffCategory, intent: reply.intent, isPrivate: channel === "messenger" || channel === "whatsapp", origin: "integration_action_result" });
+  await markActionRunFromEnvelope({ actionRunId: job.actionRunId, envelope, resultMessageId: saved.id });
+  if (status === "SENDING" && content) {
+    const delivered = await deliverExternalLookupReply({ conversation: { id: conversation.id, businessProfileId: job.businessProfileId, pageId: conversation.pageId, senderId: conversation.senderId, externalId: conversation.externalId }, channel, messageId: saved.id, content });
+    if (delivered) await scheduleConversationFollowUps({ businessProfileId: job.businessProfileId, conversationId: job.conversationId, triggerMessageId: saved.id });
+  }
 }
 
 async function markActionRunFromEnvelope(params: {
@@ -177,6 +227,10 @@ async function deliverExternalLookupReply(params: {
   const { conversation, channel, messageId, content } = params;
 
   if (channel === "web") {
+    await prisma.conversationMessage.update({
+      where: { id: messageId },
+      data: { status: "SENT" },
+    });
     return true;
   }
 
@@ -196,7 +250,7 @@ async function deliverExternalLookupReply(params: {
         content,
         conversation.pageId,
         decryptFacebookSecret(account.accessToken),
-      );
+      ) as { messages?: Array<{ id?: string }> };
       const wamid = res?.messages?.[0]?.id;
       if (wamid) {
         await prisma.conversationMessage.update({
@@ -222,7 +276,7 @@ async function deliverExternalLookupReply(params: {
         conversation.senderId,
         content,
         decryptFacebookSecret(page.pageAccessToken),
-      );
+      ) as { message_id?: string };
       if (res?.message_id) {
         await prisma.conversationMessage.update({
           where: { id: messageId },

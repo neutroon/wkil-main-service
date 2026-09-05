@@ -85,6 +85,8 @@ async function fetchMediaBuffer(params: {
 }
 
 export async function understandInboundMedia(params: {
+  businessProfileId: number;
+  userId: number;
   platform: "messenger" | "whatsapp";
   accessToken: string;
   mediaId?: string | null;
@@ -119,21 +121,19 @@ export async function understandInboundMedia(params: {
       // Inbound media understanding moved to the sibling agent-svc microservice
       // in the ai-agent cutover. The platform routes the request via AgentClient
       // and returns a structured understanding result.
-      const result = (await AgentClient.runCustomerAgent({
-        business_profile_id: 0,
-        user_id: undefined,
-        messages: [],
-        stage: "fast",
-        channel: params.platform,
-      } as any)) as { text?: string; modelName?: string; finishReason?: string | null };
+      const result = await AgentClient.runCapability({
+        userId: params.userId, businessProfileId: params.businessProfileId,
+        operation: "media_understanding",
+        context: { mode: "image", mimeType: media.mimeType, dataBase64: media.buffer.toString("base64") },
+      });
 
       const text = String(result?.text || "").trim();
       return {
         status: text ? "completed" : "failed",
         text: text || undefined,
         mimeType: media.mimeType,
-        modelName: result?.modelName,
-        finishReason: result?.finishReason ?? null,
+        modelName: undefined,
+        finishReason: null,
         ...(text ? {} : { errorCode: "media_understanding_disabled" }),
       };
     }
@@ -144,13 +144,11 @@ export async function understandInboundMedia(params: {
         : (declaredMimeType || "audio/ogg");
 
       // Inbound media understanding moved to the sibling agent-svc microservice.
-      const result = (await AgentClient.runCustomerAgent({
-        business_profile_id: 0,
-        user_id: undefined,
-        messages: [],
-        stage: "fast",
-        channel: params.platform,
-      } as any)) as { text?: string; modelName?: string; finishReason?: string | null };
+      const result = await AgentClient.runCapability({
+        userId: params.userId, businessProfileId: params.businessProfileId,
+        operation: "media_understanding",
+        context: { mode: "audio", mimeType: audioMimeType, dataBase64: media.buffer.toString("base64") },
+      });
 
       const transcript = String(result?.text || "").trim();
 
@@ -158,8 +156,8 @@ export async function understandInboundMedia(params: {
         platform: params.platform,
         mimeType: audioMimeType,
         transcriptLength: transcript.length,
-        modelName: result?.modelName,
-        finishReason: result?.finishReason,
+        modelName: undefined,
+        finishReason: null,
       });
 
       return {
@@ -167,8 +165,8 @@ export async function understandInboundMedia(params: {
         text: transcript || undefined,
         transcript: transcript || undefined,
         mimeType: audioMimeType,
-        modelName: result?.modelName,
-        finishReason: result?.finishReason ?? null,
+        modelName: undefined,
+        finishReason: null,
         ...(transcript ? {} : { errorCode: "media_understanding_disabled" }),
       };
     }

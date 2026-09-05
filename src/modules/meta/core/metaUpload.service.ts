@@ -29,7 +29,7 @@ export async function uploadWhatsAppMedia(
   );
 
   if (!response.ok) {
-    const errorData = await response.json();
+    const errorData = await response.json() as { error?: { message?: string } };
     const msg = errorData.error?.message || "Unknown error";
     throw new AppError(`WhatsApp upload failed: ${msg}`, 502);
   }
@@ -79,7 +79,7 @@ export async function uploadMessengerMedia(
   );
 
   if (!response.ok) {
-    const errorData = await response.json();
+    const errorData = await response.json() as { error?: { message?: string } };
     const msg = errorData.error?.message || "Unknown error";
     throw new AppError(`Messenger upload failed: ${msg}`, 502);
   }

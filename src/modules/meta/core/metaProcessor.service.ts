@@ -566,13 +566,98 @@ export async function processMetaMessage(
     return;
   }
 
-  return AgentClient.runCustomerAgent({
-    business_profile_id: job.businessProfileId,
-    user_id: undefined,
-    messages: [],
-    stage: "fast",
-    channel: job.platform,
-  } as any) as any;
+  if (platform !== "messenger" && platform !== "whatsapp") return;
+  const identity = await resolveAccountIdentity(job);
+  if (externalId) {
+    const duplicate = await prisma.conversationMessage.findFirst({
+      where: { externalId }, select: { id: true },
+    });
+    if (duplicate) return;
+  }
+  const customer = resolveCustomerProfile(job);
+  const conversation = await getOrCreateConversation(
+    identifier,
+    senderId,
+    identity.businessProfileId,
+    {
+      channel: platform,
+      customerName: customer.name,
+      customerPhone: job.customerPhone,
+    },
+  );
+  const mediaInfo = job.mediaId
+    ? await understandInboundMedia({
+        businessProfileId: identity.businessProfileId,
+        userId: identity.businessProfile.userId,
+        platform,
+        accessToken: identity.accessToken,
+        mediaId: job.mediaId,
+        type: job.type,
+        mediaMetadata: job.mediaMetadata,
+      })
+    : null;
+  await saveMessage(conversation.id, "user", messageText || mediaInfo?.text || "", {
+    externalId,
+    type: type || "text",
+    mediaId: job.mediaId,
+    mediaMetadata: job.mediaMetadata,
+  });
+  if (conversation.aiEnabled === false) return;
+  const history = await prisma.conversationMessage.findMany({
+    where: { conversationId: conversation.id },
+    orderBy: { createdAt: "asc" }, take: 40,
+    select: { role: true, content: true },
+  });
+  const reply = await AgentClient.runCapability({
+    userId: identity.businessProfile.userId,
+    businessProfileId: identity.businessProfileId,
+    operation: "customer_reply",
+    context: {
+      channel: platform,
+      messageText: messageText || mediaInfo?.text || "",
+      business: identity.businessProfile,
+      historyTurns: history.map((turn) => ({
+        role: turn.role === "user" ? "customer" : "agent",
+        content: turn.content || "",
+      })),
+      mediaInfo,
+      conversationId: conversation.id,
+    },
+  });
+  if (reply.action === "RESOLVE_CONVERSATION") {
+    await prisma.conversation.update({ where: { id: conversation.id }, data: { status: "RESOLVED" } });
+    return;
+  }
+  const content = (reply.content || "").trim();
+  if (!content) return;
+  const saved = await saveMessage(conversation.id, "model", content, {
+    status: "SENDING",
+    aiReasoning: reply.reasoning,
+    handoffCategory: reply.handoff_category,
+  });
+  try {
+    if (platform === "whatsapp") {
+      const { sendWhatsAppReply } = await import("../whatsapp/whatsapp.service");
+      const response = await sendWhatsAppReply(senderId, content, identifier, identity.accessToken) as { messages?: Array<{ id?: string }> };
+      await prisma.conversationMessage.update({
+        where: { id: saved.id },
+        data: { status: "SENT", externalId: response?.messages?.[0]?.id },
+      });
+    } else {
+      const { sendMessengerReply } = await import("../messenger/messenger.service");
+      const response = await sendMessengerReply(senderId, content, identity.accessToken) as { message_id?: string };
+      await prisma.conversationMessage.update({
+        where: { id: saved.id },
+        data: { status: "SENT", externalId: response?.message_id },
+      });
+    }
+  } catch (error: unknown) {
+    await prisma.conversationMessage.update({
+      where: { id: saved.id },
+      data: { status: "FAILED", aiReasoning: error instanceof Error ? error.message : String(error) },
+    });
+    throw error;
+  }
 }
 
 /**
@@ -588,7 +673,7 @@ export async function processVisualJob(payload: any) {
 
   try {
     const { createGeminiVisual, refineGeminiVisual } = await import("../../media/services/geminiVisual.service");
-    let resultAsset;
+    let resultAsset: any;
     if (normalizedType === "generate") {
       resultAsset = await createGeminiVisual({
         businessProfileId,
@@ -605,7 +690,7 @@ export async function processVisualJob(payload: any) {
         postId,
       });
     }
-    logger.info("visual_processor.complete", { assetId: resultAsset.id });
+    logger.info("visual_processor.complete", { assetId: resultAsset?.id ?? null, result: resultAsset });
   } catch (err: any) {
     logger.error("visual_processor.failed", { error: err.message });
     throw err;

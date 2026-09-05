@@ -1476,10 +1476,16 @@ export const deactivateFacebookAccount = async (facebookAccountId: number) => {
 export const deactivateFacebookPage = async (
   pageId: string,
   userId: number,
+  businessProfileId?: number,
 ) => {
   try {
     const page = await prisma.facebookPage.findFirst({
-      where: { pageId, facebookAccount: { userId } },
+      where: {
+        pageId,
+        ...(businessProfileId
+          ? { businessProfileId }
+          : { facebookAccount: { userId } }),
+      },
       select: { id: true, facebookAccountId: true, pageAccessToken: true },
     });
 
@@ -1512,9 +1518,15 @@ export const deactivateFacebookPage = async (
       });
     }
 
-    // Deactivate ALL records for this pageId belonging to this user
+    // Deactivate records inside the authorized workspace (or the connector's
+    // unlinked records for the legacy personal-connection path).
     await prisma.facebookPage.updateMany({
-      where: { pageId, facebookAccount: { userId } },
+      where: {
+        pageId,
+        ...(businessProfileId
+          ? { businessProfileId }
+          : { facebookAccount: { userId } }),
+      },
       data: { isActive: false },
     });
 

@@ -78,6 +78,10 @@ import {
 } from "@modules/order-confirmation/orderConfirmation.template.service";
 import { normalizeCanonicalOrderEvent } from "@modules/order-confirmation/orderConfirmation.normalizer";
 import {
+  requireWorkspaceProfileAccess,
+  WORKSPACE_MANAGER_ROLES,
+} from "@modules/workspace/workspace.service";
+import {
   enqueueNotificationRetry,
   enqueueStoreSyncRetry,
 } from "@modules/order-confirmation/orderConfirmation.queue";
@@ -384,10 +388,11 @@ const ONBOARDING_FIELDS = [
 
 export async function copilotApplyBusinessProfileDraft(params: {
   userId: number;
+  businessProfileId?: number;
   draft: Record<string, unknown>;
   documents?: { kind: string; title?: string; content: string }[];
 }) {
-  const profileId = await resolveProfileId(params.userId);
+  const profileId = await resolveProfileId(params.userId, params.businessProfileId);
   const profile = await prisma.businessProfile.findFirst({
     where: { id: profileId },
     select: { id: true, setupCompletedAt: true },
@@ -1028,17 +1033,19 @@ function sanitiseAccount(account: any) {
   return safe;
 }
 
-async function findOwnedWhatsAppAccount(userId: number, accountId: number) {
-  const account = await prisma.whatsAppAccount.findFirst({
-    where: { id: accountId, userId, isActive: true },
-  });
-  if (!account) throw new AppError("WhatsApp account not found", 404);
-  return account;
-}
-
-export async function copilotListWhatsAppAccounts(userId: number) {
+export async function copilotListWhatsAppAccounts(params: {
+  userId: number; businessProfileId: number;
+}) {
+  const access = await requireWorkspaceProfileAccess(params.userId, params.businessProfileId);
+  const canManage = WORKSPACE_MANAGER_ROLES.includes(access.role as "owner" | "admin");
   const accounts = await prisma.whatsAppAccount.findMany({
-    where: { userId, isActive: true },
+    where: {
+      isActive: true,
+      OR: [
+        { businessProfileId: params.businessProfileId },
+        ...(canManage ? [{ userId: params.userId, businessProfileId: null }] : []),
+      ],
+    },
     select: WHATSAPP_ACCOUNT_SELECT,
   });
   return { accounts };
@@ -1047,14 +1054,20 @@ export async function copilotListWhatsAppAccounts(userId: number) {
 export async function copilotWhatsAppAccountAction(params: {
   userId: number; accountId: number; action: string; businessProfileId?: number;
 }) {
-  const account = await findOwnedWhatsAppAccount(params.userId, params.accountId);
+  if (!params.businessProfileId) throw new AppError("businessProfileId is required", 400);
+  await requireWorkspaceProfileAccess(params.userId, params.businessProfileId, { manage: true });
+  const account = await prisma.whatsAppAccount.findFirst({
+    where: {
+      id: params.accountId,
+      isActive: true,
+      ...(params.action === "link"
+        ? { userId: params.userId, OR: [{ businessProfileId: null }, { businessProfileId: params.businessProfileId }] }
+        : { businessProfileId: params.businessProfileId }),
+    },
+  });
+  if (!account) throw new AppError("WhatsApp account not found", 404);
 
   if (params.action === "link") {
-    if (!params.businessProfileId) throw new AppError("businessProfileId is required", 400);
-    const businessProfile = await prisma.businessProfile.findFirst({
-      where: { id: params.businessProfileId, userId: params.userId },
-    });
-    if (!businessProfile) throw new AppError("Business profile not found", 404);
     const updated = await prisma.whatsAppAccount.update({
       where: { id: account.id },
       data: { businessProfileId: params.businessProfileId },
@@ -1111,18 +1124,21 @@ const FACEBOOK_PAGE_SELECT = {
   updatedAt: true,
 } as const;
 
-async function findOwnedFacebookPage(userId: number, pageId: string) {
-  const page = await prisma.facebookPage.findFirst({
-    where: { pageId, facebookAccount: { userId }, isActive: true },
-    orderBy: { updatedAt: "desc" },
-  });
-  if (!page) throw new AppError("Page not found", 404);
-  return page;
-}
-
-export async function copilotListFacebookPages(userId: number) {
+export async function copilotListFacebookPages(params: {
+  userId: number; businessProfileId: number;
+}) {
+  const access = await requireWorkspaceProfileAccess(params.userId, params.businessProfileId);
+  const canManage = WORKSPACE_MANAGER_ROLES.includes(access.role as "owner" | "admin");
   const pages = await prisma.facebookPage.findMany({
-    where: { facebookAccount: { userId }, isActive: true },
+    where: {
+      isActive: true,
+      OR: [
+        { businessProfileId: params.businessProfileId },
+        ...(canManage
+          ? [{ facebookAccount: { userId: params.userId }, businessProfileId: null }]
+          : []),
+      ],
+    },
     select: FACEBOOK_PAGE_SELECT,
     orderBy: { updatedAt: "desc" },
   });
@@ -1133,14 +1149,24 @@ export async function copilotFacebookPageAction(params: {
   userId: number; pageId: string; action: string;
   businessProfileId?: number; commentAutoDmEnabled?: boolean; commentPublicGreeting?: string;
 }) {
-  const page = await findOwnedFacebookPage(params.userId, params.pageId);
+  if (!params.businessProfileId) throw new AppError("businessProfileId is required", 400);
+  await requireWorkspaceProfileAccess(params.userId, params.businessProfileId, { manage: true });
+  const page = await prisma.facebookPage.findFirst({
+    where: {
+      pageId: params.pageId,
+      isActive: true,
+      ...(params.action === "link"
+        ? {
+            facebookAccount: { userId: params.userId },
+            OR: [{ businessProfileId: null }, { businessProfileId: params.businessProfileId }],
+          }
+        : { businessProfileId: params.businessProfileId }),
+    },
+    orderBy: { updatedAt: "desc" },
+  });
+  if (!page) throw new AppError("Page not found", 404);
 
   if (params.action === "link") {
-    if (!params.businessProfileId) throw new AppError("businessProfileId is required", 400);
-    const businessProfile = await prisma.businessProfile.findFirst({
-      where: { id: params.businessProfileId, userId: params.userId },
-    });
-    if (!businessProfile) throw new AppError("Business profile not found", 404);
     const updated = await prisma.facebookPage.update({
       where: { id: page.id },
       data: { businessProfileId: params.businessProfileId },

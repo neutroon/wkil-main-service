@@ -504,6 +504,7 @@ router.post("/copilot/onboarding/apply", async (req, res) => {
   try {
     res.json(await copilotApplyBusinessProfileDraft({
       userId,
+      businessProfileId: req.body?.businessProfileId ? Number(req.body.businessProfileId) : undefined,
       draft: req.body.draft ?? {},
       documents: Array.isArray(req.body?.documents) ? req.body.documents : undefined,
     }));
@@ -1001,9 +1002,10 @@ router.post("/copilot/orders/sync/:id/retry", async (req, res) => {
 
 router.get("/copilot/channels/whatsapp", async (req, res) => {
   const userId = Number(req.query.userId);
-  if (!userId) return res.status(400).json({ error: "userId_required" });
+  const businessProfileId = Number(req.query.businessProfileId);
+  if (!userId || !businessProfileId) return res.status(400).json({ error: "userId_and_businessProfileId_required" });
   try {
-    res.json(await copilotListWhatsAppAccounts(userId));
+    res.json(await copilotListWhatsAppAccounts({ userId, businessProfileId }));
   } catch (e: any) {
     res.status(errStatus(e, 500)).json({ error: e?.message ?? "list_whatsapp_failed" });
   }
@@ -1028,9 +1030,10 @@ router.post("/copilot/channels/whatsapp/:id/action", async (req, res) => {
 
 router.get("/copilot/channels/facebook", async (req, res) => {
   const userId = Number(req.query.userId);
-  if (!userId) return res.status(400).json({ error: "userId_required" });
+  const businessProfileId = Number(req.query.businessProfileId);
+  if (!userId || !businessProfileId) return res.status(400).json({ error: "userId_and_businessProfileId_required" });
   try {
-    res.json(await copilotListFacebookPages(userId));
+    res.json(await copilotListFacebookPages({ userId, businessProfileId }));
   } catch (e: any) {
     res.status(errStatus(e, 500)).json({ error: e?.message ?? "list_facebook_pages_failed" });
   }

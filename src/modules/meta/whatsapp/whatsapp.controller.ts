@@ -33,6 +33,10 @@ import { sendWhatsAppMedia } from "./whatsapp.service";
 import { invalidateWhatsAppAccountCache } from "../core/webhookCache.service";
 import { getAuthorizedConversation } from "../../inbox/inbox.routes";
 import { parseWhatsAppInteractiveReply } from "@modules/order-confirmation/orderConfirmation.whatsapp.parser";
+import {
+  requireWorkspaceProfileAccess,
+  WORKSPACE_MANAGER_ROLES,
+} from "@modules/workspace/workspace.service";
 
 const isDev = env.NODE_ENV !== "production";
 const OAUTH_EXCHANGE_REF_TTL_SEC = 10 * 60; // 10 minutes
@@ -269,6 +273,13 @@ export class WhatsAppController {
       throw new AppError("phoneNumberId is required and either code or exchangeRef must be provided", 400);
     }
 
+    const targetProfileId = businessProfileId
+      ? z.coerce.number().int().positive().parse(businessProfileId)
+      : undefined;
+    if (targetProfileId) {
+      await requireWorkspaceProfileAccess(userId, targetProfileId, { manage: true });
+    }
+
     const resolvedConnectionMode: "BUSINESS_API" | "COEXISTENCE" = connectionMode === "BUSINESS_API" ? "BUSINESS_API" : "COEXISTENCE";
 
     let accessToken: string | undefined;
@@ -309,7 +320,7 @@ export class WhatsAppController {
       displayPhoneNumber,
       accessToken,
       connectionMode: resolvedConnectionMode,
-      businessProfileId: businessProfileId ? z.coerce.number().int().positive().parse(businessProfileId) : undefined,
+      businessProfileId: targetProfileId,
     });
 
     return res.status(201).json({ success: true, account });
@@ -321,13 +332,23 @@ export class WhatsAppController {
   async listAccounts(req: Request, res: Response) {
     const userId = (req as any).user.id;
     const profileId = req.query.businessProfileId ? Number(req.query.businessProfileId) : undefined;
+    const access = profileId
+      ? await requireWorkspaceProfileAccess(userId, profileId)
+      : undefined;
+    const canManage = access
+      ? WORKSPACE_MANAGER_ROLES.includes(access.role as "owner" | "admin")
+      : false;
     const accounts = await prisma.whatsAppAccount.findMany({
       where: {
-        userId,
         isActive: true,
         ...(profileId
-          ? { OR: [{ businessProfileId: profileId }, { businessProfileId: null }] }
-          : {}),
+          ? {
+              OR: [
+                { businessProfileId: profileId },
+                ...(canManage ? [{ userId, businessProfileId: null }] : []),
+              ],
+            }
+          : { userId }),
       },
       select: {
         id: true,
@@ -356,7 +377,11 @@ export class WhatsAppController {
     const conversation = await getAuthorizedConversation(userId, conversationId);
 
     const account = await prisma.whatsAppAccount.findFirst({
-      where: { phoneNumberId: conversation.pageId, userId, isActive: true },
+      where: {
+        phoneNumberId: conversation.pageId,
+        businessProfileId: conversation.businessProfileId,
+        isActive: true,
+      },
       select: { accessToken: true, phoneNumberId: true },
     });
 
@@ -494,10 +519,15 @@ export class WhatsAppController {
     const { id } = req.params as any;
 
     const account = await prisma.whatsAppAccount.findFirst({
-      where: { id, userId, isActive: true },
+      where: { id, isActive: true },
     });
 
     if (!account) throw new AppError("WhatsApp account not found", 404);
+    if (account.businessProfileId) {
+      await requireWorkspaceProfileAccess(userId, account.businessProfileId, { manage: true });
+    } else if (account.userId !== userId) {
+      throw new AppError("WhatsApp account not found", 404);
+    }
     if (!account.wabaId || !account.accessToken) {
       throw new AppError("Account has no WABA ID or access token", 400);
     }
@@ -522,10 +552,15 @@ export class WhatsAppController {
     const { id } = req.params as any;
 
     const account = await prisma.whatsAppAccount.findFirst({
-      where: { id, userId, isActive: true },
+      where: { id, isActive: true },
     });
 
     if (!account) throw new AppError("WhatsApp account not found", 404);
+    if (account.businessProfileId) {
+      await requireWorkspaceProfileAccess(userId, account.businessProfileId, { manage: true });
+    } else if (account.userId !== userId) {
+      throw new AppError("WhatsApp account not found", 404);
+    }
 
     if (account.wabaId && account.accessToken) {
       try {
@@ -550,14 +585,18 @@ export class WhatsAppController {
     const { businessProfileId } = req.body;
 
     if (!businessProfileId) throw new AppError("businessProfileId is required", 400);
-
-    const account = await prisma.whatsAppAccount.findFirst({ where: { id, userId, isActive: true } });
-    if (!account) throw new AppError("WhatsApp account not found", 404);
-
     const businessProfileIdNum = z.coerce.number().int().positive().parse(businessProfileId);
-    const businessProfile = await prisma.businessProfile.findFirst({ where: { id: businessProfileIdNum, userId } });
+    await requireWorkspaceProfileAccess(userId, businessProfileIdNum, { manage: true });
 
-    if (!businessProfile) throw new AppError("Business profile not found", 404);
+    const account = await prisma.whatsAppAccount.findFirst({
+      where: {
+        id,
+        userId,
+        isActive: true,
+        OR: [{ businessProfileId: null }, { businessProfileId: businessProfileIdNum }],
+      },
+    });
+    if (!account) throw new AppError("WhatsApp account not found", 404);
 
     const updated = await prisma.whatsAppAccount.update({
       where: { id },
@@ -575,8 +614,13 @@ export class WhatsAppController {
     const userId = (req as any).user.id;
     const { id } = req.params as any;
 
-    const account = await prisma.whatsAppAccount.findFirst({ where: { id, userId, isActive: true } });
+    const account = await prisma.whatsAppAccount.findFirst({ where: { id, isActive: true } });
     if (!account) throw new AppError("WhatsApp account not found", 404);
+    if (account.businessProfileId) {
+      await requireWorkspaceProfileAccess(userId, account.businessProfileId, { manage: true });
+    } else if (account.userId !== userId) {
+      throw new AppError("WhatsApp account not found", 404);
+    }
 
     const updated = await prisma.whatsAppAccount.update({ where: { id }, data: { businessProfileId: null } });
     await invalidateWhatsAppAccountCache(account.phoneNumberId).catch(() => {});
@@ -633,9 +677,6 @@ export class WhatsAppController {
 }
 
 export const whatsappController = new WhatsAppController();
-
-
-
 
 
 

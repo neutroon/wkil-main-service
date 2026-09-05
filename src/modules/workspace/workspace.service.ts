@@ -5,10 +5,35 @@ import { AppError } from "@middlewares/errorHandler.middleware";
 
 export const SKELETON_PROFILE_NAME = "My Business";
 export const SKELETON_WORKSPACE_NAME = "My Workspace";
+export const WORKSPACE_MANAGER_ROLES = ["owner", "admin"] as const;
+
+export async function requireWorkspaceProfileAccess(
+  userId: number,
+  businessProfileId: number,
+  options: { manage?: boolean } = {},
+): Promise<{ workspaceId: number; role: string }> {
+  const profile = await prisma.businessProfile.findUnique({
+    where: { id: businessProfileId },
+    select: { workspaceId: true },
+  });
+  if (!profile) throw new AppError("Business profile not found.", 404);
+
+  const membership = await prisma.workspaceMember.findUnique({
+    where: {
+      workspaceId_userId: { workspaceId: profile.workspaceId, userId },
+    },
+    select: { role: true, isActive: true },
+  });
+  if (!membership?.isActive) throw new AppError("Business profile not found.", 404);
+  if (options.manage && !WORKSPACE_MANAGER_ROLES.includes(membership.role as "owner" | "admin")) {
+    throw new AppError("Workspace owner or admin access required.", 403);
+  }
+  return { workspaceId: profile.workspaceId, role: membership.role };
+}
 
 export async function listWorkspacesForUser(
   userId: number,
-): Promise<Array<{ workspaceId: number; profileId: number; name: string }>> {
+): Promise<Array<{ workspaceId: number; profileId: number; name: string; role: string }>> {
   const memberships = await prisma.workspaceMember.findMany({
     where: { userId, isActive: true },
     include: {
@@ -25,6 +50,7 @@ export async function listWorkspacesForUser(
       workspaceId: m.workspaceId,
       profileId: m.workspace!.profile!.id,
       name: m.workspace!.name,
+      role: m.role,
     }));
 }
 

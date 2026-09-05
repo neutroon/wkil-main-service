@@ -36,6 +36,12 @@ const userSvc = vi.hoisted(() => ({
 }));
 vi.mock("@modules/auth/user/user.service", () => userSvc);
 
+const workspaceSvc = vi.hoisted(() => ({
+  requireWorkspaceProfileAccess: vi.fn(async () => ({ workspaceId: 11, role: "owner" })),
+  WORKSPACE_MANAGER_ROLES: ["owner", "admin"],
+}));
+vi.mock("@modules/workspace/workspace.service", () => workspaceSvc);
+
 const fbSvc = vi.hoisted(() => ({
   createPost: vi.fn(),
   schedulePost: vi.fn(),
@@ -414,7 +420,7 @@ describe("copilot onboarding", () => {
   });
 
   it("copilotApplyBusinessProfileDraft completes the skeleton and ingests", async () => {
-    userSvc.getAccessibleProfileIds.mockResolvedValue([3]);
+    userSvc.getAccessibleProfileIds.mockResolvedValue([3, 4]);
     prismaMock.businessProfile.findFirst.mockResolvedValue({ id: 3, userId: 7, setupCompletedAt: null });
     prismaMock.businessProfile.update.mockResolvedValue({ id: 3, name: "Nile Coffee", setupCompletedAt: new Date() });
     prismaMock.knowledgeDocument.createMany.mockResolvedValue({ count: 1 });
@@ -422,6 +428,7 @@ describe("copilot onboarding", () => {
 
     const out = await copilotApplyBusinessProfileDraft({
       userId: 7,
+      businessProfileId: 3,
       draft: { name: "Nile Coffee", voice: "Warm", tone: "Casual", expectedUserIntents: [], corePolicies: "No refunds." },
       documents: [{ kind: "website", title: "Website", content: "https://nilecoffee.example" }],
     });
@@ -825,9 +832,14 @@ describe("copilot orders", () => {
 describe("copilot channels — whatsapp", () => {
   it("lists active accounts without leaking tokens", async () => {
     prismaMock.whatsAppAccount.findMany.mockResolvedValue([{ id: 4, phoneNumberId: "PNID" }]);
-    const out = await copilotListWhatsAppAccounts(7);
+    const out = await copilotListWhatsAppAccounts({ userId: 7, businessProfileId: 3 });
     expect(prismaMock.whatsAppAccount.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { userId: 7, isActive: true } }),
+      expect.objectContaining({
+        where: {
+          isActive: true,
+          OR: [{ businessProfileId: 3 }, { userId: 7, businessProfileId: null }],
+        },
+      }),
     );
     expect(out.accounts).toHaveLength(1);
   });
@@ -859,7 +871,9 @@ describe("copilot channels — whatsapp", () => {
       id: 4, userId: 7, isActive: true, wabaId: "WABA", accessToken: "enc",
     });
     waOauth.subscribeWebhook.mockResolvedValue(undefined);
-    const out = await copilotWhatsAppAccountAction({ userId: 7, accountId: 4, action: "resubscribe" });
+    const out = await copilotWhatsAppAccountAction({
+      userId: 7, accountId: 4, action: "resubscribe", businessProfileId: 3,
+    });
     expect(waOauth.subscribeWebhook).toHaveBeenCalledWith("WABA", "enc");
     expect(out.ok).toBe(true);
   });
@@ -869,7 +883,9 @@ describe("copilot channels — whatsapp", () => {
       id: 4, userId: 7, isActive: true, wabaId: "WABA", accessToken: "enc", phoneNumberId: "PNID",
     });
     prismaMock.whatsAppAccount.update.mockResolvedValue({ id: 4, isActive: false });
-    const out = await copilotWhatsAppAccountAction({ userId: 7, accountId: 4, action: "deactivate" });
+    const out = await copilotWhatsAppAccountAction({
+      userId: 7, accountId: 4, action: "deactivate", businessProfileId: 3,
+    });
     expect(prismaMock.whatsAppAccount.update).toHaveBeenCalledWith({
       where: { id: 4 }, data: { isActive: false },
     });
@@ -878,11 +894,19 @@ describe("copilot channels — whatsapp", () => {
 });
 
 describe("copilot channels — facebook pages", () => {
-  it("lists the owner's pages", async () => {
+  it("lists the active workspace pages", async () => {
     prismaMock.facebookPage.findMany.mockResolvedValue([{ pageId: "PG1" }]);
-    const out = await copilotListFacebookPages(7);
+    const out = await copilotListFacebookPages({ userId: 7, businessProfileId: 3 });
     expect(prismaMock.facebookPage.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { facebookAccount: { userId: 7 }, isActive: true } }),
+      expect.objectContaining({
+        where: {
+          isActive: true,
+          OR: [
+            { businessProfileId: 3 },
+            { facebookAccount: { userId: 7 }, businessProfileId: null },
+          ],
+        },
+      }),
     );
     expect(out.pages).toHaveLength(1);
   });
@@ -890,7 +914,10 @@ describe("copilot channels — facebook pages", () => {
   it("rejects actions on foreign pages with 404", async () => {
     prismaMock.facebookPage.findFirst.mockResolvedValue(null);
     await expect(
-      copilotFacebookPageAction({ userId: 7, pageId: "FOREIGN", action: "settings", commentAutoDmEnabled: true }),
+      copilotFacebookPageAction({
+        userId: 7, pageId: "FOREIGN", action: "settings",
+        businessProfileId: 3, commentAutoDmEnabled: true,
+      }),
     ).rejects.toMatchObject({ statusCode: 404 });
     expect(prismaMock.facebookPage.update).not.toHaveBeenCalled();
   });
@@ -912,7 +939,8 @@ describe("copilot channels — facebook pages", () => {
     });
     prismaMock.facebookPage.update.mockResolvedValue({ id: 5, commentAutoDmEnabled: true });
     const out = await copilotFacebookPageAction({
-      userId: 7, pageId: "PG1", action: "settings", commentAutoDmEnabled: true,
+      userId: 7, pageId: "PG1", action: "settings",
+      businessProfileId: 3, commentAutoDmEnabled: true,
     });
     expect(prismaMock.facebookPage.update).toHaveBeenCalledWith({
       where: { id: 5 },

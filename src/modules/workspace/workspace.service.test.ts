@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const prisma = vi.hoisted(() => ({
   workspace: { create: vi.fn(), findUnique: vi.fn() },
-  workspaceMember: { create: vi.fn(), findFirst: vi.fn(), findMany: vi.fn() },
-  businessProfile: { findFirst: vi.fn() },
+  workspaceMember: { create: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), findUnique: vi.fn() },
+  businessProfile: { findFirst: vi.fn(), findUnique: vi.fn() },
   user: { findUnique: vi.fn(), create: vi.fn() },
   $transaction: vi.fn(),
 }));
@@ -36,6 +36,7 @@ vi.mock("@modules/auth/core/auth.service", () => ({
 import {
   getActiveProfileId,
   provisionWorkspaceForUser,
+  requireWorkspaceProfileAccess,
 } from "./workspace.service";
 import { AppError } from "@middlewares/errorHandler.middleware";
 
@@ -62,6 +63,27 @@ describe("provisionWorkspaceForUser", () => {
       data: { workspaceId: 11, userId: 3, role: "owner" },
     });
     expect(out).toEqual({ workspaceId: 11, profileId: 7 });
+  });
+});
+
+describe("requireWorkspaceProfileAccess", () => {
+  it("allows an active member to read the workspace profile", async () => {
+    prisma.businessProfile.findUnique.mockResolvedValue({ workspaceId: 11 });
+    prisma.workspaceMember.findUnique.mockResolvedValue({ role: "member", isActive: true });
+
+    await expect(requireWorkspaceProfileAccess(3, 7)).resolves.toEqual({
+      workspaceId: 11,
+      role: "member",
+    });
+  });
+
+  it("limits channel management to owners and admins", async () => {
+    prisma.businessProfile.findUnique.mockResolvedValue({ workspaceId: 11 });
+    prisma.workspaceMember.findUnique.mockResolvedValue({ role: "member", isActive: true });
+
+    await expect(requireWorkspaceProfileAccess(3, 7, { manage: true })).rejects.toMatchObject({
+      statusCode: 403,
+    });
   });
 });
 

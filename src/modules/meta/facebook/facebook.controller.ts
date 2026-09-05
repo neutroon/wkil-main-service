@@ -29,6 +29,10 @@ import prisma from "@config/prisma";
 import { AppError } from "@middlewares/errorHandler.middleware";
 import { invalidateIdentityCache, invalidateFacebookPageCache } from "../core/webhookCache.service";
 import { createBullMqJobId, metaExpressQueue } from "../core/meta.queue";
+import {
+  requireWorkspaceProfileAccess,
+  WORKSPACE_MANAGER_ROLES,
+} from "@modules/workspace/workspace.service";
 
 export class FacebookController {
   /**
@@ -126,25 +130,31 @@ export class FacebookController {
   async listPages(req: Request, res: Response) {
     const userId = (req as any).user.id;
     const profileId = req.query.businessProfileId ? Number(req.query.businessProfileId) : undefined;
+    const access = profileId
+      ? await requireWorkspaceProfileAccess(userId, profileId)
+      : undefined;
+    const canManage = access
+      ? WORKSPACE_MANAGER_ROLES.includes(access.role as "owner" | "admin")
+      : false;
 
-    const accounts = await prisma.facebookAccount.findMany({
+    const pages = await prisma.facebookPage.findMany({
       where: {
-        userId,
         isActive: true,
         ...(profileId
-          ? { pages: { some: { OR: [{ businessProfileId: profileId }, { businessProfileId: null }], isActive: true } } }
-          : {}),
+          ? {
+              OR: [
+                { businessProfileId: profileId },
+                ...(canManage
+                  ? [{ facebookAccount: { userId }, businessProfileId: null }]
+                  : []),
+              ],
+            }
+          : { facebookAccount: { userId } }),
       },
-      include: {
-        pages: {
-          where: { isActive: true },
-          orderBy: { lastUsedAt: "desc" },
-        },
-      },
+      orderBy: { lastUsedAt: "desc" },
     });
 
-    const allPages = accounts.flatMap((acc) =>
-      acc.pages.map((p) => {
+    const allPages = pages.map((p) => {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { pageAccessToken, ...safeFields } = p;
         
@@ -159,8 +169,7 @@ export class FacebookController {
         }
 
         return safeFields;
-      })
-    );
+      });
 
     return res.json(allPages);
   }
@@ -237,7 +246,17 @@ export class FacebookController {
   async disconnectPage(req: Request, res: Response) {
     const { pageId } = req.params;
     const userId = (req as any).user.id;
-    await deactivateFacebookPage(pageId, userId);
+    const page = await prisma.facebookPage.findFirst({
+      where: { pageId, isActive: true },
+      select: { businessProfileId: true, facebookAccount: { select: { userId: true } } },
+    });
+    if (!page) throw new AppError("Page not found", 404);
+    if (page.businessProfileId) {
+      await requireWorkspaceProfileAccess(userId, page.businessProfileId, { manage: true });
+    } else if (page.facebookAccount.userId !== userId) {
+      throw new AppError("Page not found", 404);
+    }
+    await deactivateFacebookPage(pageId, userId, page.businessProfileId ?? undefined);
     // Bust both the webhook presence cache and the identity resolution cache
     await Promise.all([
       invalidateFacebookPageCache(pageId).catch(() => {}),
@@ -446,17 +465,18 @@ export class FacebookController {
     const userId = (req as any).user.id;
     const { pageId } = req.params;
     const { businessProfileId } = req.body;
+    await requireWorkspaceProfileAccess(userId, Number(businessProfileId), { manage: true });
 
     const page = await prisma.facebookPage.findFirst({
-      where: { pageId, facebookAccount: { userId }, isActive: true },
+      where: {
+        pageId,
+        facebookAccount: { userId },
+        isActive: true,
+        OR: [{ businessProfileId: null }, { businessProfileId: Number(businessProfileId) }],
+      },
       orderBy: { updatedAt: "desc" },
     });
     if (!page) throw new AppError("Page not found", 404);
-
-    const businessProfile = await prisma.businessProfile.findFirst({
-      where: { id: businessProfileId, userId },
-    });
-    if (!businessProfile) throw new AppError("Business profile not found", 404);
 
     const updated = await prisma.facebookPage.update({
       where: { id: page.id },
@@ -480,10 +500,19 @@ export class FacebookController {
     const { pageId } = req.params;
 
     const page = await prisma.facebookPage.findFirst({
-      where: { pageId, facebookAccount: { userId }, isActive: true },
+      where: { pageId, isActive: true },
       orderBy: { updatedAt: "desc" },
     });
     if (!page) throw new AppError("Page not found", 404);
+    if (page.businessProfileId) {
+      await requireWorkspaceProfileAccess(userId, page.businessProfileId, { manage: true });
+    } else if ((page as any).facebookAccount?.userId !== userId) {
+      const owned = await prisma.facebookPage.findFirst({
+        where: { id: page.id, facebookAccount: { userId } },
+        select: { id: true },
+      });
+      if (!owned) throw new AppError("Page not found", 404);
+    }
     if (!page.businessProfileId) {
       return res.json({ success: true, page });
     }
@@ -511,10 +540,12 @@ export class FacebookController {
     const { commentAutoDmEnabled, commentPublicGreeting } = req.body;
 
     const page = await prisma.facebookPage.findFirst({
-      where: { pageId, facebookAccount: { userId }, isActive: true },
+      where: { pageId, isActive: true },
       orderBy: { updatedAt: "desc" },
     });
     if (!page) throw new AppError("Page not found", 404);
+    if (!page.businessProfileId) throw new AppError("Page is not linked to a workspace", 409);
+    await requireWorkspaceProfileAccess(userId, page.businessProfileId, { manage: true });
 
     const updated = await prisma.facebookPage.update({
       where: { id: page.id },

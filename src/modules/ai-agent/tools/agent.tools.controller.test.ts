@@ -371,6 +371,7 @@ it("POST /copilot/onboarding/apply delegates the draft and documents", async () 
     .set("x-service-token", "test-token")
     .send({
       userId: 7,
+      businessProfileId: 3,
       draft: { name: "Nile Coffee", voice: "Warm", tone: "Casual", expectedUserIntents: [], corePolicies: "No refunds." },
       documents: [{ kind: "website", title: "Website", content: "https://nilecoffee.example" }],
     });
@@ -378,6 +379,7 @@ it("POST /copilot/onboarding/apply delegates the draft and documents", async () 
   expect(res.body.ok).toBe(true);
   expect(copilotApplyBusinessProfileDraft).toHaveBeenCalledWith({
     userId: 7,
+    businessProfileId: 3,
     draft: { name: "Nile Coffee", voice: "Warm", tone: "Casual", expectedUserIntents: [], corePolicies: "No refunds." },
     documents: [{ kind: "website", title: "Website", content: "https://nilecoffee.example" }],
   });

@@ -27,11 +27,16 @@ vi.mock("@utils/logger", () => ({
 
 vi.mock("@modules/ai-agent/client/agent.client", () => ({
   AgentClient: {
-    runCopilot: vi.fn().mockResolvedValue({ text: "" }),
+    runCapability: vi.fn().mockResolvedValue({
+      profile_updates: { name: "Salma", phone: null, email: null },
+      field_updates: { requested_program: "Data Science" },
+      notes: "Prefers evening calls",
+    }),
   },
 }));
 
 import prisma from "@config/prisma";
+import { AgentClient } from "@modules/ai-agent/client/agent.client";
 
 const mockedPrisma = prisma as any;
 
@@ -39,6 +44,7 @@ describe("customer memory capture job", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedPrisma.businessProfile.findUnique.mockResolvedValue({
+      userId: 7,
       name: "Training programs",
       identity: "University-backed training programs",
       voice: "Egyptian Arabic",
@@ -74,9 +80,7 @@ describe("customer memory capture job", () => {
     });
   });
 
-  it("routes through AgentClient.runCopilot and never calls updateCustomerFromSavedDetails", async () => {
-    // Memory-capture AI moved to the sibling agent-svc microservice; the
-    // monolith only routes the request via AgentClient.
+  it("runs the typed capability and persists only useful extracted details", async () => {
     await processCustomerMemoryCaptureJob({
       businessProfileId: 10,
       conversationId: 45,
@@ -84,6 +88,24 @@ describe("customer memory capture job", () => {
       recentTurns: [],
     });
 
-    expect(updateCustomerFromSavedDetails).not.toHaveBeenCalled();
+    expect(AgentClient.runCapability).toHaveBeenCalledWith(expect.objectContaining({
+      userId: 7,
+      businessProfileId: 10,
+      operation: "customer_memory",
+      context: expect.objectContaining({
+        latest_customer_message: "عاوز أسجل",
+        custom_fields: [expect.objectContaining({ key: "requested_program" })],
+        recent_messages: expect.arrayContaining([expect.objectContaining({ text: "message 1" })]),
+      }),
+    }));
+    expect(updateCustomerFromSavedDetails).toHaveBeenCalledWith({
+      businessProfileId: 10,
+      conversationId: 45,
+      details: {
+        name: "Salma",
+        requested_program: "Data Science",
+        notes: "Prefers evening calls",
+      },
+    });
   });
 });

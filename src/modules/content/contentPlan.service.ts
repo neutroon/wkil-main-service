@@ -39,16 +39,21 @@ function buildBriefSnapshot(brief: any) {
   };
 }
 
-// Extracts the generated draft from an AgentClient.runContentGeneration run
-// result. The agent graph returns its final state; the capability draft lives
-// under the "content_generation" key, with a fallback to the raw value.
-function extractGenerationDraft(result: any) {
-  return result?.content_generation ?? result ?? {};
+function buildStrategyKnowledge(brief: any, currentTrends?: string) {
+  const knowledge: Array<Record<string, unknown>> = [];
+  if (currentTrends) {
+    knowledge.push({ source: "current_trends", content: currentTrends });
+  }
+  const snapshot = buildBriefSnapshot(brief);
+  if (snapshot) {
+    knowledge.push({ source: "content_brief", content: snapshot });
+  }
+  return knowledge;
 }
 
 export async function* generateContentStrategyStream(briefing: BriefingInput) {
-  const profile = await prisma.businessProfile.findUnique({
-    where: { id: briefing.businessProfileId },
+  const profile = await prisma.businessProfile.findFirst({
+    where: { id: briefing.businessProfileId, userId: briefing.userId },
   });
 
   if (!profile) {
@@ -60,52 +65,45 @@ export async function* generateContentStrategyStream(briefing: BriefingInput) {
     businessProfileId: briefing.businessProfileId,
     contentBriefId: briefing.contentBriefId,
   });
+  const goal = briefing.goals?.trim() || contentBrief?.goal?.trim();
+  if (!goal) {
+    throw new AppError("A content strategy goal is required", 400);
+  }
+  const currentTrends = normalizeOptionalText(briefing.currentTrends);
 
   yield {
     type: "status",
     message: "Generating your strategy via the agent service...",
   };
 
-  const result = await AgentClient.runContentGeneration("plan", {
-    business_profile_id: briefing.businessProfileId,
-    user_id: briefing.userId,
-    goal: briefing.goals,
-    start_date: briefing.startDate,
-    end_date: briefing.endDate,
-    current_trends: normalizeOptionalText(briefing.currentTrends),
-    platform: "facebook",
-    settings: {
-      name: profile.name,
-      voice: profile.voice,
-      tone: profile.tone,
+  const draft = await AgentClient.runCapability({
+    userId: briefing.userId,
+    businessProfileId: briefing.businessProfileId,
+    operation: "content_plan",
+    context: {
+      goal,
+      startDate: briefing.startDate,
+      endDate: briefing.endDate,
+      platform: "facebook",
+      settings: {
+        name: profile.name,
+        voice: profile.voice,
+        tone: profile.tone,
+        corePolicies: profile.corePolicies,
+        aiBehaviorInstructions: profile.aiBehaviorInstructions,
+      },
+      knowledge: buildStrategyKnowledge(contentBrief, currentTrends),
     },
-    brief: contentBrief
-      ? {
-          goal: contentBrief.goal,
-          audienceSegments: contentBrief.audienceSegments,
-          painPoints: contentBrief.painPoints,
-          objections: contentBrief.objections,
-          buyingTriggers: contentBrief.buyingTriggers,
-          offers: contentBrief.offers,
-          proofPoints: contentBrief.proofPoints,
-          cta: contentBrief.cta,
-          funnelFocus: contentBrief.funnelFocus,
-          tonePreferences: contentBrief.tonePreferences,
-          forbiddenTopics: contentBrief.forbiddenTopics,
-        }
-      : null,
   });
-
-  const draft = extractGenerationDraft(result);
 
   const generated = await generateCopilotContentPlan({
     userId: briefing.userId,
     businessProfileId: briefing.businessProfileId,
     draft: {
-      goals: draft.goals || (briefing.goals ? [briefing.goals] : []),
-      posts: draft.posts || [],
+      goals: draft.goals,
+      posts: draft.posts,
     },
-    goal: briefing.goals,
+    goal,
     platform: "facebook",
   });
 
@@ -115,7 +113,7 @@ export async function* generateContentStrategyStream(briefing: BriefingInput) {
       contentBriefId: contentBrief?.id || null,
       startDate: new Date(briefing.startDate),
       endDate: new Date(briefing.endDate),
-      currentTrends: normalizeOptionalText(briefing.currentTrends) || null,
+      currentTrends: currentTrends || null,
       briefSnapshot: buildBriefSnapshot(contentBrief) || undefined,
     },
   });
@@ -142,19 +140,39 @@ export async function generatePostExecution(postId: number, userId: number) {
     select: { name: true, voice: true, tone: true },
   });
 
-  const result = await AgentClient.runContentGeneration("post", {
-    business_profile_id: post.contentPlan.businessProfileId,
-    user_id: userId,
-    topic: post.topic,
-    pillar: post.pillar,
-    platform: post.platform,
-    funnel_stage: post.funnelStage,
-    settings: profile || {},
+  const result = await AgentClient.runCapability({
+    userId,
+    businessProfileId: post.contentPlan.businessProfileId,
+    operation: "content_post",
+    context: {
+      topic: post.topic,
+      post: {
+        scheduledAt: post.scheduledAt.toISOString(),
+        platform: post.platform,
+        pillar: post.pillar,
+        topic: post.topic,
+        format: post.format,
+        funnelStage: post.funnelStage,
+        contentGoal: post.contentGoal,
+        targetPainPoint: post.targetPainPoint,
+        objectionHandled: post.objectionHandled,
+        cta: post.cta,
+        rationale: post.rationale,
+        evidenceRefs: post.evidenceRefs,
+      },
+      business: profile || {},
+      plan: {
+        startDate: post.contentPlan.startDate.toISOString(),
+        endDate: post.contentPlan.endDate.toISOString(),
+        goals: post.contentPlan.goals,
+        currentTrends: post.contentPlan.currentTrends,
+        briefSnapshot: post.contentPlan.briefSnapshot,
+      },
+    },
   });
 
-  const draft = extractGenerationDraft(result);
-  const caption = draft.caption ?? draft.post?.caption;
-  const imagePrompt = draft.image_prompt ?? draft.imagePrompt ?? draft.post?.image_prompt;
+  const caption = result.caption;
+  const imagePrompt = result.image_prompt || result.suggested_image;
   if (!caption) {
     throw new AppError("Post content generation returned no caption", 502);
   }

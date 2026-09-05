@@ -51,11 +51,12 @@ vi.mock("@utils/logger", () => ({
 
 vi.mock("@modules/ai-agent/client/agent.client", () => ({
   AgentClient: {
-    runCustomerAgent: vi.fn().mockResolvedValue({ text: "" }),
+    runCapability: vi.fn().mockResolvedValue({ content: "لسه مهتم بالبرنامج؟" }),
   },
 }));
 
 import prisma from "@config/prisma";
+import { AgentClient } from "@modules/ai-agent/client/agent.client";
 
 const mockedPrisma = prisma as any;
 
@@ -69,6 +70,7 @@ const baseConversation = {
   aiEnabled: true,
   businessProfile: {
     id: 10,
+    userId: 7,
     name: "Training programs",
     identity: "University-backed training programs",
     voice: "Egyptian Arabic",
@@ -139,7 +141,7 @@ describe("follow-up service", () => {
     );
   });
 
-  it("routes through AgentClient.runCustomerAgent when the trigger is delivered", async () => {
+  it("passes history to the typed capability and saves an eligible follow-up", async () => {
     mockedPrisma.conversationMessage.findUnique.mockResolvedValueOnce({
       createdAt: new Date("2026-05-10T10:00:05Z"),
       role: "model",
@@ -155,8 +157,21 @@ describe("follow-up service", () => {
       delayIndex: 0,
     });
 
-    // Follow-up AI generation moved to the sibling agent-svc microservice; the
-    // monolith only routes the request via AgentClient.
-    expect(saveMessage).not.toHaveBeenCalled();
+    expect(AgentClient.runCapability).toHaveBeenCalledWith(expect.objectContaining({
+      userId: 7,
+      businessProfileId: 10,
+      operation: "follow_up",
+      context: expect.objectContaining({
+        history: [
+          expect.objectContaining({ content: "عاوز اعرف التفاصيل" }),
+          expect.objectContaining({ content: "أكيد يا فندم." }),
+        ],
+        delay_index: 0,
+      }),
+    }));
+    expect(saveMessage).toHaveBeenCalledWith(45, "model", "لسه مهتم بالبرنامج؟", {
+      status: "SENT",
+      origin: "follow_up",
+    });
   });
 });

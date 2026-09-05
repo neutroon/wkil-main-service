@@ -159,14 +159,25 @@ async function generateFollowUpText(params: {
   conversation: any;
   history: Array<{ role: string; content: string; createdAt: Date }>;
   delayIndex: number;
-}): Promise<string> {
-  void params;
-  void buildFollowUpPrompt;
-  void cleanAiText;
-  // Follow-up AI text generation moved to the sibling agent-svc microservice
-  // in the ai-agent cutover. The job is now routed via AgentClient.runCustomerAgent in
-  // processFollowUpJob below.
-  throw new Error("Follow-up AI text generation moved to agent-svc microservice; this path is disabled.");
+  }): Promise<string> {
+    const result = await AgentClient.runCapability({
+      userId: params.businessProfile.userId,
+      businessProfileId: params.businessProfile.id,
+      operation: "follow_up",
+      context: {
+        business: {
+          name: params.businessProfile.name,
+          voice: params.businessProfile.voice,
+          tone: params.businessProfile.tone,
+          follow_up_mode: params.businessProfile.followUpMode,
+          follow_up_instructions: params.businessProfile.followUpInstructions,
+        },
+        conversation: params.conversation,
+        history: params.history.map((item) => ({ role: item.role === "user" ? "customer" : "agent", content: item.content })),
+        delay_index: params.delayIndex,
+      },
+    });
+    return cleanAiText(result.content);
 }
 
 export async function scheduleConversationFollowUps(params: {
@@ -340,11 +351,25 @@ async function deliverFollowUp(conversation: any, businessProfile: any, text: st
 }
 
 export async function processFollowUpJob(payload: FollowUpJobPayload) {
-  return AgentClient.runCustomerAgent({
-    business_profile_id: payload.businessProfileId,
-    user_id: undefined,
-    messages: [],
-    stage: "fast",
-    channel: payload.channel,
-  } as any) as any;
-}
+    const conversation = await prisma.conversation.findFirst({
+      where: { id: payload.conversationId, businessProfileId: payload.businessProfileId },
+      include: { businessProfile: true, messages: { orderBy: { createdAt: "asc" }, take: 30, select: { role: true, content: true, createdAt: true } } },
+    });
+    if (!isFollowUpConversationEligible(conversation)) return;
+    const trigger = await prisma.conversationMessage.findUnique({ where: { id: payload.triggerMessageId }, select: { createdAt: true, status: true, role: true, origin: true, handoffCategory: true } });
+    if (!isFollowUpTriggerEligible(trigger) || await hasNewerHumanOrCustomerMessage(payload.conversationId, trigger!.createdAt)) return;
+    if (await customerOptedOut(payload.conversationId)) return;
+    if (conversation!.channel === "whatsapp" && !(await isWhatsAppFreeFormWindowOpen(payload.conversationId))) return;
+    const text = await generateFollowUpText({ businessProfile: conversation!.businessProfile, conversation, history: conversation!.messages, delayIndex: payload.delayIndex });
+    if (!text) return;
+    const saved = await saveMessage(conversation!.id, "model", text, { status: "SENT", origin: "follow_up" });
+    try {
+      await deliverFollowUp(conversation, conversation!.businessProfile, text, saved.id);
+    } catch (error: unknown) {
+      await prisma.conversationMessage.update({
+        where: { id: saved.id },
+        data: { status: "FAILED", aiReasoning: error instanceof Error ? error.message : String(error) },
+      });
+      throw error;
+    }
+  }

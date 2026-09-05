@@ -1,5 +1,8 @@
 import { Router } from "express";
 import { randomUUID } from "crypto";
+import { durableAgentOperation } from "./agent.operation";
+import { authorizeAgentScope } from "./agent.scope";
+import modelReservations from "./agent.model-reservation";
 import { createIntegrationActionRun } from "../../integrations/external/integrationActionRun.service";
 import { assertQuotaAvailable, recordAiUsage } from "../../billing/billing.service";
 import { getUnifiedDashboardStats } from "../../analytics/dashboard/dashboard.service";
@@ -73,11 +76,13 @@ const errStatus = (e: any, fallback: number) =>
 
 router.use((req, res, next) => {
   const TOKEN = process.env.MONOLITH_SERVICE_TOKEN ?? "";
-  if (req.header("x-service-token") !== TOKEN) return res.status(401).json({ error: "unauthorized" });
+  if (!TOKEN || req.header("x-service-token") !== TOKEN) return res.status(401).json({ error: "unauthorized" });
   next();
 });
 
-router.post("/tools/run", async (req, res) => {
+// Legacy integration actions are still externally effectful. Keep them behind
+// the same tenant and durable-operation gates as the copilot routes.
+router.post("/tools/run", authorizeAgentScope, durableAgentOperation, async (req, res) => {
   const { tool, args } = req.body ?? {};
   const m = /^integration_action_(\d+)$/.exec(tool ?? "");
   if (!m) return res.status(400).json({ error: "unknown_tool", tool });
@@ -98,14 +103,24 @@ router.post("/tools/run", async (req, res) => {
   }
 });
 
+router.use("/model-calls", modelReservations);
+
 router.get("/quota", async (req, res) => {
   const ok = await assertQuotaAvailable(Number(req.query.userId), Number(req.query.businessProfileId)).then(() => true).catch(() => false);
   res.json({ ok });
 });
 
 router.post("/usage", async (req, res) => {
-  await recordAiUsage(req.body);
-  res.json({ ok: true });
+  const payload = req.body;
+  if (!payload || typeof payload.eventId !== "string" || !payload.eventId || payload.eventId.length > 200 ||
+      !Number.isSafeInteger(payload.userId) || payload.userId <= 0 ||
+      typeof payload.modelName !== "string" || !payload.modelName ||
+      !Number.isSafeInteger(payload.promptTokens) || payload.promptTokens < 0 ||
+      !Number.isSafeInteger(payload.completionTokens) || payload.completionTokens < 0) {
+    return res.status(400).json({ error: "invalid_usage_event" });
+  }
+  try { await recordAiUsage(payload); res.json({ ok: true }); }
+  catch { res.status(503).json({ error: "usage_not_recorded" }); }
 });
 
 router.get("/profile/:id", async (req, res) => {
@@ -121,6 +136,8 @@ router.get("/profile/:id", async (req, res) => {
 // Queried with the VERIFIED user_id/businessProfileId injected by the channel
 // BFF into the run input — never model-supplied values.
 // ---------------------------------------------------------------------------
+
+router.use("/copilot", authorizeAgentScope, durableAgentOperation);
 
 router.get("/copilot/overview", async (req, res) => {
   const userId = Number(req.query.userId);
@@ -139,7 +156,7 @@ router.get("/copilot/overview", async (req, res) => {
     });
 
     if (sections.includes("stats")) {
-      const s = await getUnifiedDashboardStats(userId, "user", days);
+      const s = await getUnifiedDashboardStats(userId, "user", days, businessProfileId);
       data.stats = s;
       const hint = `Last ${days} days`;
       const totalEngagement = (s.recentPerformance ?? []).reduce(
@@ -160,8 +177,6 @@ router.get("/copilot/overview", async (req, res) => {
           { metric: "posts_created", value: s.postsCreated, period: days },
           { metric: "posts_scheduled", value: s.postsScheduled, period: days },
           { metric: "comments_replied", value: s.commentsReplied, period: days },
-          { metric: "total_reach", value: s.totalReach, period: days },
-          { metric: "total_engagement", value: totalEngagement, period: days },
           { metric: "ai_automation_rate", value: s.aiAutomationRate },
           { metric: "ai_accuracy_score", value: s.aiAccuracyScore },
           { metric: "lead_velocity", value: s.leadVelocity, period: days },
@@ -280,6 +295,7 @@ router.get("/copilot/customers", async (req, res) => {
   try {
     const out = await listCopilotCustomers({
       userId,
+      businessProfileId: Number(req.query.businessProfileId),
       q: req.query.q ? String(req.query.q) : undefined,
       status: req.query.status ? String(req.query.status) : undefined,
       limit: req.query.limit ? Number(req.query.limit) : undefined,
@@ -381,7 +397,7 @@ router.get("/copilot/usage", async (req, res) => {
   if (!userId) return res.status(400).json({ error: "userId_required" });
   const days = Math.min(Math.max(Number(req.query.days) || 30, 1), 90);
   try {
-    res.json({ usage: await getAiPerformanceStats(String(userId), "user", days) });
+    res.json({ usage: await getAiPerformanceStats(String(userId), "user", days, Number(req.query.businessProfileId)) });
   } catch (e: any) {
     res.status(500).json({ error: e?.message ?? "usage_failed" });
   }
@@ -615,7 +631,7 @@ router.get("/copilot/social/pages", async (req, res) => {
   const userId = Number(req.query.userId);
   if (!userId) return res.status(400).json({ error: "userId_required" });
   try {
-    res.json(await listCopilotFacebookPages(userId));
+    res.json(await listCopilotFacebookPages(userId, Number(req.query.businessProfileId)));
   } catch (e: any) {
     res.status(errStatus(e, 500)).json({ error: e?.message ?? "list_pages_failed" });
   }
@@ -752,6 +768,9 @@ router.post("/copilot/media/ai", async (req, res) => {
   try {
     res.json(await copilotGenerateVisual({
       userId,
+      ...(req.body?.businessProfileId != null
+        ? { businessProfileId: Number(req.body.businessProfileId) }
+        : {}),
       prompt,
       action: action as "generate" | "refine",
       assetId: req.body?.assetId ? Number(req.body.assetId) : undefined,

@@ -3,6 +3,12 @@ import express from "express";
 import { describe, it, expect, vi } from "vitest";
 import router from "./agent.tools.controller";
 
+// Scope and idempotency are covered by their dedicated integration suites;
+// keep this controller contract suite focused on delegation and response
+// mapping without requiring a live Prisma connection.
+vi.mock("./agent.scope", () => ({ authorizeAgentScope: (_req: any, _res: any, next: any) => next() }));
+vi.mock("./agent.operation", () => ({ durableAgentOperation: (_req: any, _res: any, next: any) => next() }));
+
 vi.mock("./copilot.actions.service", () => ({
   listCopilotConversations: vi.fn(),
   getCopilotConversationMessages: vi.fn(),

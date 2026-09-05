@@ -21,6 +21,7 @@ import {
 } from "./orderConfirmation.repository";
 import {
   renderOrderTemplateVariables,
+  orderTemplateUsesActions,
   resolveActiveTemplateConfig,
   validateOrderTemplateMapping,
   type OrderTemplateConfig,
@@ -194,11 +195,14 @@ export async function sendConfirmationNotification(notificationId: number): Prom
 
   const account = getAccount(notification);
   const templateConfig = await getTemplateConfig(notification, account.id);
-  validateOrderTemplateMapping(templateConfig.variableMapping, true);
-  const actionTokens = await prepareOrderActionTokensForSend(notificationId);
+  validateOrderTemplateMapping(templateConfig.variableMapping);
+  const usesActions = orderTemplateUsesActions(templateConfig.variableMapping);
+  const actionTokens = usesActions ? await prepareOrderActionTokensForSend(notificationId) : undefined;
   if (
-    hashOrderActionToken(actionTokens.confirmToken) !== actionTokens.confirmTokenHash ||
-    hashOrderActionToken(actionTokens.cancelToken) !== actionTokens.cancelTokenHash
+    actionTokens && (
+      hashOrderActionToken(actionTokens.confirmToken) !== actionTokens.confirmTokenHash ||
+      hashOrderActionToken(actionTokens.cancelToken) !== actionTokens.cancelTokenHash
+    )
   ) {
     throw new Error("Prepared order action token verification failed");
   }
@@ -206,21 +210,21 @@ export async function sendConfirmationNotification(notificationId: number): Prom
   const rendered = renderOrderTemplateVariables(
     notification.order as any,
     templateConfig.variableMapping,
-    {
+    actionTokens ? {
       confirm: actionTokens.confirmToken,
       cancel: actionTokens.cancelToken,
-    },
+    } : undefined,
     templateConfig.locale,
   );
-  if (!rendered.buttons?.confirm || !rendered.buttons.cancel) {
+  if (usesActions && (!rendered.buttons?.confirm || !rendered.buttons.cancel)) {
     throw new Error("Confirm and Cancel payloads are required");
   }
   const components = [
-    {
+    ...(rendered.body.length > 0 ? [{
       type: "body",
       parameters: rendered.body.map((text) => ({ type: "text", text })),
-    },
-    {
+    }] : []),
+    ...(rendered.buttons ? [{
       type: "button",
       sub_type: "quick_reply",
       index: "0",
@@ -231,13 +235,14 @@ export async function sendConfirmationNotification(notificationId: number): Prom
       sub_type: "quick_reply",
       index: "1",
       parameters: [{ type: "payload", payload: rendered.buttons.cancel }],
-    },
+    }] : []),
   ];
 
   await saveNotificationRenderedVariables(notificationId, {
     body: rendered.body,
     previewText: orderPreview(notification, rendered.body),
-    buttonMapping: ["confirmToken", "cancelToken"],
+    buttonMapping: usesActions ? ["confirmToken", "cancelToken"] : [],
+    mode: usesActions ? "CONFIRMATION" : "NOTIFICATION_ONLY",
   }, templateConfig.id);
 
   const retryAfterMs = await acquireBusinessSendPermit(notification.businessProfileId);

@@ -97,8 +97,13 @@ function validateFieldList(fields: string[], allowed: Set<string>, label: string
   }
 }
 
-function validateMapping(mapping: OrderTemplateMapping, requireButtons = true): void {
-  validateFieldList(bodyFields(mapping), allowedOrderFields, "body");
+export function orderTemplateUsesActions(mapping: OrderTemplateMapping | unknown): boolean {
+  return buttonFields(asMapping(mapping)).length > 0;
+}
+
+function validateMapping(mapping: OrderTemplateMapping, requireButtons = false): void {
+  const body = bodyFields(mapping);
+  if (body.length > 0) validateFieldList(body, allowedOrderFields, "body");
 
   const buttons = buttonFields(mapping);
   if (requireButtons && buttons.length === 0) {
@@ -106,11 +111,10 @@ function validateMapping(mapping: OrderTemplateMapping, requireButtons = true): 
   }
   if (buttons.length > 0) {
     validateFieldList(buttons, allowedButtonFields, "button");
-    if (requireButtons && buttons.length !== 2) {
+    if (buttons.length !== 2) {
       throw new Error("Confirm and Cancel button parameters are required");
     }
     if (
-      requireButtons &&
       (buttons[0] !== "confirmToken" || buttons[1] !== "cancelToken")
     ) {
       throw new Error("Confirm and Cancel button parameters must be in order");
@@ -120,7 +124,7 @@ function validateMapping(mapping: OrderTemplateMapping, requireButtons = true): 
 
 export function validateOrderTemplateMapping(
   mapping: OrderTemplateMapping | unknown,
-  requireButtons = true,
+  requireButtons = false,
 ): OrderTemplateMapping {
   const normalizedMapping = asMapping(mapping);
   validateMapping(normalizedMapping, requireButtons);
@@ -288,7 +292,7 @@ export function renderOrderTemplateVariables(
   actionTokens?: { confirm: string; cancel: string },
   selectedLocale?: string,
 ): RenderedOrderTemplateVariables {
-  const normalizedMapping = validateOrderTemplateMapping(mapping, true);
+  const normalizedMapping = validateOrderTemplateMapping(mapping);
 
   const body = bodyFields(normalizedMapping).map((field) =>
     readOrderValue(order, field, selectedLocale),
@@ -298,7 +302,7 @@ export function renderOrderTemplateVariables(
     previewText: body.filter(Boolean).join(" | "),
   };
 
-  if (actionTokens) {
+  if (actionTokens && orderTemplateUsesActions(normalizedMapping)) {
     rendered.buttons = actionTokens;
   }
 

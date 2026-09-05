@@ -1273,6 +1273,7 @@ const managedOrderSelect = {
     select: {
       id: true,
       kind: true,
+      renderedVariables: true,
       status: true,
       providerMessageId: true,
       conversationMessageId: true,

@@ -3,18 +3,12 @@ import { AgentClient } from "@modules/ai-agent/client/agent.client";
 import { AppError } from "@middlewares/errorHandler.middleware";
 
 const KIND_RE = /^[a-z][a-z0-9-]{0,31}$/;
-const DOC_SELECT = { id: true, businessProfileId: true, kind: true, title: true, content: true } as const;
-
 function assertKind(kind: string) {
   if (!KIND_RE.test(kind)) throw new AppError("Invalid knowledge document kind.", 400);
 }
 
 export async function ingestProfileDocuments(profileId: number) {
-  const documents = await prisma.knowledgeDocument.findMany({
-    where: { businessProfileId: profileId },
-    select: DOC_SELECT,
-  });
-  await AgentClient.ingestRag({ business_profile_id: profileId, documents, mode: "partial" });
+  await AgentClient.ingestRag({ business_profile_id: profileId });
 }
 
 export async function listKnowledgeDocuments(

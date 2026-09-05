@@ -33,15 +33,13 @@ describe("listKnowledgeDocuments", () => {
 });
 
 describe("mutations trigger re-ingestion", () => {
-  it("create ingests with documents", async () => {
+  it("create requests a canonical profile refresh", async () => {
     prismaMock.knowledgeDocument.create.mockResolvedValue({ id: 9 });
     prismaMock.knowledgeDocument.findMany.mockResolvedValue([
       { id: 9, businessProfileId: 3, kind: "faq", title: "Q", content: "A" },
     ]);
     await createKnowledgeDocument(3, { kind: "faq", title: "Q", content: "A" });
-    expect(agentClient.ingestRag).toHaveBeenCalledWith(expect.objectContaining({
-      business_profile_id: 3, mode: "partial",
-    }));
+    expect(agentClient.ingestRag).toHaveBeenCalledWith({ business_profile_id: 3 });
   });
 
   it("update + delete re-ingest and scope by profile", async () => {
@@ -64,11 +62,10 @@ describe("mutations trigger re-ingestion", () => {
 });
 
 describe("ingestProfileDocuments", () => {
-  it("sends documents payload (no qdrant keys — graph reads env)", async () => {
+  it("requests a backend-owned canonical refresh without forwarding documents", async () => {
     prismaMock.knowledgeDocument.findMany.mockResolvedValue([]);
     await ingestProfileDocuments(3);
-    expect(agentClient.ingestRag).toHaveBeenCalledWith({
-      business_profile_id: 3, documents: [], mode: "partial",
-    });
+    expect(prismaMock.knowledgeDocument.findMany).not.toHaveBeenCalled();
+    expect(agentClient.ingestRag).toHaveBeenCalledWith({ business_profile_id: 3 });
   });
 });

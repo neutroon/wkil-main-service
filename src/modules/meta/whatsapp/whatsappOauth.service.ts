@@ -346,7 +346,7 @@ export async function saveWhatsAppAccount(params: {
         headers: { Authorization: `Bearer ${params.accessToken}` },
       }
     );
-    const details = await metaDetailsResponse.json();
+    const details = await metaDetailsResponse.json() as { is_on_biz_app?: boolean };
     
     if (details.is_on_biz_app === true) {
       connectionMode = "COEXISTENCE";
@@ -525,7 +525,7 @@ async function registerWhatsAppPhoneNumber(params: {
       }),
     });
 
-    const data = await response.json();
+    const data = await response.json() as { error?: { message?: string } };
 
     if (!response.ok) {
       // If already registered, Meta might return a 400 with a specific subcode.

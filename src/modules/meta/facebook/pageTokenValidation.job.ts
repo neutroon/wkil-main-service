@@ -40,7 +40,7 @@ export async function processPageTokenValidation(payload: { pageId: string }) {
         `${fbApiUrl}/debug_token?input_token=${token}&access_token=${appToken}`,
         { method: "GET" }
       );
-      const result = await response.json();
+      const result = await response.json() as { data?: { is_valid?: boolean; expires_at?: number; scopes?: string[] } };
       const debugData = result?.data;
 
       if (!debugData) {
@@ -71,7 +71,7 @@ export async function processPageTokenValidation(payload: { pageId: string }) {
         `${fbApiUrl}/me?access_token=${token}&fields=id`,
         { method: "GET" }
       );
-      const result = await response.json();
+      const result = await response.json() as { id?: string };
       // For page tokens, /me returns the page itself — id should match pageId
       isValid = result.id === pageId;
     }

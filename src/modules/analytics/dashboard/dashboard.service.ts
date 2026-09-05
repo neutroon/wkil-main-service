@@ -163,11 +163,23 @@ export const getDashboardActivity = async (
 
 export const getDashboardStats = async (
   userId: number,
-  days: number = DEFAULT_STATS_DAYS
+  days: number = DEFAULT_STATS_DAYS,
+  businessProfileId?: number
 ): Promise<DashboardStatsResponse> => {
   const periodDays = days > 0 ? days : DEFAULT_STATS_DAYS;
   const startDate = new Date();
   startDate.setDate(startDate.getDate() - periodDays);
+
+  if (businessProfileId) {
+    const [pages, activity] = await Promise.all([
+      prisma.facebookPage.findMany({ where: { businessProfileId, isActive: true }, select: { facebookAccountId: true } }),
+      prisma.facebookActivity.groupBy({ by: ["activityType"], where: { facebookPage: { businessProfileId }, success: true, createdAt: { gte: startDate } }, _count: { _all: true } }),
+    ]);
+    const counts = Object.fromEntries(activity.map((row) => [row.activityType, row._count._all]));
+    return { hasConnectedAccounts: pages.length > 0, connectedAccounts: new Set(pages.map((page) => page.facebookAccountId)).size,
+      connectedPages: pages.length, postsCreated: counts.post_created ?? 0, postsScheduled: counts.post_scheduled ?? 0,
+      commentsReplied: counts.comment_replied ?? 0, totalReach: 0, periodDays, lastUpdated: null, recentPerformance: [] };
+  }
 
   const [accounts, analytics] = await Promise.all([
     prisma.facebookAccount.findMany({
@@ -233,7 +245,8 @@ export const getDashboardStats = async (
 };
 
 export const getSetupProgress = async (
-  userId: number
+  userId: number,
+  businessProfileId?: number
 ): Promise<SetupProgress> => {
   const user = await prisma.user.findUnique({
     where: { id: userId },
@@ -245,7 +258,7 @@ export const getSetupProgress = async (
   });
 
   const profiles = await prisma.businessProfile.findMany({
-    where: { userId },
+    where: businessProfileId ? { id: businessProfileId } : { userId },
     select: { id: true, createdAt: true },
     orderBy: { createdAt: "asc" },
   });
@@ -411,17 +424,18 @@ export const recordSetupProgressEvent = async (
 export const getUnifiedDashboardStats = async (
   userId: number,
   role: string,
-  days: number = DEFAULT_STATS_DAYS
+  days: number = DEFAULT_STATS_DAYS,
+  businessProfileId?: number
 ): Promise<UnifiedDashboardResponse> => {
   const startDate = new Date();
   startDate.setDate(startDate.getDate() - (days || 30));
 
   const [socialStats, aiStats, conversations, messages, setupProgress] = await Promise.all([
-    getDashboardStats(userId, days),
-    getAiPerformanceStats(userId.toString(), role, days),
+    getDashboardStats(userId, days, businessProfileId),
+    getAiPerformanceStats(userId.toString(), role, days, businessProfileId),
     prisma.conversation.findMany({
       where: {
-        businessProfile: { userId },
+        ...(businessProfileId ? { businessProfileId } : { businessProfile: { userId } }),
         createdAt: { gte: startDate }
       },
       select: { createdAt: true }
@@ -429,7 +443,7 @@ export const getUnifiedDashboardStats = async (
     prisma.conversationMessage.findMany({
       where: {
         conversation: {
-          businessProfile: { userId },
+          ...(businessProfileId ? { businessProfileId } : { businessProfile: { userId } }),
           NOT: { channel: "facebook_comment" }
         },
         createdAt: { gte: startDate },
@@ -447,7 +461,7 @@ export const getUnifiedDashboardStats = async (
       },
       orderBy: { createdAt: "asc" }
     }),
-    getSetupProgress(userId),
+    getSetupProgress(userId, businessProfileId),
   ]);
 
   // Lead Velocity = Count of new conversations in the period

@@ -36,6 +36,7 @@ import {
 } from "./orderConfirmation.queue";
 import {
   renderOrderTemplateVariables,
+  orderTemplateUsesActions,
   validateOrderTemplateMapping,
   type OrderTemplateMapping,
 } from "./orderConfirmation.template.service";
@@ -202,6 +203,7 @@ function maskPhone(phone: unknown): string | null {
 
 function serializeNotification(notification: any): Record<string, unknown> {
   return {
+    mode: notification.renderedVariables?.mode === "NOTIFICATION_ONLY" ? "NOTIFICATION_ONLY" : "CONFIRMATION",
     id: notification.id,
     kind: notification.kind,
     status: notification.status,
@@ -398,7 +400,7 @@ async function currentApprovedTemplate(params: {
 }): Promise<{ template: any; mapping: OrderTemplateMapping }> {
   let mapping: OrderTemplateMapping;
   try {
-    mapping = validateOrderTemplateMapping(params.variableMapping, true);
+    mapping = validateOrderTemplateMapping(params.variableMapping);
   } catch (error) {
     badRequest(error instanceof Error ? error.message : "Invalid template variable mapping");
   }
@@ -412,8 +414,17 @@ async function currentApprovedTemplate(params: {
   );
 
   if (!template) badRequest("Selected WhatsApp template is not currently approved");
-  if (!hasRequiredQuickReplies(template)) {
-    badRequest("Selected WhatsApp template must contain Confirm and Cancel quick replies in order");
+  const hasButtons = templateComponents(template).some(
+    (component) => String(component?.type ?? "").toUpperCase() === "BUTTONS" &&
+      Array.isArray(component.buttons) && component.buttons.length > 0,
+  );
+  if (hasButtons && !hasRequiredQuickReplies(template)) {
+    badRequest("Selected WhatsApp template must have no buttons or exactly two Confirm and Cancel quick replies in order");
+  }
+  if (hasButtons !== orderTemplateUsesActions(mapping)) {
+    badRequest(hasButtons
+      ? "Confirm and Cancel button parameters are required"
+      : "Notification-only templates must not include button parameters");
   }
 
   const placeholderCount = bodyPlaceholderCount(template);
@@ -825,14 +836,14 @@ export async function testEvent(req: Request, res: Response): Promise<void> {
 
   let mapping: OrderTemplateMapping;
   try {
-    mapping = validateOrderTemplateMapping(config.variableMapping, true);
+    mapping = validateOrderTemplateMapping(config.variableMapping);
   } catch (error) {
     badRequest(error instanceof Error ? error.message : "Invalid template variable mapping");
   }
   const rendered = renderOrderTemplateVariables(
     event.order,
     mapping,
-    { confirm: "preview-confirm", cancel: "preview-cancel" },
+    orderTemplateUsesActions(mapping) ? { confirm: "preview-confirm", cancel: "preview-cancel" } : undefined,
     locale,
   );
 

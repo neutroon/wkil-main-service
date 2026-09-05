@@ -715,7 +715,7 @@ paths:
       tags: [Order Confirmations]
       operationId: createOrderTemplateConfig
       summary: Configure an order confirmation template
-      description: The selected template must be approved and contain Confirm and Cancel quick replies in that order before activation.
+      description: The selected template must be approved. Templates without buttons send notifications only; interactive templates require exactly two Confirm and Cancel quick replies in that order. Notification delivery does not confirm or cancel an order.
       security:
         - bearerAuth: []
           csrfHeader: []
@@ -3789,7 +3789,7 @@ components:
       type: string
       enum: [confirmToken, cancelToken]
     OrderTemplateMapping:
-      description: Allowlisted canonical fields mapped to template body and button positions.
+      description: Allowlisted canonical fields mapped to template body and button positions. Omit buttons for notification-only templates. Interactive templates require confirmToken followed by cancelToken. An empty body mapping supports templates without variables.
       oneOf:
         - type: array
           items: { $ref: "#/components/schemas/OrderTemplateField" }
@@ -4148,6 +4148,7 @@ components:
       properties:
         id: { type: integer, minimum: 1 }
         kind: { $ref: "#/components/schemas/OrderNotificationKind" }
+        mode: { type: string, enum: [CONFIRMATION, NOTIFICATION_ONLY] }
         status: { $ref: "#/components/schemas/OrderNotificationStatus" }
         providerMessageId: { type: [string, "null"] }
         conversationMessageId: { type: [integer, "null"], minimum: 1 }

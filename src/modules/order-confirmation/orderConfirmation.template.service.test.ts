@@ -38,16 +38,32 @@ describe("order confirmation template mapping", () => {
     vi.clearAllMocks();
   });
 
-  it("rejects body-only mappings and reversed action order", () => {
-    expect(() => validateOrderTemplateMapping({ body: ["orderNumber"] })).toThrow(
+  it("accepts notification-only mappings but requires actions when explicitly requested", () => {
+    expect(validateOrderTemplateMapping({ body: ["orderNumber"] })).toEqual({ body: ["orderNumber"] });
+    expect(() => validateOrderTemplateMapping({ body: ["orderNumber"] }, true)).toThrow(
       "Confirm and Cancel button parameters are required",
     );
+  });
+
+  it("rejects partial and reversed actions even when buttons are optional", () => {
+    expect(() => validateOrderTemplateMapping({ body: ["orderNumber"], buttons: ["confirmToken"] }, false))
+      .toThrow("Confirm and Cancel button parameters are required");
     expect(() =>
       validateOrderTemplateMapping({
         body: ["orderNumber"],
         buttons: ["cancelToken", "confirmToken"],
       }),
     ).toThrow("Confirm and Cancel button parameters must be in order");
+  });
+
+  it("renders notification variables without leaking supplied action tokens", () => {
+    const rendered = renderOrderTemplateVariables(order, { body: ["orderNumber"] }, { confirm: "unused", cancel: "unused" });
+    expect(rendered.body).toEqual(["#100"]);
+    expect(rendered.buttons).toBeUndefined();
+  });
+
+  it("supports a static body without variable parameters", () => {
+    expect(renderOrderTemplateVariables(order, { body: [] }).body).toEqual([]);
   });
 
   it("renders exact decimal text with the selected locale and mapped payloads", () => {

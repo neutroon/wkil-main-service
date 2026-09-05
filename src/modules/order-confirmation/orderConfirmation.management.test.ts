@@ -2,6 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import http from "http";
 import express, { type Application } from "express";
 
+vi.mock("@config/prisma", () => ({ default: {} }));
+vi.mock("@config/env", () => ({ env: {} }));
+vi.mock("@utils/logger", () => ({ logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() } }));
+
 const mocks = vi.hoisted(() => ({
   getAccessibleProfileIds: vi.fn(),
   listOrderIntegrations: vi.fn(),
@@ -71,7 +75,8 @@ vi.mock("@modules/meta/whatsapp/whatsapp.service", () => ({
   sendWhatsAppTemplate: mocks.sendWhatsAppTemplate,
 }));
 
-vi.mock("./orderConfirmation.template.service", () => ({
+vi.mock("./orderConfirmation.template.service", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./orderConfirmation.template.service")>(),
   validateOrderTemplateMapping: mocks.validateOrderTemplateMapping,
   renderOrderTemplateVariables: mocks.renderOrderTemplateVariables,
 }));
@@ -424,6 +429,38 @@ describe("order-confirmation management APIs", () => {
     expect(mocks.createOrderTemplateConfig).not.toHaveBeenCalled();
   });
 
+  it("accepts an approved notification-only template without button mappings", async () => {
+    mocks.listWhatsAppTemplates.mockResolvedValue([{
+      name: "order_notice", language: "en", status: "APPROVED",
+      components: [{ type: "BODY", text: "Order {{1}}" }],
+    }]);
+    const response = await request(server, {
+      method: "POST", path: "/order-confirmations/template-configs",
+      body: { integrationId: 4, businessProfileId: 11, whatsappAccountId: 9,
+        eventType: "order.created", locale: "en", templateName: "order_notice",
+        languageCode: "en", variableMapping: { body: ["orderNumber"] }, isActive: true },
+    });
+    expect(response.status).toBe(201);
+    expect(mocks.createOrderTemplateConfig).toHaveBeenCalledWith(expect.objectContaining({
+      variableMapping: { body: ["orderNumber"] },
+    }));
+  });
+
+  it("rejects action mappings attached to a notification-only template", async () => {
+    mocks.listWhatsAppTemplates.mockResolvedValue([{
+      name: "order_notice", language: "en", status: "APPROVED",
+      components: [{ type: "BODY", text: "Order {{1}}" }],
+    }]);
+    const response = await request(server, {
+      method: "POST", path: "/order-confirmations/template-configs",
+      body: { integrationId: 4, whatsappAccountId: 9, eventType: "order.created", locale: "en",
+        templateName: "order_notice", languageCode: "en",
+        variableMapping: { body: ["orderNumber"], buttons: ["confirmToken", "cancelToken"] } },
+    });
+    expect(response.status).toBe(400);
+    expect(mocks.createOrderTemplateConfig).not.toHaveBeenCalled();
+  });
+
   it("accepts localized quick-reply labels because action mapping follows button position", async () => {
     mocks.listWhatsAppTemplates.mockResolvedValue([
       {
@@ -574,7 +611,8 @@ describe("order-confirmation management APIs", () => {
           id: 31,
           status: "AWAITING_CONFIRMATION",
           sourceEventId: "evt-31",
-          notifications: [{ id: 41, status: "FAILED", lastError: "provider unavailable" }],
+          notifications: [{ id: 41, status: "FAILED", lastError: "provider unavailable",
+            renderedVariables: { mode: "NOTIFICATION_ONLY", body: ["private rendered content"] } }],
           storeSyncs: [],
           rawPayload: { customerPhone: "+12025550123" },
           actionTokens: [{ tokenHash: "hash-only" }],
@@ -594,6 +632,8 @@ describe("order-confirmation management APIs", () => {
     );
     expect(JSON.stringify(response.json)).not.toContain("rawPayload");
     expect(JSON.stringify(response.json)).not.toContain("hash-only");
+    expect(JSON.stringify(response.json)).not.toContain("private rendered content");
+    expect(response.json.data[0].notifications[0].mode).toBe("NOTIFICATION_ONLY");
   });
 
   it("does not retry a notification belonging to another profile", async () => {

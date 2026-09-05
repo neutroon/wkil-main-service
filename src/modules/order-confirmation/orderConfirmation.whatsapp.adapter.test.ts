@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@config/prisma", () => ({ default: {} }));
+vi.mock("@config/env", () => ({ env: {} }));
+vi.mock("@utils/logger", () => ({ logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() } }));
+
 const mocks = vi.hoisted(() => ({
   decryptFacebookSecret: vi.fn(),
   getSystemSetting: vi.fn(),
@@ -40,7 +44,8 @@ vi.mock("./orderConfirmation.repository", () => ({
   prepareOrderActionTokensForSend: mocks.prepareOrderActionTokensForSend,
   saveNotificationRenderedVariables: mocks.saveNotificationRenderedVariables,
 }));
-vi.mock("./orderConfirmation.template.service", () => ({
+vi.mock("./orderConfirmation.template.service", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./orderConfirmation.template.service")>(),
   resolveActiveTemplateConfig: mocks.resolveActiveTemplateConfig,
   validateOrderTemplateMapping: vi.fn((mapping: unknown) => mapping),
   renderOrderTemplateVariables: vi.fn(
@@ -162,6 +167,20 @@ describe("WhatsApp confirmation adapter", () => {
       expect.objectContaining({ buttonMapping: ["confirmToken", "cancelToken"] }),
       8,
     );
+  });
+
+  it("sends notification-only templates with body parameters and no action tokens", async () => {
+    const config = await mocks.resolveActiveTemplateConfig();
+    mocks.resolveActiveTemplateConfig.mockResolvedValue({ ...config, variableMapping: { body: ["customerName", "total"] } });
+
+    await sendConfirmationNotification(18);
+
+    expect(mocks.prepareOrderActionTokensForSend).not.toHaveBeenCalled();
+    expect(mocks.sendWhatsAppTemplate.mock.calls[0][3]).toEqual([
+      { type: "body", parameters: [{ type: "text", text: "Mona" }, { type: "text", text: "USD 10.00" }] },
+    ]);
+    expect(mocks.saveNotificationRenderedVariables).toHaveBeenCalledWith(18,
+      expect.objectContaining({ buttonMapping: [], mode: "NOTIFICATION_ONLY" }), 8);
   });
 
   it("resolves and validates the current template before consuming the send permit", async () => {

@@ -3784,7 +3784,7 @@ components:
         country: { type: string, minLength: 1 }
     OrderTemplateField:
       type: string
-      enum: [customerName, orderNumber, itemSummary, total, currency, shippingCity, shippingCountry]
+      enum: [customerName, orderNumber, itemSummary, quantity, total, shippingCity, shippingCountry]
     OrderTemplateButtonField:
       type: string
       enum: [confirmToken, cancelToken]

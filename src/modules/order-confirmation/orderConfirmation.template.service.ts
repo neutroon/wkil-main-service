@@ -5,8 +5,8 @@ const allowedOrderFields = new Set<OrderTemplateField>([
   "customerName",
   "orderNumber",
   "itemSummary",
+  "quantity",
   "total",
-  "currency",
   "shippingCity",
   "shippingCountry",
 ]);
@@ -54,6 +54,47 @@ function asMapping(value: unknown): OrderTemplateMapping {
   }
 
   return value as OrderTemplateMapping;
+}
+
+function normalizeLegacyField(value: unknown): string {
+  // Existing saved configurations used `currency` for this template slot.
+  // Keep those configurations readable while making quantity the canonical field.
+  return value === "currency" ? "quantity" : String(value);
+}
+
+function normalizeFieldCollection(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(normalizeLegacyField);
+  if (typeof value !== "object" || value === null) return value;
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, field]) => [
+      key,
+      normalizeLegacyField(field),
+    ]),
+  );
+}
+
+function normalizeOrderTemplateMapping(value: OrderTemplateMapping): OrderTemplateMapping {
+  if (Array.isArray(value)) return value.map(normalizeLegacyField) as OrderTemplateField[];
+
+  if ("body" in value) {
+    return {
+      ...value,
+      body: normalizeFieldCollection(value.body) as OrderTemplateField[] | Record<string, OrderTemplateField>,
+      ...(value.buttons === undefined
+        ? {}
+        : { buttons: normalizeFieldCollection(value.buttons) as string[] | Record<string, string> }),
+    };
+  }
+
+  return normalizeFieldCollection(value) as Record<string, OrderTemplateField>;
+}
+
+function trimDecimal(value: string): string {
+  const [integerPart, fractionPart] = value.split(".");
+  if (!fractionPart) return integerPart;
+  const trimmedFraction = fractionPart.replace(/0+$/, "");
+  return trimmedFraction ? `${integerPart}.${trimmedFraction}` : integerPart;
 }
 
 function valuesInPlaceholderOrder(value: unknown): string[] {
@@ -126,7 +167,7 @@ export function validateOrderTemplateMapping(
   mapping: OrderTemplateMapping | unknown,
   requireButtons = false,
 ): OrderTemplateMapping {
-  const normalizedMapping = asMapping(mapping);
+  const normalizedMapping = normalizeOrderTemplateMapping(asMapping(mapping));
   validateMapping(normalizedMapping, requireButtons);
   return normalizedMapping;
 }
@@ -265,9 +306,29 @@ function readOrderValue(
       const items = (source.lineItems ?? source.items) as Array<Record<string, unknown>> | undefined;
       if (!Array.isArray(items)) return "";
       return items
-        .map((item) => `${String(item.name ?? "")} x ${String(item.quantity ?? "")}`.trim())
+        .map((item) => String(item.name ?? "").trim())
         .filter(Boolean)
         .join(", ");
+    }
+    case "quantity": {
+      const items = (source.lineItems ?? source.items) as Array<Record<string, unknown>> | undefined;
+      if (!Array.isArray(items)) return "";
+
+      const quantities = items
+        .map((item) => String(item.quantity ?? ""))
+        .filter((quantity) => /^\d+(?:\.\d+)?$/.test(quantity));
+      if (quantities.length === 0) return "";
+
+      const scale = Math.max(
+        ...quantities.map((quantity) => quantity.split(".")[1]?.length ?? 0),
+      );
+      const total = quantities.reduce((sum, quantity) => {
+        const [integerPart, fractionPart = ""] = quantity.split(".");
+        return sum + BigInt(`${integerPart}${fractionPart.padEnd(scale, "0")}`);
+      }, 0n);
+      const digits = total.toString().padStart(scale + 1, "0");
+      if (scale === 0) return digits;
+      return trimDecimal(`${digits.slice(0, -scale)}.${digits.slice(-scale)}`);
     }
     case "total": {
       const rawTotal = String(source.total ?? "");

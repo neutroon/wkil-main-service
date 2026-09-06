@@ -62,6 +62,27 @@ describe("order confirmation template mapping", () => {
     expect(rendered.buttons).toBeUndefined();
   });
 
+  it("uses item names without quantities and exposes total quantity separately", () => {
+    const rendered = renderOrderTemplateVariables(
+      {
+        ...order,
+        lineItems: [
+          { name: "Product", quantity: "2" },
+          { name: "Bundle", quantity: "1.5" },
+        ],
+      },
+      { body: ["itemSummary", "quantity"] },
+    );
+
+    expect(rendered.body).toEqual(["Product, Bundle", "3.5"]);
+  });
+
+  it("normalizes saved currency mappings to quantity", () => {
+    expect(validateOrderTemplateMapping({ body: ["currency"] })).toEqual({
+      body: ["quantity"],
+    });
+  });
+
   it("supports a static body without variable parameters", () => {
     expect(renderOrderTemplateVariables(order, { body: [] }).body).toEqual([]);
   });

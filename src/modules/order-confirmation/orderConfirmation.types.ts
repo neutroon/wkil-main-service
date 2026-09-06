@@ -6,8 +6,8 @@ export type OrderTemplateField =
   | "customerName"
   | "orderNumber"
   | "itemSummary"
+  | "quantity"
   | "total"
-  | "currency"
   | "shippingCity"
   | "shippingCountry";
 

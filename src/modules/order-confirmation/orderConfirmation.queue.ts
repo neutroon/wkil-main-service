@@ -96,8 +96,24 @@ async function enqueueOrderConfirmationJob(
   });
 }
 
-export function enqueueOrderEvent(eventId: number, correlationId: string): Promise<void> {
-  return enqueueOrderConfirmationJob("process_event", {
+export async function enqueueOrderEvent(eventId: number, correlationId: string): Promise<void> {
+  const jobId = createOrderConfirmationJobId({
+    type: "PROCESS_EVENT",
+    eventId,
+    correlationId,
+  });
+  const existing = await orderConfirmationQueue.getJob(jobId);
+
+  if (existing) {
+    const state = await existing.getState();
+    if (state === "completed" || state === "failed") {
+      await existing.remove();
+    } else {
+      return;
+    }
+  }
+
+  await enqueueOrderConfirmationJob("process_event", {
     type: "PROCESS_EVENT",
     eventId,
     correlationId,

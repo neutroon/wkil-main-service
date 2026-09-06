@@ -46,6 +46,7 @@ import docsRoutes from "@modules/docs/docs.routes";
 import notificationsRoutes from "@modules/notifications/notifications.routes";
 import workspaceController from "@modules/workspace/workspace.controller";
 import agentTools from "@modules/ai-agent/tools/agent.tools.controller";
+import agentRagRoutes from "@modules/ai-agent/rag/agent.rag.routes";
 import copilotRoutes from "@modules/ai-agent/copilot.routes";
 import { identifyUserForRateLimit } from "@middlewares/identify.middleware";
 import { errorHandler } from "@middlewares/errorHandler.middleware";
@@ -226,6 +227,7 @@ app.use("/v1/workspace", publicWorkspaceRouter);
 // Service-to-service internal API — mounted BEFORE the global JWT auth: it is
 // protected by its own x-service-token middleware (agent.tools.controller).
 // Must not sit behind authenticateToken, or machine-to-machine calls 401.
+app.use("/internal/agent/rag", agentRagRoutes);
 app.use("/internal/agent", agentTools);
 
 // Protected Enterprise Routes (Require Authentication & Email Verification)

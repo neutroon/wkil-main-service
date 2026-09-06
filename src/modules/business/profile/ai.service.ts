@@ -6,12 +6,12 @@ async function discoverStrategicLinks(
   baseUrl: string,
   pageContent: string,
 ) {
-  return AgentClient.runCopilot({
-    business_profile_id: businessProfileId,
-    user_id: userId,
-    messages: [],
-    stage: "fast",
-  } as any) as any;
+  if (!businessProfileId) throw new Error("A business profile is required for strategic link discovery");
+  const result = await AgentClient.runCapability({
+    userId, businessProfileId, operation: "strategic_links",
+    context: { baseUrl, pageContent },
+  });
+  return result.links.map((link) => link.url);
 }
 
 async function extractBusinessIdentity(
@@ -19,12 +19,20 @@ async function extractBusinessIdentity(
   businessProfileId: number | null,
   markdown: string,
 ) {
-  return AgentClient.runCopilot({
-    business_profile_id: businessProfileId,
-    user_id: userId,
-    messages: [],
-    stage: "fast",
-  } as any) as any;
+  if (!businessProfileId) throw new Error("A business profile is required for business identity extraction");
+  const result = await AgentClient.runCapability({
+    userId, businessProfileId, operation: "business_identity", context: { markdown },
+  });
+  return {
+    name: result.name,
+    identity: result.identity,
+    targetAudience: result.target_audience,
+    voice: result.voice,
+    tone: result.tone,
+    productsServices: result.products_services,
+    corePolicies: result.core_policies,
+    confidence: result.confidence,
+  };
 }
 
 export { discoverStrategicLinks, extractBusinessIdentity };

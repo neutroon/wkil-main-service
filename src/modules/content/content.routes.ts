@@ -120,6 +120,7 @@ contentRoutes.post(
       businessProfile = await prisma.businessProfile.findFirst({
         where: { id: parseInt(String(businessProfileId), 10), userId },
         select: {
+          id: true,
           name: true,
           voice: true,
           tone: true,
@@ -131,6 +132,7 @@ contentRoutes.post(
       businessProfile = await prisma.businessProfile.findFirst({
         where: { userId },
         select: {
+          id: true,
           name: true,
           voice: true,
           tone: true,
@@ -140,7 +142,13 @@ contentRoutes.post(
       });
     }
 
+    if (!businessProfile) {
+      throw new AppError("Business profile not found", 404);
+    }
+
     const result = await generatePostContent({
+      userId,
+      businessProfileId: businessProfile.id,
       topic,
       length,
       keywords,

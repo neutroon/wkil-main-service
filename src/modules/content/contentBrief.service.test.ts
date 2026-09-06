@@ -22,7 +22,12 @@ vi.mock("@config/prisma", () => ({
       findFirst: vi.fn(),
     },
     contentAudit: {
+      create: vi.fn(),
+      update: vi.fn(),
       findFirst: vi.fn(),
+    },
+    competitorSource: {
+      create: vi.fn(),
     },
   },
 }));
@@ -45,13 +50,18 @@ vi.mock("@utils/apiClient", () => ({
 
 vi.mock("@modules/ai-agent/client/agent.client", () => ({
   AgentClient: {
-    runCopilot: vi.fn().mockResolvedValue({ text: "" }),
+    runCapability: vi.fn(),
   },
 }));
 
 import prisma from "@config/prisma";
+import { AgentClient } from "@modules/ai-agent/client/agent.client";
 import { getPagePosts, getPostComments } from "../meta/facebook/facebook.service";
-import { collectFirstPartySignals, saveContentBrief } from "./contentBrief.service";
+import {
+  collectFirstPartySignals,
+  generateContentAuditStream,
+  saveContentBrief,
+} from "./contentBrief.service";
 
 const mockedPrisma = prisma as any;
 
@@ -171,5 +181,94 @@ describe("content brief service", () => {
         }),
       }),
     );
+  });
+
+  it("passes all audit inputs and collected signals to the typed capability before persisting", async () => {
+    mockedPrisma.businessProfile.findFirst.mockResolvedValue({
+      id: 10,
+      userId: 7,
+      name: "Nile Coffee",
+      voice: "Warm",
+      tone: "Casual",
+      facebookPages: [],
+    });
+    mockedPrisma.contentAudit.create.mockResolvedValue({ id: 50 });
+    vi.mocked(AgentClient.runCapability).mockResolvedValue({
+      findings: ["Customer questions focus on delivery speed"],
+      gap_questions: ["Which Cairo districts convert best?"],
+      draft_brief: {
+        goal: "Grow subscriptions",
+        audience_segments: ["Busy Cairo professionals"],
+      },
+      confidence_score: 0.84,
+    });
+    mockedPrisma.contentAudit.update.mockResolvedValue({
+      id: 50,
+      status: "completed",
+      competitorSources: [],
+    });
+
+    const updates = [];
+    for await (const update of generateContentAuditStream({
+      userId: 7,
+      businessProfileId: 10,
+      goal: "Grow subscriptions",
+      startDate: "2026-09-07",
+      endDate: "2026-09-30",
+      currentTrends: "office coffee subscriptions",
+      signalWindowDays: 30,
+      competitorDiscoveryScope: "PROVIDED_ONLY",
+      competitorAnalysisModes: ["WEBSITE_SEARCH"],
+      competitors: [{ name: "Bean Co", url: "https://bean.example" }],
+      socialSamples: [],
+    })) {
+      updates.push(update);
+    }
+
+    expect(AgentClient.runCapability).toHaveBeenCalledWith({
+      userId: 7,
+      businessProfileId: 10,
+      operation: "content_audit",
+      context: {
+        goal: "Grow subscriptions",
+        startDate: "2026-09-07",
+        endDate: "2026-09-30",
+        currentTrends: "office coffee subscriptions",
+        settings: { name: "Nile Coffee", voice: "Warm", tone: "Casual" },
+        signals: {
+          firstParty: expect.objectContaining({
+            summary: expect.objectContaining({ signalWindowDays: 30 }),
+          }),
+          competitors: [{ name: "Bean Co", url: "https://bean.example" }],
+          socialSamples: [],
+          competitorDiscoveryScope: "PROVIDED_ONLY",
+          competitorAnalysisModes: ["WEBSITE_SEARCH"],
+          competitorSources: [],
+        },
+      },
+    });
+    expect(mockedPrisma.contentAudit.update).toHaveBeenCalledWith({
+      where: { id: 50 },
+      data: {
+        status: "completed",
+        findings: [{ title: "Customer questions focus on delivery speed" }],
+        gapQuestions: [
+          { id: "gap_1", question: "Which Cairo districts convert best?" },
+        ],
+        draftBrief: {
+          goal: "Grow subscriptions",
+          audienceSegments: ["Busy Cairo professionals"],
+        },
+        evidenceRefs: [],
+        confidenceScore: 0.84,
+      },
+      include: { competitorSources: true },
+    });
+    expect(updates.at(-1)).toMatchObject({
+      type: "result",
+      data: {
+        findings: [{ title: "Customer questions focus on delivery speed" }],
+      },
+    });
   });
 });

@@ -33,7 +33,7 @@ export async function processWebhookSubscription(payload: { pageId: string; acce
       { method: "POST" }
     );
 
-    const result = await response.json();
+    const result = await response.json() as { success?: boolean; error?: { message?: string } };
 
     if (result.success) {
       await prisma.facebookPage.updateMany({

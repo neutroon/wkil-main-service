@@ -210,6 +210,7 @@ export async function assertQuotaAvailable(
 }
 
 export async function recordAiUsage(params: {
+  eventId?: string;
   userId: number;
   businessProfileId?: number | null;
   modelName?: string;
@@ -232,9 +233,26 @@ export async function recordAiUsage(params: {
     groundingCalls = 0,
   } = params;
 
+  const existingEvent = async () => {
+    if (!params.eventId) return false;
+    const existing = await prisma.aiCallLog.findUnique({ where: { eventId: params.eventId } });
+    if (!existing) return false;
+    if (existing.userId !== userId || existing.businessProfileId !== (businessProfileId || 0) ||
+        existing.modelName !== modelName || existing.promptTokens !== promptTokens ||
+        existing.completionTokens !== completionTokens || existing.embeddingTokens !== embeddingTokens || existing.groundingCalls !== groundingCalls) {
+      throw new Error("usage_event_conflict");
+    }
+    return true;
+  };
+  if (await existingEvent()) return;
+  for (const count of [promptTokens, completionTokens, embeddingTokens, groundingCalls]) {
+    if (!Number.isSafeInteger(count) || count < 0) throw new Error("invalid_usage_count");
+  }
+
   const totalTokens = promptTokens + completionTokens;
 
   if (
+    !params.eventId &&
     !promptTokens &&
     !completionTokens &&
     !embeddingTokens &&
@@ -326,6 +344,7 @@ export async function recordAiUsage(params: {
       // B. Create Granular Call Log
       prisma.aiCallLog.create({
         data: {
+          ...(params.eventId ? { eventId: params.eventId } : {}),
           userId,
           businessProfileId: businessProfileId || 0,
           conversationId,
@@ -380,6 +399,12 @@ export async function recordAiUsage(params: {
       totalCreditsUsed: (await prisma.user.findUnique({ where: { id: userId }, select: { monthlyCreditsUsed: true } }))?.monthlyCreditsUsed || 0
     });
   } catch (error: any) {
+    // The call log's unique event ID is in the same transaction as every
+    // balance/aggregate update. A concurrent replay rolls back completely.
+    if (params.eventId) {
+      if (error?.code === "P2002" && await existingEvent()) return;
+      throw error;
+    }
     logger.error("billing.record_usage_failure.dead_lettering", {
       error: error.message,
       businessProfileId,
@@ -408,7 +433,5 @@ export async function recordAiUsage(params: {
       });
   }
 }
-
-
 
 

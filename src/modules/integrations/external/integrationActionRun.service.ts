@@ -1,4 +1,3 @@
-import { AgentClient } from "@modules/ai-agent/client/agent.client";
 import prisma from "@config/prisma";
 import { logger } from "@utils/logger";
 import type { AgentActionTrigger, AgentActionType, Prisma } from "@prisma/client";
@@ -27,12 +26,24 @@ export async function createIntegrationActionRun(params: {
   jobId: string;
   requestPayload?: JsonRecord | null;
 }) {
-  return AgentClient.runCopilot({
-    business_profile_id: params.businessProfileId,
-    user_id: undefined,
-    messages: [],
-    stage: "fast",
-  } as any) as any;
+  return prisma.integrationActionRun.create({
+    data: {
+      businessProfileId: params.businessProfileId,
+      sourceId: params.sourceId,
+      conversationId: params.conversationId ?? null,
+      customerId: params.customerId ?? null,
+      agentTurnId: params.agentTurnId ?? null,
+      parentRunId: params.parentRunId ?? null,
+      workflowId: params.workflowId ?? null,
+      stepKey: params.stepKey ?? null,
+      trigger: params.trigger,
+      actionType: params.actionType ?? null,
+      toolName: params.toolName ?? null,
+      jobId: params.jobId,
+      requestPayload: params.requestPayload ?? undefined,
+      status: "QUEUED",
+    },
+  });
 }
 
 export async function markIntegrationActionRunRunning(id?: number | null) {

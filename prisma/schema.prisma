@@ -208,6 +208,7 @@ model SocialIdentity {
 }
 
 model BusinessProfile {
+  ragIndexState RagIndexState?
   id     Int  @id @default(autoincrement())
   userId Int
   user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -985,6 +986,7 @@ model AiUsageStat {
 }
 
 model AiCallLog {
+  eventId String? @unique
   id                String           @id @default(cuid())
   userId            Int
   user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -1009,6 +1011,40 @@ model AiCallLog {
   @@index([userId, createdAt])
   @@index([businessProfileId, createdAt])
   @@index([conversationId])
+}
+
+// A claim is committed before invoking an external provider. A process crash
+// leaves a pending operation that must be reconciled, never automatically sent again.
+model AgentOperation {
+  id String @id
+  userId Int
+  businessProfileId Int?
+  requestHash String
+  status String @default("PENDING")
+  statusCode Int?
+  result Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([userId, createdAt])
+}
+
+// Serializes model spending per billing account across all agent workers.
+// Claims are released after durable usage recording; abandoned claims require reconciliation.
+model AgentModelReservation {
+  userId Int @id
+  eventId String @unique
+  reservedCredits Int
+  businessProfileId Int?
+  createdAt DateTime @default(now())
+}
+
+model RagIndexState {
+  businessProfileId Int @id
+  businessProfile BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+  requestedRevision Int @default(0)
+  activeRevision Int?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model BillingFailureLog {

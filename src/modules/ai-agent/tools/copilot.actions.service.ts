@@ -113,7 +113,7 @@ export async function sendCopilotMessage(params: {
     });
     if (!page) throw new Error("facebook_page_not_found");
     const pageAccessToken = decryptFacebookSecret(page.pageAccessToken);
-    const sent = await sendMessengerReply(conversation.senderId, text, pageAccessToken);
+    const sent = await sendMessengerReply(conversation.senderId, text, pageAccessToken) as { message_id?: string };
     externalId = sent?.message_id;
   } else if (channel !== "web") {
     throw new Error("unsupported_channel");
@@ -280,6 +280,7 @@ export async function getCopilotConversationMessages(params: {
 
 export async function listCopilotCustomers(params: {
   userId: number;
+  businessProfileId?: number;
   q?: string;
   status?: string;
   limit?: number;
@@ -287,6 +288,7 @@ export async function listCopilotCustomers(params: {
   const limit = Math.min(Math.max(params.limit ?? 10, 1), 50);
   return listCustomers({
     userId: params.userId,
+    businessProfileId: params.businessProfileId,
     q: params.q,
     status: params.status,
     page: 1,
@@ -524,6 +526,7 @@ export async function copilotRetryMediaSync(params: { userId: number; assetId: n
 
 export async function copilotGenerateVisual(params: {
   userId: number; prompt: string; action: "generate" | "refine"; assetId?: number; postId?: number;
+  businessProfileId?: number;
 }) {
   let businessProfileId: number;
 
@@ -542,7 +545,7 @@ export async function copilotGenerateVisual(params: {
     if (!post) throw new AppError("Post not found", 404);
     businessProfileId = post.contentPlan.businessProfileId;
   } else {
-    businessProfileId = await resolveProfileId(params.userId);
+    businessProfileId = await resolveProfileId(params.userId, params.businessProfileId);
   }
 
   if (params.postId) {

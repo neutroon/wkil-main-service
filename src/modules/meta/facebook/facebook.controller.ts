@@ -21,6 +21,7 @@ import {
   switchDevice,
   sendPrivateReply,
   decryptFacebookPageForResponse,
+  type FacebookUserInfo,
 } from "./facebook.service";
 import { saveMessage } from "../core/conversation.service";
 import { decryptFacebookSecret } from "@modules/auth/core/tokenCrypto";
@@ -56,7 +57,7 @@ export class FacebookController {
     const userInfoResponse = await fetch(
       `https://graph.facebook.com/me?access_token=${tokenData.access_token}&fields=id,name,email,picture`,
     );
-    const userInfo = await userInfoResponse.json();
+    const userInfo = await userInfoResponse.json() as FacebookUserInfo;
 
     const deviceInfo = {
       userAgent: req.get("User-Agent") || "",
@@ -94,7 +95,7 @@ export class FacebookController {
     const userInfoResponse = await fetch(
       `https://graph.facebook.com/me?access_token=${tokenData.access_token}&fields=id,name,email,picture`,
     );
-    const userInfo = await userInfoResponse.json();
+    const userInfo = await userInfoResponse.json() as FacebookUserInfo;
 
     if (!userInfo?.id) {
       throw new AppError("Unable to read Facebook user profile", 502);

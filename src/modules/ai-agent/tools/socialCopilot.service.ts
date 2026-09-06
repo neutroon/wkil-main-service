@@ -31,9 +31,9 @@ function pageIdFromScopedId(scopedId: string): string {
   return prefix;
 }
 
-export async function listCopilotFacebookPages(userId: number) {
+export async function listCopilotFacebookPages(userId: number, businessProfileId?: number) {
   const pages = await prisma.facebookPage.findMany({
-    where: { facebookAccount: { userId }, isActive: true },
+    where: { facebookAccount: { userId }, isActive: true, ...(businessProfileId ? { businessProfileId } : {}) },
     select: {
       pageId: true,
       pageName: true,

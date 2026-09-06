@@ -2,13 +2,19 @@ import { AgentClient } from "@modules/ai-agent/client/agent.client";
 import { AppError } from "@middlewares/errorHandler.middleware";
 
 export interface ContentGenerationRequest {
+  userId: number;
+  businessProfileId: number;
   topic: string;
   length?: string;
   keywords?: string[];
   context?: string;
   generateImage?: boolean;
   businessProfile?: {
+    id?: number;
     name: string;
+    identity?: string;
+    targetAudience?: string;
+    productsServices?: unknown;
     voice: string;
     tone: string;
     corePolicies?: string | null;
@@ -29,6 +35,8 @@ export const generatePostContent = async (
   request: ContentGenerationRequest,
 ): Promise<GeneratedContent> => {
   const {
+    userId,
+    businessProfileId,
     topic,
     length = "medium",
     keywords,
@@ -48,32 +56,40 @@ export const generatePostContent = async (
     );
   }
 
-  const result = await AgentClient.runContentGeneration("post", {
+  const result = await AgentClient.runCapability({
+    userId,
+    businessProfileId,
+    operation: "content_post",
+    context: {
     topic,
     length,
     keywords: keywords || [],
-    context: context || "",
-    settings: businessProfile
+      additionalContext: context || "",
+      business: businessProfile
       ? {
           name: businessProfile.name,
+            identity: businessProfile.identity,
+            targetAudience: businessProfile.targetAudience,
+            productsServices: businessProfile.productsServices,
           voice: businessProfile.voice,
           tone: businessProfile.tone,
-          core_policies: businessProfile.corePolicies,
-          ai_behavior_instructions: businessProfile.aiBehaviorInstructions,
+            corePolicies: businessProfile.corePolicies,
+            aiBehaviorInstructions: businessProfile.aiBehaviorInstructions,
         }
       : {},
+      post: { generateImage: request.generateImage ?? false },
+    },
   });
 
-  const draft = (result as any)?.content_generation ?? result ?? {};
-  const content = draft.caption ?? draft.content;
+  const content = result.caption;
   if (!content) {
     throw new AppError("Post content generation returned no content", 502);
   }
 
   return {
     content,
-    hashtags: draft.hashtags || [],
+    hashtags: result.hashtags,
     suggestedImage:
-      draft.image_prompt ?? draft.imagePrompt ?? draft.suggestedImage ?? null,
+      result.suggested_image ?? result.image_prompt ?? null,
   };
 };

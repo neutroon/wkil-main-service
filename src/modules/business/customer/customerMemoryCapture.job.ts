@@ -20,12 +20,18 @@ type CustomerMemoryField = {
 export async function processCustomerMemoryCaptureJob(
   job: CustomerMemoryCaptureJob,
 ): Promise<void> {
-  return AgentClient.runCopilot({
-    business_profile_id: job.businessProfileId,
-    user_id: undefined,
-    messages: [],
-    stage: "fast",
-  } as any) as any;
+  if (!job.conversationId) return;
+  const context = await loadMemoryContext(job);
+  if (!context) return;
+  const extracted = await extractCustomerMemoryWithAi(job, context);
+  if (!extracted) return;
+  const details = normalizeExtractedDetails(extracted);
+  if (!Object.keys(details).length) return;
+  await updateCustomerFromSavedDetails({
+    businessProfileId: job.businessProfileId,
+    conversationId: job.conversationId,
+    details,
+  });
 }
 
 async function loadMemoryContext(job: CustomerMemoryCaptureJob) {
@@ -33,6 +39,7 @@ async function loadMemoryContext(job: CustomerMemoryCaptureJob) {
     prisma.businessProfile.findUnique({
       where: { id: job.businessProfileId },
       select: {
+        userId: true,
         name: true,
         voice: true,
         tone: true,
@@ -113,15 +120,33 @@ async function extractCustomerMemoryWithAi(
   job: CustomerMemoryCaptureJob,
   context: NonNullable<Awaited<ReturnType<typeof loadMemoryContext>>>,
 ): Promise<MemoryExtractionResult | null> {
-  // Memory-capture AI moved to the sibling agent-svc microservice in the
-  // ai-agent cutover. The job entry point (processCustomerMemoryCaptureJob)
-  // routes via AgentClient; this helper is preserved for the future re-enable.
-  void job;
-  void context;
-  void normalizeMemoryFields;
-  void buildExtractionPrompt;
-  void memoryExtractionSchema;
-  return null;
+  const fields = normalizeMemoryFields(context.businessProfile.customerMemoryFields);
+  const result = await AgentClient.runCapability({
+    userId: context.businessProfile.userId,
+    businessProfileId: job.businessProfileId,
+    operation: "customer_memory",
+    context: {
+      business: {
+        name: context.businessProfile.name,
+        voice: context.businessProfile.voice,
+        tone: context.businessProfile.tone,
+        core_policies: null,
+        ai_behavior_instructions: null,
+      },
+      memory_instructions: context.businessProfile.customerDetailsInstructions,
+      custom_fields: fields,
+      conversation: context.conversation,
+      current_customer: context.currentCustomer,
+      latest_customer_message: job.latestUserText || "No new customer text",
+      recent_messages: context.messages.length ? context.messages : [{ role: "customer", text: job.latestUserText || "No text" }],
+    },
+  });
+  const allowed = new Set(fields.map((field) => field.key));
+  return memoryExtractionSchema.parse({
+    profileUpdates: result.profile_updates,
+    fieldUpdates: Object.fromEntries(Object.entries(result.field_updates ?? {}).filter(([key]) => allowed.has(key))),
+    notes: result.notes,
+  });
 }
 
 function buildExtractionPrompt(

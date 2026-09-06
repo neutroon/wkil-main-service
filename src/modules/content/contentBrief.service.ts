@@ -472,21 +472,34 @@ export async function* generateContentAuditStream(input: ContentAuditInput) {
       auditId: audit.id,
     };
 
-    const result = await AgentClient.runContentGeneration("audit", {
-      business_profile_id: input.businessProfileId,
-      user_id: input.userId,
+    const result = await AgentClient.runCapability({
+      userId: input.userId,
+      businessProfileId: input.businessProfileId,
+      operation: "content_audit",
+      context: {
       goal: input.goal,
-      start_date: input.startDate,
-      end_date: input.endDate,
-      current_trends: input.currentTrends,
+      startDate: input.startDate,
+      endDate: input.endDate,
+      currentTrends: input.currentTrends,
       settings: {
         name: profile.name,
         voice: profile.voice,
         tone: profile.tone,
       },
-      signals: firstParty,
+      signals: {
+        firstParty,
+        competitors: input.competitors || [],
+        socialSamples: input.socialSamples || [],
+        competitorDiscoveryScope:
+          input.competitorDiscoveryScope || "PROVIDED_AND_AI_SEARCH",
+        competitorAnalysisModes: input.competitorAnalysisModes || [
+          "WEBSITE_SEARCH",
+        ],
+        competitorSources,
+      },
+      },
     });
-    const draft = normalizeAuditDraft(result?.content_generation ?? result);
+    const draft = normalizeAuditDraft(result);
 
     const updatedAudit = await prisma.contentAudit.update({
       where: { id: audit.id },

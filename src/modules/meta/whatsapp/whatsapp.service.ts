@@ -24,25 +24,85 @@ async function computeBusinessChatReply(params: {
   channel: string; mediaInfo?: any; conversationId: number;
   [k: string]: unknown;
 }) {
-  const messages = [
-    ...params.historyTurns,
-    { role: "user", content: params.messageText ?? "", media: params.mediaInfo },
-  ];
-  const run = await AgentClient.runCustomerAgent({
-    business_profile_id: params.businessProfile?.id ?? params.businessProfile?.businessProfileId,
-    user_id: params.businessProfile?.userId,
-    messages, stage: "fast", channel: params.channel, conversation_id: params.conversationId,
-  } as any);
-  const text = (run as any)?.output?.content ?? (run as any)?.content ?? "";
-  const action = text ? "REPLY" : "HANDOFF_TO_HUMAN";
-  return { action, content: text, reasoning: (run as any)?.output?.reasoning ?? "", handoffCategory: text ? null : "NO_AGENT_OUTPUT" };
+  const result = await AgentClient.runCapability({
+    userId: params.businessProfile.userId,
+    businessProfileId: params.businessProfile.id,
+    operation: "customer_reply",
+    context: {
+      channel: params.channel,
+      messageText: params.messageText ?? "",
+      business: params.businessProfile,
+      historyTurns: params.historyTurns.map((turn) => ({
+        role: turn.role === "user" ? "customer" : "agent",
+        content: turn.content ?? turn.text ?? "",
+      })),
+      mediaInfo: params.mediaInfo ?? null,
+      conversationId: params.conversationId,
+    },
+  });
+  return {
+    action: result.action,
+    content: result.content ?? "",
+    reasoning: result.reasoning ?? "",
+    handoffCategory: result.handoff_category ?? null,
+    replyType: result.reply_type ?? null,
+    attachment: result.attachment ? {
+      assetName: result.attachment.asset_name,
+      caption: result.attachment.caption ?? null,
+    } : null,
+  };
 }
 function initialCustomerReplyStatus(reply: { content?: string }) { return reply.content ? "SENDING" : "FAILED"; }
-function runSavedModelReplySideEffectsInBackground(_p: any) {
-  setImmediate(() => logger.debug("whatsapp.model_side_effects_skipped_migrated"));
+function runSavedModelReplySideEffectsInBackground(params: {
+  businessProfileId: number;
+  conversationId: number;
+  message: { id: number; handoffCategory?: string | null };
+  reply: { action?: string; handoffCategory?: string | null; reasoning?: string };
+}) {
+  void (async () => {
+    try {
+      const { syncHandoffRequested, syncSystemError } = await import(
+        "@modules/realtime/socketSync.service"
+      );
+      if (params.reply.action === "HANDOFF_TO_HUMAN" && params.reply.handoffCategory && params.reply.handoffCategory !== "SYSTEM_ERROR") {
+        syncHandoffRequested({
+          businessProfileId: params.businessProfileId,
+          conversationId: params.conversationId,
+          message: params.message,
+        });
+      }
+      if (params.reply.handoffCategory === "SYSTEM_ERROR") {
+        syncSystemError({
+          businessProfileId: params.businessProfileId,
+          conversationId: params.conversationId,
+          reason: params.reply.reasoning || "AI system error",
+        });
+      }
+    } catch (error) {
+      logger.warn("whatsapp.reply_side_effects_failed", {
+        conversationId: params.conversationId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  })();
 }
-function scheduleFollowUpsForDeliveredReplyInBackground(_p: any) {
-  setImmediate(() => logger.debug("whatsapp.followup_skipped_migrated"));
+function scheduleFollowUpsForDeliveredReplyInBackground(params: {
+  businessProfileId: number;
+  conversationId: number;
+  message: { id: number; handoffCategory?: string | null };
+  reply: { action?: string; handoffCategory?: string | null; reasoning?: string };
+}) {
+  if (params.reply.action === "HANDOFF_TO_HUMAN" || params.reply.handoffCategory || params.message.handoffCategory) return;
+  void import("@modules/follow-up/followUp.service")
+    .then(({ scheduleConversationFollowUps }) => scheduleConversationFollowUps({
+      conversationId: params.conversationId,
+      businessProfileId: params.businessProfileId,
+      triggerMessageId: params.message.id,
+    }))
+    .catch((error) => logger.warn("whatsapp.followup_schedule_failed", {
+      conversationId: params.conversationId,
+      error: error instanceof Error ? error.message : String(error),
+    }));
 }
 
 
@@ -381,14 +441,13 @@ export async function handleWhatsAppMessage(
             where: { id: modelSaved.id },
             data: { status: "SENT", externalId: modelWamid },
           });
+          scheduleFollowUpsForDeliveredReplyInBackground({
+            conversationId: conversation.id,
+            businessProfileId: account.businessProfileId,
+            message: modelSaved,
+            reply,
+          });
         }
-
-        scheduleFollowUpsForDeliveredReplyInBackground({
-          conversationId: conversation.id,
-          businessProfileId: account.businessProfileId,
-          message: modelSaved,
-          reply,
-        });
       } catch (sendErr: any) {
         logger.error("whatsapp.reply_send_failed", { error: sendErr.message });
         await prisma.conversationMessage.update({

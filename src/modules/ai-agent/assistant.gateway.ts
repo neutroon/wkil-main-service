@@ -223,6 +223,10 @@ function normalizeBody(
 
   if (!hasOnly(body, [
     "assistant_id", "input", "command", "stream_mode", "multitask_strategy", "on_disconnect",
+    // The official LangGraph SDK includes these optional fields. The WKIL
+    // gateway derives tenant state itself, so they are accepted for protocol
+    // compatibility but intentionally not forwarded to the agent service.
+    "config", "checkpoint",
   ])) {
     throw new AppError("Invalid run fields", 400, true, "INVALID_BODY_FIELDS");
   }

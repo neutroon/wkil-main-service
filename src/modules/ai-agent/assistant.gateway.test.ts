@@ -69,6 +69,21 @@ describe("assistant gateway contract", () => {
     });
   });
 
+  it("accepts the SDK's optional empty run config without forwarding client state", () => {
+    const normalized = assistantGatewayInternals.normalizeBody("run", {
+      assistant_id: "agent",
+      input: { messages: [{ type: "human", content: "hello" }] },
+      stream_mode: ["messages", "updates", "custom"],
+      config: {},
+    }, scope);
+
+    expect(normalized).not.toHaveProperty("config");
+    expect(normalized).toMatchObject({
+      assistant_id: "agent",
+      input: { messages: [{ type: "human", content: "hello" }] },
+    });
+  });
+
   it("preserves official image_url content for mobile and web attachments", () => {
     const normalized = assistantGatewayInternals.normalizeBody("run", {
       assistant_id: "agent",

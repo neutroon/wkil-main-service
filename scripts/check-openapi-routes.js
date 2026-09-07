@@ -188,6 +188,24 @@ function getExpectedRoutes() {
 
   routes.push(...getAppLevelRoutes(appSource));
 
+  // The assistant gateway is an allow-listed protocol dispatcher rather than
+  // a collection of Express verb declarations. Keep its public contract in
+  // the same route-coverage audit so adding/removing a gateway operation
+  // cannot silently drift from OpenAPI.
+  if (/assistantApp\.use\(copilotRoutes\)/.test(stripComments(appSource))) {
+    routes.push(
+      "POST /v1/assistant/feedback",
+      "POST /v1/assistant/threads",
+      "POST /v1/assistant/threads/search",
+      "GET /v1/assistant/threads/{threadId}",
+      "PATCH /v1/assistant/threads/{threadId}",
+      "DELETE /v1/assistant/threads/{threadId}",
+      "GET /v1/assistant/threads/{threadId}/state",
+      "POST /v1/assistant/threads/{threadId}/runs/stream",
+      "POST /v1/assistant/threads/{threadId}/runs/{runId}/cancel",
+    );
+  }
+
   // Internal service-to-service routes (x-service-token guarded, e.g.
   // /internal/agent/* consumed by agent-svc) are not part of the public API
   // contract — exclude them from the OpenAPI coverage audit.

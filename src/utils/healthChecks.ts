@@ -4,7 +4,7 @@ import { env } from "@config/env";
 import { logger } from "@utils/logger";
 import { getRealtimeStats } from "@modules/realtime/socket";
 
-export type CheckName = "postgres" | "redis" | "bullmq" | "meta_api" | "realtime";
+export type CheckName = "postgres" | "redis" | "bullmq" | "meta_api" | "agent" | "realtime";
 
 export interface HealthCheck {
   name: CheckName;
@@ -24,6 +24,7 @@ const TIMEOUT_POSTGRES_MS = 3_000;
 const TIMEOUT_REDIS_MS = 2_000;
 const TIMEOUT_BULLMQ_MS = 2_000;
 const TIMEOUT_META_API_MS = 5_000;
+const TIMEOUT_AGENT_MS = 3_000;
 const TIMEOUT_REALTIME_MS = 5_000;
 const META_API_CACHE_TTL_MS = 30_000;
 
@@ -188,6 +189,13 @@ export const checkRealtime = (): Promise<HealthCheck> =>
     };
   }, TIMEOUT_REALTIME_MS);
 
+export const checkAgentService = (): Promise<HealthCheck> =>
+  runCheck("agent", true, async () => {
+    const response = await fetch(`${env.LANGGRAPH_API_URL.replace(/\/+$/, "")}/ok`);
+    if (!response.ok) throw new Error(`Agent service returned ${response.status}`);
+    return { status: response.status, url: env.LANGGRAPH_API_URL };
+  }, TIMEOUT_AGENT_MS);
+
 export const runHealthChecks = async (): Promise<HealthReport> => {
   const startedAt = Date.now();
   const checks = await Promise.all([
@@ -195,6 +203,7 @@ export const runHealthChecks = async (): Promise<HealthReport> => {
     checkRedis(),
     checkBullWorkers(),
     checkMetaApi(),
+    ...(env.USE_AGENT_SERVICE ? [checkAgentService()] : []),
     checkRealtime(),
   ]);
   return {

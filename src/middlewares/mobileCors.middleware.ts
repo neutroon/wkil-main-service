@@ -1,5 +1,6 @@
 import { CorsOptions } from "cors";
 import { logger } from "@utils/logger";
+import { isAllowedWkilWebOrigin } from "./origin-policy";
 
 /**
  * Narrow CORS policy for the `/v1/mobile/*` sub-app.
@@ -22,17 +23,7 @@ export const mobileCorsOptions: CorsOptions = {
     // Allow the same browser origins the dashboard accepts, so devs
     // can hit the mobile endpoints from a tool like Postman / Insomnia
     // that fakes an Origin header.
-    const allowed = [
-      "http://localhost:3000",
-      "http://localhost:3001",
-      "http://localhost:8080",
-      "https://wkil.app",
-      "https://www.wkil.app",
-      "https://app.wkil.app",
-      "https://go.wkil.app",
-    ];
-    if (allowed.includes(origin)) return callback(null, true);
-    if (origin.endsWith(".wkil.app")) return callback(null, true);
+    if (isAllowedWkilWebOrigin(origin)) return callback(null, true);
 
     logger.warn("mobile.cors_blocked", { origin });
     callback(new Error("Not allowed by mobile CORS"), false);

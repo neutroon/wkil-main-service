@@ -29,6 +29,7 @@ import {
 import authRoutes from "@modules/auth/core/auth.routes";
 import mobileAuthRoutes from "@modules/auth/mobile/mobileAuth.routes";
 import { mobileCorsOptions } from "@middlewares/mobileCors.middleware";
+import { assistantCorsOptions } from "@middlewares/assistantCors.middleware";
 import dashboardRoutes from "@modules/analytics/dashboard/dashboard.routes";
 import os from "os";
 import scrapeRoutes from "@modules/scraping/scrape";
@@ -66,6 +67,19 @@ app.set("trust proxy", env.TRUST_PROXY);
 
 // ── Global middleware (must come BEFORE all routes) ──────────────────────────
 app.use(securityHeaders);
+app.use(cookieParser());
+
+// Shared assistant gateway. It is mounted before the general CORS/body/auth
+// stack so native requests (which may have no Origin or use Origin: null) and
+// browser cookie sessions use the same authenticated API contract.
+const assistantApp = express.Router();
+assistantApp.use(cors(assistantCorsOptions));
+assistantApp.use(express.json({ limit: "2mb" }));
+assistantApp.use(authenticateToken);
+assistantApp.use(requireVerified);
+assistantApp.use(validateCsrfToken);
+assistantApp.use(copilotRoutes);
+app.use("/v1/assistant", assistantApp);
 
 // Public web widget: bypass global CORS; per-install allowlist in widgetInstallAndCors
 const widgetPublicApp = express.Router();
@@ -96,7 +110,6 @@ widgetPublicApp.use(widgetPublicRoutes);
 app.use("/v1/public/widget", widgetPublicApp);
 
 app.use(cors(corsOptions));       // ← CORS for dashboard / authenticated API
-app.use(cookieParser());
 app.use(sanitizeRequest);
 app.use(requestSizeLimit);
 app.use(generateCsrfToken); // Set CSRF cookie on every response
@@ -252,7 +265,6 @@ app.use("/v1/business-profile", businessProfileRoutes);
 app.use("/v1/agent-actions", agentActionRoutes);
 app.use("/v1/widget", widgetRoutes);
 app.use("/v1/analytics", aiAnalyticsRoutes);
-app.use("/v1/assistant", copilotRoutes);
 app.use("/v1/media", mediaLibraryRoutes);
 app.use("/v1/notifications", notificationsRoutes);
 app.use("/v1/workspace", workspaceController);

@@ -16,6 +16,11 @@ primary_region = 'cdg'
   # Private 6PN: the agent container runs an IPv6 forwarder ([::]:8123 -> 127.0.0.1:8123).
   LANGGRAPH_API_URL = "http://wkil-agent-service.internal:8123"
 
+# Set these with `fly secrets set`; they are intentionally not stored in this
+# file. LANGGRAPH_API_KEY must equal the agent service BFF key and must differ
+# from MONOLITH_AGENT_API_KEY, which is reserved for internal jobs. The
+# MONOLITH_SERVICE_TOKEN must also match on both apps for agent tool callbacks.
+
 [http_service]
   internal_port = 8080
   force_https = true

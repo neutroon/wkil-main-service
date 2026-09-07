@@ -1207,6 +1207,449 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /v1/assistant/threads:
+    post:
+      tags: [Copilot]
+      operationId: createAssistantThread
+      summary: Create an assistant thread for the active workspace
+      security:
+        - bearerAuth: []
+        - accessTokenCookie: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                metadata:
+                  type: object
+                  properties:
+                    title: { type: string, maxLength: 200 }
+                input:
+                  type: object
+                  properties:
+                    messages: { type: array, maxItems: 0, items: { type: object } }
+      responses:
+        "200": { $ref: "#/components/responses/SuccessOk" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/ServerError" }
+
+  /v1/assistant/threads/search:
+    post:
+      tags: [Copilot]
+      operationId: searchAssistantThreads
+      summary: List assistant threads in the active workspace
+      security:
+        - bearerAuth: []
+        - accessTokenCookie: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                limit: { type: integer, minimum: 1, maximum: 100 }
+                offset: { type: integer, minimum: 0 }
+                status: { type: string }
+                sort_by: { type: string }
+                sort_order: { type: string }
+                select: { type: array, items: { type: string } }
+      responses:
+        "200": { $ref: "#/components/responses/SuccessOk" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/assistant/threads/{threadId}:
+    parameters:
+      - name: threadId
+        in: path
+        required: true
+        schema: { type: string, pattern: "^[A-Za-z0-9_-]+$" }
+    get:
+      tags: [Copilot]
+      operationId: getAssistantThread
+      summary: Get an assistant thread in the active workspace
+      security:
+        - bearerAuth: []
+        - accessTokenCookie: []
+      responses:
+        "200": { $ref: "#/components/responses/SuccessOk" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    patch:
+      tags: [Copilot]
+      operationId: updateAssistantThread
+      summary: Update an assistant thread title
+      security:
+        - bearerAuth: []
+        - accessTokenCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [metadata]
+              properties:
+                metadata:
+                  type: object
+                  properties:
+                    title: { type: string, maxLength: 200 }
+      responses:
+        "200": { $ref: "#/components/responses/SuccessOk" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    delete:
+      tags: [Copilot]
+      operationId: deleteAssistantThread
+      summary: Delete an assistant thread
+      security:
+        - bearerAuth: []
+        - accessTokenCookie: []
+      responses:
+        "204": { description: Thread deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/assistant/threads/{threadId}/state:
+    get:
+      tags: [Copilot]
+      operationId: getAssistantThreadState
+      summary: Load checkpointed assistant messages and interrupts
+      security:
+        - bearerAuth: []
+        - accessTokenCookie: []
+      parameters:
+        - name: threadId
+          in: path
+          required: true
+          schema: { type: string, pattern: "^[A-Za-z0-9_-]+$" }
+        - name: subgraphs
+          in: query
+          required: false
+          schema: { type: string, enum: ["0", "1", "true", "false"] }
+      responses:
+        "200": { $ref: "#/components/responses/SuccessOk" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/assistant/threads/{threadId}/runs/stream:
+    post:
+      tags: [Copilot]
+      operationId: streamAssistantRun
+      summary: Stream an assistant run using the LangGraph protocol
+      security:
+        - bearerAuth: []
+        - accessTokenCookie: []
+      parameters:
+        - name: threadId
+          in: path
+          required: true
+          schema: { type: string, pattern: "^[A-Za-z0-9_-]+$" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [assistant_id]
+              properties:
+                assistant_id: { type: string, enum: [agent] }
+                input:
+                  type: object
+                  properties:
+                    messages: { type: array, minItems: 1, maxItems: 1, items: { type: object } }
+                command: { type: object }
+                stream_mode: { type: array, items: { type: string, enum: [messages, updates, custom] } }
+                multitask_strategy: { type: string, enum: [reject] }
+                on_disconnect: { type: string, enum: [cancel] }
+      responses:
+        "200":
+          description: Server-sent LangGraph event stream.
+          content:
+            text/event-stream: { schema: { type: string } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "502": { $ref: "#/components/responses/ServerError" }
+
+  /v1/assistant/threads/{threadId}/runs/{runId}/cancel:
+    post:
+      tags: [Copilot]
+      operationId: cancelAssistantRun
+      summary: Cancel an active assistant run
+      security:
+        - bearerAuth: []
+        - accessTokenCookie: []
+      parameters:
+        - name: threadId
+          in: path
+          required: true
+          schema: { type: string, pattern: "^[A-Za-z0-9_-]+$" }
+        - name: runId
+          in: path
+          required: true
+          schema: { type: string, pattern: "^[A-Za-z0-9_-]+$" }
+        - name: wait
+          in: query
+          required: false
+          schema: { type: string }
+        - name: action
+          in: query
+          required: false
+          schema: { type: string, enum: [interrupt] }
+      responses:
+        "200": { $ref: "#/components/responses/SuccessOk" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /v1/workspace:
+    get:
+      tags: [Business Profile]
+      operationId: listWorkspaces
+      summary: List workspaces available to the current user
+      security:
+        - bearerAuth: []
+        - accessTokenCookie: []
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Business Profile]
+      operationId: createWorkspace
+      summary: Create a workspace for the current user
+      security:
+        - bearerAuth: []
+          csrfHeader: []
+        - accessTokenCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 200 }
+      responses:
+        "201": { $ref: "#/components/responses/Created" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/workspace/invite/{token}/info:
+    get:
+      tags: [Business Profile]
+      operationId: getWorkspaceInviteInfo
+      summary: Read public workspace invite information
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/workspace/invite/accept:
+    post:
+      tags: [Business Profile]
+      operationId: acceptWorkspaceInvite
+      summary: Accept a workspace invitation
+      security:
+        - bearerAuth: []
+          csrfHeader: []
+        - accessTokenCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/workspace/{id}:
+    parameters:
+      - $ref: "#/components/parameters/IdPath"
+    get:
+      tags: [Business Profile]
+      operationId: getWorkspace
+      summary: Get a workspace the current user can access
+      security:
+        - bearerAuth: []
+        - accessTokenCookie: []
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Business Profile]
+      operationId: renameWorkspace
+      summary: Rename a workspace
+      security:
+        - bearerAuth: []
+          csrfHeader: []
+        - accessTokenCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 200 }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    delete:
+      tags: [Business Profile]
+      operationId: deleteWorkspace
+      summary: Delete a workspace after confirmation
+      security:
+        - bearerAuth: []
+          csrfHeader: []
+        - accessTokenCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmationName]
+              properties:
+                confirmationName: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/workspace/{id}/members:
+    get:
+      tags: [Business Profile]
+      operationId: listWorkspaceMembers
+      summary: List workspace members
+      security:
+        - bearerAuth: []
+        - accessTokenCookie: []
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/workspace/{id}/members/{memberId}:
+    delete:
+      tags: [Business Profile]
+      operationId: removeWorkspaceMember
+      summary: Remove a workspace member
+      security:
+        - bearerAuth: []
+          csrfHeader: []
+        - accessTokenCookie: []
+          csrfHeader: []
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+        - name: memberId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/workspace/{id}/invitations:
+    get:
+      tags: [Business Profile]
+      operationId: listWorkspaceInvitations
+      summary: List pending workspace invitations
+      security:
+        - bearerAuth: []
+        - accessTokenCookie: []
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/workspace/{id}/invitations/{invitationId}:
+    delete:
+      tags: [Business Profile]
+      operationId: revokeWorkspaceInvitation
+      summary: Revoke a pending workspace invitation
+      security:
+        - bearerAuth: []
+          csrfHeader: []
+        - accessTokenCookie: []
+          csrfHeader: []
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+        - name: invitationId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/workspace/{id}/invite:
+    post:
+      tags: [Business Profile]
+      operationId: sendWorkspaceInvite
+      summary: Send a workspace invitation
+      security:
+        - bearerAuth: []
+          csrfHeader: []
+        - accessTokenCookie: []
+          csrfHeader: []
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, role]
+              properties:
+                email: { type: string, format: email }
+                role: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/workspace/{id}/leave:
+    post:
+      tags: [Business Profile]
+      operationId: leaveWorkspace
+      summary: Leave a workspace
+      security:
+        - bearerAuth: []
+          csrfHeader: []
+        - accessTokenCookie: []
+          csrfHeader: []
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /v1/notifications/device-tokens:
     post:
       tags: [Auth]
@@ -2473,6 +2916,15 @@ paths:
         - { name: businessProfileId, in: query, required: false, schema: { type: integer } }
         - $ref: "#/components/parameters/LimitQuery"
         - $ref: "#/components/parameters/OffsetQuery"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /v1/content/plan/list/active/{id}:
+    delete:
+      tags: [Content]
+      operationId: deleteActiveContentPlan
+      summary: Delete an active content plan
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
       responses:
         "200": { $ref: "#/components/responses/Ok" }
   /v1/content/plan/{id}:

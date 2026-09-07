@@ -1,5 +1,6 @@
 import { Router } from "express";
 import prisma from "@config/prisma";
+import { assistantGateway } from "./assistant.gateway";
 
 /**
  * App-facing copilot routes (session-authenticated — mounted behind
@@ -37,5 +38,11 @@ copilotRoutes.post("/feedback", async (req, res) => {
     res.status(500).json({ error: e?.message ?? "feedback_failed" });
   }
 });
+
+// All other allow-listed LangGraph resources are handled by the shared
+// gateway. It is intentionally mounted after feedback so the legacy feedback
+// endpoint remains a normal JSON API while web and native chat share one
+// transport and one authorization boundary.
+copilotRoutes.use(assistantGateway);
 
 export default copilotRoutes;

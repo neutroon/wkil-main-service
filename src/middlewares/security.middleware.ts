@@ -2,6 +2,7 @@ import helmet from "helmet";
 import { env } from "@config/env";
 import { Request, Response, NextFunction } from "express";
 import { logger } from "@utils/logger";
+import { isAllowedWkilWebOrigin } from "./origin-policy";
 
 // Security headers configuration
 export const securityHeaders = helmet({
@@ -57,24 +58,7 @@ export const corsOptions = {
       return callback(null, true);
     }
 
-    const allowedOrigins = [
-      "http://localhost:3000",
-      "http://localhost:3001",
-      "http://localhost:8080",
-      "https://wkil.app",
-      "https://www.wkil.app",
-      "https://go.wkil.app",
-      "https://app.wkil.app",
-      "https://wkil.vercel.app",
-      "https://wkil.netlify.app",
-    ];
-
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-
-    // Dynamic production fallbacks
-    if (origin.endsWith(".wkil.app") || origin.endsWith(".vercel.app") || origin === env.FRONTEND_URL) {
+    if (isAllowedWkilWebOrigin(origin)) {
       return callback(null, true);
     }
 
@@ -88,6 +72,7 @@ export const corsOptions = {
     "Authorization",
     "X-Requested-With",
     "X-CSRF-Token",
+    "X-Workspace-ID",
     "ngrok-skip-browser-warning",
     // Sent by the dashboard `fetchWithAuth` so the copilot can match
     // the UI's locale instead of relying on the browser's

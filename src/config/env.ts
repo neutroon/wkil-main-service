@@ -96,6 +96,19 @@ const envSchema = z.object({
   // ── Microservices ──────────────────────────────────────────────────────────
   SCRAPING_SERVICE_URL: z.string().url().optional(),
   BACKEND_URL: z.string().url().optional(),
+
+  // Interactive assistant gateway → private LangGraph service. The BFF key
+  // is intentionally separate from MONOLITH_AGENT_API_KEY, which is reserved
+  // for unrestricted internal/background capability jobs.
+  LANGGRAPH_API_URL: z.string().url().default("http://localhost:8123"),
+  LANGGRAPH_API_KEY: z.string().min(1).optional(),
+  MONOLITH_AGENT_API_KEY: z.string().min(1).optional(),
+  MONOLITH_SERVICE_TOKEN: z.string().min(1).optional(),
+  USE_AGENT_SERVICE: z
+    .string()
+    .optional()
+    .default("false")
+    .transform((value) => value === "true" || value === "1"),
   
   // ── Infrastructure & Security ──────────────────────────────────────────────
   REDIS_URL: z.string().url(),
@@ -121,6 +134,36 @@ const envSchema = z.object({
   SMTP_USER: z.string().min(1),
   SMTP_PASS: z.string().min(1),
   MAIL_FROM: z.string().default("Wkil <noreply@wkil.app>"),
+}).superRefine((value, ctx) => {
+  if (value.USE_AGENT_SERVICE && !value.LANGGRAPH_API_KEY) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["LANGGRAPH_API_KEY"],
+      message: "LANGGRAPH_API_KEY is required when USE_AGENT_SERVICE is enabled",
+    });
+  }
+  if (value.USE_AGENT_SERVICE && !value.MONOLITH_AGENT_API_KEY) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["MONOLITH_AGENT_API_KEY"],
+      message: "MONOLITH_AGENT_API_KEY is required when USE_AGENT_SERVICE is enabled",
+    });
+  }
+  if (value.USE_AGENT_SERVICE && !value.MONOLITH_SERVICE_TOKEN) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["MONOLITH_SERVICE_TOKEN"],
+      message: "MONOLITH_SERVICE_TOKEN is required when USE_AGENT_SERVICE is enabled",
+    });
+  }
+  if (value.USE_AGENT_SERVICE && value.LANGGRAPH_API_KEY && value.MONOLITH_AGENT_API_KEY &&
+      value.LANGGRAPH_API_KEY === value.MONOLITH_AGENT_API_KEY) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["LANGGRAPH_API_KEY"],
+      message: "LANGGRAPH_API_KEY and MONOLITH_AGENT_API_KEY must differ",
+    });
+  }
 });
 
 // ── Validation ───────────────────────────────────────────────────────────────

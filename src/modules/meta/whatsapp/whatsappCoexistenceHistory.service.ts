@@ -1,4 +1,5 @@
 import prisma from "@config/prisma";
+import { Prisma } from "@prisma/client";
 import { upsertCustomerFromConversation } from "@modules/business/customer/customer.service";
 import {
   type CoexistenceHistoryMessage,
@@ -27,8 +28,10 @@ type HistoryDatabase = {
     updateMany(args: unknown): Promise<any>;
   };
   conversationMessage: {
-    create(args: unknown): Promise<any>;
+    findMany(args: unknown): Promise<Array<{ externalId: string | null }>>;
+    createMany(args: unknown): Promise<{ count: number }>;
   };
+  $executeRaw(query: Prisma.Sql): Promise<number>;
 };
 
 function asRecord(value: unknown): UnknownRecord {
@@ -53,19 +56,14 @@ function sourceCreatedAt(value: unknown): Date | null {
   }
 
   if (typeof value !== "string" || !value.trim()) return null;
-  const numeric = Number(value);
+  const text = value.trim();
+  const numeric = Number(text);
   if (Number.isFinite(numeric)) return sourceCreatedAt(numeric);
-  const date = new Date(value);
+  const timezoneLessIso =
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/;
+  const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(text);
+  const date = new Date(timezoneLessIso.test(text) && !hasTimezone ? `${text}Z` : text);
   return Number.isNaN(date.getTime()) ? null : date;
-}
-
-function isUniqueConstraintError(error: unknown): boolean {
-  return Boolean(
-    error &&
-      typeof error === "object" &&
-      "code" in error &&
-      (error as { code?: unknown }).code === "P2002",
-  );
 }
 
 function normalizedParticipant(value: unknown): string {
@@ -151,6 +149,18 @@ function earliestTimestamp(messages: Array<{ createdAt: Date }>): Date {
   );
 }
 
+async function lockHistoryThread(
+  db: HistoryDatabase,
+  businessProfileId: number,
+  input: CoexistenceHistoryInput,
+  threadId: string,
+) {
+  const lockKey = `${businessProfileId}:${input.phoneNumberId}:${input.wabaId}:${threadId}`;
+  await db.$executeRaw(
+    Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`,
+  );
+}
+
 function historyMessages(
   thread: UnknownRecord,
   summary: CoexistenceImportSummary,
@@ -185,6 +195,7 @@ async function importBatch(
 ) {
   await prisma.$transaction(async (transaction) => {
     const db = transaction as unknown as HistoryDatabase;
+    const pendingMessages: Array<{ externalId: string; data: Record<string, unknown> }> = [];
 
     for (const item of batch) {
       const threadId = firstString(item.thread.id);
@@ -193,8 +204,16 @@ async function importBatch(
         continue;
       }
 
+      const externalId = firstString(item.raw.id);
+      if (!externalId || seenExternalIds.has(externalId)) {
+        summary.duplicates += 1;
+        continue;
+      }
+      seenExternalIds.add(externalId);
+
       let conversation = conversationCache.get(item.threadIndex);
       if (!conversation) {
+        await lockHistoryThread(db, businessProfileId, input, threadId);
         const existing = await db.conversation.findFirst({
           where: {
             businessProfileId,
@@ -202,6 +221,7 @@ async function importBatch(
             senderId: threadId,
             channel: "whatsapp",
           },
+          orderBy: { updatedAt: "desc" },
           select: { id: true, customerId: true, updatedAt: true },
         });
         const customer = await upsertCustomerFromConversation({
@@ -220,10 +240,15 @@ async function importBatch(
           db: transaction,
         });
 
-        if (existing && !existing.customerId) {
+        const activityAt = threadActivityAt.get(item.threadIndex);
+        if (existing && !existing.customerId && activityAt) {
           await db.conversation.updateMany({
-            where: { id: existing.id },
-            data: { customerId: customer.id, updatedAt: existing.updatedAt },
+            where: {
+              id: existing.id,
+              customerId: null,
+              updatedAt: { lte: activityAt },
+            },
+            data: { customerId: customer.id, updatedAt: activityAt },
           });
         }
 
@@ -251,38 +276,49 @@ async function importBatch(
         conversationIds.add(created.id);
       }
 
-      const externalId = firstString(item.raw.id);
-      if (!externalId || seenExternalIds.has(externalId)) {
-        summary.duplicates += 1;
-        continue;
-      }
-      seenExternalIds.add(externalId);
-
       const media = mediaFields(item.raw);
-      try {
-        await db.conversationMessage.create({
-          data: {
-            conversationId: conversation.id,
-            role: isBusinessMessage(item.raw, threadId) ? "agent" : "user",
-            content: messageContent(item.raw),
-            type: firstString(item.raw.type) || "text",
-            mediaId: media.mediaId,
-            mediaMetadata: media.mediaMetadata,
-            externalId,
-            status: messageStatus(item.raw),
-            origin: WHATSAPP_COEXISTENCE_HISTORY_ORIGIN,
-            createdAt: item.createdAt,
-          },
-        });
-        summary.imported += 1;
-      } catch (error) {
-        if (isUniqueConstraintError(error)) {
-          summary.duplicates += 1;
-          continue;
-        }
-        throw error;
-      }
+      pendingMessages.push({
+        externalId,
+        data: {
+          conversationId: conversation.id,
+          role: isBusinessMessage(item.raw, threadId) ? "agent" : "user",
+          content: messageContent(item.raw),
+          type: firstString(item.raw.type) || "text",
+          mediaId: media.mediaId,
+          mediaMetadata: media.mediaMetadata,
+          externalId,
+          status: messageStatus(item.raw),
+          origin: WHATSAPP_COEXISTENCE_HISTORY_ORIGIN,
+          createdAt: item.createdAt,
+        },
+      });
     }
+
+    if (pendingMessages.length === 0) return;
+
+    const existingMessages = await db.conversationMessage.findMany({
+      where: { externalId: { in: pendingMessages.map((message) => message.externalId) } },
+      select: { externalId: true },
+    });
+    const existingExternalIds = new Set(
+      existingMessages
+        .map((message) => message.externalId)
+        .filter((externalId): externalId is string => Boolean(externalId)),
+    );
+    const messagesToInsert = pendingMessages.filter(
+      (message) => !existingExternalIds.has(message.externalId),
+    );
+    summary.duplicates += existingExternalIds.size;
+
+    if (messagesToInsert.length === 0) return;
+
+    const inserted = await db.conversationMessage.createMany({
+      data: messagesToInsert.map((message) => message.data),
+      skipDuplicates: true,
+    });
+    const importedCount = Number.isInteger(inserted.count) ? inserted.count : 0;
+    summary.imported += importedCount;
+    summary.duplicates += messagesToInsert.length - importedCount;
   });
 }
 
@@ -292,6 +328,8 @@ export async function importCoexistenceHistoryChunk(
   const account = await prisma.whatsAppAccount.findFirst({
     where: {
       phoneNumberId: input.phoneNumberId,
+      wabaId: input.wabaId,
+      connectionMode: "COEXISTENCE",
       isActive: true,
       businessProfileId: { not: null },
     },

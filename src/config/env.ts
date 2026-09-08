@@ -39,6 +39,10 @@ const envSchema = z.object({
   FB_SYSTEM_USER_ACCESS_TOKEN: z.string().min(1),
   MESSENGER_VERIFY_TOKEN: z.string().min(1),
   WHATSAPP_VERIFY_TOKEN: z.string().min(1),
+  WHATSAPP_REGISTRATION_PIN: z
+    .string()
+    .regex(/^\d{6}$/, "WHATSAPP_REGISTRATION_PIN must be exactly six digits")
+    .optional(),
   FB_TOKEN_ENCRYPTION_KEY: z.string().optional(),
   
   // ── AI Engine & ML Services ────────────────────────────────────────────────

@@ -329,6 +329,8 @@ type CoexistenceSyncType = "smb_app_state_sync" | "history";
 
 type CoexistenceSyncAccountState = {
   id: number;
+  connectionMode: string;
+  businessProfileId: number | null;
   coexistenceContactsSyncRequestedAt: Date | null;
   coexistenceHistorySyncRequestedAt: Date | null;
 };
@@ -557,46 +559,61 @@ export async function saveWhatsAppAccount(params: {
     },
   });
 
-  if (connectionMode === "BUSINESS_API") {
+  if (account.connectionMode === "BUSINESS_API") {
     // Standard Cloud API onboarding requires phone-number registration. A
     // Coexistence number is already registered in the WhatsApp Business app;
     // calling /register here is incorrect and can partially provision it.
-    try {
-      await registerWhatsAppPhoneNumber({
+    if (!env.WHATSAPP_REGISTRATION_PIN) {
+      logger.info("whatsapp_oauth.auto_registration_skipped", {
         phoneNumberId: params.phoneNumberId,
-        accessToken: params.accessToken,
+        reason: "registration_pin_not_configured",
       });
-      logger.info("whatsapp_oauth.auto_registration_success", {
-        phoneNumberId: params.phoneNumberId,
-      });
-    } catch (err: any) {
-      // Keep the existing non-blocking behavior for standard onboarding.
-      logger.warn("whatsapp_oauth.auto_registration_failed", {
-        phoneNumberId: params.phoneNumberId,
-        error: err.message,
-      });
+    } else {
+      try {
+        await registerWhatsAppPhoneNumber({
+          phoneNumberId: params.phoneNumberId,
+          accessToken: params.accessToken,
+          pin: env.WHATSAPP_REGISTRATION_PIN,
+        });
+        logger.info("whatsapp_oauth.auto_registration_success", {
+          phoneNumberId: params.phoneNumberId,
+        });
+      } catch (err: any) {
+        // Keep the existing non-blocking behavior for standard onboarding.
+        logger.warn("whatsapp_oauth.auto_registration_failed", {
+          phoneNumberId: params.phoneNumberId,
+          error: err.message,
+        });
+      }
     }
-  } else {
+  } else if (account.connectionMode === "COEXISTENCE") {
     logger.info("whatsapp_oauth.auto_registration_skipped", {
       phoneNumberId: params.phoneNumberId,
       reason: "coexistence_number_registered_in_business_app",
     });
 
-    try {
-      await syncCoexistenceAppData({
-        account,
+    if (account.businessProfileId == null) {
+      logger.info("whatsapp_oauth.coexistence_sync_deferred", {
         phoneNumberId: params.phoneNumberId,
-        accessToken: params.accessToken,
+        reason: "business_profile_not_linked",
       });
-    } catch (err) {
-      // Do not turn a live-message connection into a failed onboarding just
-      // because sync-state persistence is temporarily unavailable. The last
-      // attempt is logged and the account remains available for retry/repair.
-      logger.error("whatsapp_oauth.coexistence_sync_persistence_failed", {
-        accountId: account.id,
-        phoneNumberId: params.phoneNumberId,
-        error: err instanceof Error ? err.message : String(err),
-      });
+    } else {
+      try {
+        await syncCoexistenceAppData({
+          account,
+          phoneNumberId: params.phoneNumberId,
+          accessToken: params.accessToken,
+        });
+      } catch (err) {
+        // Do not turn a live-message connection into a failed onboarding just
+        // because sync-state persistence is temporarily unavailable. The last
+        // attempt is logged and the account remains available for retry/repair.
+        logger.error("whatsapp_oauth.coexistence_sync_persistence_failed", {
+          accountId: account.id,
+          phoneNumberId: params.phoneNumberId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
   }
 
@@ -681,8 +698,9 @@ export async function adminTransferAccount(params: {
 async function registerWhatsAppPhoneNumber(params: {
   phoneNumberId: string;
   accessToken: string;
+  pin: string;
 }) {
-  const { phoneNumberId, accessToken } = params;
+  const { phoneNumberId, accessToken, pin } = params;
   const url = `${env.FB_API_URL}/${phoneNumberId}/register`;
 
   try {
@@ -694,7 +712,7 @@ async function registerWhatsAppPhoneNumber(params: {
       },
       body: JSON.stringify({
         messaging_product: "whatsapp",
-        pin: "123456", // Default registration PIN; user can change in Meta settings if needed.
+        pin,
       }),
     });
 
@@ -714,7 +732,6 @@ async function registerWhatsAppPhoneNumber(params: {
     throw err;
   }
 }
-
 
 
 

@@ -1,5 +1,9 @@
+import { randomUUID } from "node:crypto";
+import prisma from "@config/prisma";
 import { emitToBusiness, emitToConversation } from "./socket";
 import { logger } from "@utils/logger";
+
+const COEXISTENCE_IMPORT_EVENT_LEASE_MS = 5_000;
 
 export type CoexistenceHistoryImportedInput = {
   businessProfileId: number;
@@ -9,29 +13,141 @@ export type CoexistenceHistoryImportedInput = {
   importedContactCount: number;
 };
 
+function isUniqueConstraintError(error: unknown): boolean {
+  return (
+    error !== null &&
+    typeof error === "object" &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "P2002"
+  );
+}
+
+async function getOrCreateCoexistenceImportEvent(
+  input: CoexistenceHistoryImportedInput,
+  eventKey: string,
+) {
+  const payload = {
+    businessProfileId: input.businessProfileId,
+    phoneNumberId: input.phoneNumberId,
+    conversationIds: input.conversationIds,
+    importedMessageCount: input.importedMessageCount,
+    importedContactCount: input.importedContactCount,
+  };
+
+  try {
+    return await prisma.whatsAppCoexistenceImportEvent.create({
+      data: {
+        businessProfileId: input.businessProfileId,
+        phoneNumberId: input.phoneNumberId,
+        eventKey,
+        payload,
+      },
+    });
+  } catch (error: unknown) {
+    if (!isUniqueConstraintError(error)) throw error;
+
+    const existing = await prisma.whatsAppCoexistenceImportEvent.findUnique({
+      where: {
+        businessProfileId_phoneNumberId_eventKey: {
+          businessProfileId: input.businessProfileId,
+          phoneNumberId: input.phoneNumberId,
+          eventKey,
+        },
+      },
+    });
+    if (!existing) {
+      throw new Error("Coexistence import event claim disappeared after a unique conflict");
+    }
+    return existing;
+  }
+}
+
+function eventPayload(value: unknown): CoexistenceHistoryImportedInput {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Invalid persisted Coexistence import event payload");
+  }
+  return value as CoexistenceHistoryImportedInput;
+}
+
 /**
  * Notifies the business room after a bounded Coexistence history or contact
  * import completes. Historical messages use the importer origin and are
  * intentionally not emitted through the per-message sync path.
+ *
+ * The import row is a durable outbox record. A short database lease prevents
+ * concurrent workers from emitting the same payload, while an expired lease
+ * makes a row reclaimable if a process dies before or during socket delivery.
+ * Socket.IO delivery itself remains at-least-once: a crash after delivery and
+ * before the delivered marker can cause a duplicate invalidation, which is
+ * safe because the event only tells clients to refetch current state.
  */
 export const syncCoexistenceHistoryImported = (
   input: CoexistenceHistoryImportedInput,
-): void => {
-  const {
-    businessProfileId,
-    phoneNumberId,
-    conversationIds,
-    importedMessageCount,
-    importedContactCount,
-  } = input;
+  eventKey: string,
+): Promise<void> => {
+  return (async () => {
+    const pendingEvent = await getOrCreateCoexistenceImportEvent(input, eventKey);
+    if (pendingEvent.deliveredAt) return;
 
-  emitToBusiness(businessProfileId, "whatsapp_history_imported", {
-    businessProfileId,
-    phoneNumberId,
-    conversationIds,
-    importedMessageCount,
-    importedContactCount,
-  });
+    const leaseToken = randomUUID();
+    const now = new Date();
+    const leaseUntil = new Date(now.getTime() + COEXISTENCE_IMPORT_EVENT_LEASE_MS);
+    const claim = await prisma.whatsAppCoexistenceImportEvent.updateMany({
+      where: {
+        businessProfileId: input.businessProfileId,
+        phoneNumberId: input.phoneNumberId,
+        eventKey,
+        deliveredAt: null,
+        OR: [
+          { leaseUntil: null },
+          { leaseUntil: { lte: now } },
+        ],
+      },
+      data: {
+        leaseToken,
+        leaseUntil,
+        attempts: { increment: 1 },
+      },
+    });
+    if (claim.count !== 1) return;
+
+    try {
+      emitToBusiness(
+        input.businessProfileId,
+        "whatsapp_history_imported",
+        eventPayload(pendingEvent.payload),
+      );
+      await prisma.whatsAppCoexistenceImportEvent.updateMany({
+        where: {
+          businessProfileId: input.businessProfileId,
+          phoneNumberId: input.phoneNumberId,
+          eventKey,
+          leaseToken,
+          deliveredAt: null,
+        },
+        data: {
+          deliveredAt: new Date(),
+          leaseToken: null,
+          leaseUntil: null,
+        },
+      });
+    } catch (error: unknown) {
+      await prisma.whatsAppCoexistenceImportEvent.updateMany({
+        where: {
+          businessProfileId: input.businessProfileId,
+          phoneNumberId: input.phoneNumberId,
+          eventKey,
+          leaseToken,
+          deliveredAt: null,
+        },
+        data: {
+          leaseToken: null,
+          leaseUntil: null,
+        },
+      }).catch(() => undefined);
+      throw error;
+    }
+  })();
 };
 
 /**
@@ -240,5 +356,3 @@ export const syncMediaStatus = (params: {
 };
 
 export { emitToBusiness, emitToConversation };
-
-

@@ -292,7 +292,11 @@ describe("WhatsApp Coexistence payload contracts", () => {
       conversationIds: [101],
       importedMessageCount: 1,
       importedContactCount: 0,
-    });
+    }, expect.stringContaining("whatsapp_coexistence_history:"));
+    expect(socketSyncMocks.syncCoexistenceHistoryImported).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining("whatsapp-coexistence-history-"),
+    );
     expect(socketSyncMocks.syncSocketFromMessage).not.toHaveBeenCalled();
     contactSyncMocks.syncCoexistenceContacts.mockResolvedValue({
       businessProfileId: 42,
@@ -312,7 +316,12 @@ describe("WhatsApp Coexistence payload contracts", () => {
       conversationIds: [],
       importedMessageCount: 0,
       importedContactCount: 1,
-    });
+    }, expect.stringContaining("whatsapp_coexistence_contacts:"));
+    expect(socketSyncMocks.syncCoexistenceHistoryImported).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      expect.stringContaining("whatsapp-coexistence-contacts-"),
+    );
     expect(socketSyncMocks.syncSocketFromMessage).not.toHaveBeenCalled();
     await expect(processCoexistenceHistoryJob({ type: "invalid" })).rejects.toThrow();
   });

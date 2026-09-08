@@ -3,9 +3,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   add: vi.fn(),
   queue: vi.fn(),
+  workers: [] as Array<(job: any) => Promise<unknown>>,
   loggerInfo: vi.fn(),
   loggerError: vi.fn(),
   loggerWarn: vi.fn(),
+}));
+
+const coexistenceMocks = vi.hoisted(() => ({
+  processCoexistenceHistoryJob: vi.fn(),
+  processCoexistenceContactsJob: vi.fn(),
 }));
 
 vi.mock("bullmq", () => ({
@@ -18,7 +24,11 @@ vi.mock("bullmq", () => ({
       return mocks.add(...args);
     }
   },
-  Worker: class MockWorker {},
+  Worker: class MockWorker {
+    constructor(_queueName: string, processor: (job: any) => Promise<unknown>) {
+      mocks.workers.push(processor);
+    }
+  },
   QueueEvents: class MockQueueEvents {},
   Job: class MockJob {},
 }));
@@ -44,6 +54,8 @@ vi.mock("@modules/meta/core/metaProcessor.service", () => ({
 vi.mock("@modules/media/services/mediaLibrary.service", () => ({
   registerAssetWithMeta: vi.fn(),
 }));
+
+vi.mock("@modules/meta/whatsapp/whatsappCoexistence.service", () => coexistenceMocks);
 
 import { enqueueMetaJob } from "./meta.queue";
 
@@ -88,5 +100,45 @@ describe("Meta queue failure logging", () => {
     expect(JSON.stringify(mocks.loggerError.mock.calls)).not.toContain(rawMessageBody);
     expect(JSON.stringify(mocks.loggerError.mock.calls)).not.toContain(rawAccessToken);
     expect(mocks.loggerError.mock.calls[0]?.[1]).not.toHaveProperty("payload");
+  });
+
+  it("passes the BullMQ job id to the coexistence history processor", async () => {
+    const expressProcessor = mocks.workers[0];
+    expect(expressProcessor).toBeDefined();
+
+    await expressProcessor!({
+      id: "whatsapp-coexistence-history-job-1",
+      timestamp: Date.now(),
+      name: "whatsapp_coexistence_history",
+      data: {
+        type: "whatsapp_coexistence_history",
+        payload: { platform: "whatsapp" },
+      },
+    });
+
+    expect(coexistenceMocks.processCoexistenceHistoryJob).toHaveBeenCalledWith(
+      { platform: "whatsapp" },
+      "whatsapp-coexistence-history-job-1",
+    );
+  });
+
+  it("passes the BullMQ job id to the coexistence contacts processor", async () => {
+    const expressProcessor = mocks.workers[0];
+    expect(expressProcessor).toBeDefined();
+
+    await expressProcessor!({
+      id: "whatsapp-coexistence-contacts-job-1",
+      timestamp: Date.now(),
+      name: "whatsapp_coexistence_contacts",
+      data: {
+        type: "whatsapp_coexistence_contacts",
+        payload: { platform: "whatsapp" },
+      },
+    });
+
+    expect(coexistenceMocks.processCoexistenceContactsJob).toHaveBeenCalledWith(
+      { platform: "whatsapp" },
+      "whatsapp-coexistence-contacts-job-1",
+    );
   });
 });

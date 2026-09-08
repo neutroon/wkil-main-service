@@ -135,32 +135,52 @@ export function createCoexistenceContactsJobId(
   ].join("-");
 }
 
+export function createCoexistenceImportEventKey(
+  job: whatsappCoexistenceHistoryJob | whatsappCoexistenceContactsJob,
+  jobId?: string | null,
+): string {
+  const stableJobId = jobId?.trim() || (
+    job.type === "whatsapp_coexistence_history"
+      ? createCoexistenceHistoryJobId(job)
+      : createCoexistenceContactsJobId(job)
+  );
+  return `${job.type}:${safeJobPart(stableJobId)}`;
+}
+
 export async function processCoexistenceHistoryJob(
   payload: unknown,
+  jobId?: string | null,
 ): Promise<void> {
   const input = coexistenceHistoryJobSchema.parse(payload);
   const summary = await importCoexistenceHistoryChunk(input);
-  syncCoexistenceHistoryImported({
-    businessProfileId: summary.businessProfileId,
-    phoneNumberId: input.phoneNumberId,
-    conversationIds: summary.conversationIds,
-    importedMessageCount: summary.imported,
-    importedContactCount: 0,
-  });
+  await syncCoexistenceHistoryImported(
+    {
+      businessProfileId: summary.businessProfileId,
+      phoneNumberId: input.phoneNumberId,
+      conversationIds: summary.conversationIds,
+      importedMessageCount: summary.imported,
+      importedContactCount: 0,
+    },
+    createCoexistenceImportEventKey(input, jobId),
+  );
 }
 
 export async function processCoexistenceContactsJob(
   payload: unknown,
+  jobId?: string | null,
 ): Promise<void> {
   const input = coexistenceContactsJobSchema.parse(payload);
   const summary = await syncCoexistenceContacts(input);
-  syncCoexistenceHistoryImported({
-    businessProfileId: summary.businessProfileId,
-    phoneNumberId: input.phoneNumberId,
-    conversationIds: [],
-    importedMessageCount: 0,
-    importedContactCount: summary.processed,
-  });
+  await syncCoexistenceHistoryImported(
+    {
+      businessProfileId: summary.businessProfileId,
+      phoneNumberId: input.phoneNumberId,
+      conversationIds: [],
+      importedMessageCount: 0,
+      importedContactCount: summary.processed,
+    },
+    createCoexistenceImportEventKey(input, jobId),
+  );
 }
 
 export type {

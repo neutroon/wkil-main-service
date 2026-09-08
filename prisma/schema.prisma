@@ -273,6 +273,7 @@ model BusinessProfile {
   orderTemplateConfigs  OrderTemplateConfig[]
   whatsAppSuppressions  WhatsAppSuppression[]
   whatsAppCoexistenceContactEvents WhatsAppCoexistenceContactEvent[]
+  whatsAppCoexistenceImportEvents WhatsAppCoexistenceImportEvent[]
 }
 
 model Workspace {
@@ -463,6 +464,24 @@ model WhatsAppCoexistenceContactEvent {
   createdAt         DateTime        @default(now())
 
   @@unique([businessProfileId, phoneNumberId, eventKey])
+  @@index([createdAt])
+}
+
+model WhatsAppCoexistenceImportEvent {
+  id                Int             @id @default(autoincrement())
+  businessProfileId Int
+  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+  phoneNumberId     String
+  eventKey          String
+  payload           Json
+  attempts          Int             @default(0)
+  leaseToken        String?
+  leaseUntil        DateTime?
+  deliveredAt       DateTime?
+  createdAt         DateTime        @default(now())
+
+  @@unique([businessProfileId, phoneNumberId, eventKey])
+  @@index([deliveredAt])
   @@index([createdAt])
 }
 

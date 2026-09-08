@@ -354,10 +354,10 @@ export const expressWorker = new Worker(
       await processCustomerMemoryCaptureJob(payload);
     } else if (type === "whatsapp_coexistence_history") {
       const { processCoexistenceHistoryJob } = await import("@modules/meta/whatsapp/whatsappCoexistence.service");
-      await processCoexistenceHistoryJob(payload);
+      await processCoexistenceHistoryJob(payload, job.id);
     } else if (type === "whatsapp_coexistence_contacts") {
       const { processCoexistenceContactsJob } = await import("@modules/meta/whatsapp/whatsappCoexistence.service");
-      await processCoexistenceContactsJob(payload);
+      await processCoexistenceContactsJob(payload, job.id);
     } else {
       await processMetaMessage(payload, {
         jobId: job.id,
@@ -519,4 +519,3 @@ function hashJobText(text: string): string {
   }
   return Math.abs(hash).toString(36);
 }
-

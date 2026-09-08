@@ -99,10 +99,54 @@ export class WhatsAppController {
         if (!Array.isArray(entry.changes)) continue;
 
         for (const change of entry.changes) {
-          if (change.field !== "messages" && change.field !== "smb_message_echoes" && change.field !== "message_echoes") continue;
-
           const value = change.value;
           const phoneNumberId = value?.metadata?.phone_number_id;
+
+          // Coexistence sync events are not live customer messages. They must
+          // still be acknowledged and observed; silently dropping them makes
+          // a successful Meta sync indistinguishable from a broken webhook.
+          if (change.field === "history" || change.field === "smb_app_state_sync") {
+            const historyChunks = Array.isArray(value?.history) ? value.history.length : 0;
+            const historyMessages = Array.isArray(value?.history)
+              ? value.history.reduce(
+                  (total: number, chunk: any) =>
+                    total + (Array.isArray(chunk?.threads)
+                      ? chunk.threads.reduce(
+                          (threadTotal: number, thread: any) =>
+                            threadTotal + (Array.isArray(thread?.messages) ? thread.messages.length : 0),
+                          0,
+                        )
+                      : 0),
+                  0,
+                )
+              : 0;
+            const stateSyncItems = Array.isArray(value?.state_sync) ? value.state_sync.length : 0;
+
+            logger.info("whatsapp.webhook.coexistence_sync_event_received", {
+              field: change.field,
+              wabaId: entry.id,
+              phoneNumberId,
+              historyChunks,
+              historyMessages,
+              stateSyncItems,
+              historyErrors: Array.isArray(value?.errors) ? value.errors.length : 0,
+            });
+            continue;
+          }
+
+          // Lifecycle events are useful operational signals but are not
+          // message jobs. Log a small summary without storing the raw payload.
+          if (change.field === "account_update") {
+            logger.info("whatsapp.webhook.account_update_received", {
+              wabaId: entry.id,
+              phoneNumberId,
+              event: value?.event,
+            });
+            continue;
+          }
+
+          if (change.field !== "messages" && change.field !== "smb_message_echoes" && change.field !== "message_echoes") continue;
+
           const messages = value?.messages || (value as any)?.message_echoes;
           const contacts = value?.contacts;
           const statuses = (value as any)?.statuses;
@@ -677,6 +721,5 @@ export class WhatsAppController {
 }
 
 export const whatsappController = new WhatsAppController();
-
 
 

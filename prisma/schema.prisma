@@ -611,6 +611,11 @@ model WhatsAppAccount {
   connectionMode     String           @default("BUSINESS_API") // "BUSINESS_API" | "COEXISTENCE"
   isTokenValid       Boolean          @default(true) // Result of the last /debug_token check
   lastValidatedAt    DateTime? // When the token was last checked for health
+  /// Meta permits each Coexistence app-data sync request only once per onboarding.
+  coexistenceContactsSyncRequestedAt DateTime?
+  coexistenceHistorySyncRequestedAt  DateTime?
+  coexistenceSyncLastAttemptAt       DateTime?
+  coexistenceSyncLastError           String?        @db.Text
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @updatedAt
 

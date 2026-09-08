@@ -265,6 +265,56 @@ describe("WhatsApp webhook controller wiring", () => {
     expect(response.send).toHaveBeenCalledWith("EVENT_RECEIVED");
   });
 
+  it("acknowledges and observes Coexistence sync webhooks without treating them as live messages", async () => {
+    const request = webhookRequest();
+    request.body.entry[0].changes[0] = {
+      field: "history",
+      value: {
+        metadata: { phone_number_id: "phone-number-id" },
+        history: [
+          {
+            metadata: { phase: 0, chunk_order: 1, progress: 100 },
+            threads: [{ id: customerPhone, messages: [{ id: "wamid-history-1" }] }],
+          },
+        ],
+      },
+    };
+    request.body.entry[0].changes.push({
+      field: "smb_app_state_sync",
+      value: {
+        metadata: { phone_number_id: "phone-number-id" },
+        state_sync: [{ type: "contact", action: "add" }],
+      },
+    });
+    const response = {
+      status: vi.fn().mockReturnThis(),
+      send: vi.fn().mockReturnThis(),
+    } as any;
+
+    await whatsappController.handleWebhook(request, response);
+
+    expect(response.status).toHaveBeenCalledWith(200);
+    expect(response.send).toHaveBeenCalledWith("EVENT_RECEIVED");
+    expect(mocks.accountFindFirst).not.toHaveBeenCalled();
+    expect(mocks.enqueueInboundMetaEvent).not.toHaveBeenCalled();
+    expect(mocks.loggerInfo).toHaveBeenCalledWith(
+      "whatsapp.webhook.coexistence_sync_event_received",
+      expect.objectContaining({
+        field: "history",
+        phoneNumberId: "phone-number-id",
+        historyChunks: 1,
+        historyMessages: 1,
+      }),
+    );
+    expect(mocks.loggerInfo).toHaveBeenCalledWith(
+      "whatsapp.webhook.coexistence_sync_event_received",
+      expect.objectContaining({
+        field: "smb_app_state_sync",
+        stateSyncItems: 1,
+      }),
+    );
+  });
+
   it("returns a retryable error when durable queueing fails", async () => {
     mocks.enqueueInboundMetaEvent.mockRejectedValueOnce(new Error("queue unavailable"));
     const response = {

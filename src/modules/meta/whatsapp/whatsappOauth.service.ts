@@ -9,6 +9,7 @@ const GRAPH_API = "https://graph.facebook.com/v25.0";
 const OAUTH_GRAPH_API = "https://graph.facebook.com/v25.0";
 // The "discover WABA accounts + phone numbers" step relies on Graph fields/endpoints.
 const DISCOVERY_GRAPH_API = "https://graph.facebook.com/v25.0";
+const COEXISTENCE_SYNC_TIMEOUT_MS = 15_000;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -324,6 +325,144 @@ export async function unsubscribeWebhook(wabaId: string, token: string): Promise
   }
 }
 
+type CoexistenceSyncType = "smb_app_state_sync" | "history";
+
+type CoexistenceSyncAccountState = {
+  id: number;
+  coexistenceContactsSyncRequestedAt: Date | null;
+  coexistenceHistorySyncRequestedAt: Date | null;
+};
+
+function metaResponseError(data: any, fallback: string): string {
+  return data?.error?.message || data?.error?.error_user_msg || fallback;
+}
+
+function isAlreadyRequestedError(message: string): boolean {
+  return /already|only once|previously requested|already been requested/i.test(message);
+}
+
+async function requestCoexistenceAppDataSync(params: {
+  phoneNumberId: string;
+  accessToken: string;
+  syncType: CoexistenceSyncType;
+}): Promise<{ requestId?: string; alreadyRequested: boolean }> {
+  const response = await fetch(`${GRAPH_API}/${params.phoneNumberId}/smb_app_data`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${params.accessToken}`,
+    },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      sync_type: params.syncType,
+    }),
+    signal: AbortSignal.timeout(COEXISTENCE_SYNC_TIMEOUT_MS),
+  });
+
+  let data: any = {};
+  try {
+    data = await response.json();
+  } catch {
+    // Meta may return an empty body for an accepted request. The HTTP status
+    // remains authoritative in that case.
+  }
+
+  if (!response.ok) {
+    const message = metaResponseError(data, `Coexistence ${params.syncType} sync failed`);
+    if (isAlreadyRequestedError(message)) {
+      logger.info("whatsapp_oauth.coexistence_sync_already_requested", {
+        phoneNumberId: params.phoneNumberId,
+        syncType: params.syncType,
+      });
+      return { alreadyRequested: true };
+    }
+    throw new AppError(message, 502);
+  }
+
+  logger.info("whatsapp_oauth.coexistence_sync_requested", {
+    phoneNumberId: params.phoneNumberId,
+    syncType: params.syncType,
+    requestId: data?.request_id,
+  });
+  return { requestId: data?.request_id, alreadyRequested: false };
+}
+
+/**
+ * Starts Meta's one-time Coexistence synchronization requests.
+ *
+ * These requests are deliberately best-effort: the WhatsApp account is still
+ * useful for live messaging if one sync request is temporarily unavailable,
+ * and Meta can deliver the resulting data asynchronously through webhooks.
+ * Each successful/already-completed request is persisted so reconnecting an
+ * account does not intentionally issue it again.
+ */
+async function syncCoexistenceAppData(params: {
+  account: CoexistenceSyncAccountState;
+  phoneNumberId: string;
+  accessToken: string;
+}): Promise<void> {
+  const attemptAt = new Date();
+  await prisma.whatsAppAccount.update({
+    where: { id: params.account.id },
+    data: { coexistenceSyncLastAttemptAt: attemptAt, coexistenceSyncLastError: null },
+  });
+
+  const errors: string[] = [];
+
+  // Contact/state sync is requested before history sync, matching Meta's
+  // Coexistence onboarding sequence. Continue to history if this one fails.
+  if (!params.account.coexistenceContactsSyncRequestedAt) {
+    try {
+      await requestCoexistenceAppDataSync({
+        phoneNumberId: params.phoneNumberId,
+        accessToken: params.accessToken,
+        syncType: "smb_app_state_sync",
+      });
+      const requestedAt = new Date();
+      await prisma.whatsAppAccount.update({
+        where: { id: params.account.id },
+        data: { coexistenceContactsSyncRequestedAt: requestedAt },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      errors.push(`smb_app_state_sync: ${message}`);
+      logger.warn("whatsapp_oauth.coexistence_contacts_sync_failed", {
+        accountId: params.account.id,
+        phoneNumberId: params.phoneNumberId,
+        error: message,
+      });
+    }
+  }
+
+  if (!params.account.coexistenceHistorySyncRequestedAt) {
+    try {
+      await requestCoexistenceAppDataSync({
+        phoneNumberId: params.phoneNumberId,
+        accessToken: params.accessToken,
+        syncType: "history",
+      });
+      const requestedAt = new Date();
+      await prisma.whatsAppAccount.update({
+        where: { id: params.account.id },
+        data: { coexistenceHistorySyncRequestedAt: requestedAt },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      errors.push(`history: ${message}`);
+      logger.warn("whatsapp_oauth.coexistence_history_sync_failed", {
+        accountId: params.account.id,
+        phoneNumberId: params.phoneNumberId,
+        error: message,
+      });
+    }
+  }
+
+  await prisma.whatsAppAccount.update({
+    where: { id: params.account.id },
+    data: { coexistenceSyncLastError: errors.length > 0 ? errors.join(" | ") : null },
+  });
+}
+
 // ─── Step 4: Save and upsert into DB ──────────────────────────────────────────
 
 export async function saveWhatsAppAccount(params: {
@@ -341,12 +480,20 @@ export async function saveWhatsAppAccount(params: {
   let connectionMode: "COEXISTENCE" | "BUSINESS_API" = params.connectionMode || "BUSINESS_API";
   try {
     const metaDetailsResponse = await fetch(
-      `${env.FB_API_URL}/${params.phoneNumberId}?fields=is_on_biz_app`,
+      `${env.FB_API_URL}/${params.phoneNumberId}?fields=is_on_biz_app,platform_type`,
       {
         headers: { Authorization: `Bearer ${params.accessToken}` },
       }
     );
-    const details = await metaDetailsResponse.json() as { is_on_biz_app?: boolean };
+    const details = await metaDetailsResponse.json() as {
+      is_on_biz_app?: boolean;
+      platform_type?: string;
+      error?: { message?: string };
+    };
+
+    if (!metaDetailsResponse.ok) {
+      throw new Error(metaResponseError(details, "Meta phone-number status lookup failed"));
+    }
     
     if (details.is_on_biz_app === true) {
       connectionMode = "COEXISTENCE";
@@ -357,6 +504,7 @@ export async function saveWhatsAppAccount(params: {
     logger.info("whatsapp_oauth.mode_detected", {
       phoneNumberId: params.phoneNumberId,
       isOnBizApp: details.is_on_biz_app,
+      platformType: details.platform_type,
       finalMode: connectionMode
     });
   } catch (err) {
@@ -409,22 +557,47 @@ export async function saveWhatsAppAccount(params: {
     },
   });
 
-  // PROFESSIONAL: Auto-register the number to Meta's servers immediately.
-  // This moves the number from 'Pending' to 'Connected' without user intervention.
-  try {
-    await registerWhatsAppPhoneNumber({
+  if (connectionMode === "BUSINESS_API") {
+    // Standard Cloud API onboarding requires phone-number registration. A
+    // Coexistence number is already registered in the WhatsApp Business app;
+    // calling /register here is incorrect and can partially provision it.
+    try {
+      await registerWhatsAppPhoneNumber({
+        phoneNumberId: params.phoneNumberId,
+        accessToken: params.accessToken,
+      });
+      logger.info("whatsapp_oauth.auto_registration_success", {
+        phoneNumberId: params.phoneNumberId,
+      });
+    } catch (err: any) {
+      // Keep the existing non-blocking behavior for standard onboarding.
+      logger.warn("whatsapp_oauth.auto_registration_failed", {
+        phoneNumberId: params.phoneNumberId,
+        error: err.message,
+      });
+    }
+  } else {
+    logger.info("whatsapp_oauth.auto_registration_skipped", {
       phoneNumberId: params.phoneNumberId,
-      accessToken: params.accessToken,
+      reason: "coexistence_number_registered_in_business_app",
     });
-    logger.info("whatsapp_oauth.auto_registration_success", {
-      phoneNumberId: params.phoneNumberId,
-    });
-  } catch (err: any) {
-    // We log but don't fail the whole setup if registration fails (user can manually fix in dashboard later)
-    logger.warn("whatsapp_oauth.auto_registration_failed", {
-      phoneNumberId: params.phoneNumberId,
-      error: err.message,
-    });
+
+    try {
+      await syncCoexistenceAppData({
+        account,
+        phoneNumberId: params.phoneNumberId,
+        accessToken: params.accessToken,
+      });
+    } catch (err) {
+      // Do not turn a live-message connection into a failed onboarding just
+      // because sync-state persistence is temporarily unavailable. The last
+      // attempt is logged and the account remains available for retry/repair.
+      logger.error("whatsapp_oauth.coexistence_sync_persistence_failed", {
+        accountId: account.id,
+        phoneNumberId: params.phoneNumberId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   logger.info("whatsapp_oauth.account_saved", {
@@ -541,8 +714,6 @@ async function registerWhatsAppPhoneNumber(params: {
     throw err;
   }
 }
-
-
 
 
 

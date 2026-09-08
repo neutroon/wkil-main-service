@@ -1,5 +1,5 @@
 import prisma from "@config/prisma";
-import type { ConversationMessageStatus } from "@prisma/client";
+import { Prisma, type ConversationMessageStatus } from "@prisma/client";
 import { AppError } from "@middlewares/errorHandler.middleware";
 import { getAccessibleProfileIds } from "@modules/auth/user/user.service";
 import {
@@ -11,6 +11,37 @@ import { logger } from "@utils/logger";
 
 const HISTORY_LIMIT = 24;
 
+export type ConversationLockDatabase = {
+  $executeRaw(query: Prisma.Sql): Promise<number>;
+};
+
+export function getConversationIdentityLockKey(
+  pageId: string,
+  senderId: string,
+  businessProfileId: number,
+  channel?: string | null,
+) {
+  return JSON.stringify([businessProfileId, pageId, senderId, channel ?? null]);
+}
+
+export async function lockConversationIdentity(
+  db: ConversationLockDatabase,
+  pageId: string,
+  senderId: string,
+  businessProfileId: number,
+  channel?: string | null,
+) {
+  const lockKey = getConversationIdentityLockKey(
+    pageId,
+    senderId,
+    businessProfileId,
+    channel,
+  );
+  await db.$executeRaw(
+    Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`,
+  );
+}
+
 async function attachCustomerMemory(
   conversation: any,
   opts?: {
@@ -19,6 +50,7 @@ async function attachCustomerMemory(
     customerName?: string;
     customerAvatar?: string;
   },
+  db: any = prisma,
 ) {
   const customer = await upsertCustomerFromConversation({
     businessProfileId: conversation.businessProfileId,
@@ -28,28 +60,40 @@ async function attachCustomerMemory(
     customerPhone: opts?.customerPhone ?? conversation.customerPhone,
     customerName: opts?.customerName ?? conversation.customerName,
     customerAvatar: opts?.customerAvatar ?? conversation.customerAvatar,
+    db,
   });
   return { ...conversation, customerId: customer.id };
 }
 
 // ─── Core conversation helpers ────────────────────────────────────────────────
 
-export async function getOrCreateConversation(
+type ConversationOptions = {
+  channel?: string;
+  customerPhone?: string;
+  customerName?: string;
+  customerAvatar?: string;
+  externalId?: string;
+  postId?: string;
+  sourceCommentText?: string;
+};
+
+async function getOrCreateConversationWithDb(
+  db: any,
   pageId: string,
   senderId: string,
   businessProfileId: number,
-  opts?: {
-    channel?: string;
-    customerPhone?: string;
-    customerName?: string;
-    customerAvatar?: string;
-    externalId?: string;
-    postId?: string;
-    sourceCommentText?: string;
-  },
+  opts?: ConversationOptions,
 ) {
+  await lockConversationIdentity(
+    db,
+    pageId,
+    senderId,
+    businessProfileId,
+    opts?.channel ?? null,
+  );
+
   // 1. Try to find an existing primary conversation for this user on this page
-  const existing = await prisma.conversation.findFirst({
+  const existing = await db.conversation.findFirst({
     where: {
       pageId,
       senderId,
@@ -104,11 +148,11 @@ export async function getOrCreateConversation(
     }
 
     if (Object.keys(updateData).length > 0) {
-      const updated = await prisma.conversation.update({
+      const updated = await db.conversation.update({
         where: { id: existing.id },
         data: { ...updateData, updatedAt: new Date() },
       });
-      const withCustomer = await attachCustomerMemory(updated, opts);
+      const withCustomer = await attachCustomerMemory(updated, opts, db);
       // Customer sent a new message on a RESOLVED thread — flip the
       // owning customer back to ACTIVE so the sales view reflects
       // the new open conversation immediately. Fire-and-forget so we
@@ -118,13 +162,13 @@ export async function getOrCreateConversation(
       }
       return withCustomer;
     }
-    return attachCustomerMemory(existing, opts);
+    return attachCustomerMemory(existing, opts, db);
   }
 
   // 2. If creating a NEW Messenger conversation, try to link it to the most recent comment thread
   let parentConversationId: number | null = null;
   if (opts?.channel === "messenger") {
-    const lastCommentThread = await prisma.conversation.findFirst({
+    const lastCommentThread = await db.conversation.findFirst({
       where: {
         pageId,
         senderId,
@@ -139,7 +183,7 @@ export async function getOrCreateConversation(
   }
 
   // 3. Create a brand new conversation
-  const created = await prisma.conversation.create({
+  const created = await db.conversation.create({
     data: {
       pageId,
       senderId,
@@ -155,7 +199,24 @@ export async function getOrCreateConversation(
       readAt: null,
     },
   });
-  return attachCustomerMemory(created, opts);
+  return attachCustomerMemory(created, opts, db);
+}
+
+export async function getOrCreateConversation(
+  pageId: string,
+  senderId: string,
+  businessProfileId: number,
+  opts?: ConversationOptions,
+) {
+  return prisma.$transaction((transaction) =>
+    getOrCreateConversationWithDb(
+      transaction,
+      pageId,
+      senderId,
+      businessProfileId,
+      opts,
+    ),
+  );
 }
 
 export async function getConversationHistory(

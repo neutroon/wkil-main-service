@@ -10,8 +10,8 @@ Implemented and review-hardened the real WhatsApp Coexistence history importer i
 - Created `src/modules/meta/whatsapp/whatsappCoexistenceHistory.service.test.ts`.
 - Modified `src/modules/meta/whatsapp/whatsappCoexistence.service.ts` to dispatch validated history jobs to `importCoexistenceHistoryChunk`.
 - Modified `src/modules/meta/whatsapp/whatsappCoexistence.service.test.ts` to replace the Task 1 stub assertion with the dedicated importer delegation assertion.
-- Modified `src/modules/meta/core/conversation.service.ts` for timestamp-safe numeric cursor pagination.
-- Modified `src/modules/meta/core/conversation.service.test.ts` with the old-history-after-new-live regression test.
+- Modified `src/modules/meta/core/conversation.service.ts` for timestamp-safe numeric cursor pagination and the shared transaction-scoped conversation identity lock used by live get-or-create.
+- Modified `src/modules/meta/core/conversation.service.test.ts` with the old-history-after-new-live regression and concurrent shared-identity creation test.
 - Modified `src/config/prisma.ts` to suppress per-message realtime sync for `origin = "whatsapp_coexistence_history"`.
 - Modified `prisma/schema.prisma` with `@@index([conversationId, createdAt, id])`.
 - Modified `prisma/migrations/20260908130000_coexistence_history_ordering/migration.sql` to remove the redundant two-column index before creating the cursor-supporting three-column index.
@@ -37,19 +37,22 @@ Each focused behavior was driven by a failing test before the production change:
 
 10. The concurrent duplicate regression initially failed because the importer still issued per-message creates and could poison the interactive transaction after a P2002. Batch prefiltering and `createMany({ skipDuplicates: true })` made the real transaction-safe path green.
 11. The live-update race regression initially failed because the conversation link update had no stale-write predicate. `updateMany` now requires `customerId IS NULL` and `updatedAt <= historical activityAt`, making the update atomic and the regression green.
-12. The concurrent conversation-creation regression initially failed because no transaction-scoped lock was taken before lookup. A PostgreSQL `pg_advisory_xact_lock` keyed by business profile, phone number, WABA, and thread was added before `findFirst`; selection now orders by `updatedAt DESC`.
+12. The concurrent conversation-creation regression initially failed because no transaction-scoped lock was taken before lookup. A PostgreSQL `pg_advisory_xact_lock` keyed by the shared business-profile, page/phone-number, sender/thread, and channel identity was added to `conversation.service.ts`; live get-or-create and history import now use the same key before lookup.
 13. Account-routing regression initially failed because lookup omitted WABA and connection mode. The lookup now requires matching `phoneNumberId`, matching `wabaId`, active status, and `COEXISTENCE` mode.
 14. The timezone regression initially failed under the local Cairo timezone because a timezone-less ISO value was parsed as local time. The importer now appends `Z` for timezone-less ISO timestamps.
 15. The redundant two-column message index was removed from the schema and migration; the three-column `(conversationId, createdAt, id)` index is retained for the final keyset query.
+16. The new-history read-state regression initially failed because created conversations had no `readAt`. Setting `readAt` to the thread’s latest imported source timestamp made it green; the existing-conversation path still omits `readAt`.
+17. The shared live-concurrency regression initially failed with two created rows. Running get-or-create inside a transaction using the shared advisory lock made both concurrent callers return the same row.
+18. The multi-thread lock-order regression initially failed with reverse input order (`thread-z`, then `thread-a`). Pre-acquiring unique thread locks in sorted shared-key order before history writes made it green. The first run after importing the shared helper hit the repository environment validator; the rerun with disposable test values executed and passed (with only an unrelated SMTP connection warning).
 
 ## Verification
 
-- Focused Task 2 plus existing queue tests: **4 test files, 17 tests passed**.
-- Review-fix focused importer test: **1 test file, 12 tests passed**.
-- `npx tsc --noEmit`: passed.
+- Focused Task 2/core conversation/queue tests after this fix round: **4 test files, 25 tests passed**.
+- Individual new regression checks: **read-state 1 passed, shared identity concurrency 1 passed, deterministic lock ordering 1 passed**.
+- `npx tsc --noEmit`: passed after the fix round.
 - `npx prisma generate`: passed.
 - `npx prisma validate`: passed with disposable `DATABASE_URL` and `DIRECT_URL` values. The first validation attempt correctly reported the missing `DIRECT_URL` environment variable before the rerun.
-- `npm run build`: passed, including TypeScript, alias compilation, and OpenAPI bundling.
+- `npm run build`: passed after the fix round, including Prisma client generation, TypeScript, alias compilation, and OpenAPI bundling.
 - `git diff --check`: passed.
 
 ## Decisions
@@ -58,14 +61,15 @@ Each focused behavior was driven by a failing test before the production change:
 - Numeric Meta timestamps are interpreted as Unix seconds; timezone-less ISO timestamps are explicitly interpreted as UTC; offset-bearing ISO timestamps retain their offset; invalid timestamps are skipped.
 - Read history maps to `READ`; all other historical messages map to `SENT`.
 - Media IDs and selected metadata are retained. Media without a usable ID receives a placeholder marker rather than being discarded or downloaded.
-- Imports are processed in bounded batches of 100 messages. A transaction-scoped advisory lock serializes conversation lookup/creation per business profile, phone number, WABA, and thread. Existing conversations are selected by newest `updatedAt`; a missing customer link is added only when the atomic timestamp predicate proves the historical write is not stale.
+- Imports are processed in bounded batches of 100 messages. A shared transaction-scoped advisory lock serializes live/history conversation lookup/creation per business profile, page/phone number, sender/thread, and channel. History acquires multiple locks in sorted key order before writes. Existing conversations are selected by newest `updatedAt`; a missing customer link is added only when the atomic timestamp predicate proves the historical write is not stale.
+- Newly created historical conversations are initialized as read with `readAt` equal to the latest valid source timestamp in the thread. Existing conversations never receive a history-driven `readAt` update.
 - Historical message inserts prefilter known WAMIDs and use `createMany({ skipDuplicates: true })`, so a concurrent unique race cannot be caught inside and poison the PostgreSQL interactive transaction.
 - The Prisma message extension checks write input/result origin and suppresses individual realtime imports for the history origin. No history message calls `processMetaMessage`.
 - Missing/deleted numeric cursor anchors retain the legacy `id < cursor` fallback for caller compatibility.
 
 ## Concerns and blockers
 
-- No live PostgreSQL integration or migration deployment was run because no live database credentials were in scope and the user requested focused verification only. The migration and Prisma schema validate, but applying the migration against a real database remains an operational follow-up.
-- `npm run build` passed before this review hardening; it was not rerun afterward because the user explicitly requested stopping long-running validation. The focused importer test and `git diff --check` passed after the hardening.
-- Focused importer tests use Prisma/customer mocks, so database-specific advisory-lock, `createMany` conflict, and timestamp-race behavior should still be covered by a deployment/staging PostgreSQL smoke test.
+- No live PostgreSQL integration or migration deployment was run because no live database credentials were in scope. The migration and Prisma schema validate, but applying the migration and exercising real advisory-lock concurrency remain operational follow-ups.
+- Focused tests use Prisma/customer mocks, including a transaction-aware in-memory lock model for shared live creation; database-specific advisory-lock and transaction behavior should still be covered by a deployment/staging PostgreSQL smoke test.
+- The focused run emitted an `SMTP Connection failed` warning because the disposable `SMTP_HOST` had no listener; all 25 assertions passed and the warning is unrelated to Task 2.
 - The pre-existing untracked file `docs/superpowers/plans/2026-09-08-whatsapp-coexistence-sync.md` was preserved and intentionally excluded from the Task 2 commit.

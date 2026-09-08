@@ -238,6 +238,16 @@ describe("WhatsApp Coexistence history importer", () => {
     expect(mocks.conversationUpdateMany.mock.calls[0]?.[0].data).not.toHaveProperty("status");
   });
 
+  it("marks a newly created historical conversation read at its latest source timestamp", async () => {
+    await importCoexistenceHistoryChunk(historyJob);
+
+    expect(mocks.conversationCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        readAt: new Date("2023-11-14T22:13:22.000Z"),
+      }),
+    });
+  });
+
   it("guards an existing-conversation link against a live update racing after the read", async () => {
     const historicalAt = new Date("2023-11-14T22:13:22.000Z");
     mocks.conversationFindFirst.mockResolvedValue({
@@ -280,6 +290,48 @@ describe("WhatsApp Coexistence history importer", () => {
     expect(mocks.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.conversationFindFirst.mock.invocationCallOrder[0],
     );
+  });
+
+  it("acquires multiple thread locks in deterministic key order before history writes", async () => {
+    const input: CoexistenceHistoryInput = {
+      ...historyJob,
+      historyChunk: {
+        ...historyJob.historyChunk,
+        threads: [
+          {
+            id: "thread-z",
+            messages: [
+              {
+                id: "wamid-history-thread-z",
+                from: "thread-z",
+                timestamp: "2024-01-01T00:00:00Z",
+                type: "text",
+                text: { body: "z" },
+              },
+            ],
+          },
+          {
+            id: "thread-a",
+            messages: [
+              {
+                id: "wamid-history-thread-a",
+                from: "thread-a",
+                timestamp: "2024-01-01T00:00:01Z",
+                type: "text",
+                text: { body: "a" },
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    await importCoexistenceHistoryChunk(input);
+
+    const lockKeys = mocks.executeRaw.mock.calls.map(
+      ([query]) => (query as { values?: unknown[] }).values?.[0],
+    );
+    expect(lockKeys).toEqual([...lockKeys].sort());
   });
 
   it("resolves only the active Coexistence account matching both WABA and phone number", async () => {

@@ -5,6 +5,10 @@ import {
   type CoexistenceHistoryMessage,
   type WhatsappCoexistenceHistoryJob,
 } from "./whatsappCoexistence.schemas";
+import {
+  getConversationIdentityLockKey,
+  lockConversationIdentity,
+} from "@modules/meta/core/conversation.service";
 
 export const WHATSAPP_COEXISTENCE_HISTORY_ORIGIN = "whatsapp_coexistence_history" as const;
 const HISTORY_BATCH_SIZE = 100;
@@ -149,18 +153,6 @@ function earliestTimestamp(messages: Array<{ createdAt: Date }>): Date {
   );
 }
 
-async function lockHistoryThread(
-  db: HistoryDatabase,
-  businessProfileId: number,
-  input: CoexistenceHistoryInput,
-  threadId: string,
-) {
-  const lockKey = `${businessProfileId}:${input.phoneNumberId}:${input.wabaId}:${threadId}`;
-  await db.$executeRaw(
-    Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`,
-  );
-}
-
 function historyMessages(
   thread: UnknownRecord,
   summary: CoexistenceImportSummary,
@@ -196,6 +188,33 @@ async function importBatch(
   await prisma.$transaction(async (transaction) => {
     const db = transaction as unknown as HistoryDatabase;
     const pendingMessages: Array<{ externalId: string; data: Record<string, unknown> }> = [];
+    const lockTargets = new Map<string, string>();
+
+    for (const item of batch) {
+      const threadId = firstString(item.thread.id);
+      if (!threadId) continue;
+      lockTargets.set(
+        getConversationIdentityLockKey(
+          input.phoneNumberId,
+          threadId,
+          businessProfileId,
+          "whatsapp",
+        ),
+        threadId,
+      );
+    }
+
+    for (const [lockKey, threadId] of Array.from(lockTargets.entries()).sort(([left], [right]) =>
+      left < right ? -1 : left > right ? 1 : 0,
+    )) {
+      await lockConversationIdentity(
+        db,
+        input.phoneNumberId,
+        threadId,
+        businessProfileId,
+        "whatsapp",
+      );
+    }
 
     for (const item of batch) {
       const threadId = firstString(item.thread.id);
@@ -213,7 +232,6 @@ async function importBatch(
 
       let conversation = conversationCache.get(item.threadIndex);
       if (!conversation) {
-        await lockHistoryThread(db, businessProfileId, input, threadId);
         const existing = await db.conversation.findFirst({
           where: {
             businessProfileId,
@@ -266,6 +284,7 @@ async function importBatch(
               asRecord(item.thread.contact).name,
               asRecord(item.thread.profile).name,
             ),
+            readAt: threadActivityAt.get(item.threadIndex),
             createdAt: threadStartedAt.get(item.threadIndex),
             updatedAt: threadActivityAt.get(item.threadIndex),
           },

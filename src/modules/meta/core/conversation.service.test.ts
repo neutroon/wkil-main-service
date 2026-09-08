@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@config/prisma", () => ({
   default: {
+    $executeRaw: vi.fn(),
+    $transaction: vi.fn(),
     conversationMessage: {
       create: vi.fn(),
       findMany: vi.fn(),
@@ -34,9 +36,15 @@ vi.mock("@utils/logger", () => ({
 }));
 
 import prisma from "@config/prisma";
-import { listConversationMessages, saveMessage } from "./conversation.service";
+import { upsertCustomerFromConversation } from "@modules/business/customer/customer.service";
+import {
+  getOrCreateConversation,
+  listConversationMessages,
+  saveMessage,
+} from "./conversation.service";
 
 const mockedPrisma = prisma as any;
+const mockedUpsertCustomer = upsertCustomerFromConversation as any;
 
 async function flushMessageSideEffects() {
   await new Promise<void>((resolve) => setImmediate(resolve));
@@ -98,6 +106,73 @@ describe("saveMessage", () => {
       where: { id: 99 },
       data: { lastInteractionAt: expect.any(Date) },
     });
+  });
+});
+
+describe("shared conversation identity locking", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("serializes concurrent live identity creation so history and inbound writes share one conversation", async () => {
+    const rows: any[] = [];
+    let nextId = 500;
+    let lockHeld = false;
+    const waiters: Array<() => void> = [];
+    const acquireLock = async () => {
+      if (!lockHeld) {
+        lockHeld = true;
+        return;
+      }
+      await new Promise<void>((resolve) => waiters.push(resolve));
+    };
+    const releaseLock = () => {
+      const next = waiters.shift();
+      if (next) next();
+      else lockHeld = false;
+    };
+
+    mockedPrisma.$transaction.mockImplementation(async (callback: (db: any) => unknown) => {
+      try {
+        return await callback(mockedPrisma);
+      } finally {
+        releaseLock();
+      }
+    });
+    mockedPrisma.$executeRaw.mockImplementation(acquireLock);
+    mockedPrisma.conversation.findFirst.mockImplementation(async () => {
+      await Promise.resolve();
+      return rows[0] ?? null;
+    });
+    mockedPrisma.conversation.create.mockImplementation(async ({ data }: { data: any }) => {
+      await Promise.resolve();
+      const row = {
+        id: nextId++,
+        ...data,
+        customerId: null,
+        status: "OPEN",
+        channel: data.channel,
+      };
+      rows.push(row);
+      return row;
+    });
+    mockedUpsertCustomer.mockResolvedValue({ id: 900 });
+
+    const [historyConversation, liveConversation] = await Promise.all([
+      getOrCreateConversation("phone-number-id", "201001234567", 42, {
+        channel: "whatsapp",
+        customerPhone: "201001234567",
+      }),
+      getOrCreateConversation("phone-number-id", "201001234567", 42, {
+        channel: "whatsapp",
+        customerPhone: "201001234567",
+      }),
+    ]);
+
+    expect(rows).toHaveLength(1);
+    expect(mockedPrisma.conversation.create).toHaveBeenCalledTimes(1);
+    expect(historyConversation.id).toBe(liveConversation.id);
+    expect(mockedPrisma.$executeRaw).toHaveBeenCalledTimes(2);
   });
 });
 

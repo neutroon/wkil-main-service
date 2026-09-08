@@ -11,10 +11,12 @@ const queueMocks = vi.hoisted(() => ({
 
 const contactSyncMocks = vi.hoisted(() => ({
   syncCoexistenceContacts: vi.fn(),
+  countStableCoexistenceContacts: vi.fn(),
 }));
 
 const historyImportMocks = vi.hoisted(() => ({
   importCoexistenceHistoryChunk: vi.fn(),
+  countStableCoexistenceHistoryMessages: vi.fn(),
 }));
 
 const socketSyncMocks = vi.hoisted(() => ({
@@ -136,6 +138,8 @@ const historyPayload = {
 describe("WhatsApp Coexistence payload contracts", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    historyImportMocks.countStableCoexistenceHistoryMessages.mockReturnValue(1);
+    contactSyncMocks.countStableCoexistenceContacts.mockReturnValue(1);
     queueMocks.add.mockResolvedValue({
       id: "queued-job-id",
       getState: queueMocks.getState,
@@ -324,6 +328,79 @@ describe("WhatsApp Coexistence payload contracts", () => {
     );
     expect(socketSyncMocks.syncSocketFromMessage).not.toHaveBeenCalled();
     await expect(processCoexistenceHistoryJob({ type: "invalid" })).rejects.toThrow();
+  });
+
+  it("preserves the source history count when a retry imports no new rows", async () => {
+    const historyJob = parseCoexistenceHistoryPayload(historyPayload)[0]!;
+    const retryJob = {
+      ...historyJob,
+      historyChunk: {
+        ...historyJob.historyChunk,
+        threads: [
+          {
+            ...historyJob.historyChunk.threads[0]!,
+            messages: [
+              ...historyJob.historyChunk.threads[0]!.messages,
+              {
+                ...historyJob.historyChunk.threads[0]!.messages[0]!,
+                timestamp: "not-a-date",
+              },
+            ],
+          },
+        ],
+      },
+    };
+    historyImportMocks.importCoexistenceHistoryChunk.mockResolvedValue({
+      businessProfileId: 42,
+      processed: 1,
+      imported: 0,
+      duplicates: 1,
+      skipped: 1,
+      conversationIds: [101],
+    });
+
+    await processCoexistenceHistoryJob(retryJob, "same-history-job");
+
+    expect(socketSyncMocks.syncCoexistenceHistoryImported).toHaveBeenCalledWith(
+      {
+        businessProfileId: 42,
+        phoneNumberId: "phone-number-id",
+        conversationIds: [101],
+        importedMessageCount: 1,
+        importedContactCount: 0,
+      },
+      expect.stringContaining("same-history-job"),
+    );
+  });
+
+  it("preserves the source contact count when a retry claims no new contacts", async () => {
+    const contactsJob = parseCoexistenceContactsPayload({
+      wabaId: "waba-1",
+      metadata: { phone_number_id: "phone-number-id" },
+      state_sync: [{ type: "contact", action: "add", contact: { wa_id: "201001234567" } }],
+    });
+    contactSyncMocks.syncCoexistenceContacts.mockResolvedValue({
+      businessProfileId: 42,
+      processed: 0,
+      added: 0,
+      updated: 0,
+      removed: 0,
+      duplicates: 1,
+      skipped: 0,
+    });
+
+    await processCoexistenceContactsJob(contactsJob, "same-contacts-job");
+
+    expect(socketSyncMocks.syncCoexistenceHistoryImported).toHaveBeenCalledWith(
+      {
+        businessProfileId: 42,
+        phoneNumberId: "phone-number-id",
+        conversationIds: [],
+        importedMessageCount: 0,
+        importedContactCount: 1,
+      },
+      expect.stringContaining("same-contacts-job"),
+    );
   });
 
   it("forwards BullMQ options and skips only post-enqueue diagnostics for coexistence jobs", async () => {

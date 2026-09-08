@@ -119,6 +119,19 @@ function contactIdentity(contact: NormalizedContact) {
   ].join(":");
 }
 
+export function countStableCoexistenceContacts(
+  input: CoexistenceContactsInput,
+): number {
+  const identities = new Set<string>();
+
+  for (const event of input.stateSync) {
+    const normalized = normalizeContact(event);
+    if (normalized) identities.add(contactIdentity(normalized));
+  }
+
+  return identities.size;
+}
+
 function mergeContactMetadata(
   current: unknown,
   incoming: Record<string, unknown> | undefined,

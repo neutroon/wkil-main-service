@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  countStableCoexistenceContacts,
   syncCoexistenceContacts,
   type CoexistenceContactsJob,
   type CoexistenceContactStateSync,
@@ -108,6 +109,16 @@ describe("WhatsApp Coexistence contact synchronization", () => {
     mockedPrisma.customer.update.mockImplementation((args: any) =>
       Promise.resolve({ ...makeCustomer(), ...args.data }),
     );
+  });
+
+  it("counts unique recognized contact state-sync entries", () => {
+    const input = job([
+      contact(),
+      contact(),
+      { type: "message", action: "add", phone: "+20100111222" },
+    ]);
+
+    expect(countStableCoexistenceContacts(input)).toBe(1);
   });
 
   it("adds a contact using the normalized phone identity without touching interaction time", async () => {

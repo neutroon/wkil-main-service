@@ -9,8 +9,14 @@ import {
   type WhatsappCoexistenceContactsJob,
   type WhatsappCoexistenceHistoryJob,
 } from "./whatsappCoexistence.schemas";
-import { syncCoexistenceContacts } from "./whatsappCoexistenceContacts.service";
-import { importCoexistenceHistoryChunk } from "./whatsappCoexistenceHistory.service";
+import {
+  countStableCoexistenceContacts,
+  syncCoexistenceContacts,
+} from "./whatsappCoexistenceContacts.service";
+import {
+  countStableCoexistenceHistoryMessages,
+  importCoexistenceHistoryChunk,
+} from "./whatsappCoexistenceHistory.service";
 import { syncCoexistenceHistoryImported } from "@modules/realtime/socketSync.service";
 
 export type whatsappCoexistenceHistoryJob = WhatsappCoexistenceHistoryJob;
@@ -152,13 +158,14 @@ export async function processCoexistenceHistoryJob(
   jobId?: string | null,
 ): Promise<void> {
   const input = coexistenceHistoryJobSchema.parse(payload);
+  const importedMessageCount = countStableCoexistenceHistoryMessages(input);
   const summary = await importCoexistenceHistoryChunk(input);
   await syncCoexistenceHistoryImported(
     {
       businessProfileId: summary.businessProfileId,
       phoneNumberId: input.phoneNumberId,
       conversationIds: summary.conversationIds,
-      importedMessageCount: summary.imported,
+      importedMessageCount,
       importedContactCount: 0,
     },
     createCoexistenceImportEventKey(input, jobId),
@@ -170,6 +177,7 @@ export async function processCoexistenceContactsJob(
   jobId?: string | null,
 ): Promise<void> {
   const input = coexistenceContactsJobSchema.parse(payload);
+  const importedContactCount = countStableCoexistenceContacts(input);
   const summary = await syncCoexistenceContacts(input);
   await syncCoexistenceHistoryImported(
     {
@@ -177,7 +185,7 @@ export async function processCoexistenceContactsJob(
       phoneNumberId: input.phoneNumberId,
       conversationIds: [],
       importedMessageCount: 0,
-      importedContactCount: summary.processed,
+      importedContactCount,
     },
     createCoexistenceImportEventKey(input, jobId),
   );

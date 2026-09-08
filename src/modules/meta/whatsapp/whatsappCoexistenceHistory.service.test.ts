@@ -30,6 +30,7 @@ vi.mock("@modules/meta/core/metaProcessor.service", () => ({
 }));
 
 import {
+  countStableCoexistenceHistoryMessages,
   importCoexistenceHistoryChunk,
   type CoexistenceHistoryInput,
 } from "./whatsappCoexistenceHistory.service";
@@ -106,6 +107,27 @@ describe("WhatsApp Coexistence history importer", () => {
       id: Number(mocks.messageCreate.mock.calls.length),
       ...data,
     }));
+  });
+
+  it("counts unique history WAMIDs with valid source timestamps", () => {
+    const input: CoexistenceHistoryInput = {
+      ...historyJob,
+      historyChunk: {
+        ...historyJob.historyChunk,
+        threads: [
+          {
+            ...historyJob.historyChunk.threads[0]!,
+            messages: [
+              ...historyJob.historyChunk.threads[0]!.messages,
+              historyJob.historyChunk.threads[0]!.messages[0]!,
+              { id: "wamid-invalid", timestamp: "not-a-date" },
+            ],
+          },
+        ],
+      },
+    };
+
+    expect(countStableCoexistenceHistoryMessages(input)).toBe(3);
   });
 
   it("persists original UTC timestamps, participant roles, read status, and media metadata", async () => {

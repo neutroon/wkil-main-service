@@ -175,6 +175,24 @@ function historyMessages(
   return normalized;
 }
 
+export function countStableCoexistenceHistoryMessages(
+  input: CoexistenceHistoryInput,
+): number {
+  const externalIds = new Set<string>();
+
+  for (const thread of input.historyChunk.threads) {
+    for (const value of thread.messages) {
+      const message = asRecord(value);
+      const externalId = firstString(message.id);
+      if (externalId && sourceCreatedAt(message.timestamp)) {
+        externalIds.add(externalId);
+      }
+    }
+  }
+
+  return externalIds.size;
+}
+
 async function importBatch(
   input: CoexistenceHistoryInput,
   businessProfileId: number,

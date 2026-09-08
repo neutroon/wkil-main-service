@@ -5,11 +5,13 @@ vi.mock("@config/prisma", () => ({
     conversationMessage: {
       create: vi.fn(),
       findMany: vi.fn(),
+      findUnique: vi.fn(),
     },
     conversation: {
       findFirst: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
+      findUnique: vi.fn(),
     },
     customer: {
       updateMany: vi.fn(),
@@ -32,7 +34,7 @@ vi.mock("@utils/logger", () => ({
 }));
 
 import prisma from "@config/prisma";
-import { saveMessage } from "./conversation.service";
+import { listConversationMessages, saveMessage } from "./conversation.service";
 
 const mockedPrisma = prisma as any;
 
@@ -96,5 +98,87 @@ describe("saveMessage", () => {
       where: { id: 99 },
       data: { lastInteractionAt: expect.any(Date) },
     });
+  });
+});
+
+describe("listConversationMessages cursor pagination", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedPrisma.conversation.findUnique.mockResolvedValue({
+      id: 45,
+      senderId: "201001234567",
+      pageId: "phone-number-id",
+      channel: "whatsapp",
+    });
+  });
+
+  it("resolves numeric cursors by timestamp so older history survives a newer live message ID", async () => {
+    const liveCreatedAt = new Date("2026-09-08T10:00:00.000Z");
+    const historyCreatedAt = new Date("2024-01-01T00:00:00.000Z");
+    mockedPrisma.conversationMessage.findMany
+      .mockResolvedValueOnce([
+        {
+          id: 100,
+          conversationId: 45,
+          role: "user",
+          content: "live",
+          type: "text",
+          mediaId: null,
+          mediaMetadata: null,
+          status: "SENT",
+          aiReasoning: null,
+          handoffCategory: null,
+          intent: null,
+          isPrivate: false,
+          origin: null,
+          createdAt: liveCreatedAt,
+          conversation: { id: 45, channel: "whatsapp", postId: null, externalId: null },
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: 50,
+          conversationId: 45,
+          role: "user",
+          content: "history",
+          type: "text",
+          mediaId: null,
+          mediaMetadata: null,
+          status: "SENT",
+          aiReasoning: null,
+          handoffCategory: null,
+          intent: null,
+          isPrivate: false,
+          origin: "whatsapp_coexistence_history",
+          createdAt: historyCreatedAt,
+          conversation: { id: 45, channel: "whatsapp", postId: null, externalId: null },
+        },
+      ]);
+    mockedPrisma.conversationMessage.findUnique.mockResolvedValue({
+      id: 100,
+      conversationId: 45,
+      createdAt: liveCreatedAt,
+    });
+
+    const firstPage = await listConversationMessages(45, 1);
+    const secondPage = await listConversationMessages(45, 1, firstPage.meta.nextCursor!);
+
+    expect(firstPage.meta.nextCursor).toBe(100);
+    expect(secondPage.data[0]?.id).toBe(50);
+    expect(mockedPrisma.conversationMessage.findUnique).toHaveBeenCalledWith({
+      where: { id: 100 },
+      select: { id: true, conversationId: true, createdAt: true },
+    });
+    expect(mockedPrisma.conversationMessage.findMany).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      where: {
+        conversationId: 45,
+        OR: [
+          { createdAt: { lt: liveCreatedAt } },
+          { createdAt: liveCreatedAt, id: { lt: 100 } },
+        ],
+      },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: 1,
+    }));
   });
 });

@@ -19,6 +19,21 @@ const prismaWithQueryTrace = basePrisma.$extends({
   },
 });
 
+const WHATSAPP_COEXISTENCE_HISTORY_ORIGIN = "whatsapp_coexistence_history";
+
+function isHistoricalConversationMessageWrite(args: any, result: any): boolean {
+  const dataCandidates = [args?.data, args?.create, args?.update];
+  const inputOrigin = dataCandidates
+    .filter((candidate) => candidate && typeof candidate === "object" && !Array.isArray(candidate))
+    .map((candidate) => candidate.origin)
+    .find((origin) => origin === WHATSAPP_COEXISTENCE_HISTORY_ORIGIN);
+
+  return (
+    inputOrigin === WHATSAPP_COEXISTENCE_HISTORY_ORIGIN ||
+    (!Array.isArray(result) && result?.origin === WHATSAPP_COEXISTENCE_HISTORY_ORIGIN)
+  );
+}
+
 /**
  * ELITE TIER: Automated Side-Effects Extension
  * This extension intercepts every write to 'conversationMessage' and 
@@ -31,7 +46,11 @@ const prisma = prismaWithQueryTrace.$extends({
         const result = await query(args);
 
         // Automated Message Sync (Upsert/Update/Delete)
-        if (["create", "update", "upsert", "delete"].includes(operation) && result) {
+        if (
+          ["create", "update", "upsert", "delete"].includes(operation) &&
+          result &&
+          !isHistoricalConversationMessageWrite(args, result)
+        ) {
           import("@modules/realtime/socketSync.service")
             .then(async ({ syncSocketFromMessage, emitToBusiness }) => {
               if (operation === "delete") {
@@ -89,5 +108,4 @@ const prisma = prismaWithQueryTrace.$extends({
 
 export default prisma;
 export { Prisma };
-
 

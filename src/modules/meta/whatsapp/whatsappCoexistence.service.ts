@@ -10,6 +10,7 @@ import {
   type WhatsappCoexistenceHistoryJob,
 } from "./whatsappCoexistence.schemas";
 import { syncCoexistenceContacts } from "./whatsappCoexistenceContacts.service";
+import { importCoexistenceHistoryChunk } from "./whatsappCoexistenceHistory.service";
 
 export type whatsappCoexistenceHistoryJob = WhatsappCoexistenceHistoryJob;
 export type whatsappCoexistenceContactsJob = WhatsappCoexistenceContactsJob;
@@ -136,10 +137,8 @@ export function createCoexistenceContactsJobId(
 export async function processCoexistenceHistoryJob(
   payload: unknown,
 ): Promise<void> {
-  // Task 2 replaces this boundary with the historical importer. Failing keeps
-  // the BullMQ job retryable instead of silently acknowledging data.
-  coexistenceHistoryJobSchema.parse(payload);
-  throw new Error("whatsapp coexistence history importer is not installed");
+  const input = coexistenceHistoryJobSchema.parse(payload);
+  await importCoexistenceHistoryChunk(input);
 }
 
 export async function processCoexistenceContactsJob(

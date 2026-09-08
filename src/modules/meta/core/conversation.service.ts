@@ -395,12 +395,31 @@ export async function listConversationMessages(
 
   if (!mainConv) throw new AppError("Conversation not found", 404);
 
+  let messageWhere: any = { conversationId };
+  if (cursor !== undefined) {
+    const cursorAnchor = await prisma.conversationMessage.findUnique({
+      where: { id: cursor },
+      select: { id: true, conversationId: true, createdAt: true },
+    });
+
+    if (cursorAnchor?.conversationId === conversationId) {
+      messageWhere = {
+        conversationId,
+        OR: [
+          { createdAt: { lt: cursorAnchor.createdAt } },
+          { createdAt: cursorAnchor.createdAt, id: { lt: cursorAnchor.id } },
+        ],
+      };
+    } else {
+      // Preserve the legacy numeric-cursor behavior if an old/deleted cursor
+      // cannot be resolved to a timestamp anchor.
+      messageWhere = { conversationId, id: { lt: cursor } };
+    }
+  }
+
   const messages = await prisma.conversationMessage.findMany({
-    where: {
-      conversationId: conversationId,
-      ...(cursor ? { id: { lt: cursor } } : {}),
-    },
-    orderBy: { id: "desc" },
+    where: messageWhere,
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     take: limit,
     include: {
       conversation: {

@@ -602,6 +602,7 @@ model ConversationMessage {
 
   @@index([conversationId])
   @@index([conversationId, createdAt])
+  @@index([conversationId, createdAt, id])
   @@index([status, createdAt])
   @@index([handoffCategory])
   @@index([externalId])

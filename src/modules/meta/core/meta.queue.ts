@@ -1,5 +1,5 @@
 import * as Sentry from "@sentry/node";
-import { Queue, Worker, Job, QueueEvents } from "bullmq";
+import { Queue, Worker, Job, QueueEvents, type JobsOptions } from "bullmq";
 import { bullConnection, bullQueuePrefix } from "@config/redis";
 import { logger } from "@utils/logger";
 import type { IntegrationActionJob } from "@modules/integrations/external/agentAction.job";
@@ -64,7 +64,9 @@ export type MetaJobType =
   | "token_refresh_cron"
   | "follow_up"
   | "integration_action"
-  | "customer_memory_capture";
+  | "customer_memory_capture"
+  | "whatsapp_coexistence_history"
+  | "whatsapp_coexistence_contacts";
 
 export interface MetaEngineJob {
   type: MetaJobType;
@@ -111,25 +113,55 @@ function summarizeMetaQueuePayload(payload: any): Record<string, string | number
   return summary;
 }
 
+export type MetaEnqueueOptions = {
+  jobId?: string;
+  attempts?: JobsOptions["attempts"];
+  backoff?: JobsOptions["backoff"];
+  removeOnComplete?: JobsOptions["removeOnComplete"];
+  removeOnFail?: JobsOptions["removeOnFail"];
+};
+
 /**
  * Enqueues a job into the appropriate BullMQ lane.
  */
 export async function enqueueMetaJob(
   job: any,
-  opts: { jobId?: string } = {},
+  opts: MetaEnqueueOptions = {},
 ): Promise<void> {
   const { delaySeconds = 0, ...payload } = job;
 
   const isVisual =
     payload.type === "visual_production" || payload.type === "visual_refine";
+  const isCoexistence =
+    payload.type === "whatsapp_coexistence_history" ||
+    payload.type === "whatsapp_coexistence_contacts";
   const queue = isVisual ? metaProductionQueue : metaExpressQueue;
   const jobId = opts.jobId ? safeBullMqJobId(opts.jobId) : undefined;
+  const queueJobType = isVisual
+    ? "visual_production"
+    : isCoexistence
+      ? payload.type
+      : "messaging";
+  const queueJobName = isVisual
+    ? "visual_task"
+    : isCoexistence
+      ? payload.type
+      : "message_task";
 
   try {
     const queuedJob = await queue.add(
-      isVisual ? "visual_task" : "message_task",
-      { type: isVisual ? "visual_production" : "messaging", payload },
-      { delay: delaySeconds * 1000, jobId },
+      queueJobName,
+      { type: queueJobType, payload },
+      {
+        delay: delaySeconds * 1000,
+        jobId,
+        ...(opts.attempts !== undefined ? { attempts: opts.attempts } : {}),
+        ...(opts.backoff !== undefined ? { backoff: opts.backoff } : {}),
+        ...(opts.removeOnComplete !== undefined
+          ? { removeOnComplete: opts.removeOnComplete }
+          : {}),
+        ...(opts.removeOnFail !== undefined ? { removeOnFail: opts.removeOnFail } : {}),
+      },
     );
     const [jobState, counts] = await Promise.all([
       queuedJob.getState().catch(() => "unknown"),
@@ -316,6 +348,12 @@ export const expressWorker = new Worker(
     } else if (type === "customer_memory_capture") {
       const { processCustomerMemoryCaptureJob } = await import("@modules/business/customer/customerMemoryCapture.job");
       await processCustomerMemoryCaptureJob(payload);
+    } else if (type === "whatsapp_coexistence_history") {
+      const { processCoexistenceHistoryJob } = await import("@modules/meta/whatsapp/whatsappCoexistence.service");
+      await processCoexistenceHistoryJob(payload);
+    } else if (type === "whatsapp_coexistence_contacts") {
+      const { processCoexistenceContactsJob } = await import("@modules/meta/whatsapp/whatsappCoexistence.service");
+      await processCoexistenceContactsJob(payload);
     } else {
       await processMetaMessage(payload, {
         jobId: job.id,
@@ -477,7 +515,5 @@ function hashJobText(text: string): string {
   }
   return Math.abs(hash).toString(36);
 }
-
-
 
 

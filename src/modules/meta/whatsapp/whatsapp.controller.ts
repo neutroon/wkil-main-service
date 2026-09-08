@@ -34,6 +34,13 @@ import { invalidateWhatsAppAccountCache } from "../core/webhookCache.service";
 import { getAuthorizedConversation } from "../../inbox/inbox.routes";
 import { parseWhatsAppInteractiveReply } from "@modules/order-confirmation/orderConfirmation.whatsapp.parser";
 import {
+  createCoexistenceContactsJobId,
+  createCoexistenceHistoryJobId,
+  parseCoexistenceContactsPayload,
+  parseCoexistenceHistoryPayload,
+  WHATSAPP_COEXISTENCE_QUEUE_OPTIONS,
+} from "./whatsappCoexistence.service";
+import {
   requireWorkspaceProfileAccess,
   WORKSPACE_MANAGER_ROLES,
 } from "@modules/workspace/workspace.service";
@@ -102,33 +109,79 @@ export class WhatsAppController {
           const value = change.value;
           const phoneNumberId = value?.metadata?.phone_number_id;
 
-          // Coexistence sync events are not live customer messages. They must
-          // still be acknowledged and observed; silently dropping them makes
-          // a successful Meta sync indistinguishable from a broken webhook.
-          if (change.field === "history" || change.field === "smb_app_state_sync") {
-            const historyChunks = Array.isArray(value?.history) ? value.history.length : 0;
-            const historyMessages = Array.isArray(value?.history)
-              ? value.history.reduce(
-                  (total: number, chunk: any) =>
-                    total + (Array.isArray(chunk?.threads)
-                      ? chunk.threads.reduce(
-                          (threadTotal: number, thread: any) =>
-                            threadTotal + (Array.isArray(thread?.messages) ? thread.messages.length : 0),
-                          0,
-                        )
-                      : 0),
+          // Coexistence sync events are not live customer messages. Validate
+          // and hand them to BullMQ so imports cannot run in the webhook path.
+          if (change.field === "history") {
+            let historyJobs;
+            try {
+              historyJobs = parseCoexistenceHistoryPayload({
+                ...(value || {}),
+                wabaId: entry.id,
+              });
+            } catch {
+              logger.warn("whatsapp.webhook.invalid_coexistence_payload", {
+                field: change.field,
+                wabaId: entry.id,
+                phoneNumberId,
+              });
+              return res.status(400).send("INVALID_COEXISTENCE_PAYLOAD");
+            }
+
+            for (const historyJob of historyJobs) {
+              await enqueueMetaJob(historyJob, {
+                jobId: createCoexistenceHistoryJobId(historyJob),
+                ...WHATSAPP_COEXISTENCE_QUEUE_OPTIONS,
+              });
+            }
+
+            const historyMessages = historyJobs.reduce(
+              (total, historyJob) =>
+                total + historyJob.historyChunk.threads.reduce(
+                  (threadTotal, thread) => threadTotal + thread.messages.length,
                   0,
-                )
-              : 0;
-            const stateSyncItems = Array.isArray(value?.state_sync) ? value.state_sync.length : 0;
+                ),
+              0,
+            );
+            logger.info("whatsapp.webhook.coexistence_sync_event_received", {
+              field: change.field,
+              wabaId: entry.id,
+              phoneNumberId,
+              historyChunks: historyJobs.length,
+              historyMessages,
+              stateSyncItems: 0,
+              historyErrors: Array.isArray(value?.errors) ? value.errors.length : 0,
+            });
+            continue;
+          }
+
+          if (change.field === "smb_app_state_sync") {
+            let contactsJob;
+            try {
+              contactsJob = parseCoexistenceContactsPayload({
+                ...(value || {}),
+                wabaId: entry.id,
+              });
+            } catch {
+              logger.warn("whatsapp.webhook.invalid_coexistence_payload", {
+                field: change.field,
+                wabaId: entry.id,
+                phoneNumberId,
+              });
+              return res.status(400).send("INVALID_COEXISTENCE_PAYLOAD");
+            }
+
+            await enqueueMetaJob(contactsJob, {
+              jobId: createCoexistenceContactsJobId(contactsJob),
+              ...WHATSAPP_COEXISTENCE_QUEUE_OPTIONS,
+            });
 
             logger.info("whatsapp.webhook.coexistence_sync_event_received", {
               field: change.field,
               wabaId: entry.id,
               phoneNumberId,
-              historyChunks,
-              historyMessages,
-              stateSyncItems,
+              historyChunks: 0,
+              historyMessages: 0,
+              stateSyncItems: contactsJob.stateSync.length,
               historyErrors: Array.isArray(value?.errors) ? value.errors.length : 0,
             });
             continue;
@@ -721,5 +774,4 @@ export class WhatsAppController {
 }
 
 export const whatsappController = new WhatsAppController();
-
 

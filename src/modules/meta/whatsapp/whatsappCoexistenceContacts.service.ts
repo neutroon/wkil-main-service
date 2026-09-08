@@ -1,42 +1,17 @@
+import prisma from "@config/prisma";
 import {
   normalizeCustomerPhone,
   upsertCustomerFromConversation,
 } from "@modules/business/customer/customer.service";
+import {
+  type WhatsappCoexistenceContactsJob,
+} from "./whatsappCoexistence.schemas";
 
 export type CoexistenceContactAction = "add" | "edit" | "remove";
 
-export type CoexistenceContactStateSync = {
-  type?: string | null;
-  action: string;
-  eventId?: string | null;
-  idempotencyKey?: string | null;
-  externalId?: string | null;
-  contactId?: string | null;
-  id?: string | null;
-  phone?: string | null;
-  phoneNumber?: string | null;
-  phone_number?: string | null;
-  waId?: string | null;
-  wa_id?: string | null;
-  displayName?: string | null;
-  name?: string | null;
-  fullName?: string | null;
-  full_name?: string | null;
-  metadata?: Record<string, unknown> | null;
-  contact?: Record<string, unknown> | null;
-  [key: string]: unknown;
-};
-
-export type CoexistenceContactsInput = {
-  businessProfileId: number;
-  phoneNumberId: string;
-  contacts?: CoexistenceContactStateSync[];
-  events?: CoexistenceContactStateSync[];
-  items?: CoexistenceContactStateSync[];
-  stateSync?: CoexistenceContactStateSync[];
-};
-
-export type CoexistenceContactsJob = CoexistenceContactsInput;
+export type CoexistenceContactStateSync = WhatsappCoexistenceContactsJob["stateSync"][number];
+export type CoexistenceContactsInput = WhatsappCoexistenceContactsJob;
+export type CoexistenceContactsJob = WhatsappCoexistenceContactsJob;
 
 export type CoexistenceContactsSummary = {
   processed: number;
@@ -55,6 +30,8 @@ type NormalizedContact = {
   displayName: string | null;
   metadata?: Record<string, unknown>;
 };
+
+type CustomerMetadata = Record<string, unknown>;
 
 function cleanString(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -136,22 +113,104 @@ function contactIdentity(contact: NormalizedContact) {
   ].join(":");
 }
 
-function removedMetadata(contact: NormalizedContact) {
-  return {
-    ...contact.metadata,
-    whatsappCoexistence: {
-      state: "REMOVED",
-      removed: true,
-      removedAt: new Date().toISOString(),
-      ...(contact.eventId ? { eventId: contact.eventId } : {}),
-    },
+function processedEventIds(metadata: unknown): string[] {
+  const root = asRecord(asRecord(metadata)?.whatsappCoexistence);
+  return Array.isArray(root?.processedEventIds)
+    ? root.processedEventIds.filter((value): value is string => typeof value === "string")
+    : [];
+}
+
+function mergeContactMetadata(
+  current: unknown,
+  incoming: Record<string, unknown> | undefined,
+  contact: NormalizedContact,
+  identity: string,
+): CustomerMetadata {
+  const currentMetadata = asRecord(current) || {};
+  const incomingMetadata = incoming || {};
+  const currentState = asRecord(currentMetadata.whatsappCoexistence) || {};
+  const incomingState = asRecord(incomingMetadata.whatsappCoexistence) || {};
+  const eventIds = Array.from(
+    new Set([
+      ...processedEventIds(currentMetadata),
+      ...processedEventIds(incomingMetadata),
+      identity,
+    ]),
+  );
+  const nextState: CustomerMetadata = {
+    ...currentState,
+    ...incomingState,
+    processedEventIds: eventIds,
   };
+
+  if (contact.action === "remove") {
+    nextState.state = "REMOVED";
+    nextState.removed = true;
+    nextState.removedAt = new Date().toISOString();
+    if (contact.eventId) nextState.eventId = contact.eventId;
+  } else {
+    delete nextState.state;
+    delete nextState.removed;
+    delete nextState.removedAt;
+    delete nextState.eventId;
+  }
+
+  return {
+    ...currentMetadata,
+    ...incomingMetadata,
+    whatsappCoexistence: nextState,
+  };
+}
+
+async function findContactCustomer(params: {
+  businessProfileId: number;
+  externalId: string | null;
+  normalizedPhone: string | null;
+}) {
+  if (params.externalId) {
+    const identity = await prisma.customerExternalIdentity.findUnique({
+      where: {
+        businessProfileId_channel_externalId: {
+          businessProfileId: params.businessProfileId,
+          channel: "whatsapp",
+          externalId: params.externalId,
+        },
+      },
+      include: { customer: true },
+    });
+    if (identity?.customer) return identity.customer;
+  }
+
+  if (params.normalizedPhone) {
+    return prisma.customer.findUnique({
+      where: {
+        businessProfileId_normalizedPhone: {
+          businessProfileId: params.businessProfileId,
+          normalizedPhone: params.normalizedPhone,
+        },
+      },
+    });
+  }
+
+  return null;
 }
 
 export async function syncCoexistenceContacts(
   input: CoexistenceContactsInput,
 ): Promise<CoexistenceContactsSummary> {
-  const contacts = input.contacts || input.events || input.items || input.stateSync || [];
+  const account = await prisma.whatsAppAccount.findFirst({
+    where: {
+      phoneNumberId: input.phoneNumberId,
+      isActive: true,
+      businessProfileId: { not: null },
+    },
+    select: { businessProfileId: true },
+  });
+  if (!account?.businessProfileId) {
+    throw new Error("WhatsApp account is not linked to a business profile");
+  }
+
+  const contacts = input.stateSync;
   const seen = new Set<string>();
   const summary: CoexistenceContactsSummary = {
     processed: 0,
@@ -176,13 +235,30 @@ export async function syncCoexistenceContacts(
     }
     seen.add(identity);
 
+    const existing = await findContactCustomer({
+      businessProfileId: account.businessProfileId,
+      externalId: normalized.externalId,
+      normalizedPhone: normalizeCustomerPhone(normalized.phone),
+    });
+    if (processedEventIds(existing?.metadata).includes(identity)) {
+      summary.duplicates += 1;
+      continue;
+    }
+
+    const metadata = mergeContactMetadata(
+      existing?.metadata,
+      normalized.metadata,
+      normalized,
+      identity,
+    );
+
     await upsertCustomerFromConversation({
-      businessProfileId: input.businessProfileId,
+      businessProfileId: account.businessProfileId,
       channel: "whatsapp",
       senderId: normalized.externalId || normalized.phone || identity,
       customerPhone: normalized.phone,
       customerName: normalized.displayName,
-      metadata: normalized.action === "remove" ? removedMetadata(normalized) : normalized.metadata,
+      metadata,
       updateInteraction: false,
     });
 

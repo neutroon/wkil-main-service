@@ -294,9 +294,7 @@ export async function upsertCustomerFromConversation(params: {
           : {}),
         ...(
           params.updateInteraction === false
-            ? historicalActivity
-              ? { lastInteractionAt: historicalActivity }
-              : {}
+            ? { lastInteractionAt: (historicalActivity ?? null) as unknown as Date }
             : { lastInteractionAt: historicalActivity || now }
         ),
       },

@@ -22,6 +22,11 @@ export type CoexistenceContactsSummary = {
   skipped: number;
 };
 
+type ContactDatabase = Pick<
+  typeof prisma,
+  "customer" | "customerExternalIdentity" | "conversation" | "whatsAppCoexistenceContactEvent"
+>;
+
 type NormalizedContact = {
   action: CoexistenceContactAction;
   eventId: string | null;
@@ -113,35 +118,20 @@ function contactIdentity(contact: NormalizedContact) {
   ].join(":");
 }
 
-function processedEventIds(metadata: unknown): string[] {
-  const root = asRecord(asRecord(metadata)?.whatsappCoexistence);
-  return Array.isArray(root?.processedEventIds)
-    ? root.processedEventIds.filter((value): value is string => typeof value === "string")
-    : [];
-}
-
 function mergeContactMetadata(
   current: unknown,
   incoming: Record<string, unknown> | undefined,
   contact: NormalizedContact,
-  identity: string,
 ): CustomerMetadata {
   const currentMetadata = asRecord(current) || {};
   const incomingMetadata = incoming || {};
   const currentState = asRecord(currentMetadata.whatsappCoexistence) || {};
   const incomingState = asRecord(incomingMetadata.whatsappCoexistence) || {};
-  const eventIds = Array.from(
-    new Set([
-      ...processedEventIds(currentMetadata),
-      ...processedEventIds(incomingMetadata),
-      identity,
-    ]),
-  );
   const nextState: CustomerMetadata = {
     ...currentState,
     ...incomingState,
-    processedEventIds: eventIds,
   };
+  delete nextState.processedEventIds;
 
   if (contact.action === "remove") {
     nextState.state = "REMOVED";
@@ -155,20 +145,22 @@ function mergeContactMetadata(
     delete nextState.eventId;
   }
 
-  return {
+  const result: CustomerMetadata = {
     ...currentMetadata,
     ...incomingMetadata,
     whatsappCoexistence: nextState,
   };
+
+  return result;
 }
 
 async function findContactCustomer(params: {
   businessProfileId: number;
   externalId: string | null;
   normalizedPhone: string | null;
-}) {
+}, db: ContactDatabase) {
   if (params.externalId) {
-    const identity = await prisma.customerExternalIdentity.findUnique({
+    const identity = await db.customerExternalIdentity.findUnique({
       where: {
         businessProfileId_channel_externalId: {
           businessProfileId: params.businessProfileId,
@@ -182,7 +174,7 @@ async function findContactCustomer(params: {
   }
 
   if (params.normalizedPhone) {
-    return prisma.customer.findUnique({
+    return db.customer.findUnique({
       where: {
         businessProfileId_normalizedPhone: {
           businessProfileId: params.businessProfileId,
@@ -193,6 +185,15 @@ async function findContactCustomer(params: {
   }
 
   return null;
+}
+
+function isUniqueConstraintError(error: unknown): boolean {
+  return (
+    error !== null &&
+    typeof error === "object" &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "P2002"
+  );
 }
 
 export async function syncCoexistenceContacts(
@@ -209,6 +210,7 @@ export async function syncCoexistenceContacts(
   if (!account?.businessProfileId) {
     throw new Error("WhatsApp account is not linked to a business profile");
   }
+  const businessProfileId = account.businessProfileId;
 
   const contacts = input.stateSync;
   const seen = new Set<string>();
@@ -235,32 +237,52 @@ export async function syncCoexistenceContacts(
     }
     seen.add(identity);
 
-    const existing = await findContactCustomer({
-      businessProfileId: account.businessProfileId,
-      externalId: normalized.externalId,
-      normalizedPhone: normalizeCustomerPhone(normalized.phone),
-    });
-    if (processedEventIds(existing?.metadata).includes(identity)) {
-      summary.duplicates += 1;
-      continue;
+    let eventClaimed = false;
+    try {
+      await prisma.$transaction(async (tx) => {
+        const db = tx as unknown as ContactDatabase;
+
+        // The claim remains uncommitted until customer persistence and identity
+        // attachment succeed. A unique violation serializes concurrent jobs,
+        // while rollback leaves a failed delivery retryable.
+        await db.whatsAppCoexistenceContactEvent.create({
+          data: {
+            businessProfileId,
+            phoneNumberId: input.phoneNumberId,
+            eventKey: identity,
+          },
+        });
+        eventClaimed = true;
+
+        const existing = await findContactCustomer({
+          businessProfileId,
+          externalId: normalized.externalId,
+          normalizedPhone: normalizeCustomerPhone(normalized.phone),
+        }, db);
+        const metadata = mergeContactMetadata(
+          existing?.metadata,
+          normalized.metadata,
+          normalized,
+        );
+
+        await upsertCustomerFromConversation({
+          businessProfileId,
+          channel: "whatsapp",
+          senderId: normalized.externalId || normalized.phone || identity,
+          customerPhone: normalized.phone,
+          customerName: normalized.displayName,
+          metadata,
+          updateInteraction: false,
+          db,
+        });
+      });
+    } catch (error) {
+      if (!eventClaimed && isUniqueConstraintError(error)) {
+        summary.duplicates += 1;
+        continue;
+      }
+      throw error;
     }
-
-    const metadata = mergeContactMetadata(
-      existing?.metadata,
-      normalized.metadata,
-      normalized,
-      identity,
-    );
-
-    await upsertCustomerFromConversation({
-      businessProfileId: account.businessProfileId,
-      channel: "whatsapp",
-      senderId: normalized.externalId || normalized.phone || identity,
-      customerPhone: normalized.phone,
-      customerName: normalized.displayName,
-      metadata,
-      updateInteraction: false,
-    });
 
     summary.processed += 1;
     if (normalized.action === "add") summary.added += 1;

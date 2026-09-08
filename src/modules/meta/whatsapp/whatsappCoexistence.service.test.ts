@@ -9,6 +9,10 @@ const queueMocks = vi.hoisted(() => ({
   loggerWarn: vi.fn(),
 }));
 
+const contactSyncMocks = vi.hoisted(() => ({
+  syncCoexistenceContacts: vi.fn(),
+}));
+
 vi.mock("bullmq", () => ({
   Queue: class MockQueue {
     add(...args: unknown[]) {
@@ -45,6 +49,8 @@ vi.mock("@modules/meta/core/metaProcessor.service", () => ({
 vi.mock("@modules/media/services/mediaLibrary.service", () => ({
   registerAssetWithMeta: vi.fn(),
 }));
+
+vi.mock("./whatsappCoexistenceContacts.service", () => contactSyncMocks);
 
 import {
   createCoexistenceContactsJobId,
@@ -250,7 +256,7 @@ describe("WhatsApp Coexistence payload contracts", () => {
     });
   });
 
-  it("validates normalized history and contacts jobs at the worker dispatch hooks", async () => {
+  it("dispatches normalized contacts while keeping history on its Task 2 stub", async () => {
     const historyJob = parseCoexistenceHistoryPayload(historyPayload)[0]!;
     const contactsJob = parseCoexistenceContactsPayload({
       wabaId: "waba-1",
@@ -261,9 +267,16 @@ describe("WhatsApp Coexistence payload contracts", () => {
     await expect(processCoexistenceHistoryJob(historyJob)).rejects.toThrow(
       "whatsapp coexistence history importer is not installed",
     );
-    await expect(processCoexistenceContactsJob(contactsJob)).rejects.toThrow(
-      "whatsapp coexistence contacts importer is not installed",
-    );
+    contactSyncMocks.syncCoexistenceContacts.mockResolvedValue({
+      processed: 1,
+      added: 1,
+      updated: 0,
+      removed: 0,
+      duplicates: 0,
+      skipped: 0,
+    });
+    await expect(processCoexistenceContactsJob(contactsJob)).resolves.toBeUndefined();
+    expect(contactSyncMocks.syncCoexistenceContacts).toHaveBeenCalledWith(contactsJob);
     await expect(processCoexistenceHistoryJob({ type: "invalid" })).rejects.toThrow();
   });
 

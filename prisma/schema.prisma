@@ -272,6 +272,7 @@ model BusinessProfile {
   orderStoreSyncs       OrderStoreSync[]
   orderTemplateConfigs  OrderTemplateConfig[]
   whatsAppSuppressions  WhatsAppSuppression[]
+  whatsAppCoexistenceContactEvents WhatsAppCoexistenceContactEvent[]
 }
 
 model Workspace {
@@ -425,7 +426,7 @@ model Customer {
   resolvedAt        DateTime?
   resolvedByUserId  Int?
   notes             String?   @db.Text
-  lastInteractionAt DateTime  @default(now())
+  lastInteractionAt DateTime?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
@@ -451,6 +452,18 @@ model CustomerExternalIdentity {
 
   @@unique([businessProfileId, channel, externalId])
   @@index([customerId])
+}
+
+model WhatsAppCoexistenceContactEvent {
+  id                Int             @id @default(autoincrement())
+  businessProfileId Int
+  businessProfile   BusinessProfile @relation(fields: [businessProfileId], references: [id], onDelete: Cascade)
+  phoneNumberId     String
+  eventKey          String
+  createdAt         DateTime        @default(now())
+
+  @@unique([businessProfileId, phoneNumberId, eventKey])
+  @@index([createdAt])
 }
 
 model Conversation {

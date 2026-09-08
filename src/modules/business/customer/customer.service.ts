@@ -6,6 +6,11 @@ import { type CustomerStatus } from "./customer.validation";
 const DEFAULT_STATUS: CustomerStatus = "ACTIVE";
 const FOLLOW_UP_STATUS: CustomerStatus = "NEEDS_FOLLOW_UP";
 
+type CustomerDatabase = Pick<
+  typeof prisma,
+  "customer" | "customerExternalIdentity" | "conversation"
+>;
+
 const customerMemorySelect = {
   id: true,
   businessProfileId: true,
@@ -162,12 +167,12 @@ async function findCustomerByIdentity(params: {
   externalId?: string | null;
   normalizedPhone?: string | null;
   normalizedEmail?: string | null;
-}) {
+}, db: CustomerDatabase = prisma) {
   const channel = cleanString(params.channel);
   const externalId = cleanString(params.externalId);
 
   if (channel && externalId) {
-    const identity = await prisma.customerExternalIdentity.findUnique({
+    const identity = await db.customerExternalIdentity.findUnique({
       where: {
         businessProfileId_channel_externalId: {
           businessProfileId: params.businessProfileId,
@@ -181,7 +186,7 @@ async function findCustomerByIdentity(params: {
   }
 
   if (params.normalizedPhone) {
-    const byPhone = await prisma.customer.findUnique({
+    const byPhone = await db.customer.findUnique({
       where: {
         businessProfileId_normalizedPhone: {
           businessProfileId: params.businessProfileId,
@@ -193,7 +198,7 @@ async function findCustomerByIdentity(params: {
   }
 
   if (params.normalizedEmail) {
-    const byEmail = await prisma.customer.findUnique({
+    const byEmail = await db.customer.findUnique({
       where: {
         businessProfileId_normalizedEmail: {
           businessProfileId: params.businessProfileId,
@@ -212,12 +217,12 @@ async function attachExternalIdentity(params: {
   businessProfileId: number;
   channel?: string | null;
   externalId?: string | null;
-}) {
+}, db: CustomerDatabase = prisma) {
   const channel = cleanString(params.channel);
   const externalId = cleanString(params.externalId);
   if (!channel || !externalId) return;
 
-  const identity = await prisma.customerExternalIdentity.upsert({
+  const identity = await db.customerExternalIdentity.upsert({
     where: {
       businessProfileId_channel_externalId: {
         businessProfileId: params.businessProfileId,
@@ -238,7 +243,7 @@ async function attachExternalIdentity(params: {
     await mergeCustomerIdentity({
       targetCustomerId: identity.customerId,
       sourceCustomerId: params.customerId,
-    });
+    }, db);
   }
 }
 
@@ -254,7 +259,9 @@ export async function upsertCustomerFromConversation(params: {
   metadata?: Record<string, unknown>;
   updateInteraction?: boolean;
   activityAt?: Date | null;
+  db?: CustomerDatabase;
 }) {
+  const db = params.db || prisma;
   const channel = cleanString(params.channel) || "web";
   const phone = cleanString(params.customerPhone) || (channel === "whatsapp" ? params.senderId : null);
   const email = cleanString(params.email);
@@ -275,10 +282,10 @@ export async function upsertCustomerFromConversation(params: {
     externalId: params.senderId,
     normalizedPhone,
     normalizedEmail,
-  });
+  }, db);
 
   if (!customer) {
-    customer = await prisma.customer.create({
+    customer = await db.customer.create({
       data: {
         businessProfileId: params.businessProfileId,
         displayName,
@@ -294,7 +301,7 @@ export async function upsertCustomerFromConversation(params: {
           : {}),
         ...(
           params.updateInteraction === false
-            ? { lastInteractionAt: (historicalActivity ?? null) as unknown as Date }
+            ? { lastInteractionAt: historicalActivity ?? null }
             : { lastInteractionAt: historicalActivity || now }
         ),
       },
@@ -307,7 +314,7 @@ export async function upsertCustomerFromConversation(params: {
           ? historicalActivityToWrite(customer.lastInteractionAt, params.activityAt)
           : now;
 
-    customer = await prisma.customer.update({
+    customer = await db.customer.update({
       where: { id: customer.id },
       data: {
         displayName:
@@ -334,10 +341,10 @@ export async function upsertCustomerFromConversation(params: {
     businessProfileId: params.businessProfileId,
     channel,
     externalId: params.senderId,
-  });
+  }, db);
 
   if (params.conversationId) {
-    await prisma.conversation.updateMany({
+    await db.conversation.updateMany({
       where: { id: params.conversationId, businessProfileId: params.businessProfileId },
       data: { customerId: customer.id },
     });
@@ -454,25 +461,25 @@ export async function updateCustomerFromSavedDetails(params: {
 export async function mergeCustomerIdentity(params: {
   targetCustomerId: number;
   sourceCustomerId: number;
-}) {
+}, db: CustomerDatabase = prisma) {
   if (params.targetCustomerId === params.sourceCustomerId) return;
 
   const [target, source] = await Promise.all([
-    prisma.customer.findUnique({ where: { id: params.targetCustomerId } }),
-    prisma.customer.findUnique({ where: { id: params.sourceCustomerId } }),
+    db.customer.findUnique({ where: { id: params.targetCustomerId } }),
+    db.customer.findUnique({ where: { id: params.sourceCustomerId } }),
   ]);
   if (!target || !source || target.businessProfileId !== source.businessProfileId) return;
 
-  await prisma.$transaction([
-    prisma.conversation.updateMany({
+  const operations = [
+    db.conversation.updateMany({
       where: { customerId: source.id },
       data: { customerId: target.id },
     }),
-    prisma.customerExternalIdentity.updateMany({
+    db.customerExternalIdentity.updateMany({
       where: { customerId: source.id },
       data: { customerId: target.id },
     }),
-    prisma.customer.update({
+    db.customer.update({
       where: { id: target.id },
       data: {
         phone: target.phone || source.phone,
@@ -482,13 +489,21 @@ export async function mergeCustomerIdentity(params: {
         avatarUrl: target.avatarUrl || source.avatarUrl,
         capturedFields: mergeJsonObject(target.capturedFields, (source.capturedFields || {}) as Record<string, unknown>) as Prisma.InputJsonObject,
         lastInteractionAt:
-          target.lastInteractionAt > source.lastInteractionAt
-            ? target.lastInteractionAt
-            : source.lastInteractionAt,
+          target.lastInteractionAt && source.lastInteractionAt
+            ? target.lastInteractionAt > source.lastInteractionAt
+              ? target.lastInteractionAt
+              : source.lastInteractionAt
+            : target.lastInteractionAt || source.lastInteractionAt,
       },
     }),
-    prisma.customer.delete({ where: { id: source.id } }),
-  ]);
+    db.customer.delete({ where: { id: source.id } }),
+  ];
+
+  if (db === prisma) {
+    await prisma.$transaction(operations);
+  } else {
+    await Promise.all(operations);
+  }
 }
 
 export async function listCustomers(params: {

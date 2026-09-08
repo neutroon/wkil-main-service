@@ -24,6 +24,10 @@ vi.mock("@config/prisma", () => ({
     whatsAppAccount: {
       findFirst: vi.fn(),
     },
+    whatsAppCoexistenceContactEvent: {
+      create: vi.fn(),
+    },
+    $transaction: vi.fn(),
     conversation: {
       updateMany: vi.fn(),
     },
@@ -88,6 +92,9 @@ describe("WhatsApp Coexistence contact synchronization", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedPrisma.whatsAppAccount.findFirst.mockResolvedValue({ businessProfileId: 42 });
+    mockedPrisma.$transaction.mockImplementation((callback: (tx: any) => Promise<unknown>) =>
+      callback(mockedPrisma),
+    );
     mockedPrisma.customerExternalIdentity.findUnique.mockResolvedValue(null);
     mockedPrisma.customerExternalIdentity.upsert.mockImplementation((args: any) =>
       Promise.resolve({
@@ -176,9 +183,6 @@ describe("WhatsApp Coexistence contact synchronization", () => {
           existing: true,
           source: "updated",
           optedIn: true,
-          whatsappCoexistence: expect.objectContaining({
-            processedEventIds: ["event:state-event-edit"],
-          }),
         }),
         externalIds: {
           messenger: ["psid-1"],
@@ -264,10 +268,9 @@ describe("WhatsApp Coexistence contact synchronization", () => {
     const metadata = mockedPrisma.customer.update.mock.calls[0][0].data.metadata;
     expect(metadata).toMatchObject({
       source: "phonebook-updated",
-      whatsappCoexistence: {
-        processedEventIds: ["event:old-remove", "event:state-event-restore"],
-      },
+      whatsappCoexistence: {},
     });
+    expect(metadata.whatsappCoexistence).not.toHaveProperty("processedEventIds");
     expect(metadata.whatsappCoexistence).not.toHaveProperty("state");
     expect(metadata.whatsappCoexistence).not.toHaveProperty("removed");
     expect(metadata.whatsappCoexistence).not.toHaveProperty("removedAt");
@@ -286,7 +289,18 @@ describe("WhatsApp Coexistence contact synchronization", () => {
   });
 
   it("does not repeat database side effects when the same queue job is delivered twice", async () => {
+    const eventKeys = new Set<string>();
     let storedCustomer: any = null;
+    mockedPrisma.whatsAppCoexistenceContactEvent.create.mockImplementation((args: any) => {
+      const key = `${args.data.businessProfileId}:${args.data.phoneNumberId}:${args.data.eventKey}`;
+      if (eventKeys.has(key)) {
+        const error: any = new Error("duplicate event claim");
+        error.code = "P2002";
+        return Promise.reject(error);
+      }
+      eventKeys.add(key);
+      return Promise.resolve({ id: 1, ...args.data });
+    });
     mockedPrisma.customerExternalIdentity.findUnique.mockResolvedValue(null);
     mockedPrisma.customer.findUnique.mockImplementation(() => Promise.resolve(storedCustomer));
     mockedPrisma.customer.findFirst.mockImplementation(() =>
@@ -313,6 +327,92 @@ describe("WhatsApp Coexistence contact synchronization", () => {
     expect(mockedPrisma.customer.create).toHaveBeenCalledTimes(1);
     expect(mockedPrisma.customer.update).not.toHaveBeenCalled();
     expect(mockedPrisma.customerExternalIdentity.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("suppresses concurrent deliveries with an atomic durable event claim", async () => {
+    const eventKeys = new Set<string>();
+    let releaseFirstCreate!: () => void;
+    let firstCreateStarted!: () => void;
+    const firstCreateReady = new Promise<void>((resolve) => {
+      firstCreateStarted = resolve;
+    });
+    const allowFirstCreate = new Promise<void>((resolve) => {
+      releaseFirstCreate = resolve;
+    });
+
+    mockedPrisma.$transaction.mockImplementation((callback: (tx: any) => Promise<unknown>) =>
+      callback(mockedPrisma),
+    );
+    mockedPrisma.whatsAppCoexistenceContactEvent.create.mockImplementation((args: any) => {
+      const key = `${args.data.businessProfileId}:${args.data.phoneNumberId}:${args.data.eventKey}`;
+      if (eventKeys.has(key)) {
+        const error: any = new Error("duplicate event claim");
+        error.code = "P2002";
+        return Promise.reject(error);
+      }
+      eventKeys.add(key);
+      return Promise.resolve({ id: 1, ...args.data });
+    });
+    mockedPrisma.customer.findUnique.mockResolvedValue(null);
+    let createCalls = 0;
+    mockedPrisma.customer.create.mockImplementation(async () => {
+      createCalls += 1;
+      if (createCalls === 1) {
+        firstCreateStarted();
+        await allowFirstCreate;
+      }
+      return makeCustomer();
+    });
+
+    const first = syncCoexistenceContacts(job([contact({ eventId: "concurrent-event" })]));
+    await firstCreateReady;
+    const second = await syncCoexistenceContacts(job([contact({ eventId: "concurrent-event" })]));
+
+    expect(second).toMatchObject({ processed: 0, duplicates: 1 });
+    releaseFirstCreate();
+    await expect(first).resolves.toMatchObject({ processed: 1, added: 1 });
+    expect(mockedPrisma.customer.create).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.whatsAppCoexistenceContactEvent.create).toHaveBeenCalledTimes(2);
+  });
+
+  it("rolls back an event claim when customer persistence fails so retry can finish", async () => {
+    const eventKeys = new Set<string>();
+    mockedPrisma.$transaction.mockImplementation(async (callback: (tx: any) => Promise<unknown>) => {
+      const before = new Set(eventKeys);
+      try {
+        return await callback(mockedPrisma);
+      } catch (error) {
+        eventKeys.clear();
+        for (const key of before) eventKeys.add(key);
+        throw error;
+      }
+    });
+    mockedPrisma.whatsAppCoexistenceContactEvent.create.mockImplementation((args: any) => {
+      const key = `${args.data.businessProfileId}:${args.data.phoneNumberId}:${args.data.eventKey}`;
+      if (eventKeys.has(key)) {
+        const error: any = new Error("duplicate event claim");
+        error.code = "P2002";
+        return Promise.reject(error);
+      }
+      eventKeys.add(key);
+      return Promise.resolve({ id: 1, ...args.data });
+    });
+    mockedPrisma.customer.findUnique.mockResolvedValue(makeCustomer());
+    mockedPrisma.customer.update
+      .mockRejectedValueOnce(new Error("customer update failed"))
+      .mockResolvedValue(makeCustomer());
+
+    await expect(
+      syncCoexistenceContacts(job([contact({ eventId: "retry-event", action: "edit" })])),
+    ).rejects.toThrow("customer update failed");
+
+    const retry = await syncCoexistenceContacts(
+      job([contact({ eventId: "retry-event", action: "edit" })]),
+    );
+
+    expect(retry).toMatchObject({ processed: 1, updated: 1 });
+    expect(mockedPrisma.whatsAppCoexistenceContactEvent.create).toHaveBeenCalledTimes(2);
+    expect(mockedPrisma.customer.update).toHaveBeenCalledTimes(2);
   });
 
   it("keeps live current-time interaction updates and allows Coexistence callers to opt out", async () => {

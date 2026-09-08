@@ -14,6 +14,7 @@ export type CoexistenceContactsInput = WhatsappCoexistenceContactsJob;
 export type CoexistenceContactsJob = WhatsappCoexistenceContactsJob;
 
 export type CoexistenceContactsSummary = {
+  businessProfileId: number;
   processed: number;
   added: number;
   updated: number;
@@ -215,6 +216,7 @@ export async function syncCoexistenceContacts(
   const contacts = input.stateSync;
   const seen = new Set<string>();
   const summary: CoexistenceContactsSummary = {
+    businessProfileId,
     processed: 0,
     added: 0,
     updated: 0,

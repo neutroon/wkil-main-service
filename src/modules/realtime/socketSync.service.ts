@@ -1,6 +1,39 @@
 import { emitToBusiness, emitToConversation } from "./socket";
 import { logger } from "@utils/logger";
 
+export type CoexistenceHistoryImportedInput = {
+  businessProfileId: number;
+  phoneNumberId: string;
+  conversationIds: number[];
+  importedMessageCount: number;
+  importedContactCount: number;
+};
+
+/**
+ * Notifies the business room after a bounded Coexistence history or contact
+ * import completes. Historical messages use the importer origin and are
+ * intentionally not emitted through the per-message sync path.
+ */
+export const syncCoexistenceHistoryImported = (
+  input: CoexistenceHistoryImportedInput,
+): void => {
+  const {
+    businessProfileId,
+    phoneNumberId,
+    conversationIds,
+    importedMessageCount,
+    importedContactCount,
+  } = input;
+
+  emitToBusiness(businessProfileId, "whatsapp_history_imported", {
+    businessProfileId,
+    phoneNumberId,
+    conversationIds,
+    importedMessageCount,
+    importedContactCount,
+  });
+};
+
 /**
  * BEST PRACTICE: Background Socket Synchronization
  * This helper is called by the Prisma Extension to ensure the UI 
@@ -207,6 +240,5 @@ export const syncMediaStatus = (params: {
 };
 
 export { emitToBusiness, emitToConversation };
-
 
 

@@ -17,6 +17,11 @@ const historyImportMocks = vi.hoisted(() => ({
   importCoexistenceHistoryChunk: vi.fn(),
 }));
 
+const socketSyncMocks = vi.hoisted(() => ({
+  syncCoexistenceHistoryImported: vi.fn(),
+  syncSocketFromMessage: vi.fn(),
+}));
+
 vi.mock("bullmq", () => ({
   Queue: class MockQueue {
     add(...args: unknown[]) {
@@ -56,6 +61,7 @@ vi.mock("@modules/media/services/mediaLibrary.service", () => ({
 
 vi.mock("./whatsappCoexistenceContacts.service", () => contactSyncMocks);
 vi.mock("./whatsappCoexistenceHistory.service", () => historyImportMocks);
+vi.mock("@modules/realtime/socketSync.service", () => socketSyncMocks);
 
 import {
   createCoexistenceContactsJobId,
@@ -270,6 +276,7 @@ describe("WhatsApp Coexistence payload contracts", () => {
     });
 
     historyImportMocks.importCoexistenceHistoryChunk.mockResolvedValue({
+      businessProfileId: 42,
       processed: 1,
       imported: 1,
       duplicates: 0,
@@ -278,7 +285,17 @@ describe("WhatsApp Coexistence payload contracts", () => {
     });
     await expect(processCoexistenceHistoryJob(historyJob)).resolves.toBeUndefined();
     expect(historyImportMocks.importCoexistenceHistoryChunk).toHaveBeenCalledWith(historyJob);
+    expect(socketSyncMocks.syncCoexistenceHistoryImported).toHaveBeenCalledTimes(1);
+    expect(socketSyncMocks.syncCoexistenceHistoryImported).toHaveBeenCalledWith({
+      businessProfileId: 42,
+      phoneNumberId: "phone-number-id",
+      conversationIds: [101],
+      importedMessageCount: 1,
+      importedContactCount: 0,
+    });
+    expect(socketSyncMocks.syncSocketFromMessage).not.toHaveBeenCalled();
     contactSyncMocks.syncCoexistenceContacts.mockResolvedValue({
+      businessProfileId: 42,
       processed: 1,
       added: 1,
       updated: 0,
@@ -288,6 +305,15 @@ describe("WhatsApp Coexistence payload contracts", () => {
     });
     await expect(processCoexistenceContactsJob(contactsJob)).resolves.toBeUndefined();
     expect(contactSyncMocks.syncCoexistenceContacts).toHaveBeenCalledWith(contactsJob);
+    expect(socketSyncMocks.syncCoexistenceHistoryImported).toHaveBeenCalledTimes(2);
+    expect(socketSyncMocks.syncCoexistenceHistoryImported).toHaveBeenNthCalledWith(2, {
+      businessProfileId: 42,
+      phoneNumberId: "phone-number-id",
+      conversationIds: [],
+      importedMessageCount: 0,
+      importedContactCount: 1,
+    });
+    expect(socketSyncMocks.syncSocketFromMessage).not.toHaveBeenCalled();
     await expect(processCoexistenceHistoryJob({ type: "invalid" })).rejects.toThrow();
   });
 

@@ -11,6 +11,7 @@ import {
 } from "./whatsappCoexistence.schemas";
 import { syncCoexistenceContacts } from "./whatsappCoexistenceContacts.service";
 import { importCoexistenceHistoryChunk } from "./whatsappCoexistenceHistory.service";
+import { syncCoexistenceHistoryImported } from "@modules/realtime/socketSync.service";
 
 export type whatsappCoexistenceHistoryJob = WhatsappCoexistenceHistoryJob;
 export type whatsappCoexistenceContactsJob = WhatsappCoexistenceContactsJob;
@@ -138,14 +139,28 @@ export async function processCoexistenceHistoryJob(
   payload: unknown,
 ): Promise<void> {
   const input = coexistenceHistoryJobSchema.parse(payload);
-  await importCoexistenceHistoryChunk(input);
+  const summary = await importCoexistenceHistoryChunk(input);
+  syncCoexistenceHistoryImported({
+    businessProfileId: summary.businessProfileId,
+    phoneNumberId: input.phoneNumberId,
+    conversationIds: summary.conversationIds,
+    importedMessageCount: summary.imported,
+    importedContactCount: 0,
+  });
 }
 
 export async function processCoexistenceContactsJob(
   payload: unknown,
 ): Promise<void> {
   const input = coexistenceContactsJobSchema.parse(payload);
-  await syncCoexistenceContacts(input);
+  const summary = await syncCoexistenceContacts(input);
+  syncCoexistenceHistoryImported({
+    businessProfileId: summary.businessProfileId,
+    phoneNumberId: input.phoneNumberId,
+    conversationIds: [],
+    importedMessageCount: 0,
+    importedContactCount: summary.processed,
+  });
 }
 
 export type {

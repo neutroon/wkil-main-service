@@ -16,6 +16,7 @@ const HISTORY_BATCH_SIZE = 100;
 export type CoexistenceHistoryInput = WhatsappCoexistenceHistoryJob;
 
 export type CoexistenceImportSummary = {
+  businessProfileId: number;
   processed: number;
   imported: number;
   duplicates: number;
@@ -360,6 +361,7 @@ export async function importCoexistenceHistoryChunk(
   const businessProfileId = account.businessProfileId;
 
   const summary: CoexistenceImportSummary = {
+    businessProfileId,
     processed: 0,
     imported: 0,
     duplicates: 0,

@@ -25,6 +25,12 @@
 - `src/modules/meta/whatsapp/whatsappCoexistence.service.test.ts`
   - Verifies contact jobs dispatch while history jobs retain the existing stub failure.
 
+- `src/modules/content/contentBrief.service.ts`
+  - Omits the evidence `createdAt` field when a customer's nullable `lastInteractionAt` is null, while preserving the existing ISO timestamp for non-null activity.
+
+- `src/modules/content/contentBrief.service.test.ts`
+  - Adds a regression test proving null activity does not throw and the customer signal remains available.
+
 - `prisma/schema.prisma`
   - Makes `Customer.lastInteractionAt` nullable and adds the dedicated durable Coexistence event-claim model/relation.
 
@@ -81,6 +87,36 @@ Tests       41 passed (41)
 
 `npx prisma generate` also completed successfully after the schema change. The full backend suite was not run; validation remained limited to the relevant Task 3 Vitest files as requested.
 
+The follow-up nullability RED/GREEN cycle was:
+
+```text
+npm test -- src/modules/content/contentBrief.service.test.ts -t "keeps a customer signal"
+
+1 failed, 3 skipped
+TypeError: Cannot read properties of null (reading 'toISOString')
+
+npm test -- src/modules/content/contentBrief.service.test.ts -t "keeps a customer signal"
+
+1 passed, 3 skipped
+```
+
+The focused TypeScript audit completed successfully:
+
+```text
+npx tsc --noEmit --pretty false
+
+TypeScript exit code: 0
+```
+
+The final focused Vitest run covered the Task 3 services and the required nullable caller:
+
+```text
+npm test -- src/modules/meta/whatsapp/whatsappCoexistenceContacts.service.test.ts src/modules/business/customer/customer.service.test.ts src/modules/meta/whatsapp/whatsappCoexistence.service.test.ts src/modules/content/contentBrief.service.test.ts
+
+Test Files  4 passed (4)
+Tests       45 passed (45)
+```
+
 ## Design decisions
 
 - Customer synchronization reuses `upsertCustomerFromConversation` so phone normalization, business scoping, external identity attachment, and existing customer merge conventions remain centralized.
@@ -90,11 +126,11 @@ Tests       41 passed (41)
 - Durable idempotency is a unique event ledger claim in the same transaction as customer and external-identity writes. The marker is event-based when available and otherwise deterministic from contact action, external ID, and normalized phone.
 - The transaction client is passed through the shared customer upsert path, preserving atomicity without changing default live-caller behavior.
 - Removes never delete customers, external identities, conversations, or messages. They record a tombstone in customer metadata; a later add/edit clears the tombstone and removes legacy JSON event-marker data.
+- Nullable customer activity is represented as an omitted evidence timestamp in content briefs; non-null activity continues to serialize as the same ISO timestamp.
 - No WhatsApp SDK or third-party WhatsApp library was added. History queue behavior remains unchanged.
 
 ## Unresolved concerns
 
-- `src/modules/content/contentBrief.service.ts` still assumes `lastInteractionAt` is non-null. It was explicitly reverted per scope instruction, so a separate out-of-scope adjustment is needed for a clean full TypeScript build after this required nullable-schema change.
 - The dedicated event ledger retains one unique identity row per processed event; a retention policy must not purge rows needed for the desired lifetime of redelivery idempotency.
 - The tombstone shape is local to this importer (`metadata.whatsappCoexistence.state/removed/removedAt`) and should be treated as the downstream contract for any UI or reporting consumer.
 - Full backend tests were not run because the known baseline lacks environment variables. Task 1 files and unrelated queue/controller edits were left untouched.

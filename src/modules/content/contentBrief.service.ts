@@ -249,7 +249,9 @@ export async function collectFirstPartySignals(params: {
       id: `customer:${customer.id}`,
       sourceType: customer.primaryChannel || "customer",
       label: `${customer.primaryChannel || "Customer"} record`,
-      createdAt: customer.lastInteractionAt.toISOString(),
+      ...(customer.lastInteractionAt
+        ? { createdAt: customer.lastInteractionAt.toISOString() }
+        : {}),
     });
     return [
       `source=customer:${customer.id}`,

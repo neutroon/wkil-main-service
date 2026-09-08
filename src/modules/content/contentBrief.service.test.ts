@@ -144,6 +144,34 @@ describe("content brief service", () => {
     );
   });
 
+  it("keeps a customer signal without creating an evidence timestamp when activity is null", async () => {
+    mockedPrisma.customer.findMany.mockResolvedValue([
+      {
+        id: 4,
+        primaryChannel: "whatsapp",
+        status: "ACTIVE",
+        capturedFields: {},
+        lastInteractionAt: null,
+      },
+    ]);
+
+    const result = await collectFirstPartySignals({
+      businessProfileId: 10,
+      userId: 7,
+      signalWindowDays: 90,
+    });
+
+    expect(result.summary.customerCount).toBe(1);
+    expect(result.customerSignals).toEqual([
+      "source=customer:4 | channel=whatsapp | status=ACTIVE | captured_fields={}",
+    ]);
+    expect(result.evidenceRefs).toContainEqual({
+      id: "customer:4",
+      sourceType: "whatsapp",
+      label: "whatsapp record",
+    });
+  });
+
   it("saves a confirmed brief only for an owned profile and source audit", async () => {
     mockedPrisma.contentAudit.findFirst.mockResolvedValue({ id: 5 });
     mockedPrisma.contentBrief.create.mockImplementation((args: any) =>

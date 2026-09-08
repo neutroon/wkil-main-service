@@ -2,7 +2,9 @@ import { Router } from "express";
 import { authLimiter } from "@middlewares/rateLimit.middleware";
 import { validate } from "@middlewares/validate.middleware";
 import { loginSchema } from "@modules/auth/core/auth.validation";
+import { authenticateToken } from "@modules/auth/core/auth.middleware";
 import {
+  mobileCurrentUser,
   mobileLogin,
   mobileLogout,
   mobileRefresh,
@@ -30,5 +32,9 @@ mobileAuthRoutes.post("/auth/refresh", authLimiter, mobileRefresh);
 // POST /v1/mobile/auth/logout
 // Header / body: refresh token → revokes in DB
 mobileAuthRoutes.post("/auth/logout", mobileLogout);
+
+// GET /v1/mobile/auth/me
+// Header: Authorization: Bearer <accessToken> → { user }
+mobileAuthRoutes.get("/auth/me", authenticateToken, mobileCurrentUser);
 
 export default mobileAuthRoutes;

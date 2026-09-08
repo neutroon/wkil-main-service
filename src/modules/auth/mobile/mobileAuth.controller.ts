@@ -1,12 +1,13 @@
 import { Request, Response } from "express";
 import {
   AppError,
+  getMobileUserShape,
   issueAuthSession,
   validateAndRotateRefreshToken,
   logoutAndRevoke,
-  publicUserShape,
   verifyCredentials,
 } from "@modules/auth/core/auth.service";
+import { getUserById } from "@modules/auth/user/user.service";
 import { logger } from "@utils/logger";
 
 /**
@@ -37,9 +38,21 @@ export const mobileLogin = async (req: Request, res: Response) => {
   logger.info("mobile.auth.login", { userId: user.id });
   res.status(200).json({
     message: "Login successful",
-    user: publicUserShape(user),
+    user: getMobileUserShape(user),
     ...tokens,
   });
+};
+
+/**
+ * GET /v1/mobile/auth/me
+ * Header: Authorization: Bearer <accessToken>
+ * Returns the current profile fields needed by the native account surface.
+ */
+export const mobileCurrentUser = async (req: Request, res: Response) => {
+  const userId = Number((req as any).user?.id);
+  const user = await getUserById(userId);
+  if (!user) throw new AppError("User not found", 404);
+  res.json({ user: getMobileUserShape(user) });
 };
 
 /**

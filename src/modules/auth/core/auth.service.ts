@@ -13,6 +13,7 @@ import {
   setAuthCookies,
   clearAuthCookies,
 } from "@modules/auth/core/auth.middleware";
+import { PLAN_CREDIT_LIMITS } from "@modules/billing/billing.config";
 
 // Re-exported for callers that import only from auth.service.
 export { AppError };
@@ -258,6 +259,10 @@ export interface LoginUser {
   isSocialUser: boolean;
   isBusinessProfileCreated: boolean;
   lastVerificationSentAt: Date | null;
+  plan: string;
+  monthlyCreditsUsed: number;
+  monthlyCreditQuota: number | null;
+  createdAt: Date;
 }
 
 /**
@@ -286,6 +291,10 @@ export const verifyCredentials = async (
       isSocialUser: true,
       isBusinessProfileCreated: true,
       lastVerificationSentAt: true,
+      plan: true,
+      monthlyCreditsUsed: true,
+      monthlyCreditQuota: true,
+      createdAt: true,
     },
   });
   if (!user) return null;
@@ -300,6 +309,10 @@ export const verifyCredentials = async (
     isSocialUser: user.isSocialUser,
     isBusinessProfileCreated: user.isBusinessProfileCreated,
     lastVerificationSentAt: user.lastVerificationSentAt,
+    plan: user.plan,
+    monthlyCreditsUsed: user.monthlyCreditsUsed,
+    monthlyCreditQuota: user.monthlyCreditQuota,
+    createdAt: user.createdAt,
   };
 };
 
@@ -316,6 +329,21 @@ export const publicUserShape = (u: LoginUser) => ({
   isSocialUser: u.isSocialUser,
   isBusinessProfileCreated: u.isBusinessProfileCreated,
   lastVerificationSentAt: u.lastVerificationSentAt,
+});
+
+/**
+ * Mobile-only identity projection. Billing fields are intentionally not added
+ * to the web login response, while native profile screens receive the same
+ * authoritative values used by the billing service.
+ */
+export const getMobileUserShape = (u: LoginUser) => ({
+  ...publicUserShape(u),
+  plan: u.plan,
+  monthlyCreditsUsed: u.monthlyCreditsUsed,
+  monthlyCreditLimit: u.monthlyCreditQuota && u.monthlyCreditQuota > 0
+    ? u.monthlyCreditQuota
+    : PLAN_CREDIT_LIMITS[String(u.plan || "FREE").toUpperCase()] || PLAN_CREDIT_LIMITS.FREE,
+  createdAt: u.createdAt.toISOString(),
 });
 
 // ════════════════════════════════════════════════════════════════════

@@ -47,6 +47,28 @@ import {
 
 const isDev = env.NODE_ENV !== "production";
 const OAUTH_EXCHANGE_REF_TTL_SEC = 10 * 60; // 10 minutes
+const COEXISTENCE_HISTORY_ENQUEUE_CONCURRENCY = 4;
+
+async function enqueueCoexistenceHistoryJobs(
+  historyJobs: ReturnType<typeof parseCoexistenceHistoryPayload>,
+): Promise<void> {
+  for (
+    let offset = 0;
+    offset < historyJobs.length;
+    offset += COEXISTENCE_HISTORY_ENQUEUE_CONCURRENCY
+  ) {
+    const batch = historyJobs.slice(offset, offset + COEXISTENCE_HISTORY_ENQUEUE_CONCURRENCY);
+    await Promise.all(
+      batch.map((historyJob) =>
+        enqueueMetaJob(historyJob, {
+          jobId: createCoexistenceHistoryJobId(historyJob),
+          skipPostEnqueueDiagnostics: true,
+          ...WHATSAPP_COEXISTENCE_QUEUE_OPTIONS,
+        }),
+      ),
+    );
+  }
+}
 
 export class WhatsAppController {
   /**
@@ -127,12 +149,7 @@ export class WhatsAppController {
               return res.status(400).send("INVALID_COEXISTENCE_PAYLOAD");
             }
 
-            for (const historyJob of historyJobs) {
-              await enqueueMetaJob(historyJob, {
-                jobId: createCoexistenceHistoryJobId(historyJob),
-                ...WHATSAPP_COEXISTENCE_QUEUE_OPTIONS,
-              });
-            }
+            await enqueueCoexistenceHistoryJobs(historyJobs);
 
             const historyMessages = historyJobs.reduce(
               (total, historyJob) =>
@@ -170,10 +187,13 @@ export class WhatsAppController {
               return res.status(400).send("INVALID_COEXISTENCE_PAYLOAD");
             }
 
-            await enqueueMetaJob(contactsJob, {
-              jobId: createCoexistenceContactsJobId(contactsJob),
-              ...WHATSAPP_COEXISTENCE_QUEUE_OPTIONS,
-            });
+            if (contactsJob.stateSync.length > 0) {
+              await enqueueMetaJob(contactsJob, {
+                jobId: createCoexistenceContactsJobId(contactsJob),
+                skipPostEnqueueDiagnostics: true,
+                ...WHATSAPP_COEXISTENCE_QUEUE_OPTIONS,
+              });
+            }
 
             logger.info("whatsapp.webhook.coexistence_sync_event_received", {
               field: change.field,
@@ -774,4 +794,3 @@ export class WhatsAppController {
 }
 
 export const whatsappController = new WhatsAppController();
-

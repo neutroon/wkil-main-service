@@ -54,7 +54,7 @@ export const coexistenceContactsJobSchema = z
     type: z.literal("whatsapp_coexistence_contacts"),
     wabaId: nonEmptyString,
     phoneNumberId: nonEmptyString,
-    stateSync: z.array(coexistenceContactStateSchema).min(1).max(1_000),
+    stateSync: z.array(coexistenceContactStateSchema).max(1_000),
   })
   .strict();
 

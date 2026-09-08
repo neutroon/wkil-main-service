@@ -119,6 +119,7 @@ export type MetaEnqueueOptions = {
   backoff?: JobsOptions["backoff"];
   removeOnComplete?: JobsOptions["removeOnComplete"];
   removeOnFail?: JobsOptions["removeOnFail"];
+  skipPostEnqueueDiagnostics?: boolean;
 };
 
 /**
@@ -163,17 +164,20 @@ export async function enqueueMetaJob(
         ...(opts.removeOnFail !== undefined ? { removeOnFail: opts.removeOnFail } : {}),
       },
     );
-    const [jobState, counts] = await Promise.all([
-      queuedJob.getState().catch(() => "unknown"),
-      queue.getJobCounts("waiting", "active", "delayed", "failed", "paused").catch(() => null),
-    ]);
+    let jobState: string | undefined;
+    let counts: Record<string, number> | null | undefined;
+    if (!opts.skipPostEnqueueDiagnostics) {
+      [jobState, counts] = await Promise.all([
+        queuedJob.getState().catch(() => "unknown"),
+        queue.getJobCounts("waiting", "active", "delayed", "failed", "paused").catch(() => null),
+      ]);
+    }
     logger.info("meta.queue.enqueued", {
-      type: isVisual ? "visual" : "messaging",
+      type: isVisual ? "visual" : isCoexistence ? payload.type : "messaging",
       platform: payload.platform,
       delaySeconds,
       jobId: queuedJob.id,
-      jobState,
-      counts,
+      ...(opts.skipPostEnqueueDiagnostics ? {} : { jobState, counts }),
     });
   } catch (err: any) {
     logger.error("meta.queue.add_failed", {
@@ -515,5 +519,4 @@ function hashJobText(text: string): string {
   }
   return Math.abs(hash).toString(36);
 }
-
 

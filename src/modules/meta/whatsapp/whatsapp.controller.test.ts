@@ -315,6 +315,7 @@ describe("WhatsApp webhook controller wiring", () => {
       },
       expect.objectContaining({
         jobId: expect.any(String),
+        skipPostEnqueueDiagnostics: true,
         ...WHATSAPP_COEXISTENCE_QUEUE_OPTIONS,
       }),
     );
@@ -329,6 +330,7 @@ describe("WhatsApp webhook controller wiring", () => {
       },
       expect.objectContaining({
         jobId: expect.any(String),
+        skipPostEnqueueDiagnostics: true,
         ...WHATSAPP_COEXISTENCE_QUEUE_OPTIONS,
       }),
     );
@@ -372,6 +374,82 @@ describe("WhatsApp webhook controller wiring", () => {
     expect(response.send).toHaveBeenCalledWith("INVALID_COEXISTENCE_PAYLOAD");
     expect(mocks.enqueueMetaJob).not.toHaveBeenCalled();
     expect(mocks.enqueueInboundMetaEvent).not.toHaveBeenCalled();
+  });
+
+  it("acknowledges empty Coexistence sync arrays without queueing no-op jobs", async () => {
+    const request = webhookRequest();
+    request.body.entry[0].changes = [
+      {
+        field: "history",
+        value: {
+          metadata: { phone_number_id: "phone-number-id" },
+          history: [],
+        },
+      },
+      {
+        field: "smb_app_state_sync",
+        value: {
+          metadata: { phone_number_id: "phone-number-id" },
+          state_sync: [],
+        },
+      },
+    ];
+    const response = {
+      status: vi.fn().mockReturnThis(),
+      send: vi.fn().mockReturnThis(),
+    } as any;
+
+    await whatsappController.handleWebhook(request, response);
+
+    expect(response.status).toHaveBeenCalledWith(200);
+    expect(response.send).toHaveBeenCalledWith("EVENT_RECEIVED");
+    expect(mocks.enqueueMetaJob).not.toHaveBeenCalled();
+    expect(mocks.enqueueInboundMetaEvent).not.toHaveBeenCalled();
+    expect(mocks.loggerInfo).toHaveBeenCalledWith(
+      "whatsapp.webhook.coexistence_sync_event_received",
+      expect.objectContaining({ field: "history", historyChunks: 0, historyMessages: 0 }),
+    );
+    expect(mocks.loggerInfo).toHaveBeenCalledWith(
+      "whatsapp.webhook.coexistence_sync_event_received",
+      expect.objectContaining({ field: "smb_app_state_sync", stateSyncItems: 0 }),
+    );
+  });
+
+  it("enqueues history chunks concurrently without exceeding the bounded concurrency", async () => {
+    const request = webhookRequest();
+    request.body.entry[0].changes = [{
+      field: "history",
+      value: {
+        metadata: { phone_number_id: "phone-number-id" },
+        history: Array.from({ length: 6 }, (_, chunkOrder) => ({
+          metadata: { phase: 0, chunk_order: chunkOrder, progress: chunkOrder === 5 ? 100 : 50 },
+          threads: [{
+            id: customerPhone,
+            messages: [{ id: `wamid-history-${chunkOrder}` }],
+          }],
+        })),
+      },
+    }];
+    let inFlight = 0;
+    let maxInFlight = 0;
+    mocks.enqueueMetaJob.mockImplementation(async () => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise<void>((resolve) => queueMicrotask(resolve));
+      inFlight -= 1;
+    });
+    const response = {
+      status: vi.fn().mockReturnThis(),
+      send: vi.fn().mockReturnThis(),
+    } as any;
+
+    await whatsappController.handleWebhook(request, response);
+
+    expect(mocks.enqueueMetaJob).toHaveBeenCalledTimes(6);
+    expect(maxInFlight).toBeGreaterThan(1);
+    expect(maxInFlight).toBeLessThanOrEqual(4);
+    expect(response.status).toHaveBeenCalledWith(200);
+    expect(response.send).toHaveBeenCalledWith("EVENT_RECEIVED");
   });
 
   it("returns a retryable error when durable queueing fails", async () => {

@@ -79,7 +79,6 @@ export function parseCoexistenceHistoryPayload(input: unknown): whatsappCoexiste
   const { wabaId, phoneNumberId } = routingSchema.parse(payload);
   const chunks = z
     .array(coexistenceHistoryChunkSchema)
-    .min(1)
     .parse(payload.history);
 
   return chunks.map((historyChunk) => ({
@@ -96,7 +95,6 @@ export function parseCoexistenceContactsPayload(input: unknown): whatsappCoexist
   const { wabaId, phoneNumberId } = routingSchema.parse(payload);
   const stateSync = z
     .array(coexistenceContactStateSchema)
-    .min(1)
     .max(1_000)
     .parse(payload.state_sync);
 
@@ -137,17 +135,19 @@ export function createCoexistenceContactsJobId(
 export async function processCoexistenceHistoryJob(
   payload: unknown,
 ): Promise<void> {
-  // The historical importer is added by the next task. Keep this worker hook
-  // as the validated dispatch boundary so malformed jobs cannot reach it.
+  // Task 2 replaces this boundary with the historical importer. Failing keeps
+  // the BullMQ job retryable instead of silently acknowledging data.
   coexistenceHistoryJobSchema.parse(payload);
+  throw new Error("whatsapp coexistence history importer is not installed");
 }
 
 export async function processCoexistenceContactsJob(
   payload: unknown,
 ): Promise<void> {
-  // The contacts importer is added by the next task. Keep this worker hook as
-  // the validated dispatch boundary so malformed jobs cannot reach it.
+  // Task 3 replaces this boundary with the contacts importer. Failing keeps
+  // the BullMQ job retryable instead of silently acknowledging data.
   coexistenceContactsJobSchema.parse(payload);
+  throw new Error("whatsapp coexistence contacts importer is not installed");
 }
 
 export type {

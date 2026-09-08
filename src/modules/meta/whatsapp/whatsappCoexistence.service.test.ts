@@ -1,4 +1,50 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const queueMocks = vi.hoisted(() => ({
+  add: vi.fn(),
+  getState: vi.fn(),
+  getJobCounts: vi.fn(),
+  loggerInfo: vi.fn(),
+  loggerError: vi.fn(),
+  loggerWarn: vi.fn(),
+}));
+
+vi.mock("bullmq", () => ({
+  Queue: class MockQueue {
+    add(...args: unknown[]) {
+      return queueMocks.add(...args);
+    }
+
+    getJobCounts(...args: unknown[]) {
+      return queueMocks.getJobCounts(...args);
+    }
+  },
+  Worker: class MockWorker {},
+  QueueEvents: class MockQueueEvents {},
+  Job: class MockJob {},
+}));
+
+vi.mock("@config/redis", () => ({
+  bullConnection: { host: "redis.test", port: 6379 },
+  bullQueuePrefix: "test-prefix",
+}));
+
+vi.mock("@utils/logger", () => ({
+  logger: {
+    info: queueMocks.loggerInfo,
+    error: queueMocks.loggerError,
+    warn: queueMocks.loggerWarn,
+  },
+}));
+
+vi.mock("@modules/meta/core/metaProcessor.service", () => ({
+  processMetaMessage: vi.fn(),
+  processVisualJob: vi.fn(),
+}));
+
+vi.mock("@modules/media/services/mediaLibrary.service", () => ({
+  registerAssetWithMeta: vi.fn(),
+}));
 
 import {
   createCoexistenceContactsJobId,
@@ -9,6 +55,7 @@ import {
   processCoexistenceHistoryJob,
   WHATSAPP_COEXISTENCE_QUEUE_OPTIONS,
 } from "./whatsappCoexistence.service";
+import { enqueueMetaJob } from "../core/meta.queue";
 
 const historyPayload = {
   wabaId: "waba-1",
@@ -70,6 +117,16 @@ const historyPayload = {
 };
 
 describe("WhatsApp Coexistence payload contracts", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    queueMocks.add.mockResolvedValue({
+      id: "queued-job-id",
+      getState: queueMocks.getState,
+    });
+    queueMocks.getState.mockResolvedValue("waiting");
+    queueMocks.getJobCounts.mockResolvedValue({ waiting: 1 });
+  });
+
   it("parses every history chunk while preserving messages from multiple threads", () => {
     const parsed = parseCoexistenceHistoryPayload(historyPayload);
 
@@ -201,8 +258,49 @@ describe("WhatsApp Coexistence payload contracts", () => {
       state_sync: [{ type: "contact", action: "add", contact: { wa_id: "201001234567" } }],
     });
 
-    await expect(processCoexistenceHistoryJob(historyJob)).resolves.toBeUndefined();
-    await expect(processCoexistenceContactsJob(contactsJob)).resolves.toBeUndefined();
+    await expect(processCoexistenceHistoryJob(historyJob)).rejects.toThrow(
+      "whatsapp coexistence history importer is not installed",
+    );
+    await expect(processCoexistenceContactsJob(contactsJob)).rejects.toThrow(
+      "whatsapp coexistence contacts importer is not installed",
+    );
     await expect(processCoexistenceHistoryJob({ type: "invalid" })).rejects.toThrow();
+  });
+
+  it("forwards BullMQ options and skips only post-enqueue diagnostics for coexistence jobs", async () => {
+    const historyJob = parseCoexistenceHistoryPayload(historyPayload)[0]!;
+
+    await enqueueMetaJob(historyJob, {
+      jobId: "coexistence-job-1",
+      attempts: 3,
+      backoff: { type: "exponential", delay: 10_000 },
+      removeOnComplete: { count: 100 },
+      removeOnFail: { count: 500 },
+      skipPostEnqueueDiagnostics: true,
+    });
+
+    expect(queueMocks.add).toHaveBeenCalledWith(
+      "whatsapp_coexistence_history",
+      { type: "whatsapp_coexistence_history", payload: historyJob },
+      {
+        delay: 0,
+        jobId: "coexistence-job-1",
+        attempts: 3,
+        backoff: { type: "exponential", delay: 10_000 },
+        removeOnComplete: { count: 100 },
+        removeOnFail: { count: 500 },
+      },
+    );
+    expect(queueMocks.getState).not.toHaveBeenCalled();
+    expect(queueMocks.getJobCounts).not.toHaveBeenCalled();
+    expect(queueMocks.loggerInfo).toHaveBeenCalledWith(
+      "meta.queue.enqueued",
+      expect.objectContaining({ type: "whatsapp_coexistence_history" }),
+    );
+
+    await enqueueMetaJob({ platform: "whatsapp", type: "messaging", messageText: "live" }, { jobId: "live-job" });
+
+    expect(queueMocks.getState).toHaveBeenCalledTimes(1);
+    expect(queueMocks.getJobCounts).toHaveBeenCalledTimes(1);
   });
 });

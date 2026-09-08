@@ -147,6 +147,15 @@ function mergeExternalIds(
   return base;
 }
 
+function historicalActivityToWrite(
+  current: Date | null | undefined,
+  activityAt: Date | null | undefined,
+) {
+  if (!(activityAt instanceof Date) || Number.isNaN(activityAt.getTime())) return undefined;
+  if (current && current > activityAt) return undefined;
+  return activityAt;
+}
+
 async function findCustomerByIdentity(params: {
   businessProfileId: number;
   channel?: string | null;
@@ -242,6 +251,9 @@ export async function upsertCustomerFromConversation(params: {
   customerName?: string | null;
   customerAvatar?: string | null;
   email?: string | null;
+  metadata?: Record<string, unknown>;
+  updateInteraction?: boolean;
+  activityAt?: Date | null;
 }) {
   const channel = cleanString(params.channel) || "web";
   const phone = cleanString(params.customerPhone) || (channel === "whatsapp" ? params.senderId : null);
@@ -255,6 +267,7 @@ export async function upsertCustomerFromConversation(params: {
     senderId: params.senderId,
   });
   const now = new Date();
+  const historicalActivity = historicalActivityToWrite(undefined, params.activityAt);
 
   let customer = await findCustomerByIdentity({
     businessProfileId: params.businessProfileId,
@@ -276,10 +289,26 @@ export async function upsertCustomerFromConversation(params: {
         avatarUrl: cleanString(params.customerAvatar),
         primaryChannel: channel,
         externalIds: mergeExternalIds(null, channel, params.senderId),
-        lastInteractionAt: now,
+        ...(params.metadata
+          ? { metadata: mergeJsonObject(null, params.metadata) as Prisma.InputJsonObject }
+          : {}),
+        ...(
+          params.updateInteraction === false
+            ? historicalActivity
+              ? { lastInteractionAt: historicalActivity }
+              : {}
+            : { lastInteractionAt: historicalActivity || now }
+        ),
       },
     });
   } else {
+    const interactionAt =
+      params.updateInteraction === false
+        ? historicalActivityToWrite(customer.lastInteractionAt, params.activityAt)
+        : params.activityAt
+          ? historicalActivityToWrite(customer.lastInteractionAt, params.activityAt)
+          : now;
+
     customer = await prisma.customer.update({
       where: { id: customer.id },
       data: {
@@ -294,7 +323,10 @@ export async function upsertCustomerFromConversation(params: {
         avatarUrl: cleanString(params.customerAvatar) || customer.avatarUrl,
         primaryChannel: customer.primaryChannel || channel,
         externalIds: mergeExternalIds(customer.externalIds, channel, params.senderId),
-        lastInteractionAt: now,
+        ...(params.metadata
+          ? { metadata: mergeJsonObject(customer.metadata, params.metadata) as Prisma.InputJsonObject }
+          : {}),
+        ...(interactionAt ? { lastInteractionAt: interactionAt } : {}),
       },
     });
   }

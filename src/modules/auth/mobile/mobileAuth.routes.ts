@@ -14,9 +14,9 @@ import {
  * Mobile-friendly auth endpoints.
  *
  * Mounted at `/v1/mobile/auth` BEFORE the `authenticateToken` wall in
- * `app.ts`, so these routes are public. They return JWTs in the JSON
- * body instead of setting HttpOnly cookies, which is the standard pattern
- * for native mobile clients (no cookie jar, no CSRF).
+ * `app.ts`. Login, refresh, and logout are public; the profile endpoint
+ * applies route-level token authentication. Tokens are returned in the JSON
+ * body instead of setting HttpOnly cookies for native mobile clients.
  */
 const mobileAuthRoutes = Router();
 

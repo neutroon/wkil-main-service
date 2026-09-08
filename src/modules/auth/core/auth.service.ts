@@ -336,10 +336,34 @@ export const publicUserShape = (u: LoginUser) => ({
  * to the web login response, while native profile screens receive the same
  * authoritative values used by the billing service.
  */
-export const getMobileUserShape = (u: LoginUser) => ({
-  ...publicUserShape(u),
+type MobileUserSource = {
+  id: number;
+  email: string | null;
+  name: string;
+  role: string;
+  avatar?: string | null;
+  isEmailVerified?: boolean;
+  isSocialUser?: boolean;
+  isBusinessProfileCreated?: boolean;
+  lastVerificationSentAt?: Date | null;
+  plan?: string | null;
+  monthlyCreditsUsed?: number | null;
+  monthlyCreditQuota?: number | null;
+  createdAt: Date;
+};
+
+export const getMobileUserShape = (u: MobileUserSource) => ({
+  id: u.id,
+  email: u.email,
+  name: u.name,
+  role: u.role,
+  avatar: u.avatar ?? null,
+  isEmailVerified: u.isEmailVerified ?? false,
+  isSocialUser: u.isSocialUser ?? false,
+  isBusinessProfileCreated: u.isBusinessProfileCreated ?? false,
+  lastVerificationSentAt: u.lastVerificationSentAt ?? null,
   plan: u.plan,
-  monthlyCreditsUsed: u.monthlyCreditsUsed,
+  monthlyCreditsUsed: u.monthlyCreditsUsed ?? 0,
   monthlyCreditLimit: u.monthlyCreditQuota && u.monthlyCreditQuota > 0
     ? u.monthlyCreditQuota
     : PLAN_CREDIT_LIMITS[String(u.plan || "FREE").toUpperCase()] || PLAN_CREDIT_LIMITS.FREE,

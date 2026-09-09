@@ -66,6 +66,7 @@ interface IdentityResolution {
   businessProfileId: number;
   businessProfile: any;
   accessToken: string;
+  aiRepliesEnabled?: boolean;
   pageSettings: {
     commentAutoDmEnabled?: boolean;
     commentPublicGreeting?: string;
@@ -168,7 +169,7 @@ async function resolveAccountIdentity(job: MetaMessageJob): Promise<IdentityReso
                 isActive: true,
                 businessProfileId: cached.businessProfileId,
               },
-              select: { accessToken: true, isTokenValid: true }
+              select: { accessToken: true, isTokenValid: true, aiRepliesEnabled: true }
             });
 
         if (!tokenRow) {
@@ -185,7 +186,13 @@ async function resolveAccountIdentity(job: MetaMessageJob): Promise<IdentityReso
           const rawToken = platform === "messenger"
             ? (tokenRow as any).pageAccessToken
             : (tokenRow as any).accessToken;
-          return { ...cached, accessToken: decryptFacebookSecret(rawToken) };
+          return {
+            ...cached,
+            ...(platform === "whatsapp"
+              ? { aiRepliesEnabled: (tokenRow as any).aiRepliesEnabled }
+              : {}),
+            accessToken: decryptFacebookSecret(rawToken),
+          };
         }
       }
     } catch {
@@ -359,6 +366,7 @@ async function resolveAccountIdentity(job: MetaMessageJob): Promise<IdentityReso
       businessProfileId: account.businessProfileId,
       businessProfile: account.businessProfile,
       accessToken: decryptFacebookSecret(account.accessToken),
+      aiRepliesEnabled: account.aiRepliesEnabled,
       pageSettings: null,
     };
 
@@ -602,6 +610,7 @@ export async function processMetaMessage(
     mediaId: job.mediaId,
     mediaMetadata: job.mediaMetadata,
   });
+  if (platform === "whatsapp" && identity.aiRepliesEnabled === false) return;
   if (conversation.aiEnabled === false) return;
   const history = await prisma.conversationMessage.findMany({
     where: { conversationId: conversation.id },

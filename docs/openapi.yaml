@@ -399,6 +399,20 @@ paths:
       summary: List connected WhatsApp accounts
       responses:
         "200": { $ref: "#/components/responses/Ok" }
+  /v1/whatsapp/accounts/{id}/ai-toggle:
+    patch:
+      tags: [WhatsApp]
+      operationId: toggleWhatsAppAiReplies
+      summary: Toggle automatic AI replies for a WhatsApp account
+      description: Controls normal inbound WhatsApp AI replies for this connected number. Order confirmations and their action acknowledgements remain independent.
+      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      requestBody: { $ref: "#/components/requestBodies/ConversationAiToggle" }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/whatsapp/accounts/{id}:
     delete:
       tags: [WhatsApp]

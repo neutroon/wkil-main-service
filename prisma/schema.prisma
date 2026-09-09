@@ -638,6 +638,9 @@ model WhatsAppAccount {
   businessProfileId  Int?
   businessProfile    BusinessProfile? @relation(fields: [businessProfileId], references: [id], onDelete: SetNull)
   isActive           Boolean          @default(true)
+  /// Controls automatic AI replies for normal inbound WhatsApp messages.
+  /// Order confirmations and their action acknowledgements are independent.
+  aiRepliesEnabled   Boolean          @default(true)
   /// How the number was onboarded: "COEXISTENCE" = stays on WBA app simultaneously;
   /// "BUSINESS_API" = full migration away from the WhatsApp Business App.
   connectionMode     String           @default("BUSINESS_API") // "BUSINESS_API" | "COEXISTENCE"

@@ -475,12 +475,49 @@ export class WhatsAppController {
         businessProfileId: true,
         connectionMode: true,
         isActive: true,
+        aiRepliesEnabled: true,
         isTokenValid: true,
         createdAt: true,
         updatedAt: true,
       },
     });
     return res.json({ data: accounts });
+  }
+
+  /**
+   * PATCH /v1/whatsapp/accounts/:id/ai-toggle
+   * Toggle automatic AI replies for one connected WhatsApp number.
+   */
+  async toggleAiReplies(req: Request, res: Response) {
+    const userId = (req as any).user.id as number;
+    const id = Number(req.params.id);
+    const enabled = req.body.enabled as boolean;
+
+    const account = await prisma.whatsAppAccount.findFirst({
+      where: { id, isActive: true },
+      select: {
+        id: true,
+        userId: true,
+        phoneNumberId: true,
+        businessProfileId: true,
+      },
+    });
+
+    if (!account) throw new AppError("WhatsApp account not found", 404);
+    if (account.businessProfileId) {
+      await requireWorkspaceProfileAccess(userId, account.businessProfileId, { manage: true });
+    } else if (account.userId !== userId) {
+      throw new AppError("WhatsApp account not found", 404);
+    }
+
+    const updated = await prisma.whatsAppAccount.update({
+      where: { id },
+      data: { aiRepliesEnabled: enabled },
+    });
+    await Promise.resolve(invalidateWhatsAppAccountCache(account.phoneNumberId)).catch(() => {});
+    await Promise.resolve(cache.delete(`identity:whatsapp:${account.phoneNumberId}`)).catch(() => {});
+
+    return res.json({ success: true, account: this.sanitiseAccount(updated) });
   }
 
   /**

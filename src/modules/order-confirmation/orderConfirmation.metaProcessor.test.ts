@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   cacheDelete: vi.fn(),
   whatsappAccountFindFirst: vi.fn(),
   conversationMessageFindFirst: vi.fn(),
+  conversationMessageFindMany: vi.fn(),
   conversationMessageUpdate: vi.fn(),
   conversationMessageUpdateMany: vi.fn(),
   reconcileNotificationDeliveryStatus: vi.fn(),
@@ -13,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   getOrCreateConversation: vi.fn(),
   saveMessage: vi.fn(),
   enqueueOrderAction: vi.fn(),
+  agentRunCapability: vi.fn(),
   computeBusinessChatReply: vi.fn(),
   buildUnansweredUserTurnContext: vi.fn(),
   startConversationAiRun: vi.fn(),
@@ -37,6 +39,7 @@ vi.mock("@config/prisma", () => ({
     whatsAppAccount: { findFirst: mocks.whatsappAccountFindFirst },
     conversationMessage: {
       findFirst: mocks.conversationMessageFindFirst,
+      findMany: mocks.conversationMessageFindMany,
       update: mocks.conversationMessageUpdate,
       updateMany: mocks.conversationMessageUpdateMany,
     },
@@ -88,6 +91,10 @@ vi.mock("@modules/order-confirmation/orderConfirmation.repository", () => ({
   reconcileNotificationDeliveryStatus: mocks.reconcileNotificationDeliveryStatus,
 }));
 
+vi.mock("@modules/ai-agent/client/agent.client", () => ({
+  AgentClient: { runCapability: mocks.agentRunCapability },
+}));
+
 vi.mock("@modules/ai-agent/chat/businessChatReply.service", () => ({
   computeBusinessChatReply: mocks.computeBusinessChatReply,
 }));
@@ -135,7 +142,8 @@ const account = {
   businessProfileId: 11,
   accessToken: "encrypted-account-token",
   isTokenValid: true,
-  businessProfile: { agentActionSources: [] },
+  aiRepliesEnabled: true,
+  businessProfile: { userId: 3, agentActionSources: [] },
 };
 
 describe("WhatsApp order action routing and suppression", () => {
@@ -158,12 +166,16 @@ describe("WhatsApp order action routing and suppression", () => {
     mocks.conversationMessageUpdateMany.mockResolvedValue({ count: 1 });
     mocks.reconcileNotificationDeliveryStatus.mockResolvedValue(undefined);
     mocks.enqueueOrderAction.mockResolvedValue(undefined);
+    mocks.agentRunCapability.mockResolvedValue({ action: "RESPOND", content: "" });
+    mocks.conversationMessageFindMany.mockResolvedValue([]);
     mocks.classifyInboundMessageSignal.mockReturnValue({
       shouldTriggerAi: true,
     });
   });
 
   it("routes an order action before identity or AI work", async () => {
+    mocks.whatsappAccountFindFirst.mockResolvedValue({ ...account, aiRepliesEnabled: false });
+
     await processMetaMessage({
       platform: "whatsapp",
       identifier: "phone-number-id",
@@ -287,5 +299,73 @@ describe("WhatsApp order action routing and suppression", () => {
       error: undefined,
     });
     expect(mocks.computeBusinessChatReply).not.toHaveBeenCalled();
+  });
+
+  it("persists a normal WhatsApp message but skips AI when the connected number disables AI replies", async () => {
+    mocks.whatsappAccountFindFirst.mockResolvedValue({ ...account, aiRepliesEnabled: false });
+    mocks.getOrCreateConversation.mockResolvedValue({ id: 77, aiEnabled: true });
+
+    await processMetaMessage({
+      platform: "whatsapp",
+      identifier: "phone-number-id",
+      phoneNumberId: "phone-number-id",
+      senderId: "+201001234567",
+      customerPhone: "+201001234567",
+      messageText: "Please send me the catalogue",
+      type: "text",
+      externalId: "wamid-ai-disabled-1",
+    });
+
+    expect(mocks.saveMessage).toHaveBeenCalledWith(
+      77,
+      "user",
+      "Please send me the catalogue",
+      expect.objectContaining({ externalId: "wamid-ai-disabled-1", type: "text" }),
+    );
+    expect(mocks.agentRunCapability).not.toHaveBeenCalled();
+  });
+
+  it("runs AI for a normal WhatsApp message when both account and conversation AI are enabled", async () => {
+    mocks.getOrCreateConversation.mockResolvedValue({ id: 77, aiEnabled: true });
+
+    await processMetaMessage({
+      platform: "whatsapp",
+      identifier: "phone-number-id",
+      phoneNumberId: "phone-number-id",
+      senderId: "+201001234567",
+      customerPhone: "+201001234567",
+      messageText: "What are your opening hours?",
+      type: "text",
+      externalId: "wamid-ai-enabled-1",
+    });
+
+    expect(mocks.agentRunCapability).toHaveBeenCalledWith(expect.objectContaining({
+      userId: 3,
+      businessProfileId: 11,
+      operation: "customer_reply",
+    }));
+  });
+
+  it("still respects the per-conversation AI switch when the account switch is enabled", async () => {
+    mocks.getOrCreateConversation.mockResolvedValue({ id: 77, aiEnabled: false });
+
+    await processMetaMessage({
+      platform: "whatsapp",
+      identifier: "phone-number-id",
+      phoneNumberId: "phone-number-id",
+      senderId: "+201001234567",
+      customerPhone: "+201001234567",
+      messageText: "This should remain in the inbox",
+      type: "text",
+      externalId: "wamid-conversation-ai-disabled-1",
+    });
+
+    expect(mocks.saveMessage).toHaveBeenCalledWith(
+      77,
+      "user",
+      "This should remain in the inbox",
+      expect.objectContaining({ externalId: "wamid-conversation-ai-disabled-1" }),
+    );
+    expect(mocks.agentRunCapability).not.toHaveBeenCalled();
   });
 });

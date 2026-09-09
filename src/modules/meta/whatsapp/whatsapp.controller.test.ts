@@ -2,9 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   accountFindFirst: vi.fn(),
+  accountUpdate: vi.fn(),
   enqueueMetaJob: vi.fn(),
   enqueueInboundMetaEvent: vi.fn(),
   verifyMetaWebhookSignature: vi.fn(),
+  requireWorkspaceProfileAccess: vi.fn(),
   loggerDebug: vi.fn(),
   loggerInfo: vi.fn(),
   loggerWarn: vi.fn(),
@@ -16,12 +18,17 @@ vi.mock("@config/env", () => ({
     NODE_ENV: "test",
     WHATSAPP_VERIFY_TOKEN: "verify-token",
     FB_APP_SECRET: "app-secret",
+    R2_BUCKET_NAME: "test-bucket",
+    R2_PUBLIC_URL: "https://example.test",
   },
 }));
 
 vi.mock("@config/prisma", () => ({
   default: {
-    whatsAppAccount: { findFirst: mocks.accountFindFirst },
+    whatsAppAccount: {
+      findFirst: mocks.accountFindFirst,
+      update: mocks.accountUpdate,
+    },
   },
 }));
 
@@ -92,6 +99,11 @@ vi.mock("@modules/meta/core/webhookCache.service", () => ({
 
 vi.mock("@modules/inbox/inbox.routes", () => ({
   getAuthorizedConversation: vi.fn(),
+}));
+
+vi.mock("@modules/workspace/workspace.service", () => ({
+  requireWorkspaceProfileAccess: mocks.requireWorkspaceProfileAccess,
+  WORKSPACE_MANAGER_ROLES: ["owner", "admin"],
 }));
 
 import { whatsappController } from "./whatsapp.controller";
@@ -464,5 +476,78 @@ describe("WhatsApp webhook controller wiring", () => {
 
     expect(response.status).toHaveBeenCalledWith(500);
     expect(response.send).toHaveBeenCalledWith("WEBHOOK_PROCESSING_FAILED");
+  });
+
+  it("toggles AI replies for an owned WhatsApp account and returns the updated account", async () => {
+    const account = {
+      id: 9,
+      userId: 7,
+      phoneNumberId: "phone-number-id",
+      businessProfileId: null,
+      isActive: true,
+      aiRepliesEnabled: true,
+    };
+    const updated = { ...account, aiRepliesEnabled: false };
+    mocks.accountFindFirst.mockResolvedValueOnce(account);
+    mocks.accountUpdate.mockResolvedValueOnce(updated);
+    const response = { json: vi.fn().mockReturnThis() } as any;
+
+    await whatsappController.toggleAiReplies(
+      { user: { id: 7 }, params: { id: "9" }, body: { enabled: false } } as any,
+      response,
+    );
+
+    expect(mocks.accountUpdate).toHaveBeenCalledWith({
+      where: { id: 9 },
+      data: { aiRepliesEnabled: false },
+    });
+    expect(response.json).toHaveBeenCalledWith({
+      success: true,
+      account: expect.objectContaining({ aiRepliesEnabled: false }),
+    });
+  });
+
+  it("requires workspace management access for a linked WhatsApp account", async () => {
+    const account = {
+      id: 9,
+      userId: 7,
+      phoneNumberId: "phone-number-id",
+      businessProfileId: 42,
+      isActive: true,
+      aiRepliesEnabled: true,
+    };
+    const updated = { ...account, aiRepliesEnabled: false };
+    mocks.accountFindFirst.mockResolvedValueOnce(account);
+    mocks.accountUpdate.mockResolvedValueOnce(updated);
+    mocks.requireWorkspaceProfileAccess.mockResolvedValueOnce({ role: "admin" });
+    const response = { json: vi.fn().mockReturnThis() } as any;
+
+    await whatsappController.toggleAiReplies(
+      { user: { id: 7 }, params: { id: "9" }, body: { enabled: false } } as any,
+      response,
+    );
+
+    expect(mocks.requireWorkspaceProfileAccess).toHaveBeenCalledWith(7, 42, { manage: true });
+    expect(mocks.accountUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not let an unrelated owner toggle an unlinked WhatsApp account", async () => {
+    mocks.accountFindFirst.mockResolvedValueOnce({
+      id: 9,
+      userId: 8,
+      phoneNumberId: "phone-number-id",
+      businessProfileId: null,
+      isActive: true,
+    });
+    const response = { json: vi.fn().mockReturnThis() } as any;
+
+    await expect(
+      whatsappController.toggleAiReplies(
+        { user: { id: 7 }, params: { id: "9" }, body: { enabled: false } } as any,
+        response,
+      ),
+    ).rejects.toMatchObject({ message: "WhatsApp account not found" });
+
+    expect(mocks.accountUpdate).not.toHaveBeenCalled();
   });
 });

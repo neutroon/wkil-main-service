@@ -7,7 +7,7 @@ import {
 import { validate } from "@middlewares/validate.middleware";
 import { idParamSchema } from "@utils/shared.validation";
 import { paginationSchema, idPaginationSchema } from "@utils/shared.validation";
-import { sendMessageSchema } from "@modules/meta/core/conversation.validation";
+import { sendMessageSchema, toggleAiSchema } from "@modules/meta/core/conversation.validation";
 import { sendWhatsAppTemplateSchema } from "@modules/meta/core/meta.validation";
 import conversationsRoutes from "@modules/inbox/inbox.routes";
 import { whatsappController } from "@modules/meta/whatsapp/whatsapp.controller";
@@ -53,6 +53,12 @@ whatsappRoutes.post("/oauth", authenticateToken, (req, res) =>
 // ─── Account Management ───────────────────────────────────────────────────────
 whatsappRoutes.get("/accounts", authenticateToken, (req, res) =>
   whatsappController.listAccounts(req, res),
+);
+whatsappRoutes.patch(
+  "/accounts/:id/ai-toggle",
+  authenticateToken,
+  validate(toggleAiSchema),
+  (req, res) => whatsappController.toggleAiReplies(req, res),
 );
 whatsappRoutes.post(
   "/accounts/:id/re-subscribe",

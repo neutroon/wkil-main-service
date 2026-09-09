@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { assistantGatewayInternals } from "./assistant.gateway";
 
 const scope = { userId: 42, profileId: 7, workspaceId: 11 };
@@ -131,5 +131,98 @@ describe("assistant gateway contract", () => {
       input: { messages: [] },
       user_id: 999,
     }, scope)).toThrowError(/fields/i);
+  });
+
+  it("preserves string titles in create and update normalization", () => {
+    expect(assistantGatewayInternals.normalizeBody("create", {
+      metadata: { title: "  Existing title  " },
+    }, scope)).toMatchObject({
+      metadata: { workspace_id: 11, title: "Existing title" },
+    });
+
+    expect(assistantGatewayInternals.normalizeBody("update", {
+      metadata: { title: "Renamed title" },
+    }, scope)).toMatchObject({
+      metadata: { workspace_id: 11, title: "Renamed title" },
+    });
+  });
+
+  it("derives a deterministic title from the normalized first human message", () => {
+    expect(assistantGatewayInternals.automaticTitleFromRun({
+      input: {
+        messages: [{
+          type: "human",
+          content: "  Plan   a launch\nfor my store  ",
+        }],
+      },
+    })).toBe("Plan a launch for my store");
+  });
+
+  it("does not derive a title from image-only input or resume commands", () => {
+    expect(assistantGatewayInternals.automaticTitleFromRun({
+      input: { messages: [{ type: "human", content: [{
+        type: "image_url", image_url: "data:image/png;base64,AAAA",
+      }] }] },
+    })).toBeUndefined();
+    expect(assistantGatewayInternals.automaticTitleFromRun({
+      command: { resume: { approved: true } },
+    })).toBeUndefined();
+  });
+
+  it("sets a server title from the earliest persisted human message", async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ metadata: {} }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ values: {
+        messages: [{ type: "human", content: "Earlier server message" }],
+      } }), { status: 200 }))
+      .mockResolvedValueOnce(new Response("{}", { status: 200 }));
+
+    await assistantGatewayInternals.ensureThreadTitle({
+      apiUrl: "https://agent.test",
+      threadId: "thread-1",
+      title: "Current message must not win",
+      headers: new Headers({ "x-api-key": "test-key" }),
+      signal: new AbortController().signal,
+      fetchImpl,
+    });
+
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      3,
+      "https://agent.test/threads/thread-1",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ metadata: { title: "Earlier server message" } }),
+      }),
+    );
+  });
+
+  it("does not overwrite a title already stored on the server", async () => {
+    const fetchImpl = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify({ metadata: { title: "Manual rename" } }), { status: 200 }),
+    );
+
+    await assistantGatewayInternals.ensureThreadTitle({
+      apiUrl: "https://agent.test",
+      threadId: "thread-1",
+      title: "Automatic title",
+      headers: new Headers({ "x-api-key": "test-key" }),
+      signal: new AbortController().signal,
+      fetchImpl,
+    });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not throw when server title persistence fails", async () => {
+    const fetchImpl = vi.fn().mockRejectedValue(new Error("agent unavailable"));
+
+    await expect(assistantGatewayInternals.ensureThreadTitle({
+      apiUrl: "https://agent.test",
+      threadId: "thread-1",
+      title: "Automatic title",
+      headers: new Headers({ "x-api-key": "test-key" }),
+      signal: new AbortController().signal,
+      fetchImpl,
+    })).resolves.toBeUndefined();
   });
 });

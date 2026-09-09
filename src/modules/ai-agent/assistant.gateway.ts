@@ -139,8 +139,116 @@ function validTitle(value: unknown): value is string {
 }
 
 function clientTitle(value: unknown): string | undefined {
-  if (!isPlainRecord(value) || !isPlainRecord(value.title)) return undefined;
+  if (!isPlainRecord(value) || !validTitle(value.title)) return undefined;
   return validTitle(value.title) ? value.title.trim() : undefined;
+}
+
+function deterministicThreadTitle(raw: string): string {
+  const line = raw.replace(/\s+/g, " ").trim();
+  if (line.length <= 48) return line;
+  const cut = line.slice(0, 48);
+  const boundary = cut.lastIndexOf(" ");
+  return `${cut.slice(0, boundary > 20 ? boundary : 48)}…`;
+}
+
+function automaticTitleFromRun(normalized: PlainRecord | undefined): string | undefined {
+  if (!normalized || normalized.command !== undefined) return undefined;
+  const input = isPlainRecord(normalized.input) ? normalized.input : undefined;
+  const messages = input && Array.isArray(input.messages) ? input.messages : [];
+  const message = messages[0];
+  if (!isPlainRecord(message)) return undefined;
+  const text = textFromMessageContent(message.content);
+  const title = deterministicThreadTitle(text);
+  return title || undefined;
+}
+
+type TitleFetch = (
+  input: string,
+  init?: RequestInit,
+) => Promise<globalThis.Response>;
+
+type EnsureThreadTitleParams = {
+  apiUrl: string;
+  threadId: string;
+  title: string;
+  headers: Headers;
+  signal: AbortSignal;
+  fetchImpl?: TitleFetch;
+};
+
+function stateFirstHumanTitle(value: unknown): { found: boolean; title?: string } {
+  if (!isPlainRecord(value) || !isPlainRecord(value.values) || !Array.isArray(value.values.messages)) {
+    return { found: false };
+  }
+
+  for (const message of value.values.messages) {
+    if (!isPlainRecord(message) || !["human", "user"].includes(String(message.type ?? message.role))) {
+      continue;
+    }
+    const text = textFromMessageContent(message.content);
+    const title = deterministicThreadTitle(text);
+    return { found: true, ...(title ? { title } : {}) };
+  }
+  return { found: false };
+}
+
+async function ensureThreadTitle(params: EnsureThreadTitleParams): Promise<void> {
+  const fetchImpl = params.fetchImpl ?? fetch;
+  const threadUrl = `${params.apiUrl}/threads/${encodeURIComponent(params.threadId)}`;
+
+  try {
+    const readHeaders = new Headers(params.headers);
+    readHeaders.delete("content-type");
+    const threadResponse = await fetchImpl(threadUrl, {
+      method: "GET",
+      headers: readHeaders,
+      signal: params.signal,
+    });
+    if (!threadResponse.ok) {
+      logger.warn("assistant.gateway.title_read_failed", { status: threadResponse.status });
+      return;
+    }
+
+    const thread = await threadResponse.json() as unknown;
+    const metadata = isPlainRecord(thread) && isPlainRecord(thread.metadata)
+      ? thread.metadata
+      : undefined;
+    if (metadata && validTitle(metadata.title)) return;
+
+    let title = params.title;
+    try {
+      const stateResponse = await fetchImpl(`${threadUrl}/state`, {
+        method: "GET",
+        headers: readHeaders,
+        signal: params.signal,
+      });
+      if (stateResponse.ok) {
+        const state = stateFirstHumanTitle(await stateResponse.json() as unknown);
+        if (state.found) title = state.title ?? "";
+      }
+    } catch (error) {
+      logger.warn("assistant.gateway.title_state_read_failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    if (!title) return;
+    const patchHeaders = new Headers(params.headers);
+    patchHeaders.set("content-type", "application/json");
+    const updateResponse = await fetchImpl(threadUrl, {
+      method: "PATCH",
+      headers: patchHeaders,
+      body: JSON.stringify({ metadata: { title } }),
+      signal: params.signal,
+    });
+    if (!updateResponse.ok) {
+      logger.warn("assistant.gateway.title_update_failed", { status: updateResponse.status });
+    }
+  } catch (error) {
+    logger.warn("assistant.gateway.title_persistence_failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 function normalizeHumanMessage(value: unknown, userId: number): {
@@ -345,6 +453,7 @@ export async function assistantGateway(req: AuthRequest, res: Response): Promise
     workspaceId: resolvedWorkspaceId,
   });
   const apiUrl = (process.env.LANGGRAPH_API_URL ?? "http://localhost:8123").replace(/\/+$/, "");
+  const pathParts = req.path.replace(/^\/+/, "").split("/");
   const target = `${apiUrl}/${req.path.replace(/^\/+/, "")}${queryString(req)}`;
   // Interactive user traffic must use the BFF-scoped key. The monolith key
   // intentionally represents an unrestricted service caller and remains
@@ -378,6 +487,20 @@ export async function assistantGateway(req: AuthRequest, res: Response): Promise
     if (!responseFinished) controller.abort();
   });
 
+  if (endpoint === "run") {
+    const title = automaticTitleFromRun(normalized);
+    const threadId = pathParts[1];
+    if (title && threadId) {
+      await ensureThreadTitle({
+        apiUrl,
+        threadId,
+        title,
+        headers,
+        signal: controller.signal,
+      });
+    }
+  }
+
   let upstream: globalThis.Response;
   try {
     upstream = await fetch(target, {
@@ -409,4 +532,7 @@ export const assistantGatewayInternals = {
   endpointFor,
   normalizeBody,
   textFromMessageContent,
+  deterministicThreadTitle,
+  automaticTitleFromRun,
+  ensureThreadTitle,
 };

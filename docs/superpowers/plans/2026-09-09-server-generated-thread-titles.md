@@ -205,7 +205,7 @@ Expected: FAIL because the current adapter reads the passed message and calls `t
 
 - [ ] **Step 3: Replace web title derivation with a server metadata read**
 
-Remove the web-only `textOf`, `makeTitle`, and title update logic. Implement `generateTitle(remoteId)` by reading the thread metadata, extracting a non-empty string title, and returning it via `createAssistantStream`; return an empty stream when the read fails or no title exists. Keep explicit `rename(remoteId, title)` unchanged so manual rename remains server-backed.
+Remove the web-only `makeTitle` and title update logic. Keep `textOf` because the stream transport still normalizes the current user message for the agent; it must not be used by `generateTitle`. Implement `generateTitle(remoteId)` by reading the thread metadata, extracting a non-empty string title, and returning it via `createAssistantStream`; return an empty stream when the read fails or no title exists. Keep explicit `rename(remoteId, title)` unchanged so manual rename remains server-backed.
 
 - [ ] **Step 4: Run web runtime tests**
 
@@ -227,6 +227,7 @@ git commit -m "refactor(web): read copilot titles from server"
 **Files:**
 - Modify: `app-mobile-rn/hooks/use-app-runtime.ts:17-97`
 - Test: `app-mobile-rn/hooks/use-app-runtime.test.ts`
+- Test support: `app-mobile-rn/vitest.config.mjs`
 
 **Interfaces:**
 - Consumes the same backend metadata contract from Task 1.
@@ -286,7 +287,7 @@ Run:
 rg -n "makeTitle|generatedTitle|messageText|textOf|generateTitle" app/src/components/user/copilot app-mobile-rn/hooks/use-app-runtime.ts
 ```
 
-Expected: only adapter method declarations and server metadata reads remain; no client title derivation helper or message parsing remains.
+Expected: only adapter method declarations and server metadata reads remain; no `makeTitle`, `generatedTitle`, or `messageText` helper remains. The web transport's `textOf` helper may remain because it serializes messages for the server run and is not title logic.
 
 - [ ] **Step 3: Run TypeScript checks for the web and React Native clients**
 

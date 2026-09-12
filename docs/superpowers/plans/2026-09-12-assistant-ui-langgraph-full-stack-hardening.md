@@ -513,7 +513,7 @@ This table is the recovery point after context compaction. Update it immediately
 |---|---|---|---|---|
 | Approved design and implementation plan | Complete | User approved spec and selected subagent-driven execution on 2026-09-12; plan self-review and `git diff --check` passed | `back-end: 63b92eb`, `a8da6bf` | Set up SDD worktrees and ledger |
 | 1. Frontend dependencies | Complete | ESM import, assistant-ui doctor, 12 focused tests, and `tsc --noEmit` passed; scoped re-review clean | `app: c19ade2` | Vite peer warning deferred to final review |
-| 2. Gateway history/checkpoint | Pending | Not run | — | Add allow-list and normalization |
+| 2. Gateway history/checkpoint | Complete | 51 focused tests; OpenAPI lint/routes/bundle/type generation passed; two scoped fix reviews clean | `back-end: 275bf88, 113afb8`; `app: ec60623, daf623a` | None |
 | 3. Frontend checkpoint editing | Pending | Not run | — | Add exact history matching and run fork |
 | 4. Compiled graph exports | Pending | Not run | — | Compile three builder exports |
 | 5. Graph/HITL invariants | Pending | Not run | — | Add structural coverage; fix only proven gaps |
@@ -526,7 +526,8 @@ This table is the recovery point after context compaction. Update it immediately
 - Approved design is durable in `back-end/docs/superpowers/specs/2026-09-12-assistant-ui-langgraph-full-stack-hardening-design.md`.
 - This implementation plan was self-reviewed against the approved thirteen-item end state.
 - Coordinated worktrees and the SDD ledger are active; Task 1 is complete after one reviewed fix round.
-- The next action is Task 2: tenant-scoped checkpoint history gateway contract.
+- Tasks 1 and 2 are complete with independent review gates.
+- The next action is Task 3: assistant-ui checkpoint-backed edit/regenerate wiring.
 - No product code or dependency manifest has been changed yet.
 
 ### Resume instruction

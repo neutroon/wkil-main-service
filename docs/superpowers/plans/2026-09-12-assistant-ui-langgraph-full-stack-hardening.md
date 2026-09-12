@@ -121,13 +121,13 @@
    expect(normalizeBody("run", {
      assistant_id: "agent",
      input: { messages: [{ type: "human", content: "edited" }] },
-     checkpoint: { checkpoint_id: "cp-123" },
+   checkpoint_id: "cp-123",
    }, scope)).toMatchObject({
-     checkpoint: { checkpoint_id: "cp-123" },
+     checkpoint_id: "cp-123",
    });
    ```
 
-   Also prove nested unknown fields, blank IDs, oversized IDs, client-supplied thread namespaces, and checkpoints on approval resumes are rejected unless the installed SDK/documentation requires them.
+   Also prove the legacy/nested `checkpoint` object, blank IDs, oversized IDs, client-supplied thread namespaces, and checkpoint IDs on approval resumes are rejected unless later installed SDK/documentation requires them.
 
 4. Run the focused test and observe the intended failures:
 
@@ -145,25 +145,23 @@
 
 6. Add a dedicated history body normalizer. It must return a new object, bound `limit`, and copy only SDK-documented pagination/filter fields. It must never accept `user_id`, `workspace_id`, `assistant_id`, or arbitrary metadata from the browser.
 
-7. Add a dedicated checkpoint normalizer for runs:
+7. Add a dedicated checkpoint-ID normalizer for runs. SDK 1.11.0 accepts `checkpointId` in TypeScript and sends the scalar `checkpoint_id` field on the wire:
 
    ```ts
-   function normalizeCheckpoint(value: unknown): { checkpoint_id: string } | undefined {
+   function normalizeCheckpointId(value: unknown): string | undefined {
      if (value === undefined) return undefined;
-     if (!isPlainRecord(value) || !hasOnly(value, ["checkpoint_id"])) {
+     if (typeof value !== "string") {
        throw new AppError("Invalid checkpoint", 400, true, "INVALID_CHECKPOINT");
      }
-     const checkpointId = typeof value.checkpoint_id === "string"
-       ? value.checkpoint_id.trim()
-       : "";
+     const checkpointId = value.trim();
      if (!checkpointId || checkpointId.length > 256) {
        throw new AppError("Invalid checkpoint", 400, true, "INVALID_CHECKPOINT");
      }
-     return { checkpoint_id: checkpointId };
+     return checkpointId;
    }
    ```
 
-8. Forward the normalized checkpoint only for a new/edited human run. Preserve the current top-level `command.resume`, tenant-derived input, stream mode, `on_disconnect: "cancel"`, and `multitask_strategy: "reject"` behavior.
+8. Accept `checkpoint_id` in the run field allow-list and forward the normalized scalar only for a new/edited human run. Preserve the current top-level `command.resume`, tenant-derived input, stream mode, `on_disconnect: "cancel"`, and `multitask_strategy: "reject"` behavior. Continue rejecting the older `checkpoint` object.
 
 9. Re-run the focused test, then the client contract test:
 
@@ -212,13 +210,13 @@
 
 2. Add a runtime-hook test proving `getCheckpointId(threadId, parentMessages)` calls `client.threads.getHistory(threadId)` and returns the pure helper result.
 
-3. Add a stream test proving `config.checkpointId` is mapped to the installed LangGraph SDK run field. The expected shape from the official docs is:
+3. Add a stream test proving assistant-ui's `config.checkpointId` is passed to SDK 1.11.0 using its typed camelCase option; the SDK maps this to wire-level `checkpoint_id`:
 
    ```ts
-   checkpoint: checkpointId ? { checkpoint_id: checkpointId } : undefined
+   checkpointId: checkpointId ?? undefined
    ```
 
-   Confirm this exact property against `app/node_modules/@langchain/langgraph-sdk` after Task 1 and adjust only if the installed type requires another documented spelling.
+   Confirm this exact property against `app/node_modules/@langchain/langgraph-sdk`; do not build the wire body manually.
 
 4. Run the focused tests and observe the intended failures:
 
@@ -230,7 +228,7 @@
 
 6. Pass `getCheckpointId` to `useLangGraphRuntime`. Do not add edit/regenerate visibility state: assistant-ui enables `ActionBarPrimitive.Edit` and `ActionBarPrimitive.Reload` only when checkpoint lookup exists.
 
-7. Destructure `checkpointId` in `stream`, forward it in both ordinary message and valid resume configurations only as allowed by the gateway tests, and preserve `initialize()`, `abortSignal`, stream modes, the one-new-human-message input, and top-level `command` semantics.
+7. Destructure `checkpointId` in `stream` and forward it only in ordinary/edited human runs. Approval resumes retain top-level `command` semantics and do not accept an arbitrary checkpoint ID. Preserve `initialize()`, `abortSignal`, stream modes, and the one-new-human-message input.
 
 8. Verify that `app/src/components/thread.tsx` still uses supported assistant-ui primitives for user edit composer and assistant reload. Do not redesign the component.
 

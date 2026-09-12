@@ -510,7 +510,7 @@ This table is the recovery point after context compaction. Update it immediately
 
 | Task | Status | Evidence | Commit(s) | Remaining concern |
 |---|---|---|---|---|
-| Approved design | Complete | User approved 2026-09-12 | `back-end: 907e0e6` plus approval-status commit | None |
+| Approved design and implementation plan | Complete | User approved spec 2026-09-12; plan self-review and `git diff --check` passed | `back-end: 63b92eb` | Awaiting execution approval |
 | 1. Frontend dependencies | Pending | Not run | — | Repair stale junctions; patch-update assistant-ui |
 | 2. Gateway history/checkpoint | Pending | Not run | — | Add allow-list and normalization |
 | 3. Frontend checkpoint editing | Pending | Not run | — | Add exact history matching and run fork |

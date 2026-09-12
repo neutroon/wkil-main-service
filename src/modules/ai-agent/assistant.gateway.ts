@@ -278,6 +278,7 @@ function normalizeHumanMessage(value: unknown, userId: number): {
 }
 
 function normalizeHistoryBody(body: unknown): PlainRecord {
+  if (body === undefined) return { limit: 10 };
   if (!isPlainRecord(body)) {
     throw new AppError("Invalid request body", 400, true, "INVALID_BODY");
   }
@@ -287,7 +288,7 @@ function normalizeHistoryBody(body: unknown): PlainRecord {
   if (!hasOnly(body, ["limit"])) {
     throw new AppError("Invalid history fields", 400, true, "INVALID_BODY_FIELDS");
   }
-  const limit = body.limit ?? 10;
+  const limit = body.limit === undefined ? 10 : body.limit;
   if (!Number.isInteger(limit) || Number(limit) < 1 || Number(limit) > 100) {
     throw new AppError("Invalid pagination", 400, true, "INVALID_PAGINATION");
   }
@@ -317,11 +318,11 @@ function normalizeBody(
     }
     return undefined;
   }
+  if (endpoint === "history") return normalizeHistoryBody(body);
+
   if (!isPlainRecord(body)) {
     throw new AppError("Invalid request body", 400, true, "INVALID_BODY");
   }
-
-  if (endpoint === "history") return normalizeHistoryBody(body);
 
   if (endpoint === "search") {
     if (!hasOnly(body, ["limit", "offset", "status", "sort_by", "sort_order", "select"])) {

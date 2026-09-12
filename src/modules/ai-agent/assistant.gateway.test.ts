@@ -37,8 +37,13 @@ describe("assistant gateway contract", () => {
     expect(assistantGatewayInternals.normalizeBody("history", {}, scope)).toEqual({ limit: 10 });
   });
 
+  it("defaults an omitted history body to the SDK page size", () => {
+    expect(assistantGatewayInternals.normalizeBody("history", undefined, scope)).toEqual({ limit: 10 });
+  });
+
   it.each([
     { limit: 0 },
+    { limit: null },
     { limit: 101 },
     { limit: 1.5 },
     { user_id: 999 },
@@ -50,6 +55,10 @@ describe("assistant gateway contract", () => {
     { arbitrary: true },
   ])("rejects unsafe history body %j", (body) => {
     expect(() => assistantGatewayInternals.normalizeBody("history", body, scope)).toThrow();
+  });
+
+  it("rejects a null history body", () => {
+    expect(() => assistantGatewayInternals.normalizeBody("history", null, scope)).toThrow();
   });
 
   it("derives tenant identity and normalizes rich text human messages", () => {

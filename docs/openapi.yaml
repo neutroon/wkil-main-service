@@ -1374,7 +1374,15 @@ paths:
               properties:
                 limit: { type: integer, minimum: 1, maximum: 100, default: 10 }
       responses:
-        "200": { $ref: "#/components/responses/SuccessOk" }
+        "200":
+          description: LangGraph checkpoint states, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }

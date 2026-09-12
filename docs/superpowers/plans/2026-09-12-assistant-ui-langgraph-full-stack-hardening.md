@@ -6,7 +6,7 @@
 
 **Architecture:** Keep the existing three-tier boundary: Next.js/assistant-ui -> Express `/v1/assistant` gateway -> Python LangGraph Agent Server. Add the missing checkpoint-history contract needed for safe edit/regenerate, compile every registered graph for deployment without an application checkpointer, repair the current checkout's dependency installation, and verify existing streaming, cancellation, HITL, tool, RAG, and workspace-isolation behavior without introducing parallel state stores or protocols.
 
-**Tech Stack:** Next.js 15.5, React 19, assistant-ui 0.15.x, `@assistant-ui/react-langgraph`, LangGraph JS SDK 1.10.x, Express 5, Vitest, Python 3.11+, LangGraph 1.2.x, LangChain Core/provider packages, LangGraph Agent Server 0.13.2, Qdrant, pytest, Ruff, LangSmith.
+**Tech Stack:** Next.js 15.5, React 19, assistant-ui 0.15.x, `@assistant-ui/react-langgraph`, LangGraph JS SDK 1.11.0, Express 5, Vitest, Python 3.11+, LangGraph 1.2.x, LangChain Core/provider packages, LangGraph Agent Server 0.13.2, Qdrant, pytest, Ruff, LangSmith.
 
 **Spec:** `back-end/docs/superpowers/specs/2026-09-12-assistant-ui-langgraph-full-stack-hardening-design.md`
 
@@ -517,7 +517,7 @@ This table is the recovery point after context compaction. Update it immediately
 | 3. Frontend checkpoint editing | Complete | 21 focused tests and `tsc --noEmit` passed; independent review passed | `app: f1a475d` | Minor test-strengthening items deferred to final review |
 | 4. Compiled graph exports | Complete | 14 focused tests, four-target import validation, Ruff, and independent review passed | `agent-svc: c9998bc` | None |
 | 5. Graph/HITL invariants | Complete | 78 focused tests and edited-file Ruff passed; independent review passed | `agent-svc: ea366fd` | Full-scope pre-existing Ruff cleanup deferred to final gate |
-| 6. RAG consistency | Pending | Not run | — | Verify dedicated packages and shared embeddings |
+| 6. RAG consistency | Complete | 32 RAG tests, scoped Ruff, and `uv lock --check` passed; independent review passed after a focused test-strengthening round | `agent-svc: 83b744d, 8eda1a6` | Full-scope pre-existing Ruff cleanup remains deferred to final gate |
 | 7. LangSmith/runbook | Pending | Not run | — | Server-only optional tracing documentation |
 | 8. Full verification/review | Pending | Not run | — | All suites, builds, config, smoke, diff review |
 
@@ -526,9 +526,9 @@ This table is the recovery point after context compaction. Update it immediately
 - Approved design is durable in `back-end/docs/superpowers/specs/2026-09-12-assistant-ui-langgraph-full-stack-hardening-design.md`.
 - This implementation plan was self-reviewed against the approved thirteen-item end state.
 - Coordinated worktrees and the SDD ledger are active; Task 1 is complete after one reviewed fix round.
-- Tasks 1 through 5 are complete with independent review gates.
-- The next action is Task 6: LangChain RAG package and embedding consistency.
-- No product code or dependency manifest has been changed yet.
+- Tasks 1 through 6 are complete with independent review gates.
+- The next action is Task 7: optional server-side LangSmith configuration and the architecture/runbook documentation.
+- Product, dependency, contract, graph, and RAG changes are isolated in the coordinated feature worktrees and recorded above.
 
 ### Resume instruction
 

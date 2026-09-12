@@ -1437,6 +1437,10 @@ paths:
                                         items: { $ref: "#/components/schemas/AssistantHumanContentPart" }
                                         contains: { $ref: "#/components/schemas/AssistantMeaningfulHumanContentPart" }
                                         minContains: 1
+                                        allOf:
+                                          - contains: { $ref: "#/components/schemas/AssistantTextContentPart" }
+                                            minContains: 0
+                                            maxContains: 1
                                   id: { type: string }
                                 additionalProperties: true
                               - type: object
@@ -1452,6 +1456,10 @@ paths:
                                         items: { $ref: "#/components/schemas/AssistantHumanContentPart" }
                                         contains: { $ref: "#/components/schemas/AssistantMeaningfulHumanContentPart" }
                                         minContains: 1
+                                        allOf:
+                                          - contains: { $ref: "#/components/schemas/AssistantTextContentPart" }
+                                            minContains: 0
+                                            maxContains: 1
                                   id: { type: string }
                                 additionalProperties: true
                     checkpoint_id: { type: string, minLength: 1, maxLength: 256, pattern: "\\S" }

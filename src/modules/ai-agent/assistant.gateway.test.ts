@@ -61,15 +61,14 @@ describe("assistant gateway contract", () => {
     expect(() => assistantGatewayInternals.normalizeBody("history", null, scope)).toThrow();
   });
 
-  it("derives tenant identity and normalizes rich text human messages", () => {
+  it("derives tenant identity and normalizes the composed text message", () => {
     const normalized = assistantGatewayInternals.normalizeBody("run", {
       assistant_id: "agent",
       input: {
         messages: [{
           type: "human",
           content: [
-            { type: "text", text: "مرحبا " },
-            { type: "text_delta", text: "بالعالم" },
+            { type: "text", text: "مرحبا بالعالم" },
           ],
           id: "client-id",
         }],

@@ -12,6 +12,7 @@ const ASSISTANT_GRAPH = "agent";
 const MAX_MESSAGE_LENGTH = 16000;
 const MAX_IMAGE_URL_LENGTH = 1_500_000;
 const MAX_TITLE_LENGTH = 200;
+const RFC_3986_URI_CHARACTERS = /^[A-Za-z0-9._~:/?#@!$&'()*+,;=%\[\]-]+$/u;
 
 type GatewayEndpoint =
   | "create"
@@ -77,8 +78,23 @@ function imageUrl(value: unknown): string | { url: string; detail?: "auto" | "lo
     : undefined;
 }
 
+function hasValidUriBracketPlacement(value: string): boolean {
+  const brackets = value.match(/[\[\]]/gu);
+  if (!brackets) return true;
+  if (brackets.length !== 2) return false;
+  return /^https?:\/\/(?:[^\[\]/?#@]*@)?\[[^\[\]]+\](?::\d*)?(?:[/?#]|$)/iu.test(value);
+}
+
 function isAllowedImageUrl(value: string): boolean {
-  if (!value || value.length > MAX_IMAGE_URL_LENGTH) return false;
+  if (
+    !value ||
+    value.length > MAX_IMAGE_URL_LENGTH ||
+    !RFC_3986_URI_CHARACTERS.test(value) ||
+    /%(?![0-9A-Fa-f]{2})/u.test(value) ||
+    !hasValidUriBracketPlacement(value)
+  ) {
+    return false;
+  }
   try {
     const parsed = new URL(value);
     if (parsed.protocol === "data:") return value.toLowerCase().startsWith("data:image/");
@@ -89,18 +105,27 @@ function isAllowedImageUrl(value: string): boolean {
 }
 
 function normalizeMessageContent(value: unknown): string | AssistantContentPart[] {
-  if (typeof value === "string") return value.trim();
+  if (typeof value === "string") {
+    if (value.length > MAX_MESSAGE_LENGTH) {
+      throw new AppError("Message must contain 1-16000 characters or an image", 400, true, "INVALID_HUMAN_MESSAGE");
+    }
+    return value.trim();
+  }
   if (!Array.isArray(value)) throw new AppError("Message content is invalid", 400, true, "INVALID_HUMAN_MESSAGE");
 
   const parts: AssistantContentPart[] = [];
-  let textLength = 0;
+  let textPartCount = 0;
   for (const rawPart of value) {
     if (!isPlainRecord(rawPart)) {
       throw new AppError("Message content is invalid", 400, true, "INVALID_HUMAN_MESSAGE");
     }
     if (rawPart.type === "text" || rawPart.type === "text_delta") {
-      const text = typeof rawPart.text === "string" ? rawPart.text : "";
-      textLength += text.trim().length;
+      textPartCount += 1;
+      if (textPartCount > 1 || typeof rawPart.text !== "string" ||
+          rawPart.text.length > MAX_MESSAGE_LENGTH) {
+        throw new AppError("Message may contain at most one valid text part", 400, true, "INVALID_HUMAN_MESSAGE");
+      }
+      const text = rawPart.text;
       if (text) parts.push({ type: "text", text });
       continue;
     }
@@ -117,7 +142,7 @@ function normalizeMessageContent(value: unknown): string | AssistantContentPart[
     throw new AppError("Unsupported message content", 400, true, "UNSUPPORTED_MESSAGE_CONTENT");
   }
 
-  if (textLength > MAX_MESSAGE_LENGTH || parts.length === 0 ||
+  if (parts.length === 0 ||
       (!parts.some((part) => part.type === "text") && !parts.some((part) => part.type === "image_url"))) {
     throw new AppError("Message must contain text or an image", 400, true, "INVALID_HUMAN_MESSAGE");
   }

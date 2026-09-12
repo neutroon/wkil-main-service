@@ -20,6 +20,7 @@ type GatewayEndpoint =
   | "update"
   | "delete"
   | "state"
+  | "history"
   | "run"
   | "cancel";
 
@@ -45,6 +46,9 @@ function endpointFor(parts: readonly string[], method: string): GatewayEndpoint 
     return method === "GET" ? "read" : method === "PATCH" ? "update" : "delete";
   }
   if (parts.length === 3 && parts[2] === "state" && method === "GET") return "state";
+  if (parts.length === 3 && parts[2] === "history" && method === "POST") {
+    return "history";
+  }
   if (parts.length === 4 && parts[2] === "runs" && parts[3] === "stream" && method === "POST") return "run";
   if (parts.length === 5 && parts[2] === "runs" && parts[4] === "cancel" && method === "POST") return "cancel";
   return undefined;
@@ -273,12 +277,41 @@ function normalizeHumanMessage(value: unknown, userId: number): {
   };
 }
 
+function normalizeHistoryBody(body: unknown): PlainRecord {
+  if (!isPlainRecord(body)) {
+    throw new AppError("Invalid request body", 400, true, "INVALID_BODY");
+  }
+  // The SDK also types checkpoint/metadata cursors, but those can carry
+  // client-controlled namespaces or tenant metadata. This BFF only exposes
+  // the bounded page-size control needed by checkpoint lookup.
+  if (!hasOnly(body, ["limit"])) {
+    throw new AppError("Invalid history fields", 400, true, "INVALID_BODY_FIELDS");
+  }
+  const limit = body.limit ?? 10;
+  if (!Number.isInteger(limit) || Number(limit) < 1 || Number(limit) > 100) {
+    throw new AppError("Invalid pagination", 400, true, "INVALID_PAGINATION");
+  }
+  return { limit: Number(limit) };
+}
+
+function normalizeCheckpointId(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") {
+    throw new AppError("Invalid checkpoint", 400, true, "INVALID_CHECKPOINT");
+  }
+  const checkpointId = value.trim();
+  if (!checkpointId || checkpointId.length > 256) {
+    throw new AppError("Invalid checkpoint", 400, true, "INVALID_CHECKPOINT");
+  }
+  return checkpointId;
+}
+
 function normalizeBody(
   endpoint: GatewayEndpoint,
   body: unknown,
   scope: { userId: number; profileId: number; workspaceId: number },
 ): PlainRecord | undefined {
-  if (!["create", "search", "update", "run"].includes(endpoint)) {
+  if (!["create", "search", "update", "history", "run"].includes(endpoint)) {
     if (body !== undefined && endpoint !== "read" && endpoint !== "state" && endpoint !== "delete" && endpoint !== "cancel") {
       throw new AppError("Invalid request body", 400, true, "INVALID_BODY");
     }
@@ -287,6 +320,8 @@ function normalizeBody(
   if (!isPlainRecord(body)) {
     throw new AppError("Invalid request body", 400, true, "INVALID_BODY");
   }
+
+  if (endpoint === "history") return normalizeHistoryBody(body);
 
   if (endpoint === "search") {
     if (!hasOnly(body, ["limit", "offset", "status", "sort_by", "sort_order", "select"])) {
@@ -331,10 +366,10 @@ function normalizeBody(
 
   if (!hasOnly(body, [
     "assistant_id", "input", "command", "stream_mode", "multitask_strategy", "on_disconnect",
-    // The official LangGraph SDK includes these optional fields. The WKIL
-    // gateway derives tenant state itself, so they are accepted for protocol
-    // compatibility but intentionally not forwarded to the agent service.
-    "config", "checkpoint",
+    // An empty SDK config is harmless and preserves client compatibility;
+    // any client-supplied config state is rejected below. checkpoint_id is
+    // the scalar fork target that the SDK sends on the wire.
+    "config", "checkpoint_id",
   ])) {
     throw new AppError("Invalid run fields", 400, true, "INVALID_BODY_FIELDS");
   }
@@ -352,7 +387,13 @@ function normalizeBody(
   if (body.multitask_strategy !== undefined && body.multitask_strategy !== "reject") {
     throw new AppError("Only reject multitask strategy is supported", 400, true, "INVALID_MULTITASK_STRATEGY");
   }
+  if (body.config !== undefined && (!isPlainRecord(body.config) || Object.keys(body.config).length !== 0)) {
+    throw new AppError("Client run config is not allowed", 400, true, "INVALID_RUN_CONFIG");
+  }
   if (body.command !== undefined) {
+    if (body.checkpoint_id !== undefined) {
+      throw new AppError("Resume commands cannot select a checkpoint", 400, true, "INVALID_RESUME");
+    }
     if (body.input !== undefined && body.input !== null) {
       throw new AppError("Resume commands cannot include input", 400, true, "INVALID_RESUME");
     }
@@ -371,6 +412,7 @@ function normalizeBody(
       !Array.isArray(body.input.messages) || body.input.messages.length !== 1) {
     throw new AppError("Exactly one human message is required", 400, true, "ONE_HUMAN_MESSAGE_REQUIRED");
   }
+  const checkpointId = normalizeCheckpointId(body.checkpoint_id);
   return {
     assistant_id: ASSISTANT_GRAPH,
     input: {
@@ -381,6 +423,7 @@ function normalizeBody(
       channel: "internal_copilot",
     },
     stream_mode: body.stream_mode,
+    ...(checkpointId ? { checkpoint_id: checkpointId } : {}),
     on_disconnect: "cancel",
     multitask_strategy: "reject",
   };

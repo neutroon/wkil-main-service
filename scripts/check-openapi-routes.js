@@ -201,6 +201,7 @@ function getExpectedRoutes() {
       "PATCH /v1/assistant/threads/{threadId}",
       "DELETE /v1/assistant/threads/{threadId}",
       "GET /v1/assistant/threads/{threadId}/state",
+      "POST /v1/assistant/threads/{threadId}/history",
       "POST /v1/assistant/threads/{threadId}/runs/stream",
       "POST /v1/assistant/threads/{threadId}/runs/{runId}/cancel",
     );

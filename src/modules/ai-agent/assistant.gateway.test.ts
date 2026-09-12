@@ -11,6 +11,7 @@ describe("assistant gateway contract", () => {
     ["PATCH", ["threads", "thread-1"], "update"],
     ["DELETE", ["threads", "thread-1"], "delete"],
     ["GET", ["threads", "thread-1", "state"], "state"],
+    ["POST", ["threads", "thread-1", "history"], "history"],
     ["POST", ["threads", "thread-1", "runs", "stream"], "run"],
     ["POST", ["threads", "thread-1", "runs", "run-1", "cancel"], "cancel"],
   ] as const)("allow-lists %s %s as %s", (method, parts, expected) => {
@@ -21,6 +22,34 @@ describe("assistant gateway contract", () => {
     expect(assistantGatewayInternals.endpointFor(["threads", "..", "state"], "GET")).toBeUndefined();
     expect(assistantGatewayInternals.endpointFor(["graphs", "agent"], "GET")).toBeUndefined();
     expect(assistantGatewayInternals.endpointFor(["threads", "thread-1"], "PUT")).toBeUndefined();
+    expect(assistantGatewayInternals.endpointFor(["threads", "thread-1", "history"], "GET")).toBeUndefined();
+  });
+
+  it("bounds history pagination without forwarding browser-owned filters", () => {
+    const body = { limit: 25 };
+    const normalized = assistantGatewayInternals.normalizeBody("history", body, scope);
+
+    expect(normalized).toEqual({ limit: 25 });
+    expect(normalized).not.toBe(body);
+  });
+
+  it("defaults history pages to the SDK's bounded page size", () => {
+    expect(assistantGatewayInternals.normalizeBody("history", {}, scope)).toEqual({ limit: 10 });
+  });
+
+  it.each([
+    { limit: 0 },
+    { limit: 101 },
+    { limit: 1.5 },
+    { user_id: 999 },
+    { workspace_id: 999 },
+    { assistant_id: "agent" },
+    { metadata: { workspace_id: 999 } },
+    { before: { configurable: { thread_id: "other-thread" } } },
+    { checkpoint: { checkpoint_ns: "other-namespace" } },
+    { arbitrary: true },
+  ])("rejects unsafe history body %j", (body) => {
+    expect(() => assistantGatewayInternals.normalizeBody("history", body, scope)).toThrow();
   });
 
   it("derives tenant identity and normalizes rich text human messages", () => {
@@ -67,6 +96,37 @@ describe("assistant gateway contract", () => {
       on_disconnect: "cancel",
       multitask_strategy: "reject",
     });
+  });
+
+  it("forwards the scalar SDK checkpoint ID for a human-run fork", () => {
+    expect(assistantGatewayInternals.normalizeBody("run", {
+      assistant_id: "agent",
+      input: { messages: [{ type: "human", content: "edited" }] },
+      checkpoint_id: "cp-123",
+    }, scope)).toMatchObject({
+      checkpoint_id: "cp-123",
+    });
+  });
+
+  it.each([
+    { checkpoint: { checkpoint_id: "cp-123" } },
+    { checkpoint_id: "   " },
+    { checkpoint_id: "x".repeat(257) },
+    { config: { configurable: { thread_id: "other-thread" } } },
+  ])("rejects legacy or client-scoped checkpoint data %j", (extra) => {
+    expect(() => assistantGatewayInternals.normalizeBody("run", {
+      assistant_id: "agent",
+      input: { messages: [{ type: "human", content: "edited" }] },
+      ...extra,
+    }, scope)).toThrow();
+  });
+
+  it("rejects checkpoint IDs on approval resumes", () => {
+    expect(() => assistantGatewayInternals.normalizeBody("run", {
+      assistant_id: "agent",
+      command: { resume: { approved: true } },
+      checkpoint_id: "cp-123",
+    }, scope)).toThrow();
   });
 
   it("accepts the SDK's optional empty run config without forwarding client state", () => {

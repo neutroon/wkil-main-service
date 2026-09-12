@@ -1,7 +1,7 @@
 # Assistant UI + LangGraph Full-Stack Hardening Design
 
 **Date:** 2026-09-12  
-**Status:** Revised after goal/source review; pending written-spec approval
+**Status:** Approved by the user on 2026-09-12; implementation plan written and awaiting execution approval
 **Scope owner:** `back-end` repository, spanning sibling `app` and `agent-svc` repositories
 
 ## 1. Goal
@@ -292,19 +292,19 @@ This section is the fallback checkpoint for future compacted sessions. The imple
 - Created a persistent Codex goal for the full outcome.
 - Incorporated review feedback by replacing the broad goal with thirteen evidence-based completion requirements.
 - Enumerated the mandatory workflow, assistant-ui, LangChain, and LangGraph skills plus the exact MCP documentation resources.
+- Received explicit user approval for this revised written specification.
+- Wrote and self-reviewed the task-by-task implementation plan.
 
 ### Current checkpoint
 
-- Review this revised written specification.
+- Review the executable implementation plan and begin Task 1 after user approval.
 - No product code or dependency manifest has been modified.
 
 ### Remaining phases
 
-1. Receive written-spec approval.
-2. Write and self-review the task-by-task implementation plan.
-3. Repair dependency installation and update compatible patch versions.
-4. Add failing contract tests for each confirmed behavior gap.
-5. Implement the smallest frontend, gateway, and agent changes required by those tests.
-6. Add LangSmith environment documentation and architecture/runbook updates.
-7. Run focused, full-suite, build, and cross-layer verification.
-8. Review all repository diffs and report verified results and any credential-dependent checks not run.
+1. Repair dependency installation and update compatible patch versions.
+2. Add failing contract tests for each confirmed behavior gap.
+3. Implement the smallest frontend, gateway, and agent changes required by those tests.
+4. Add LangSmith environment documentation and architecture/runbook updates.
+5. Run focused, full-suite, build, and cross-layer verification.
+6. Review all repository diffs and report verified results and any credential-dependent checks not run.

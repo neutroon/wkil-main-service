@@ -518,7 +518,7 @@ This table is the recovery point after context compaction. Update it immediately
 | 4. Compiled graph exports | Complete | 14 focused tests, four-target import validation, Ruff, and independent review passed | `agent-svc: c9998bc` | None |
 | 5. Graph/HITL invariants | Complete | 78 focused tests and edited-file Ruff passed; independent review passed | `agent-svc: ea366fd` | Full-scope pre-existing Ruff cleanup deferred to final gate |
 | 6. RAG consistency | Complete | 32 RAG tests, scoped Ruff, and `uv lock --check` passed; independent review passed after a focused test-strengthening round | `agent-svc: 83b744d, 8eda1a6` | Full-scope pre-existing Ruff cleanup remains deferred to final gate |
-| 7. LangSmith/runbook | Pending | Not run | — | Server-only optional tracing documentation |
+| 7. LangSmith/runbook | Complete | 13 focused observability/security tests, scoped Ruff, lock check, secret scans, docs checks, CLI manifest/import validation, and independent review passed | `agent-svc: 627aca1`; `back-end: 8c31e10, 4253cff` | Live startup and trace delivery remain explicit Task 8 smoke gates |
 | 8. Full verification/review | Pending | Not run | — | All suites, builds, config, smoke, diff review |
 
 ### Current checkpoint
@@ -526,8 +526,8 @@ This table is the recovery point after context compaction. Update it immediately
 - Approved design is durable in `back-end/docs/superpowers/specs/2026-09-12-assistant-ui-langgraph-full-stack-hardening-design.md`.
 - This implementation plan was self-reviewed against the approved thirteen-item end state.
 - Coordinated worktrees and the SDD ledger are active; Task 1 is complete after one reviewed fix round.
-- Tasks 1 through 6 are complete with independent review gates.
-- The next action is Task 7: optional server-side LangSmith configuration and the architecture/runbook documentation.
+- Tasks 1 through 7 are complete with independent review gates.
+- The next action is Task 8: full verification, cross-layer smoke where credentials permit, and final independent review.
 - Product, dependency, contract, graph, and RAG changes are isolated in the coordinated feature worktrees and recorded above.
 
 ### Resume instruction

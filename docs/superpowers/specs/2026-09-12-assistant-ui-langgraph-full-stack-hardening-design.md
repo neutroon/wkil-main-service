@@ -1,7 +1,7 @@
 # Assistant UI + LangGraph Full-Stack Hardening Design
 
 **Date:** 2026-09-12  
-**Status:** Approved by the user on 2026-09-12; implementation plan written and awaiting execution approval
+**Status:** Approved by the user on 2026-09-12; subagent-driven execution selected
 **Scope owner:** `back-end` repository, spanning sibling `app` and `agent-svc` repositories
 
 ## 1. Goal
@@ -46,7 +46,9 @@ These govern how the work is performed:
 - `superpowers:brainstorming` — architecture, approval, written specification, and review gate.
 - `superpowers:receiving-code-review` — evaluate and incorporate review feedback against repository evidence.
 - `superpowers:writing-plans` — produce the executable plan after this specification is approved.
-- `superpowers:executing-plans` — execute the approved plan inline with review checkpoints; no subagents are assumed.
+- `superpowers:subagent-driven-development` — execute each bounded task with a fresh implementer, an independent task reviewer, fix/re-review gates, and a final whole-change review.
+- `superpowers:using-git-worktrees` — isolate coordinated changes for the three repositories before subagents edit them.
+- `superpowers:executing-plans` — fallback only if the user later asks to stop delegated execution and continue inline.
 - `superpowers:systematic-debugging` — determine root cause before repairing failures.
 - `superpowers:test-driven-development` — add a failing test before each behavior fix.
 - `superpowers:verification-before-completion` — run fresh evidence commands before any completion claim.
@@ -294,10 +296,11 @@ This section is the fallback checkpoint for future compacted sessions. The imple
 - Enumerated the mandatory workflow, assistant-ui, LangChain, and LangGraph skills plus the exact MCP documentation resources.
 - Received explicit user approval for this revised written specification.
 - Wrote and self-reviewed the task-by-task implementation plan.
+- Received the user's explicit selection of subagent-driven execution.
 
 ### Current checkpoint
 
-- Review the executable implementation plan and begin Task 1 after user approval.
+- Set up coordinated isolated worktrees and the SDD ledger, then dispatch Task 1.
 - No product code or dependency manifest has been modified.
 
 ### Remaining phases

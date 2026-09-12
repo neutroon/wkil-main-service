@@ -1,6 +1,6 @@
 # Assistant UI + LangGraph Full-Stack Hardening Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to execute this plan inline with review checkpoints. `superpowers:subagent-driven-development` is an available alternative only if the user explicitly requests delegated agents.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development`. The user explicitly selected fresh implementation subagents with independent task reviews. Use `superpowers:using-git-worktrees` for isolation before Task 1.
 
 **Goal:** Deliver and verify one production-shaped chat path in which assistant-ui owns the web chat experience, the authenticated TypeScript gateway owns client access and tenant scoping, and LangGraph Agent Server owns durable execution, checkpoints, interrupts, and streaming.
 
@@ -13,6 +13,9 @@
 ## Global Constraints
 
 - Run commands from `D:\wkil` unless a step explicitly changes the working directory.
+- Execute from coordinated `app`, `back-end`, and `agent-svc` worktrees on matching feature branches. Record their absolute paths and base SHAs in the SDD ledger before Task 1.
+- Dispatch exactly one implementation subagent at a time because all agents share the filesystem. After each implementation, dispatch a separate read-only reviewer; resolve Critical/Important findings through the bounded fix/re-review loop before continuing.
+- Give subagents task briefs and report/review-package file paths from this plan's `.superpowers/sdd/<plan-name>/` workspace. Do not paste the complete plan or accumulated chat history into their prompts.
 - Before each implementation task, re-read the named skills and the exact MCP resources listed in the approved spec. Installed package types decide ambiguous method signatures.
 - Use `superpowers:test-driven-development` for every behavior change: add one focused failing test, observe the expected failure, implement the minimum change, then observe it pass.
 - Use `superpowers:systematic-debugging` for unexpected failures. Do not paper over dependency, environment, or test-runner problems.
@@ -510,7 +513,7 @@ This table is the recovery point after context compaction. Update it immediately
 
 | Task | Status | Evidence | Commit(s) | Remaining concern |
 |---|---|---|---|---|
-| Approved design and implementation plan | Complete | User approved spec 2026-09-12; plan self-review and `git diff --check` passed | `back-end: 63b92eb` | Awaiting execution approval |
+| Approved design and implementation plan | Complete | User approved spec and selected subagent-driven execution on 2026-09-12; plan self-review and `git diff --check` passed | `back-end: 63b92eb`, `a8da6bf` | Set up SDD worktrees and ledger |
 | 1. Frontend dependencies | Pending | Not run | — | Repair stale junctions; patch-update assistant-ui |
 | 2. Gateway history/checkpoint | Pending | Not run | — | Add allow-list and normalization |
 | 3. Frontend checkpoint editing | Pending | Not run | — | Add exact history matching and run fork |
@@ -523,7 +526,8 @@ This table is the recovery point after context compaction. Update it immediately
 ### Current checkpoint
 
 - Approved design is durable in `back-end/docs/superpowers/specs/2026-09-12-assistant-ui-langgraph-full-stack-hardening-design.md`.
-- This implementation plan was self-reviewed against the approved thirteen-item end state and is awaiting execution approval.
+- This implementation plan was self-reviewed against the approved thirteen-item end state.
+- The user selected subagent-driven execution; the next action is coordinated worktree and SDD-ledger setup, then Task 1 dispatch.
 - No product code or dependency manifest has been changed yet.
 
 ### Resume instruction

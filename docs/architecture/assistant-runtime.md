@@ -132,20 +132,25 @@ running, stop its `langgraph-api` service before selecting this alternative.
 The project lock does not install `langgraph-cli`. The following command installs
 a pinned CLI into uv's temporary tool environment while keeping the project lock
 unchanged and retaining Agent Server 0.13.2. `--port 8123` preserves the gateway URL;
-the CLI's upstream default is 2024. UTF-8 avoids Windows console encoding errors.
+the CLI's upstream default is 2024. `--directory agent-svc` changes the working
+directory so graph, auth, and `.env` paths in the manifest resolve inside the agent
+repository. `--project` alone does not change that directory. UTF-8 avoids Windows
+console encoding errors.
 
 ```powershell
 docker compose --env-file agent-svc/.env -f agent-svc/docker-compose.yml up -d qdrant
 $env:PYTHONUTF8 = "1"
-uv run --project agent-svc --locked --with "langgraph-cli[inmem]==0.4.31" --with "langgraph-api==0.13.2" langgraph dev --config agent-svc/langgraph.json --port 8123 --no-browser
+uv run --directory agent-svc --locked --with "langgraph-cli[inmem]==0.4.31" --with "langgraph-api==0.13.2" langgraph dev --config langgraph.json --port 8123 --no-browser
 ```
 
 Use the host callback URL from the table and configure the selected model and
 embedding provider keys in `agent-svc/.env`. Then start the backend and app using
 the same commands as the Docker path. Development state uses local in-memory/
 disk storage, not Docker Postgres; switching server modes does not share history.
-The CLI flags/package resolution have been checked; live startup and complete
-chat behavior require configured local services and credentials.
+The real CLI's parsed manifest has been checked at its server-launch boundary:
+all four graphs and custom auth import from the agent repository, and `.env`
+resolves there. Live startup and complete chat behavior still require configured
+local services and credentials.
 
 ## Optional server-side LangSmith
 

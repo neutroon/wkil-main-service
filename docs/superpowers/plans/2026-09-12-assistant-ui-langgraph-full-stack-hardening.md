@@ -516,7 +516,7 @@ This table is the recovery point after context compaction. Update it immediately
 | 2. Gateway history/checkpoint | Complete | 51 focused tests; OpenAPI lint/routes/bundle/type generation passed; two scoped fix reviews clean | `back-end: 275bf88, 113afb8`; `app: ec60623, daf623a` | None |
 | 3. Frontend checkpoint editing | Complete | 21 focused tests and `tsc --noEmit` passed; independent review passed | `app: f1a475d` | Minor test-strengthening items deferred to final review |
 | 4. Compiled graph exports | Complete | 14 focused tests, four-target import validation, Ruff, and independent review passed | `agent-svc: c9998bc` | None |
-| 5. Graph/HITL invariants | Pending | Not run | — | Add structural coverage; fix only proven gaps |
+| 5. Graph/HITL invariants | Complete | 78 focused tests and edited-file Ruff passed; independent review passed | `agent-svc: ea366fd` | Full-scope pre-existing Ruff cleanup deferred to final gate |
 | 6. RAG consistency | Pending | Not run | — | Verify dedicated packages and shared embeddings |
 | 7. LangSmith/runbook | Pending | Not run | — | Server-only optional tracing documentation |
 | 8. Full verification/review | Pending | Not run | — | All suites, builds, config, smoke, diff review |
@@ -526,8 +526,8 @@ This table is the recovery point after context compaction. Update it immediately
 - Approved design is durable in `back-end/docs/superpowers/specs/2026-09-12-assistant-ui-langgraph-full-stack-hardening-design.md`.
 - This implementation plan was self-reviewed against the approved thirteen-item end state.
 - Coordinated worktrees and the SDD ledger are active; Task 1 is complete after one reviewed fix round.
-- Tasks 1 through 4 are complete with independent review gates.
-- The next action is Task 5: graph, message-order, and HITL invariants.
+- Tasks 1 through 5 are complete with independent review gates.
+- The next action is Task 6: LangChain RAG package and embedding consistency.
 - No product code or dependency manifest has been changed yet.
 
 ### Resume instruction

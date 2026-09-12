@@ -1405,23 +1405,104 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [assistant_id]
-              properties:
-                assistant_id: { type: string, enum: [agent] }
-                input:
-                  description: A single human message, or null only when checkpoint_id selects the persisted state to regenerate from.
-                  oneOf:
-                    - type: object
-                      properties:
-                        messages: { type: array, minItems: 1, maxItems: 1, items: { type: object } }
+              description: "Exactly one LangGraph run mode: a human turn, checkpoint regeneration, or interrupt resume."
+              oneOf:
+                - title: Human message run
+                  type: object
+                  additionalProperties: false
+                  required: [assistant_id, input]
+                  properties:
+                    assistant_id: { type: string, enum: [agent] }
+                    input:
+                      type: object
+                      additionalProperties: false
                       required: [messages]
-                    - type: "null"
-                command: { type: object }
-                checkpoint_id: { type: string, minLength: 1, maxLength: 256 }
-                stream_mode: { type: array, items: { type: string, enum: [messages, updates, custom] } }
-                multitask_strategy: { type: string, enum: [reject] }
-                on_disconnect: { type: string, enum: [cancel] }
+                      properties:
+                        messages:
+                          type: array
+                          minItems: 1
+                          maxItems: 1
+                          items:
+                            anyOf:
+                              - type: object
+                                required: [type, content]
+                                properties:
+                                  type: { type: string, enum: [human, user] }
+                                  role: { type: string, enum: [human, user] }
+                                  content:
+                                    oneOf:
+                                      - { type: string }
+                                      - type: array
+                                        minItems: 1
+                                        items: { type: object, additionalProperties: true }
+                                  id: { type: string }
+                                additionalProperties: true
+                              - type: object
+                                required: [role, content]
+                                properties:
+                                  type: { type: string, enum: [human, user] }
+                                  role: { type: string, enum: [human, user] }
+                                  content:
+                                    oneOf:
+                                      - { type: string }
+                                      - type: array
+                                        minItems: 1
+                                        items: { type: object, additionalProperties: true }
+                                  id: { type: string }
+                                additionalProperties: true
+                    checkpoint_id: { type: string, minLength: 1, maxLength: 256, pattern: "\\S" }
+                    command: false
+                    config: { type: object, additionalProperties: false }
+                    stream_mode: { type: array, items: { type: string, enum: [messages, updates, custom] } }
+                    multitask_strategy: { type: string, enum: [reject] }
+                    on_disconnect: { type: string, enum: [cancel] }
+                - title: Checkpoint regeneration
+                  type: object
+                  additionalProperties: false
+                  required: [assistant_id, input, checkpoint_id]
+                  properties:
+                    assistant_id: { type: string, enum: [agent] }
+                    input: { type: "null" }
+                    checkpoint_id: { type: string, minLength: 1, maxLength: 256, pattern: "\\S" }
+                    command: false
+                    config: { type: object, additionalProperties: false }
+                    stream_mode: { type: array, items: { type: string, enum: [messages, updates, custom] } }
+                    multitask_strategy: { type: string, enum: [reject] }
+                    on_disconnect: { type: string, enum: [cancel] }
+                - title: Interrupt resume
+                  type: object
+                  additionalProperties: false
+                  required: [assistant_id, command]
+                  properties:
+                    assistant_id: { type: string, enum: [agent] }
+                    input: { type: "null" }
+                    checkpoint_id: false
+                    command:
+                      type: object
+                      additionalProperties: false
+                      required: [resume]
+                      properties:
+                        resume:
+                          oneOf:
+                            - { type: boolean }
+                            - { type: string, enum: ["true", "false", approved, denied, allow, reject] }
+                            - anyOf:
+                                - type: object
+                                  additionalProperties: false
+                                  required: [approved]
+                                  properties:
+                                    approved: { type: boolean }
+                                    decision: { type: string, enum: [approved, denied, allow, reject] }
+                                - type: object
+                                  additionalProperties: false
+                                  required: [decision]
+                                  properties:
+                                    approved: { type: boolean }
+                                    decision: { type: string, enum: [approved, denied, allow, reject] }
+                    config: { type: object, additionalProperties: false }
+                    stream_mode: { type: array, items: { type: string, enum: [messages, updates, custom] } }
+                    multitask_strategy: { type: string, enum: [reject] }
+                    on_disconnect: { type: string, enum: [cancel] }
       responses:
         "200":
           description: Server-sent LangGraph event stream.

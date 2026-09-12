@@ -107,6 +107,29 @@ describe("assistant gateway contract", () => {
     });
   });
 
+  it.each([
+    { approved: true, decision: "later" },
+    { approved: "yes", decision: "approved" },
+  ])("rejects resume objects with conflicting invalid fields %j", (resume) => {
+    expect(() => assistantGatewayInternals.normalizeBody("run", {
+      assistant_id: "agent",
+      command: { resume },
+    }, scope)).toThrow();
+  });
+
+  it("rejects a message whose declared type and role disagree", () => {
+    expect(() => assistantGatewayInternals.normalizeBody("run", {
+      assistant_id: "agent",
+      input: {
+        messages: [{
+          type: "human",
+          role: "assistant",
+          content: "hello",
+        }],
+      },
+    }, scope)).toThrow();
+  });
+
   it("forwards the scalar SDK checkpoint ID for a human-run fork", () => {
     expect(assistantGatewayInternals.normalizeBody("run", {
       assistant_id: "agent",

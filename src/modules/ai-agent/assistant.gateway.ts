@@ -132,10 +132,12 @@ function approval(value: unknown): boolean {
   if (typeof value === "string") {
     return ["true", "false", "approved", "denied", "allow", "reject"].includes(value);
   }
-  return isPlainRecord(value) &&
-    hasOnly(value, ["approved", "decision"]) &&
-    (typeof value.approved === "boolean" ||
-      ["approved", "denied", "allow", "reject"].includes(String(value.decision)));
+  if (!isPlainRecord(value) || !hasOnly(value, ["approved", "decision"])) return false;
+  const hasApproved = Object.hasOwn(value, "approved");
+  const hasDecision = Object.hasOwn(value, "decision");
+  return (hasApproved || hasDecision) &&
+    (!hasApproved || typeof value.approved === "boolean") &&
+    (!hasDecision || ["approved", "denied", "allow", "reject"].includes(String(value.decision)));
 }
 
 function validTitle(value: unknown): value is string {
@@ -260,7 +262,12 @@ function normalizeHumanMessage(value: unknown, userId: number): {
   content: string | AssistantContentPart[];
   id: string;
 } {
-  if (!isPlainRecord(value) || !["human", "user"].includes(String(value.type ?? value.role))) {
+  if (!isPlainRecord(value)) {
+    throw new AppError("Exactly one human message is required", 400, true, "ONE_HUMAN_MESSAGE_REQUIRED");
+  }
+  const declaredKinds = [value.type, value.role].filter((kind) => kind !== undefined);
+  if (declaredKinds.length === 0 ||
+      declaredKinds.some((kind) => !["human", "user"].includes(String(kind)))) {
     throw new AppError("Exactly one human message is required", 400, true, "ONE_HUMAN_MESSAGE_REQUIRED");
   }
   const content = normalizeMessageContent(value.content);

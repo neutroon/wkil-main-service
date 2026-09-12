@@ -117,6 +117,30 @@ describe("assistant gateway contract", () => {
     });
   });
 
+  it("regenerates from an authorized thread checkpoint without adding a human message", () => {
+    expect(assistantGatewayInternals.normalizeBody("run", {
+      assistant_id: "agent", input: null, checkpoint_id: " cp-human ",
+      stream_mode: ["messages", "updates", "custom"],
+    }, scope)).toEqual({
+      assistant_id: "agent", input: null, checkpoint_id: "cp-human",
+      stream_mode: ["messages", "updates", "custom"],
+      on_disconnect: "cancel", multitask_strategy: "reject",
+    });
+  });
+
+  it.each([
+    { input: null },
+    { input: null, checkpoint_id: " " },
+    { input: null, checkpoint_id: 123 },
+    { checkpoint_id: "cp-human" },
+    { input: { messages: [] }, checkpoint_id: "cp-human" },
+    { input: null, checkpoint_id: "cp-human", command: { resume: true } },
+  ])("rejects ambiguous checkpoint-only requests %j", (body) => {
+    expect(() => assistantGatewayInternals.normalizeBody("run", {
+      assistant_id: "agent", ...body,
+    }, scope)).toThrow();
+  });
+
   it.each([
     { checkpoint: { checkpoint_id: "cp-123" } },
     { checkpoint_id: "   " },

@@ -409,11 +409,29 @@ function normalizeBody(
       multitask_strategy: "reject",
     };
   }
+  const checkpointId = normalizeCheckpointId(body.checkpoint_id);
+  if (body.input === null) {
+    if (!checkpointId) {
+      throw new AppError(
+        "Checkpoint regeneration requires a checkpoint",
+        400,
+        true,
+        "INVALID_CHECKPOINT",
+      );
+    }
+    return {
+      assistant_id: ASSISTANT_GRAPH,
+      input: null,
+      checkpoint_id: checkpointId,
+      stream_mode: body.stream_mode,
+      on_disconnect: "cancel",
+      multitask_strategy: "reject",
+    };
+  }
   if (!isPlainRecord(body.input) || !hasOnly(body.input, ["messages"]) ||
       !Array.isArray(body.input.messages) || body.input.messages.length !== 1) {
     throw new AppError("Exactly one human message is required", 400, true, "ONE_HUMAN_MESSAGE_REQUIRED");
   }
-  const checkpointId = normalizeCheckpointId(body.checkpoint_id);
   return {
     assistant_id: ASSISTANT_GRAPH,
     input: {

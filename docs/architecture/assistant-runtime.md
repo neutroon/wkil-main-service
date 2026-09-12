@@ -46,7 +46,11 @@ parent directory containing the three repositories.
    accepts an optional limit of 1–100, defaulting to 10. The frontend matches the
    exact ordered stable message IDs and message count for the parent history,
    then supplies that checkpoint as SDK `checkpointId`. SDK 1.11.0 serializes it
-   as scalar `checkpoint_id` for a normal run. The gateway rejects arbitrary
+   as scalar `checkpoint_id`. Edited human input remains a one-message run;
+   regeneration sends SDK `input: null` so Agent Server continues from that
+   checkpoint without fabricating another human message. If there is no exact
+   stable-ID checkpoint match, the frontend finishes the attempted reload
+   locally and does not issue a server run. The gateway rejects arbitrary
    config/namespaces and the legacy nested `checkpoint` object. The lookup returns
    null when there is no exact match; current history lookup is bounded, not a
    full-history pagination search.

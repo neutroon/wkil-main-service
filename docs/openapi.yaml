@@ -1410,9 +1410,13 @@ paths:
               properties:
                 assistant_id: { type: string, enum: [agent] }
                 input:
-                  type: object
-                  properties:
-                    messages: { type: array, minItems: 1, maxItems: 1, items: { type: object } }
+                  description: A single human message, or null only when checkpoint_id selects the persisted state to regenerate from.
+                  oneOf:
+                    - type: object
+                      properties:
+                        messages: { type: array, minItems: 1, maxItems: 1, items: { type: object } }
+                      required: [messages]
+                    - type: "null"
                 command: { type: object }
                 checkpoint_id: { type: string, minLength: 1, maxLength: 256 }
                 stream_mode: { type: array, items: { type: string, enum: [messages, updates, custom] } }

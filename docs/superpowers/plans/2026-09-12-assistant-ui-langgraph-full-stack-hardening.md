@@ -519,16 +519,17 @@ This table is the recovery point after context compaction. Update it immediately
 | 5. Graph/HITL invariants | Complete | 78 focused tests and edited-file Ruff passed; independent review passed | `agent-svc: ea366fd` | Full-scope pre-existing Ruff cleanup deferred to final gate |
 | 6. RAG consistency | Complete | 32 RAG tests, scoped Ruff, and `uv lock --check` passed; independent review passed after a focused test-strengthening round | `agent-svc: 83b744d, 8eda1a6` | Full-scope pre-existing Ruff cleanup remains deferred to final gate |
 | 7. LangSmith/runbook | Complete | 13 focused observability/security tests, scoped Ruff, lock check, secret scans, docs checks, CLI manifest/import validation, and independent review passed | `agent-svc: 627aca1`; `back-end: 8c31e10, 4253cff` | Live startup and trace delivery remain explicit Task 8 smoke gates |
-| 8. Full verification/review | Pending | Not run | — | All suites, builds, config, smoke, diff review |
+| 8. Full verification/review | Complete | Fresh controller run: app 178 tests + typecheck/lint/build; backend 721 tests + build + OpenAPI/docs 234/234; agent 242 tests + lock/Ruff/four-graph manifest. Final independent review passed with no findings. | `app: 2836d023, ca04fb9e, a3374040, 44bc83ef`; `back-end: 18d9e73, 7f82133, f23c0b3, 0b71893, 6aef00e`; `agent-svc: 408ccd7` | Live running-stack/provider/RAG/LangSmith checks unavailable; downstream durable idempotency remains an operational requirement |
 
 ### Current checkpoint
 
 - Approved design is durable in `back-end/docs/superpowers/specs/2026-09-12-assistant-ui-langgraph-full-stack-hardening-design.md`.
 - This implementation plan was self-reviewed against the approved thirteen-item end state.
-- Coordinated worktrees and the SDD ledger are active; Task 1 is complete after one reviewed fix round.
-- Tasks 1 through 7 are complete with independent review gates.
-- The next action is Task 8: full verification, cross-layer smoke where credentials permit, and final independent review.
-- Product, dependency, contract, graph, and RAG changes are isolated in the coordinated feature worktrees and recorded above.
+- Coordinated worktrees and the SDD ledger remain available for audit and integration.
+- Tasks 1 through 8 are complete with independent review gates.
+- All credential-independent suites, builds, type/lint/docs checks, lock checks, graph imports, and repository hygiene gates pass on the final heads.
+- Live authenticated thread/stream/edit/regenerate/cancel/interrupt/workspace-isolation, live RAG, and LangSmith delivery remain explicitly unverified because Docker, running services, private test credentials, and provider credentials were unavailable.
+- The implementation is ready for the user's integration choice across the three feature branches.
 
 ### Resume instruction
 

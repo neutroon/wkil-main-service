@@ -126,6 +126,44 @@ describe("assistant run OpenAPI contract", () => {
   });
 
   it.each([
+    ["array-valued image detail", {
+      assistant_id: "agent",
+      input: { messages: [{
+        type: "human",
+        content: [{
+          type: "image_url",
+          image_url: { url: "https://example.com/image.png", detail: ["high"] },
+        }],
+      }] },
+    }],
+    ["array-valued resume decision", {
+      assistant_id: "agent",
+      command: { resume: { decision: ["approved"] } },
+    }],
+    ["array-valued message type", {
+      assistant_id: "agent",
+      input: { messages: [{ type: ["human"], content: "hello" }] },
+    }],
+    ["nested-array stream mode", {
+      assistant_id: "agent",
+      input: { messages: [{ type: "human", content: "hello" }] },
+      stream_mode: [["messages"]],
+    }],
+  ])("rejects schema-invalid primitive shape %s at both boundaries", (_label, body) => {
+    const schemaAccepted = validate(body);
+    let gatewayAccepted = true;
+    try {
+      assistantGatewayInternals.normalizeBody("run", body, scope);
+    } catch {
+      gatewayAccepted = false;
+    }
+
+    expect(schemaAccepted, JSON.stringify(validate.errors)).toBe(false);
+    expect(gatewayAccepted).toBe(false);
+    expect(schemaAccepted).toBe(gatewayAccepted);
+  });
+
+  it.each([
     ["ordinary human run", {
       assistant_id: "agent",
       input: { messages: [{ type: "human", content: "hello" }] },

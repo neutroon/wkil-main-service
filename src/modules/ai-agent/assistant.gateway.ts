@@ -73,9 +73,11 @@ function imageUrl(value: unknown): string | { url: string; detail?: "auto" | "lo
   if (typeof value === "string") return value;
   if (!isPlainRecord(value) || typeof value.url !== "string") return undefined;
   const detail = value.detail;
-  return detail === undefined || ["auto", "low", "high"].includes(String(detail))
-    ? { url: value.url, ...(detail === undefined ? {} : { detail: detail as "auto" | "low" | "high" }) }
-    : undefined;
+  if (detail === undefined) return { url: value.url };
+  if (detail === "auto" || detail === "low" || detail === "high") {
+    return { url: value.url, detail };
+  }
+  return undefined;
 }
 
 function hasValidUriBracketPlacement(value: string): boolean {
@@ -162,7 +164,8 @@ function approval(value: unknown): boolean {
   const hasDecision = Object.hasOwn(value, "decision");
   return (hasApproved || hasDecision) &&
     (!hasApproved || typeof value.approved === "boolean") &&
-    (!hasDecision || ["approved", "denied", "allow", "reject"].includes(String(value.decision)));
+    (!hasDecision || (typeof value.decision === "string" &&
+      ["approved", "denied", "allow", "reject"].includes(value.decision)));
 }
 
 function validTitle(value: unknown): value is string {
@@ -292,7 +295,7 @@ function normalizeHumanMessage(value: unknown, userId: number): {
   }
   const declaredKinds = [value.type, value.role].filter((kind) => kind !== undefined);
   if (declaredKinds.length === 0 ||
-      declaredKinds.some((kind) => !["human", "user"].includes(String(kind)))) {
+      declaredKinds.some((kind) => typeof kind !== "string" || !["human", "user"].includes(kind))) {
     throw new AppError("Exactly one human message is required", 400, true, "ONE_HUMAN_MESSAGE_REQUIRED");
   }
   const content = normalizeMessageContent(value.content);
@@ -411,7 +414,8 @@ function normalizeBody(
   }
   if (body.stream_mode !== undefined &&
       (!Array.isArray(body.stream_mode) ||
-        !body.stream_mode.every((mode) => ["messages", "updates", "custom"].includes(String(mode))))) {
+        !body.stream_mode.every((mode) => typeof mode === "string" &&
+          ["messages", "updates", "custom"].includes(mode)))) {
     throw new AppError("Invalid stream mode", 400, true, "INVALID_STREAM_MODE");
   }
   if (body.on_disconnect !== undefined && body.on_disconnect !== "cancel") {

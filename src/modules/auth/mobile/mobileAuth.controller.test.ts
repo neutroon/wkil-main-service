@@ -29,13 +29,26 @@ vi.mock("@modules/auth/user/user.service", () => ({
   getUserById: vi.fn(),
 }));
 
+vi.mock("@modules/auth/core/socialAuth.service", () => ({
+  verifyGoogleIdToken: vi.fn(),
+  authenticateSocialUser: vi.fn(),
+}));
+
 import {
   getMobileUserShape,
   issueAuthSession,
   verifyCredentials,
 } from "@modules/auth/core/auth.service";
+import {
+  authenticateSocialUser,
+  verifyGoogleIdToken,
+} from "@modules/auth/core/socialAuth.service";
 import { getUserById } from "@modules/auth/user/user.service";
-import { mobileCurrentUser, mobileLogin } from "./mobileAuth.controller";
+import {
+  mobileCurrentUser,
+  mobileGoogle,
+  mobileLogin,
+} from "./mobileAuth.controller";
 
 const response = () => ({
   status: vi.fn().mockReturnThis(),
@@ -102,6 +115,91 @@ describe("mobile auth profile projection", () => {
     vi.mocked(getUserById).mockResolvedValue(null);
     await expect(
       mobileCurrentUser({ user: { id: 7 } } as any, response()),
+    ).rejects.toThrow("User not found");
+  });
+
+  it("verifies Google identity and returns a mobile bearer session", async () => {
+    const profile = {
+      providerUserId: "google-7",
+      email: "owner@example.com",
+      emailVerified: true,
+      name: "Google Owner",
+      avatar: null,
+    };
+    const socialUser = {
+      id: 7,
+      email: profile.email,
+      name: profile.name,
+      role: "user",
+      avatar: null,
+      isEmailVerified: true,
+      isSocialUser: true,
+      isBusinessProfileCreated: true,
+      plan: "FREE",
+      monthlyCreditsUsed: 0,
+      monthlyCreditQuota: null,
+      createdAt: new Date("2026-09-14T00:00:00.000Z"),
+    };
+    const authoritativeUser = {
+      ...socialUser,
+      name: "Stored Google Owner",
+    };
+    vi.mocked(verifyGoogleIdToken).mockResolvedValue(profile);
+    vi.mocked(authenticateSocialUser).mockResolvedValue(socialUser as never);
+    vi.mocked(getUserById).mockResolvedValue(authoritativeUser as never);
+    vi.mocked(issueAuthSession).mockResolvedValue({
+      accessToken: "mobile-access",
+      refreshToken: "mobile-refresh",
+      expiresIn: 900,
+    });
+
+    const res = response();
+    await mobileGoogle({ body: { token: "google-id-token" } } as any, res);
+
+    expect(verifyGoogleIdToken).toHaveBeenCalledWith("google-id-token");
+    expect(authenticateSocialUser).toHaveBeenCalledWith("google", profile);
+    expect(getUserById).toHaveBeenCalledWith(7);
+    expect(issueAuthSession).toHaveBeenCalledWith(expect.objectContaining({
+      id: 7,
+      name: "Google Owner",
+      isSocialUser: true,
+    }));
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      message: "Social authentication successful",
+      accessToken: "mobile-access",
+      refreshToken: "mobile-refresh",
+      expiresIn: 900,
+      user: expect.objectContaining({ id: 7, name: "Stored Google Owner" }),
+    }));
+  });
+
+  it("throws when the Google-authenticated account cannot be refetched", async () => {
+    vi.mocked(verifyGoogleIdToken).mockResolvedValue({
+      providerUserId: "google-7",
+      email: "owner@example.com",
+      emailVerified: true,
+      name: "Google Owner",
+    });
+    vi.mocked(authenticateSocialUser).mockResolvedValue({
+      id: 7,
+      email: "owner@example.com",
+      name: "Google Owner",
+      role: "user",
+      isSocialUser: true,
+    } as never);
+    vi.mocked(issueAuthSession).mockResolvedValue({
+      accessToken: "mobile-access",
+      refreshToken: "mobile-refresh",
+      expiresIn: 900,
+    });
+    vi.mocked(getUserById).mockResolvedValue(null);
+
+    await expect(
+      mobileGoogle(
+        { body: { token: "google-id-token" } } as any,
+        response(),
+      ),
     ).rejects.toThrow("User not found");
   });
 });

@@ -112,7 +112,10 @@ app.use("/v1/public/widget", widgetPublicApp);
 app.use(cors(corsOptions));       // ← CORS for dashboard / authenticated API
 app.use(sanitizeRequest);
 app.use(requestSizeLimit);
-app.use(generateCsrfToken); // Set CSRF cookie on every response
+app.use((req, res, next) => {
+  if (req.path.startsWith("/v1/mobile/auth/")) return next();
+  return generateCsrfToken(req, res, next);
+});
 app.use(identifyUserForRateLimit);
 
 // ── Raw-body paths (declared before express.json()) ──────────────────────────

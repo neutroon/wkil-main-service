@@ -1,6 +1,24 @@
-import { describe, expect, it } from "vitest";
+import type { Request, Response } from "express";
+import request from "supertest";
+import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "fs";
 import path from "path";
+
+vi.mock("@modules/auth/mobile/mobileAuth.controller", () => ({
+  mobileGoogle: (_req: Request, res: Response) => res.status(200).json({
+    message: "Social authentication successful",
+    user: { id: 7, email: "owner@example.com", name: "Google Owner" },
+    accessToken: "mobile-access",
+    refreshToken: "mobile-refresh",
+    expiresIn: 900,
+  }),
+  mobileLogin: vi.fn(),
+  mobileRefresh: vi.fn(),
+  mobileLogout: vi.fn(),
+  mobileCurrentUser: vi.fn(),
+}));
+
+import app from "./app";
 
 describe("app route mounts", () => {
   const appSource = readFileSync(path.join(__dirname, "app.ts"), "utf8");
@@ -74,6 +92,15 @@ describe("app route mounts", () => {
   it("wires the mobile auth router into the mobile sub-app", () => {
     expect(appSource).toContain("mobileAuthRoutes");
     expect(appSource).toMatch(/mobileApp\.use\(mobileAuthRoutes\)/);
+  });
+
+  it("does not set cookies on a mobile Google authentication response", async () => {
+    const response = await request(app)
+      .post("/v1/mobile/auth/google")
+      .send({ token: "google-id-token" });
+
+    expect(response.status).toBe(200);
+    expect(response.headers["set-cookie"]).toBeUndefined();
   });
 
   it("mounts order-confirmation management routes behind authentication, verification, and CSRF", () => {

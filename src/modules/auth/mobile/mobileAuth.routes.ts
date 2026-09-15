@@ -1,10 +1,16 @@
-import { Router } from "express";
+import { Router, type ErrorRequestHandler } from "express";
+import { AppError } from "@middlewares/errorHandler.middleware";
+import { logger } from "@utils/logger";
 import { authLimiter } from "@middlewares/rateLimit.middleware";
 import { validate } from "@middlewares/validate.middleware";
-import { loginSchema } from "@modules/auth/core/auth.validation";
+import {
+  loginSchema,
+  socialAuthSchema,
+} from "@modules/auth/core/auth.validation";
 import { authenticateToken } from "@modules/auth/core/auth.middleware";
 import {
   mobileCurrentUser,
+  mobileGoogle,
   mobileLogin,
   mobileLogout,
   mobileRefresh,
@@ -20,12 +26,40 @@ import {
  */
 const mobileAuthRoutes = Router();
 
+// Limit this response boundary to Google auth. Never serialize arbitrary error
+// properties or pass unexpected provider/database details to the global handler.
+const mobileGoogleErrorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
+  if (error instanceof AppError && error.isOperational) {
+    res.status(error.statusCode).json({ status: "error", message: error.message, code: error.code });
+    return;
+  }
+  logger.error("mobile.auth.google.failed");
+  res.status(500).json({
+    status: "error",
+    message: "Unable to complete Google authentication",
+    code: "GOOGLE_AUTH_FAILED",
+  });
+};
+
 // POST /v1/mobile/auth/login
 // Body: { email, password } → { user, accessToken, refreshToken, expiresIn }
 mobileAuthRoutes.post("/auth/login", authLimiter, validate(loginSchema), mobileLogin);
 
+mobileAuthRoutes.post(
+  "/auth/google",
+  authLimiter,
+  validate(socialAuthSchema),
+  async (req, res, next) => {
+    try {
+      await mobileGoogle(req, res);
+    } catch (error) {
+      mobileGoogleErrorHandler(error, req, res, next);
+    }
+  },
+);
+
 // POST /v1/mobile/auth/refresh
-// Header: `Authorization: Bearer <refreshToken>` (preferred)
+// Header: `Authorization: Bearer <refreshToken>`
 // OR body: { refreshToken } → { accessToken, refreshToken?, expiresIn }
 mobileAuthRoutes.post("/auth/refresh", authLimiter, mobileRefresh);
 

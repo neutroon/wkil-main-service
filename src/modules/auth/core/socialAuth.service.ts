@@ -60,9 +60,16 @@ const userSelect = {
 const normalizeEmail = (email: string) => email.trim().toLowerCase();
 
 const decodeBase64UrlJson = <T>(value: string): T => {
-  const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
-  const padded = normalized.padEnd(normalized.length + ((4 - (normalized.length % 4)) % 4), "=");
-  return JSON.parse(Buffer.from(padded, "base64").toString("utf8")) as T;
+  try {
+    if (!/^[A-Za-z0-9_-]+$/.test(value)) throw new Error("Invalid encoding");
+    const decoded: unknown = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
+    if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) {
+      throw new Error("Invalid JSON object");
+    }
+    return decoded as T;
+  } catch {
+    throw new AppError("Invalid Google credential", 401, true, "GOOGLE_TOKEN_INVALID");
+  }
 };
 
 const assertActiveUser = (user: { isActive: boolean } | null) => {

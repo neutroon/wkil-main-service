@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import {
   AppError,
+  extractRefreshToken,
   getMobileUserShape,
   issueAuthSession,
   validateAndRotateRefreshToken,
@@ -8,6 +9,10 @@ import {
   verifyCredentials,
 } from "@modules/auth/core/auth.service";
 import { getUserById } from "@modules/auth/user/user.service";
+import {
+  authenticateSocialUser,
+  verifyGoogleIdToken,
+} from "@modules/auth/core/socialAuth.service";
 import { logger } from "@utils/logger";
 
 /**
@@ -43,6 +48,28 @@ export const mobileLogin = async (req: Request, res: Response) => {
   });
 };
 
+export const mobileGoogle = async (req: Request, res: Response) => {
+  const { token } = req.body as { token: string };
+  const profile = await verifyGoogleIdToken(token);
+  const socialUser = await authenticateSocialUser("google", profile);
+  const user = await getUserById(socialUser.id);
+  if (!user) throw new AppError("User not found", 404);
+  const tokens = await issueAuthSession({
+    id: socialUser.id,
+    name: socialUser.name,
+    email: socialUser.email,
+    role: socialUser.role,
+    isSocialUser: socialUser.isSocialUser,
+  });
+
+  logger.info("mobile.auth.google", { userId: socialUser.id });
+  res.status(200).json({
+    message: "Social authentication successful",
+    user: getMobileUserShape(user),
+    ...tokens,
+  });
+};
+
 /**
  * GET /v1/mobile/auth/me
  * Header: Authorization: Bearer <accessToken>
@@ -57,11 +84,12 @@ export const mobileCurrentUser = async (req: Request, res: Response) => {
 
 /**
  * POST /v1/mobile/auth/refresh
- * Header: `Authorization: Bearer <refreshToken>` (preferred) OR
- * Body: { refreshToken }
+ * Body: { refreshToken } OR header: `Authorization: Bearer <refreshToken>`.
+ * Preserve existing body/cookie precedence when multiple sources are supplied.
  * Returns: { accessToken, refreshToken?, expiresIn }
  */
 export const mobileRefresh = async (req: Request, res: Response) => {
+  acceptMobileRefreshBearer(req);
   const result = await validateAndRotateRefreshToken(req);
   res.json({
     message: result.isGracePeriod
@@ -82,6 +110,15 @@ export const mobileRefresh = async (req: Request, res: Response) => {
  * Header / body: refresh token → revokes in DB. Idempotent.
  */
 export const mobileLogout = async (req: Request, res: Response) => {
+  acceptMobileRefreshBearer(req);
   await logoutAndRevoke(req, res);
   res.json({ message: "Logged out successfully" });
+};
+
+// The shared extractor is also used by web auth. Bridge bearer transport only
+// for mobile, after its existing body/cookie sources have been considered.
+const acceptMobileRefreshBearer = (req: Request) => {
+  if (extractRefreshToken(req)) return;
+  const bearer = /^Bearer\s+(\S+)$/i.exec(req.headers.authorization?.trim() ?? "");
+  if (bearer) req.body = { ...req.body, refreshToken: bearer[1] };
 };

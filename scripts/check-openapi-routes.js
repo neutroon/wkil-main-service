@@ -30,21 +30,21 @@ function toOpenApiPath(expressPath) {
   return expressPath.replace(/:([A-Za-z0-9_]+)/g, "{$1}");
 }
 
-function resolveImport(specifier) {
+function resolveImport(specifier, rootDir = root) {
   if (specifier.startsWith("@modules/")) {
-    return path.join(root, "src/modules", `${specifier.slice("@modules/".length)}.ts`);
+    return path.join(rootDir, "src/modules", `${specifier.slice("@modules/".length)}.ts`);
   }
 
   if (specifier.startsWith("@middlewares/")) {
-    return path.join(root, "src/middlewares", `${specifier.slice("@middlewares/".length)}.ts`);
+    return path.join(rootDir, "src/middlewares", `${specifier.slice("@middlewares/".length)}.ts`);
   }
 
   if (specifier.startsWith("@config/")) {
-    return path.join(root, "src/config", `${specifier.slice("@config/".length)}.ts`);
+    return path.join(rootDir, "src/config", `${specifier.slice("@config/".length)}.ts`);
   }
 
   if (specifier.startsWith("@utils/")) {
-    return path.join(root, "src/utils", `${specifier.slice("@utils/".length)}.ts`);
+    return path.join(rootDir, "src/utils", `${specifier.slice("@utils/".length)}.ts`);
   }
 
   return null;
@@ -132,24 +132,55 @@ function parseRouteFile(filePath, prefix, mountedVariable) {
   return routes;
 }
 
-function getMountedRouters(appSource, imports) {
+function getMountedRouters(appSource, imports, rootDir = root) {
   const mounts = [];
-  const mountPattern = /app\.use\(\s*["']([^"']+)["']\s*,\s*(\w+)/g;
+  const localUses = new Map();
+  const usePattern = /\b(\w+)\.use\(\s*([\s\S]*?)\)\s*;/g;
 
-  for (const match of appSource.matchAll(mountPattern)) {
-    const [, prefix, variable] = match;
+  for (const match of appSource.matchAll(usePattern)) {
+    const [, container, rawArguments] = match;
+    const args = rawArguments
+      .split(",")
+      .map((argument) => argument.trim())
+      .filter(Boolean);
+    if (args.length === 0) continue;
+
+    const prefixMatch = args[0].match(/^["'`]([^"'`]*)["'`]$/);
+    const prefix = prefixMatch ? prefixMatch[1] : "";
+    const targetMatch = args[args.length - 1].match(/^(\w+)$/);
+    if (!targetMatch) continue;
+
+    const entries = localUses.get(container) || [];
+    entries.push({ prefix, target: targetMatch[1] });
+    localUses.set(container, entries);
+  }
+
+  const visited = new Set();
+  const resolveTarget = (prefix, variable) => {
     const specifier = imports.get(variable);
-    if (!specifier) continue;
-
-    const filePath = resolveImport(specifier);
-    if (filePath && fs.existsSync(filePath)) {
-      mounts.push({ prefix, variable, filePath });
+    if (specifier) {
+      const filePath = resolveImport(specifier, rootDir);
+      if (filePath && fs.existsSync(filePath)) {
+        mounts.push({ prefix, variable, filePath });
+      }
+      return;
     }
+
+    const visitKey = `${prefix}:${variable}`;
+    if (visited.has(visitKey)) return;
+    visited.add(visitKey);
+    for (const nested of localUses.get(variable) || []) {
+      resolveTarget(joinPaths(prefix, nested.prefix), nested.target);
+    }
+  };
+
+  for (const entry of localUses.get("app") || []) {
+    if (entry.prefix) resolveTarget(entry.prefix, entry.target);
   }
 
   const widgetPublicSpecifier = imports.get("widgetPublicRoutes");
   const widgetPublicPath =
-    widgetPublicSpecifier && resolveImport(widgetPublicSpecifier);
+    widgetPublicSpecifier && resolveImport(widgetPublicSpecifier, rootDir);
   if (
     widgetPublicPath &&
     fs.existsSync(widgetPublicPath) &&
@@ -176,10 +207,12 @@ function getAppLevelRoutes(appSource) {
   return routes;
 }
 
-function getExpectedRoutes() {
-  const appSource = readFile(appPath);
+function getExpectedRoutes(options = {}) {
+  const rootDir = options.root || root;
+  const appFilePath = options.appPath || path.join(rootDir, "src/app.ts");
+  const appSource = readFile(appFilePath);
   const imports = getDefaultImports(appSource);
-  const mountedRouters = getMountedRouters(appSource, imports);
+  const mountedRouters = getMountedRouters(appSource, imports, rootDir);
   const routes = [];
 
   for (const mount of mountedRouters) {
@@ -260,4 +293,8 @@ function main() {
   }
 }
 
-main();
+if (require.main === module) {
+  main();
+}
+
+module.exports = { getExpectedRoutes };

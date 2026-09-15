@@ -149,6 +149,119 @@ paths:
       responses:
         "200": { $ref: "#/components/responses/AuthOk" }
         "400": { $ref: "#/components/responses/BadRequest" }
+
+  /v1/mobile/auth/login:
+    post:
+      tags: [Auth]
+      operationId: mobileLogin
+      summary: Log in from a native mobile client
+      security: []
+      requestBody: { $ref: "#/components/requestBodies/Login" }
+      responses:
+        "200":
+          description: Mobile authentication session.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MobileAuthSessionResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/mobile/auth/google:
+    post:
+      tags: [Auth]
+      operationId: mobileGoogleAuth
+      summary: Authenticate a native mobile client with a Google ID token
+      description: >-
+        Malformed Google credentials return GOOGLE_TOKEN_INVALID. Operational
+        authentication errors retain their stable codes. Unexpected verifier or
+        persistence failures return 500 GOOGLE_AUTH_FAILED without internal details.
+      security: []
+      requestBody: { $ref: "#/components/requestBodies/SocialAuth" }
+      responses:
+        "200":
+          description: Mobile authentication session.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MobileAuthSessionResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/ServerError" }
+  /v1/mobile/auth/refresh:
+    post:
+      tags: [Auth]
+      operationId: mobileRefreshAuth
+      summary: Refresh a native mobile access token
+      description: >-
+        A valid refresh token is required. Supply it as an Authorization bearer
+        token or in the JSON refreshToken field. Existing refreshToken cookies
+        remain supported. When multiple sources are supplied, a nonblank JSON
+        token takes precedence, then the cookie, then the bearer header.
+        The empty security alternative represents JSON-body authentication, not
+        anonymous refresh; missing credentials return 401 NO_REFRESH_TOKEN.
+      security:
+        - mobileRefreshBearer: []
+        - refreshTokenCookie: []
+        - {}
+      requestBody:
+        required: false
+        description: Required when no bearer token or refreshToken cookie is supplied.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string, minLength: 1, pattern: '\S' }
+      responses:
+        "200":
+          description: Refreshed mobile access token.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MobileAuthRefreshResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/mobile/auth/logout:
+    post:
+      tags: [Auth]
+      operationId: mobileLogout
+      summary: Log out a native mobile client
+      description: >-
+        Supply the refresh token in the Authorization bearer header or JSON
+        refreshToken field to revoke the session. Existing refreshToken cookies
+        remain supported. A nonblank JSON token takes precedence, then the cookie,
+        then the bearer header. Logout remains idempotent and succeeds when no
+        credential is supplied or the supplied credential cannot be decoded.
+      security:
+        - mobileRefreshBearer: []
+        - refreshTokenCookie: []
+        - {}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refreshToken: { type: string, minLength: 1 }
+      responses:
+        "200": { $ref: "#/components/responses/MessageOk" }
+  /v1/mobile/auth/me:
+    get:
+      tags: [Auth]
+      operationId: mobileCurrentUser
+      summary: Get the current native mobile user
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current mobile user.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user]
+                properties:
+                  user: { $ref: "#/components/schemas/MobileUser" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/auth/verify-email:
     get:
       tags: [Auth]
@@ -3194,6 +3307,11 @@ paths:
 
 components:
   securitySchemes:
+    mobileRefreshBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: A WKIL refresh token, not an access token, for mobile refresh and logout.
     bearerAuth:
       type: http
       scheme: bearer
@@ -4011,6 +4129,34 @@ components:
         user: { $ref: "#/components/schemas/User" }
         message: { type: string }
         accessToken: { type: string }
+    MobileUser:
+      type: object
+      required: [id, email, name, role, avatar, isEmailVerified, isSocialUser]
+      properties:
+        id: { type: integer }
+        email: { type: [string, "null"], format: email }
+        name: { type: string }
+        role: { type: string }
+        avatar: { type: [string, "null"], format: uri }
+        isEmailVerified: { type: boolean }
+        isSocialUser: { type: boolean }
+    MobileAuthSessionResponse:
+      type: object
+      required: [message, user, accessToken, refreshToken, expiresIn]
+      properties:
+        message: { type: string }
+        user: { $ref: "#/components/schemas/MobileUser" }
+        accessToken: { type: string, minLength: 1 }
+        refreshToken: { type: string, minLength: 1 }
+        expiresIn: { type: integer, minimum: 1 }
+    MobileAuthRefreshResponse:
+      type: object
+      required: [message, accessToken, expiresIn]
+      properties:
+        message: { type: string }
+        accessToken: { type: string, minLength: 1 }
+        refreshToken: { type: string, minLength: 1 }
+        expiresIn: { type: integer, minimum: 1 }
     ProfileUpdateResponse:
       type: object
       required: [message, user]

@@ -1,10 +1,15 @@
 import { Client, type Run } from "@langchain/langgraph-sdk";
+import {
+  customerAgentDecisionSchema,
+  type CustomerAgentDecision,
+  type CustomerChannel,
+} from "../customer/customerAgent.types";
 
 const API_URL = process.env.LANGGRAPH_API_URL ?? "http://localhost:8123";
 const RUN_TIMEOUT_MS = 45_000;
 
 export type CapabilityOperation = "customer_memory" | "business_identity" |
-  "strategic_links" | "follow_up" | "customer_reply" | "content_plan" |
+  "strategic_links" | "follow_up" | "content_plan" |
   "content_post" | "content_audit" | "media_understanding";
 
 export type CapabilityResultMap = {
@@ -20,14 +25,6 @@ export type CapabilityResultMap = {
   };
   strategic_links: { links: Array<{ url: string; label: string; reason?: string }> };
   follow_up: { content: string };
-  customer_reply: {
-    action: "REPLY_AUTO" | "HANDOFF_TO_HUMAN" | "RESOLVE_CONVERSATION";
-    content?: string | null;
-    reasoning?: string;
-    handoff_category?: string | null;
-    reply_type?: string | null;
-    attachment?: { asset_name: string; caption?: string | null } | null;
-  };
   content_plan: {
     goals: string[];
     posts: Array<{
@@ -123,11 +120,6 @@ function validateResult<K extends CapabilityOperation>(operation: K, value: unkn
   if (operation === "media_understanding" && typeof value.text !== "string") {
     throw new Error("Agent capability media_understanding returned an invalid result");
   }
-  if (operation === "customer_reply" && ![
-    "REPLY_AUTO", "HANDOFF_TO_HUMAN", "RESOLVE_CONVERSATION",
-  ].includes(String(value.action))) {
-    throw new Error("Agent capability customer_reply returned an invalid result");
-  }
   if (operation === "strategic_links" && !Array.isArray(value.links)) {
     throw new Error("Agent capability strategic_links returned an invalid result");
   }
@@ -144,6 +136,148 @@ export class AgentClient {
   }
 
   static async createThread() { return this.client().threads.create(); }
+
+  static async ensureCustomerThread(
+    threadId: string,
+    metadata: { businessProfileId: number; conversationId: number; channel: CustomerChannel },
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await this.client().threads.create({
+      threadId,
+      ifExists: "do_nothing",
+      graphId: "customer_agent",
+      ttl: { ttl: 90 * 24 * 60, strategy: "delete" },
+      metadata: {
+        business_profile_id: metadata.businessProfileId,
+        conversation_id: metadata.conversationId,
+        channel: metadata.channel,
+      },
+      signal,
+    });
+  }
+
+  static async getCustomerThreadState(
+    threadId: string,
+    signal?: AbortSignal,
+  ): Promise<Record<string, unknown>> {
+    const state = await this.client().threads.getState(threadId, undefined, { signal });
+    if (!isRecord(state.values)) {
+      throw new Error("Customer agent thread returned invalid state");
+    }
+    return state.values;
+  }
+
+  static async startCustomerRun(request: {
+    threadId: string;
+    messages: Array<{ role: "user" | "assistant" | "system"; content: string }>;
+    context: {
+      userId: number;
+      businessProfileId: number;
+      conversationId: number;
+      channel: CustomerChannel;
+      runMode: "inbound" | "follow_up";
+      mediaContext?: string | null;
+      followUpIndex?: number | null;
+    };
+    dedupeKey: string;
+    signal?: AbortSignal;
+  }): Promise<{ runId: string }> {
+    const run = await this.client().runs.create(
+      request.threadId,
+      "customer_agent",
+      {
+        input: this.customerRunInput(request.messages, request.context),
+        multitaskStrategy: "enqueue",
+        durability: "async",
+        config: { recursion_limit: 6 },
+        metadata: { dedupe_key: request.dedupeKey },
+        signal: request.signal,
+      },
+    );
+    this.assertRunnableStatus(run);
+    return { runId: run.run_id };
+  }
+
+  static async findCustomerRunByDedupeKey(
+    threadId: string,
+    dedupeKey: string,
+    signal?: AbortSignal,
+  ): Promise<{ runId: string } | null> {
+    const runs = await this.client().runs.list(threadId, { limit: 25, offset: 0, signal });
+    const match = runs.find((run) => isRecord(run.metadata) && run.metadata.dedupe_key === dedupeKey);
+    return match ? { runId: match.run_id } : null;
+  }
+
+  static async joinCustomerRun(
+    threadId: string,
+    runId: string,
+    options?: { signal?: AbortSignal; cancelOnDisconnect?: boolean },
+  ): Promise<CustomerAgentDecision> {
+    const controller = new AbortController();
+    const onAbort = () => controller.abort(options?.signal?.reason);
+    if (options?.signal?.aborted) onAbort();
+    else options?.signal?.addEventListener("abort", onAbort, { once: true });
+    const timer = setTimeout(() => controller.abort(), RUN_TIMEOUT_MS);
+    try {
+      const state = await this.client().runs.join(threadId, runId, {
+        signal: controller.signal,
+        cancelOnDisconnect: options?.cancelOnDisconnect,
+      });
+      const run = await this.client().runs.get(threadId, runId, { signal: controller.signal });
+      if (run.status !== "success") throw new Error(`Customer agent run ${run.status}`);
+      if (!isRecord(state) || !("structured_response" in state)) {
+        throw new Error("Customer agent run is missing structured_response");
+      }
+      return customerAgentDecisionSchema.parse(state.structured_response);
+    } catch (error: unknown) {
+      if (controller.signal.aborted) {
+        await this.cancelCustomerRun(threadId, runId).catch(() => undefined);
+        throw new Error(`Customer agent run timeout after ${RUN_TIMEOUT_MS}ms`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      options?.signal?.removeEventListener("abort", onAbort);
+    }
+  }
+
+  static joinCustomerRunStream(
+    threadId: string,
+    runId: string,
+    options?: { signal?: AbortSignal; cancelOnDisconnect?: boolean },
+  ) {
+    return this.client().runs.joinStream(threadId, runId, options);
+  }
+
+  static cancelCustomerRun(threadId: string, runId: string, signal?: AbortSignal): Promise<void> {
+    return signal
+      ? this.client().runs.cancel(threadId, runId, true, "interrupt", { signal })
+      : this.client().runs.cancel(threadId, runId, true, "interrupt");
+  }
+
+  private static customerRunInput(
+    messages: Array<{ role: "user" | "assistant" | "system"; content: string }>,
+    context: {
+      userId: number;
+      businessProfileId: number;
+      conversationId: number;
+      channel: CustomerChannel;
+      runMode: "inbound" | "follow_up";
+      mediaContext?: string | null;
+      followUpIndex?: number | null;
+    },
+  ): Record<string, unknown> {
+    return {
+      messages,
+      user_id: context.userId,
+      business_profile_id: context.businessProfileId,
+      conversation_id: context.conversationId,
+      channel: context.channel,
+      run_mode: context.runMode,
+      ...(context.mediaContext == null ? {} : { media_context: context.mediaContext }),
+      ...(context.followUpIndex == null ? {} : { follow_up_index: context.followUpIndex }),
+    };
+  }
 
   private static async completedRun(graph: string, input: Record<string, unknown>): Promise<Record<string, unknown>> {
     const client = this.client();
@@ -193,7 +327,6 @@ export class AgentClient {
   }
 
   static runCopilot(input: Record<string, unknown>) { return this.completedRun("agent", input); }
-  static runCustomerAgent(input: Record<string, unknown>) { return this.completedRun("customer_agent", input); }
 
   static runContentGeneration(kind: "plan" | "post" | "audit", context: Record<string, unknown>) {
     const operation = kind === "plan" ? "content_plan" : kind === "post" ? "content_post" : "content_audit";

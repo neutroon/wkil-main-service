@@ -4,13 +4,23 @@ const runsCreateMock = vi.hoisted(() => vi.fn());
 const runsJoinMock = vi.hoisted(() => vi.fn());
 const runsGetMock = vi.hoisted(() => vi.fn());
 const runsCancelMock = vi.hoisted(() => vi.fn());
+const runsListMock = vi.hoisted(() => vi.fn());
+const runsJoinStreamMock = vi.hoisted(() => vi.fn());
 const threadsCreateMock = vi.hoisted(() => vi.fn(async () => ({ thread_id: "thread-1" })));
+const threadsGetStateMock = vi.hoisted(() => vi.fn());
 const clientConstructorMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@langchain/langgraph-sdk", () => ({
   Client: class {
-    threads = { create: threadsCreateMock };
-    runs = { create: runsCreateMock, join: runsJoinMock, get: runsGetMock, cancel: runsCancelMock };
+    threads = { create: threadsCreateMock, getState: threadsGetStateMock };
+    runs = {
+      create: runsCreateMock,
+      join: runsJoinMock,
+      get: runsGetMock,
+      cancel: runsCancelMock,
+      list: runsListMock,
+      joinStream: runsJoinStreamMock,
+    };
     constructor(config: unknown) { clientConstructorMock(config); }
   },
 }));
@@ -28,6 +38,9 @@ beforeEach(() => {
   });
   runsJoinMock.mockResolvedValue({ result: { content: "completed output" } });
   runsGetMock.mockResolvedValue({ status: "success" });
+  runsCancelMock.mockResolvedValue(undefined);
+  threadsGetStateMock.mockResolvedValue({ values: { messages: [] } });
+  runsListMock.mockResolvedValue([]);
 });
 
 describe("AgentClient", () => {
@@ -71,6 +84,128 @@ describe("AgentClient", () => {
     );
   });
 
+  it("creates a caller-selected customer thread idempotently", async () => {
+    await AgentClient.ensureCustomerThread("11111111-1111-4111-8111-111111111111", {
+      businessProfileId: 10,
+      conversationId: 45,
+      channel: "whatsapp",
+    });
+
+    expect(threadsCreateMock).toHaveBeenCalledWith(expect.objectContaining({
+      threadId: "11111111-1111-4111-8111-111111111111",
+      ifExists: "do_nothing",
+      graphId: "customer_agent",
+      ttl: { ttl: 90 * 24 * 60, strategy: "delete" },
+      metadata: {
+        business_profile_id: 10,
+        conversation_id: 45,
+        channel: "whatsapp",
+      },
+    }));
+  });
+
+  it("starts an ordered durable run on the existing thread", async () => {
+    await AgentClient.startCustomerRun({
+      threadId: "11111111-1111-4111-8111-111111111111",
+      messages: [{ role: "user", content: "Hello" }],
+      context: {
+        userId: 7, businessProfileId: 10, conversationId: 45,
+        channel: "whatsapp", runMode: "inbound",
+        mediaContext: "Customer attached an image.", followUpIndex: 2,
+      },
+      dedupeKey: "message:99",
+    });
+
+    expect(runsCreateMock).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      "customer_agent",
+      expect.objectContaining({
+        input: {
+          messages: [{ role: "user", content: "Hello" }],
+          user_id: 7,
+          business_profile_id: 10,
+          conversation_id: 45,
+          channel: "whatsapp",
+          run_mode: "inbound",
+          media_context: "Customer attached an image.",
+          follow_up_index: 2,
+        },
+        multitaskStrategy: "enqueue",
+        durability: "async",
+        config: { recursion_limit: 6 },
+        metadata: expect.objectContaining({ dedupe_key: "message:99" }),
+      }),
+    );
+  });
+
+  it("finds an existing customer run by its exact dedupe key", async () => {
+    runsListMock.mockResolvedValueOnce([
+      { run_id: "old", metadata: { dedupe_key: "message:98" } },
+      { run_id: "current", metadata: { dedupe_key: "message:99" } },
+    ]);
+
+    await expect(AgentClient.findCustomerRunByDedupeKey("thread-1", "message:99"))
+      .resolves.toEqual({ runId: "current" });
+    expect(runsListMock).toHaveBeenCalledWith("thread-1", { limit: 25, offset: 0, signal: undefined });
+  });
+
+  it("reads customer thread state and exposes the official join stream", async () => {
+    const stream = (async function* () { yield { event: "values", data: {} }; })();
+    runsJoinStreamMock.mockReturnValueOnce(stream);
+
+    await expect(AgentClient.getCustomerThreadState("thread-1")).resolves.toEqual({ messages: [] });
+    expect(threadsGetStateMock).toHaveBeenCalledWith("thread-1", undefined, { signal: undefined });
+    expect(AgentClient.joinCustomerRunStream("thread-1", "run-1", { cancelOnDisconnect: true }))
+      .toBe(stream);
+    expect(runsJoinStreamMock).toHaveBeenCalledWith("thread-1", "run-1", { cancelOnDisconnect: true });
+  });
+
+  it("cancels a customer run through the official interrupt operation", async () => {
+    await AgentClient.cancelCustomerRun("thread-1", "run-1");
+    expect(runsCancelMock).toHaveBeenCalledWith("thread-1", "run-1", true, "interrupt");
+  });
+
+  it("reads and validates the completed structured response", async () => {
+    runsJoinMock.mockResolvedValueOnce({
+      structured_response: {
+        action: "HANDOFF",
+        content: null,
+        reason_code: "HUMAN_ACTION_REQUIRED",
+        handoff_category: "SUPPORT",
+      },
+    });
+
+    await expect(AgentClient.joinCustomerRun("thread-1", "run-1")).resolves.toEqual({
+      action: "HANDOFF",
+      content: null,
+      reason_code: "HUMAN_ACTION_REQUIRED",
+      handoff_category: "SUPPORT",
+    });
+  });
+
+  it("rejects a terminal non-success customer run", async () => {
+    runsGetMock.mockResolvedValueOnce({ status: "error" });
+
+    await expect(AgentClient.joinCustomerRun("thread-1", "run-1"))
+      .rejects.toThrow("Customer agent run error");
+  });
+
+  it("cancels a customer run if joining times out", async () => {
+    vi.useFakeTimers();
+    runsJoinMock.mockImplementationOnce(async (_threadId: string, _runId: string, options: { signal: AbortSignal }) => {
+      await new Promise<void>((_resolve, reject) => {
+        options.signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+      });
+      return {};
+    });
+    const pending = expect(AgentClient.joinCustomerRun("thread-1", "run-1"))
+      .rejects.toThrow("Customer agent run timeout after 45000ms");
+    await vi.advanceTimersByTimeAsync(45_000);
+    await pending;
+    expect(runsCancelMock).toHaveBeenCalledWith("thread-1", "run-1", true, "interrupt");
+    vi.useRealTimers();
+  });
+
   it.each(["interrupted", "error", "timeout"] as const)(
     "rejects a %s run instead of consuming partial state",
     async (status) => {
@@ -112,28 +247,4 @@ describe("AgentClient", () => {
     });
   });
 
-  it("projects profile payloads onto the strict business capability contract", async () => {
-    runsJoinMock.mockResolvedValueOnce({ result: { action: "REPLY_AUTO", content: "ok" } });
-    await AgentClient.runCapability({
-      userId: 7, businessProfileId: 10, operation: "customer_reply",
-      context: {
-        channel: "web", messageText: "hello", conversationId: 4,
-        business: {
-          id: 10, userId: 7, name: "Academy", voice: "Warm", tone: "Calm",
-          targetAudience: "Parents", productsServices: ["Classes"],
-          internalSecret: "must-not-reach-agent",
-        },
-      },
-    });
-    expect(runsCreateMock).toHaveBeenCalledWith("thread-1", "capability", expect.objectContaining({
-      input: expect.objectContaining({
-        context: expect.objectContaining({
-          business: {
-            name: "Academy", voice: "Warm", tone: "Calm",
-            target_audience: "Parents", products_services: ["Classes"],
-          },
-        }),
-      }),
-    }));
-  });
 });

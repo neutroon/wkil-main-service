@@ -28,6 +28,7 @@ enum ConversationMessageStatus {
 enum AgentTurnMode {
   CUSTOMER_MESSAGE
   ACTION_RESULT
+  FOLLOW_UP
 }
 
 enum AgentTurnStatus {
@@ -501,6 +502,8 @@ model Conversation {
   customerAvatar    String?
   status            String          @default("OPEN") // "OPEN", "RESOLVED", "SNOOZED"
   aiEnabled         Boolean         @default(true) // Toggle automation for this specific thread
+  agentThreadId        String?   @unique @db.Uuid
+  agentHistorySeededAt DateTime?
 
   // Facebook Comments / Thread Continuity
   externalId           String?        @unique // Facebook comment_id or similar
@@ -538,6 +541,10 @@ model AgentTurn {
   channel           String
   mode              AgentTurnMode
   status            AgentTurnStatus       @default(RUNNING)
+  dedupeKey         String?               @unique
+  agentRunId        String?               @unique @db.Uuid
+  decision          Json?
+  failureReason     String?               @db.Text
   customerText      String                @db.Text
   parentActionRunId Int?
   parentActionRun   IntegrationActionRun? @relation("ParentActionRunTurns", fields: [parentActionRunId], references: [id], onDelete: SetNull)
@@ -547,6 +554,7 @@ model AgentTurn {
   updatedAt         DateTime              @updatedAt
 
   actionRuns IntegrationActionRun[] @relation("AgentTurnActionRuns")
+  outputMessage ConversationMessage? @relation("AgentTurnOutput")
 
   @@index([businessProfileId, status, createdAt])
   @@index([conversationId, createdAt])
@@ -609,6 +617,8 @@ model ConversationMessage {
   mediaId         String? // Meta media_id
   mediaMetadata   Json? // Stores duration, filename, mimeType, size etc.
   externalId      String?                   @unique // Meta message ID (wamid or mid) for status tracking
+  agentTurnId     Int?                      @unique
+  agentTurn       AgentTurn?                @relation("AgentTurnOutput", fields: [agentTurnId], references: [id], onDelete: SetNull)
   status          ConversationMessageStatus @default(SENT)
   aiReasoning     String? // Storing the AI's thought process for routing
   handoffCategory String? // e.g. "SALES", "SUPPORT", "ANGRY_CUSTOMER"

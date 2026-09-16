@@ -2249,18 +2249,6 @@ paths:
       requestBody: { $ref: "#/components/requestBodies/FacebookCommentReply" }
       responses:
         "200": { $ref: "#/components/responses/Ok" }
-  /v1/facebook/private-reply/{messageId}:
-    post:
-      tags: [Facebook]
-      operationId: sendFacebookPrivateReply
-      summary: Send a private reply for a Facebook message
-      security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
-      parameters:
-        - $ref: "#/components/parameters/MessageIdPath"
-      requestBody: { $ref: "#/components/requestBodies/FacebookPrivateReply" }
-      responses:
-        "200": { $ref: "#/components/responses/Ok" }
-
   /v1/meta/media/{conversationId}/{mediaId}:
     get:
       tags: [Meta Media]
@@ -3355,7 +3343,6 @@ components:
     PostIdPath: { name: postId, in: path, required: true, schema: { type: integer } }
     PostIdStringPath: { name: postId, in: path, required: true, schema: { type: string, minLength: 1 } }
     CommentIdPath: { name: commentId, in: path, required: true, schema: { type: string, minLength: 1 } }
-    MessageIdPath: { name: messageId, in: path, required: true, schema: { type: integer } }
     ConversationIdPath: { name: conversationId, in: path, required: true, schema: { type: integer } }
     MediaIdStringPath: { name: mediaId, in: path, required: true, schema: { type: string, minLength: 1 } }
     PageQuery: { name: page, in: query, required: false, schema: { type: integer, minimum: 1, default: 1 } }
@@ -3969,15 +3956,6 @@ components:
             required: [pageId, message]
             properties:
               pageId: { type: string, minLength: 1 }
-              message: { type: string, minLength: 1 }
-    FacebookPrivateReply:
-      required: true
-      content:
-        application/json:
-          schema:
-            type: object
-            required: [message]
-            properties:
               message: { type: string, minLength: 1 }
     MessengerReply:
       required: true

@@ -106,18 +106,6 @@ export const facebookPageSettingsSchema = z.object({
 });
 
 /**
- * Facebook Private Reply Schema
- */
-export const facebookPrivateReplySchema = z.object({
-  params: z.object({
-    messageId: z.coerce.number(),
-  }),
-  body: z.object({
-    message: z.string().min(1, "message is required"),
-  }),
-});
-
-/**
  * Generic ID Parameter Schemas
  */
 export const facebookIdParamSchema = z.object({

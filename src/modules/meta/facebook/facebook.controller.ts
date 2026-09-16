@@ -19,11 +19,9 @@ import {
   validateAccessToken,
   deactivateFacebookPage,
   switchDevice,
-  sendPrivateReply,
   decryptFacebookPageForResponse,
   type FacebookUserInfo,
 } from "./facebook.service";
-import { saveMessage } from "../core/conversation.service";
 import { decryptFacebookSecret } from "@modules/auth/core/tokenCrypto";
 import { logger } from "@utils/logger";
 import prisma from "@config/prisma";
@@ -568,68 +566,6 @@ export class FacebookController {
     return res.json({ success: true, page: updated });
   }
 
-  /**
-   * POST /v1/facebook/private-reply/:messageId
-   */
-  async sendPrivateReply(req: Request, res: Response) {
-    const { messageId } = req.params as any;
-    const { message } = req.body;
-
-    const sourceMsg = await prisma.conversationMessage.findUnique({
-      where: { id: messageId },
-      include: {
-        conversation: { include: { businessProfile: true } },
-      },
-    });
-
-    if (!sourceMsg || !sourceMsg.externalId) throw new AppError("Source comment not found", 404);
-    if (sourceMsg.conversation.channel !== "facebook_comment") throw new AppError("Invalid channel", 400);
-
-    const page = await prisma.facebookPage.findFirst({
-      where: {
-        pageId: sourceMsg.conversation.pageId,
-        businessProfileId: sourceMsg.conversation.businessProfileId,
-        isActive: true,
-      },
-    });
-    if (!page) throw new AppError("Page not found", 404);
-
-    const accessToken = decryptFacebookSecret(page.pageAccessToken);
-    const dmRes = await sendPrivateReply({
-      commentId: sourceMsg.externalId,
-      message,
-      accessToken,
-      pageId: page.pageId,
-      businessProfileId: page.businessProfileId!,
-    });
-
-    if (!dmRes?.id) throw new AppError("Meta API failed", 502);
-
-    const saved = await saveMessage(sourceMsg.conversationId, "agent", message, {
-      externalId: dmRes.id,
-      status: "SENT",
-      isPrivate: true,
-      origin: "facebook_comment_reply",
-    });
-
-    try {
-      const { mirrorCommentReplyToMessenger } = await import("../core/metaDelivery.service");
-      await mirrorCommentReplyToMessenger({
-        pageId: page.pageId,
-        senderId: sourceMsg.conversation.senderId,
-        businessProfileId: page.businessProfileId!,
-        messageId: dmRes.id,
-        content: message,
-        postId: sourceMsg.conversation.postId ?? undefined,
-        commentId: sourceMsg.externalId ?? undefined,
-        role: "agent",
-      });
-    } catch (err: any) {
-      logger.warn("facebook.controller.mirror_failed", { error: err.message });
-    }
-
-    return res.json({ success: true, data: saved });
-  }
 }
 
 export const facebookController = new FacebookController();

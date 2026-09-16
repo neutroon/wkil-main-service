@@ -16,7 +16,6 @@ import {
   facebookIdParamSchema,
   facebookLinkBusinessSchema,
   facebookPageSettingsSchema,
-  facebookPrivateReplySchema
 } from "./facebook.validation";
 import { facebookLimiter } from "@middlewares/rateLimit.middleware";
 import { facebookController } from "./facebook.controller";
@@ -52,13 +51,5 @@ facebookRoutes.get("/page-posts/:pageId", authenticateToken, validate(facebookPa
 facebookRoutes.delete("/post/:postId", authenticateToken, validate(facebookPostIdParamSchema), (req, res) => facebookController.deletePost(req, res));
 facebookRoutes.get("/comments/:postId", authenticateToken, validate(facebookPostIdParamSchema), (req, res) => facebookController.getComments(req, res));
 facebookRoutes.post("/reply/:commentId", authenticateToken, validate(facebookCommentReplySchema), (req, res) => facebookController.replyToComment(req, res));
-facebookRoutes.post("/private-reply/:messageId", authenticateToken, validate(facebookPrivateReplySchema), (req, res) => facebookController.sendPrivateReply(req, res));
 
 export default facebookRoutes;
-
-
-
-
-
-
-

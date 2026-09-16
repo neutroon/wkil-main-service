@@ -1,4 +1,19 @@
 import { z } from "zod";
+import type { NextFunction, Request, Response } from "express";
+import { AppError } from "@middlewares/errorHandler.middleware";
+
+const manualReplyIdempotencyKeySchema = z.string().trim().min(8).max(128);
+
+export function requireManualReplyIdempotencyKey(req: Request, _res: Response, next: NextFunction) {
+  const parsed = manualReplyIdempotencyKeySchema.safeParse(req.get("Idempotency-Key"));
+  if (!parsed.success) throw new AppError("A valid Idempotency-Key header is required", 400);
+  Object.defineProperty(req, "manualReplyIdempotencyKey", {
+    value: parsed.data,
+    writable: false,
+    configurable: true,
+  });
+  next();
+}
 
 /**
  * Schema for sending a Messenger reply
@@ -12,6 +27,7 @@ export const sendMessengerReplySchema = z.object({
     message: z.string().min(1, "Message is required").max(2000),
     type: z.enum(["text", "image", "file"]).optional().default("text"),
     attachmentId: z.string().optional(),
+    isPrivate: z.boolean().optional().default(false),
   }),
 });
 

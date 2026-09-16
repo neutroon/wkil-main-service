@@ -1,7 +1,7 @@
 import axios from "axios";
 import axiosRetry from "axios-retry";
 import { mapFacebookGraphError } from "@modules/meta/facebook/facebookGraphError";
-import { AppError } from "@middlewares/errorHandler.middleware";
+import { AppError, ProviderDeliveryRejectedError } from "@middlewares/errorHandler.middleware";
 import { env } from "@config/env";
 import { logger } from "./logger";
 
@@ -90,7 +90,10 @@ metaClient.interceptors.response.use(
     }
     
     const codePart = mapped.code !== undefined && mapped.code !== 0 ? ` (code: ${mapped.code})` : "";
-    return Promise.reject(new AppError(`${mapped.message}${codePart}`, 502));
+    const message = `${mapped.message}${codePart}`;
+    return Promise.reject(error.response
+      ? new ProviderDeliveryRejectedError(message)
+      : new AppError(message, 502));
   }
 );
 

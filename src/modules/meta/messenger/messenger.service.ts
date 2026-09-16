@@ -6,7 +6,7 @@ import {
   getConversationHistory,
   saveMessage,
 } from "../core/conversation.service";
-import { AppError } from "@middlewares/errorHandler.middleware";
+import { AppError, ProviderDeliveryRejectedError } from "@middlewares/errorHandler.middleware";
 import { AgentClient } from "@modules/ai-agent/client/agent.client";
 
 // ── Local shims (formerly @modules/ai-agent/chat/*, migrated to agent-svc) ──
@@ -135,7 +135,7 @@ export async function sendMessengerReply(
 
   if (!response.ok) {
     const error = await response.json();
-    throw new AppError(`Messenger Send API error: ${JSON.stringify(error)}`, 502);
+    throw new ProviderDeliveryRejectedError(`Messenger Send API error: ${JSON.stringify(error)}`);
   }
 
   return response.json();

@@ -336,6 +336,9 @@ export class MessengerController {
     const pageAccessToken = decryptFacebookSecret(page.pageAccessToken);
     const trimmedText = text.trim();
     const isPrivateRequest = req.body.isPrivate === true;
+    const idempotencyKey = (req as Request & { manualReplyIdempotencyKey?: string }).manualReplyIdempotencyKey
+      ?? req.get("Idempotency-Key");
+    if (!idempotencyKey) throw new AppError("A valid Idempotency-Key header is required", 400);
 
     const saved = await saveManualReplyAndTakeHumanControl({
       businessProfileId: conversation.businessProfileId,
@@ -346,6 +349,7 @@ export class MessengerController {
       origin: conversation.channel === "facebook_comment"
         ? "facebook_comment_reply"
         : "messenger_manual_reply",
+      idempotencyKey,
       deliver: async () => {
         let fbData: any;
         if (conversation.channel === "facebook_comment") {
@@ -483,7 +487,6 @@ function normalizeMetaOccurredAt(value: unknown): string | null {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
-
 
 
 

@@ -446,9 +446,10 @@ paths:
       security: [ { bearerAuth: [], csrfHeader: [] }, { accessTokenCookie: [], csrfHeader: [] } ]
       parameters:
         - $ref: "#/components/parameters/IdPath"
+        - $ref: "#/components/parameters/ManualReplyIdempotencyKeyHeader"
       requestBody: { $ref: "#/components/requestBodies/MessengerReply" }
       responses:
-        "200": { $ref: "#/components/responses/Ok" }
+        "201": { $ref: "#/components/responses/Ok" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
   /v1/messenger/conversations/{id}/media:
@@ -3375,6 +3376,12 @@ components:
       required: true
       description: Must exactly match the canonical event's top-level eventId.
       schema: { type: string, minLength: 1 }
+    ManualReplyIdempotencyKeyHeader:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: A client-generated key scoped to this conversation. Reusing it with the same request reuses the durable result; conflicting reuse is rejected.
+      schema: { type: string, minLength: 8, maxLength: 128 }
     WkilTimestampHeader:
       name: X-Wkil-Timestamp
       in: header
@@ -3983,6 +3990,7 @@ components:
               message: { type: string, minLength: 1, maxLength: 2000 }
               type: { type: string, enum: [text, image, file], default: text }
               attachmentId: { type: string }
+              isPrivate: { type: boolean, default: false, description: "For Facebook comment conversations, send a private reply instead of a public comment." }
     ConversationMessage:
       required: true
       content:

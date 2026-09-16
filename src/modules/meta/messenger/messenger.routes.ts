@@ -2,7 +2,7 @@ import { Router } from "express";
 import multer from "multer";
 import { authenticateToken } from "@modules/auth/core/auth.middleware";
 import { validate } from "@middlewares/validate.middleware";
-import { sendMessengerReplySchema } from "../core/meta.validation";
+import { requireManualReplyIdempotencyKey, sendMessengerReplySchema } from "../core/meta.validation";
 import { paginationSchema, idPaginationSchema, idParamSchema } from "@utils/shared.validation";
 import { messengerController } from "./messenger.controller";
 
@@ -20,7 +20,7 @@ messengerRoutes.post("/webhook", (req, res) => messengerController.handleWebhook
 // ─── Conversations & Messages ─────────────────────────────────────────────────
 messengerRoutes.get("/", authenticateToken, validate(paginationSchema), (req, res) => messengerController.listConversations(req, res));
 messengerRoutes.get("/:id/messages", authenticateToken, validate(idPaginationSchema), (req, res) => messengerController.listMessages(req, res));
-messengerRoutes.post("/conversations/:id/messages", authenticateToken, validate(idParamSchema), validate(sendMessengerReplySchema), (req, res) => messengerController.sendManualReply(req, res));
+messengerRoutes.post("/conversations/:id/messages", authenticateToken, requireManualReplyIdempotencyKey, validate(idParamSchema), validate(sendMessengerReplySchema), (req, res) => messengerController.sendManualReply(req, res));
 messengerRoutes.post("/conversations/:id/media", authenticateToken, upload.single("file"), validate(idParamSchema), (req, res) => messengerController.uploadAndSendMedia(req, res));
 
 export default messengerRoutes;

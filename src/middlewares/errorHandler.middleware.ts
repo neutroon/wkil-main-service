@@ -17,6 +17,17 @@ export class AppError extends Error {
   }
 }
 
+/**
+ * A provider returned a definitive non-success response before accepting the
+ * delivery. Only this explicit rejection is safe to mark retryable/FAILED.
+ */
+export class ProviderDeliveryRejectedError extends AppError {
+  constructor(message: string, statusCode = 502) {
+    super(message, statusCode, true, "PROVIDER_DELIVERY_REJECTED");
+    this.name = "ProviderDeliveryRejectedError";
+  }
+}
+
 export const errorHandler = (
   err: any,
   req: Request,

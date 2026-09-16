@@ -295,6 +295,8 @@ describe("Messenger manual replies", () => {
       user: { id: 7 },
       params: { id: "45" },
       body: { message: "  Hello  " },
+      headers: { "idempotency-key": "manual-reply-key-0001" },
+      get: vi.fn((name: string) => name.toLowerCase() === "idempotency-key" ? "manual-reply-key-0001" : undefined),
       ...overrides,
     } as any;
   }
@@ -334,6 +336,7 @@ describe("Messenger manual replies", () => {
       content: "Hello",
       isPrivate: false,
       origin: "messenger_manual_reply",
+      idempotencyKey: "manual-reply-key-0001",
       deliver: expect.any(Function),
     });
     expect(res.status).toHaveBeenCalledWith(201);
@@ -411,6 +414,34 @@ describe("Messenger manual replies", () => {
     }));
     expect(mocks.saveManualReplyAndTakeHumanControl.mock.invocationCallOrder[0])
       .toBeLessThan(mocks.mirrorCommentReplyToMessenger.mock.invocationCallOrder[0]);
+  });
+
+  it("reuses an in-progress private-reply claim without another send or mirror", async () => {
+    mocks.getMessengerConversationForUser.mockResolvedValue({
+      id: 46,
+      businessProfileId: 10,
+      pageId: "owned-page",
+      senderId: "commenter-1",
+      channel: "facebook_comment",
+      externalId: "comment.in-1",
+      postId: "post-1",
+    });
+    mocks.saveManualReplyAndTakeHumanControl.mockResolvedValue({
+      id: 501,
+      conversationId: 46,
+      role: "agent",
+      content: "Private answer",
+      status: "SENDING",
+      externalId: null,
+    });
+
+    await messengerController.sendManualReply(manualReplyRequest({
+      params: { id: "46" },
+      body: { message: "Private answer", isPrivate: true },
+    }), response());
+
+    expect(mocks.sendPrivateReply).not.toHaveBeenCalled();
+    expect(mocks.mirrorCommentReplyToMessenger).not.toHaveBeenCalled();
   });
 
   it("persists the delivery claim before a provider rejection", async () => {

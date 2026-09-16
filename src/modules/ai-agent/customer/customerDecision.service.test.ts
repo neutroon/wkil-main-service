@@ -102,6 +102,27 @@ describe("customer decision applier", () => {
     expect(deliver).not.toHaveBeenCalled();
   });
 
+  it("suppresses delivery when manual takeover wins after agent execution", async () => {
+    prismaMock.conversationMessage.updateMany.mockResolvedValueOnce({ count: 0 });
+    const deliver = vi.fn();
+
+    const result = await applyCustomerDecision({ ...params, deliver });
+
+    expect(prismaMock.conversationMessage.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: 202,
+        conversationId: 45,
+        agentTurnId: 8,
+        status: "SENDING",
+        conversation: { is: { businessProfileId: 10, aiEnabled: true } },
+      },
+      data: { status: "SENDING" },
+    });
+    expect(result).toMatchObject({ action: "REPLY", delivery: "pending" });
+    expect(deliver).not.toHaveBeenCalled();
+    expect(followUpMock.scheduleConversationFollowUps).not.toHaveBeenCalled();
+  });
+
   it("retries a failed delivery without another model run", async () => {
     prismaMock.conversationMessage.findUnique.mockResolvedValue(message({ status: "FAILED" }));
     const deliver = vi.fn().mockResolvedValue({ externalId: "wamid.retry" });
@@ -128,7 +149,9 @@ describe("customer decision applier", () => {
   });
 
   it("keeps a provider-accepted message ambiguous when local SENT persistence fails", async () => {
-    prismaMock.conversationMessage.updateMany.mockRejectedValueOnce(new Error("database unavailable"));
+    prismaMock.conversationMessage.updateMany
+      .mockResolvedValueOnce({ count: 1 })
+      .mockRejectedValueOnce(new Error("database unavailable"));
     const deliver = vi.fn().mockResolvedValue({ externalId: "wamid.accepted" });
 
     await expect(applyCustomerDecision({ ...params, deliver }))

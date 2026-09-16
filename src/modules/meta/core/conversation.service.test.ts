@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "crypto";
 
 vi.mock("@config/prisma", () => ({
   default: {
@@ -6,6 +7,7 @@ vi.mock("@config/prisma", () => ({
     $transaction: vi.fn(),
     conversationMessage: {
       create: vi.fn(),
+      findFirst: vi.fn(),
       findMany: vi.fn(),
       findUnique: vi.fn(),
       updateMany: vi.fn(),
@@ -56,6 +58,7 @@ import {
   saveManualReplyAndTakeHumanControl,
   saveMessage,
 } from "./conversation.service";
+import { ProviderDeliveryRejectedError } from "@middlewares/errorHandler.middleware";
 
 const mockedPrisma = prisma as any;
 const mockedUpsertCustomer = upsertCustomerFromConversation as any;
@@ -63,6 +66,14 @@ const mockedUpsertCustomer = upsertCustomerFromConversation as any;
 async function flushMessageSideEffects() {
   await new Promise<void>((resolve) => setImmediate(resolve));
   await Promise.resolve();
+}
+
+function manualReplyRequestHash() {
+  return createHash("sha256").update(JSON.stringify({
+    content: "Human reply",
+    isPrivate: false,
+    origin: "messenger_manual_reply",
+  })).digest("hex");
 }
 
 describe("saveMessage", () => {
@@ -137,6 +148,7 @@ describe("saveManualReplyAndTakeHumanControl", () => {
       externalId: null,
     });
     mockedPrisma.conversationMessage.updateMany.mockResolvedValue({ count: 1 });
+    mockedPrisma.conversationMessage.findFirst.mockResolvedValue(null);
     mockedPrisma.conversation.update.mockResolvedValue({
       id: 45,
       businessProfileId: 10,
@@ -156,6 +168,7 @@ describe("saveManualReplyAndTakeHumanControl", () => {
       content: "Human reply",
       isPrivate: false,
       origin: "messenger_manual_reply",
+      idempotencyKey: "manual-reply-key-0001",
       deliver,
     });
 
@@ -172,6 +185,8 @@ describe("saveManualReplyAndTakeHumanControl", () => {
         status: "SENDING",
         isPrivate: false,
         origin: "messenger_manual_reply",
+        manualReplyIdempotencyKey: "manual-reply-key-0001",
+        manualReplyRequestHash: manualReplyRequestHash(),
       },
     });
     expect(deliver).toHaveBeenCalledWith(expect.objectContaining({
@@ -203,6 +218,7 @@ describe("saveManualReplyAndTakeHumanControl", () => {
       content: "Human reply",
       isPrivate: false,
       origin: "messenger_manual_reply",
+      idempotencyKey: "manual-reply-key-0001",
       deliver: vi.fn(),
     })).rejects.toThrow("Manual reply conversation scope is no longer available");
 
@@ -221,6 +237,7 @@ describe("saveManualReplyAndTakeHumanControl", () => {
       content: "Human reply",
       isPrivate: false,
       origin: "messenger_manual_reply",
+      idempotencyKey: "manual-reply-key-0001",
       deliver,
     });
 
@@ -234,7 +251,7 @@ describe("saveManualReplyAndTakeHumanControl", () => {
   });
 
   it("marks a known provider rejection failed without losing human control", async () => {
-    const deliver = vi.fn().mockRejectedValue(new Error("Meta rejected send"));
+    const deliver = vi.fn().mockRejectedValue(new ProviderDeliveryRejectedError("Meta rejected send"));
 
     await expect(saveManualReplyAndTakeHumanControl({
       businessProfileId: 10,
@@ -243,6 +260,7 @@ describe("saveManualReplyAndTakeHumanControl", () => {
       content: "Human reply",
       isPrivate: false,
       origin: "messenger_manual_reply",
+      idempotencyKey: "manual-reply-key-0001",
       deliver,
     })).rejects.toThrow("Meta rejected send");
 
@@ -269,10 +287,89 @@ describe("saveManualReplyAndTakeHumanControl", () => {
       content: "Human reply",
       isPrivate: false,
       origin: "messenger_manual_reply",
+      idempotencyKey: "manual-reply-key-0001",
       deliver,
     })).rejects.toMatchObject({ name: "CustomerDeliveryAmbiguousError" });
 
     expect(deliver).toHaveBeenCalledOnce();
+  });
+
+  it("keeps an unknown transport failure SENDING and reports an ambiguous outcome", async () => {
+    const networkError = Object.assign(new Error("socket closed"), { code: "ECONNRESET" });
+    const deliver = vi.fn().mockRejectedValue(networkError);
+
+    await expect(saveManualReplyAndTakeHumanControl({
+      businessProfileId: 10,
+      conversationId: 45,
+      channel: "messenger",
+      content: "Human reply",
+      isPrivate: false,
+      origin: "messenger_manual_reply",
+      idempotencyKey: "manual-reply-key-0001",
+      deliver,
+    })).rejects.toMatchObject({ name: "CustomerDeliveryAmbiguousError" });
+
+    expect(mockedPrisma.conversationMessage.updateMany).not.toHaveBeenCalledWith(expect.objectContaining({
+      data: { status: "FAILED" },
+    }));
+  });
+
+  it("reuses the concurrent winner for the same idempotency key without another provider call", async () => {
+    const duplicate = Object.assign(new Error("duplicate"), { code: "P2002" });
+    mockedPrisma.$transaction.mockRejectedValueOnce(duplicate);
+    mockedPrisma.conversationMessage.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: 504,
+        conversationId: 45,
+        role: "agent",
+        content: "Human reply",
+        status: "SENDING",
+        externalId: null,
+        manualReplyIdempotencyKey: "manual-reply-key-0001",
+        manualReplyRequestHash: manualReplyRequestHash(),
+      });
+    const deliver = vi.fn();
+
+    const saved = await saveManualReplyAndTakeHumanControl({
+      businessProfileId: 10,
+      conversationId: 45,
+      channel: "messenger",
+      content: "Human reply",
+      isPrivate: false,
+      origin: "messenger_manual_reply",
+      idempotencyKey: "manual-reply-key-0001",
+      deliver,
+    });
+
+    expect(saved).toMatchObject({ id: 504, status: "SENDING" });
+    expect(deliver).not.toHaveBeenCalled();
+  });
+
+  it("rejects conflicting reuse of a manual-reply idempotency key", async () => {
+    mockedPrisma.conversationMessage.findFirst.mockResolvedValue({
+      id: 504,
+      conversationId: 45,
+      role: "agent",
+      content: "Different reply",
+      status: "SENT",
+      externalId: "mid.other",
+      manualReplyIdempotencyKey: "manual-reply-key-0001",
+      manualReplyRequestHash: "different-request-hash",
+    });
+
+    await expect(saveManualReplyAndTakeHumanControl({
+      businessProfileId: 10,
+      conversationId: 45,
+      channel: "messenger",
+      content: "Human reply",
+      isPrivate: false,
+      origin: "messenger_manual_reply",
+      idempotencyKey: "manual-reply-key-0001",
+      deliver: vi.fn(),
+    })).rejects.toMatchObject({ statusCode: 409 });
+
+    expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
   });
 });
 

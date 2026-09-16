@@ -163,6 +163,24 @@ async function deliverAndFinalize(
   params: ApplyCustomerDecisionParams,
   message: PersistedMessage,
 ): Promise<ApplyCustomerDecisionResult> {
+  // Re-check human control at the last durable boundary before provider I/O.
+  // A takeover after this claim can only race with an already in-flight
+  // provider request; that unavoidable boundary remains reconciled by the
+  // persisted SENDING row and provider receipts.
+  const deliveryBoundary = await prisma.conversationMessage.updateMany({
+    where: {
+      id: message.id,
+      conversationId: params.conversationId,
+      agentTurnId: params.agentTurnId,
+      status: "SENDING",
+      conversation: { is: { businessProfileId: params.businessProfileId, aiEnabled: true } },
+    },
+    data: { status: "SENDING" },
+  });
+  if (deliveryBoundary.count !== 1) {
+    return { action: "REPLY", delivery: "pending", message };
+  }
+
   let provider: CustomerDeliveryResult;
   try {
     provider = await params.deliver(message);

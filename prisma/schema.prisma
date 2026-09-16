@@ -629,6 +629,8 @@ model ConversationMessage {
   intent          String? // AI-detected intent (e.g. "SALES_DM", "GREET_ONLY")
   isPrivate       Boolean                   @default(false)
   origin          String? // Context tag for converged history (e.g. "facebook_comment_reply")
+  manualReplyIdempotencyKey String?
+  manualReplyRequestHash    String?
   createdAt       DateTime                  @default(now())
 
   orderNotifications OrderNotification[]
@@ -638,6 +640,7 @@ model ConversationMessage {
   @@index([status, createdAt])
   @@index([handoffCategory])
   @@index([externalId])
+  @@unique([conversationId, manualReplyIdempotencyKey])
 }
 
 /// WhatsApp Business phone number linked to a user

@@ -1,6 +1,6 @@
 import prisma from "@config/prisma";
 import { Prisma, type ConversationMessageStatus } from "@prisma/client";
-import { AppError } from "@middlewares/errorHandler.middleware";
+import { AppError, ProviderDeliveryRejectedError } from "@middlewares/errorHandler.middleware";
 import { getAccessibleProfileIds } from "@modules/auth/user/user.service";
 import {
   reconcileCustomerStatusFromConversations,
@@ -9,6 +9,7 @@ import {
 import { runOutsideDbQueryTrace } from "@utils/dbQueryTrace";
 import { logger } from "@utils/logger";
 import { CustomerDeliveryAmbiguousError } from "@modules/ai-agent/customer/customerDecision.service";
+import { createHash } from "crypto";
 
 const HISTORY_LIMIT = 24;
 
@@ -302,31 +303,50 @@ export async function saveManualReplyAndTakeHumanControl(params: {
   content: string;
   isPrivate: boolean;
   origin: string;
+  idempotencyKey: string;
   deliver: (message: any) => Promise<{ externalId?: string | null } | void>;
 }) {
-  const message = await prisma.$transaction(async (db) => {
-    const controlTransition = await db.conversation.updateMany({
-      where: {
-        id: params.conversationId,
-        businessProfileId: params.businessProfileId,
-      },
-      data: { aiEnabled: false },
-    });
-    if (controlTransition.count !== 1) {
-      throw new Error("Manual reply conversation scope is no longer available");
-    }
+  const requestHash = createHash("sha256").update(JSON.stringify({
+    content: params.content,
+    isPrivate: params.isPrivate,
+    origin: params.origin,
+  })).digest("hex");
+  const existing = await findManualReplyByIdempotencyKey(params);
+  if (existing) return assertSameManualReplyRequest(existing, requestHash);
 
-    return db.conversationMessage.create({
-      data: {
-        conversationId: params.conversationId,
-        role: "agent",
-        content: params.content,
-        status: "SENDING",
-        isPrivate: params.isPrivate,
-        origin: params.origin,
-      },
+  let message: any;
+  try {
+    message = await prisma.$transaction(async (db) => {
+      const controlTransition = await db.conversation.updateMany({
+        where: {
+          id: params.conversationId,
+          businessProfileId: params.businessProfileId,
+        },
+        data: { aiEnabled: false },
+      });
+      if (controlTransition.count !== 1) {
+        throw new Error("Manual reply conversation scope is no longer available");
+      }
+
+      return db.conversationMessage.create({
+        data: {
+          conversationId: params.conversationId,
+          role: "agent",
+          content: params.content,
+          status: "SENDING",
+          isPrivate: params.isPrivate,
+          origin: params.origin,
+          manualReplyIdempotencyKey: params.idempotencyKey,
+          manualReplyRequestHash: requestHash,
+        },
+      });
     });
-  });
+  } catch (error) {
+    if (!isUniqueConstraintError(error)) throw error;
+    const concurrent = await findManualReplyByIdempotencyKey(params);
+    if (!concurrent) throw error;
+    return assertSameManualReplyRequest(concurrent, requestHash);
+  }
 
   await syncManualReplySoft(params, message);
 
@@ -355,14 +375,21 @@ export async function saveManualReplyAndTakeHumanControl(params: {
     provider = await params.deliver(message);
   } catch (error) {
     if (error instanceof CustomerDeliveryAmbiguousError) throw error;
-    const failed = await prisma.conversationMessage.updateMany({
-      where: { id: message.id, conversationId: params.conversationId, status: "SENDING" },
-      data: { status: "FAILED" },
-    }).catch(() => ({ count: 0 }));
-    if (failed.count === 1) {
-      await syncManualReplySoft(params, { ...message, status: "FAILED" });
+    if (error instanceof ProviderDeliveryRejectedError) {
+      const failed = await prisma.conversationMessage.updateMany({
+        where: { id: message.id, conversationId: params.conversationId, status: "SENDING" },
+        data: { status: "FAILED" },
+      }).catch(() => ({ count: 0 }));
+      if (failed.count === 1) {
+        await syncManualReplySoft(params, { ...message, status: "FAILED" });
+      }
+      throw error;
     }
-    throw error;
+    const ambiguous = new CustomerDeliveryAmbiguousError(
+      "Manual reply transport outcome is ambiguous",
+    );
+    Object.defineProperty(ambiguous, "cause", { value: error, configurable: true });
+    throw ambiguous;
   }
 
   const externalId = provider?.externalId ?? null;
@@ -391,6 +418,32 @@ export async function saveManualReplyAndTakeHumanControl(params: {
   const sentMessage = { ...message, status: "SENT" as const, externalId };
   await syncManualReplySoft(params, sentMessage);
   return sentMessage;
+}
+
+async function findManualReplyByIdempotencyKey(params: {
+  businessProfileId: number;
+  conversationId: number;
+  idempotencyKey: string;
+}) {
+  return prisma.conversationMessage.findFirst({
+    where: {
+      conversationId: params.conversationId,
+      manualReplyIdempotencyKey: params.idempotencyKey,
+      conversation: { businessProfileId: params.businessProfileId },
+    },
+  });
+}
+
+function assertSameManualReplyRequest(message: any, requestHash: string) {
+  if (message.manualReplyRequestHash !== requestHash) {
+    throw new AppError("Idempotency-Key was already used for a different manual reply", 409);
+  }
+  return message;
+}
+
+function isUniqueConstraintError(error: unknown): boolean {
+  return error !== null && typeof error === "object" && "code" in error
+    && (error as { code?: unknown }).code === "P2002";
 }
 
 async function syncManualReplySoft(

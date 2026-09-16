@@ -403,6 +403,24 @@ export async function processFollowUpJob(payload: FollowUpJobPayload) {
     if (conversation!.channel === "whatsapp" && !(await isWhatsAppFreeFormWindowOpen(payload.conversationId))) return;
     const text = await generateFollowUpText({ businessProfile: conversation!.businessProfile, conversation, history: conversation!.messages, delayIndex: payload.delayIndex });
     if (!text) return;
+
+    // Generation can take seconds. Re-check human control and every delivery
+    // guard at the last application boundary so an active job cannot send
+    // after a handoff or newer customer/staff activity.
+    const currentConversation = await prisma.conversation.findFirst({
+      where: { id: payload.conversationId, businessProfileId: payload.businessProfileId },
+      include: { businessProfile: true },
+    });
+    if (!isFollowUpConversationEligible(currentConversation)) return;
+    const currentTrigger = await prisma.conversationMessage.findUnique({
+      where: { id: payload.triggerMessageId },
+      select: { createdAt: true, status: true, role: true, origin: true, handoffCategory: true },
+    });
+    if (!isFollowUpTriggerEligible(currentTrigger)) return;
+    if (await hasNewerHumanOrCustomerMessage(payload.conversationId, currentTrigger.createdAt)) return;
+    if (await customerOptedOut(payload.conversationId)) return;
+    if (currentConversation.channel === "whatsapp" && !(await isWhatsAppFreeFormWindowOpen(payload.conversationId))) return;
+
     const saved = await saveMessage(conversation!.id, "model", text, { status: "SENT", origin: "follow_up" });
     try {
       await deliverFollowUp(conversation, conversation!.businessProfile, text, saved.id);

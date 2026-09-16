@@ -180,6 +180,23 @@ describe("follow-up service", () => {
     });
   });
 
+  it("does not persist or deliver when human handoff happens during generation", async () => {
+    mockedPrisma.conversation.findFirst
+      .mockResolvedValueOnce(baseConversation)
+      .mockResolvedValueOnce({ ...baseConversation, aiEnabled: false });
+
+    await processFollowUpJob({
+      conversationId: 45,
+      businessProfileId: 10,
+      triggerMessageId: 101,
+      delayIndex: 0,
+    });
+
+    expect(AgentClient.runCapability).toHaveBeenCalledOnce();
+    expect(mockedPrisma.conversation.findFirst).toHaveBeenCalledTimes(2);
+    expect(saveMessage).not.toHaveBeenCalled();
+  });
+
   it("cancels only waiting or delayed follow-up jobs for the selected conversation", async () => {
     const matchingDelayed = {
       id: "followup-45-101-0",

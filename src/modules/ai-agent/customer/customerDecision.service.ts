@@ -163,20 +163,9 @@ async function deliverAndFinalize(
   params: ApplyCustomerDecisionParams,
   message: PersistedMessage,
 ): Promise<ApplyCustomerDecisionResult> {
-  let externalId: string | null = null;
+  let provider: CustomerDeliveryResult;
   try {
-    const provider = await params.deliver(message);
-    externalId = provider?.externalId ?? null;
-    await prisma.conversationMessage.updateMany({
-      where: {
-        id: message.id,
-        conversationId: params.conversationId,
-        agentTurnId: params.agentTurnId,
-        status: "SENDING",
-      },
-      data: { status: "SENT", externalId },
-    });
-
+    provider = await params.deliver(message);
   } catch (error) {
     if (error instanceof CustomerDeliveryAmbiguousError) throw error;
     await prisma.conversationMessage.updateMany({
@@ -189,6 +178,33 @@ async function deliverAndFinalize(
       data: { status: "FAILED" },
     }).catch(() => undefined);
     throw error;
+  }
+
+  const externalId = provider?.externalId ?? null;
+  try {
+    const persisted = await prisma.conversationMessage.updateMany({
+      where: {
+        id: message.id,
+        conversationId: params.conversationId,
+        agentTurnId: params.agentTurnId,
+        status: "SENDING",
+      },
+      data: { status: "SENT", externalId },
+    });
+    if (persisted.count !== 1) {
+      const current = await getMessageForTurn(params);
+      if (!current || !DELIVERED_STATUSES.has(current.status)) {
+        throw new Error("Customer delivery confirmation was not persisted");
+      }
+    }
+  } catch (error) {
+    // The provider has already accepted the send. Never make this row
+    // retryable when local confirmation fails, or a retry could duplicate it.
+    const ambiguous = new CustomerDeliveryAmbiguousError(
+      "Customer delivery was accepted but local confirmation is ambiguous",
+    );
+    Object.defineProperty(ambiguous, "cause", { value: error, configurable: true });
+    throw ambiguous;
   }
 
   // The scheduler itself re-validates the persisted SENT trigger. Do this

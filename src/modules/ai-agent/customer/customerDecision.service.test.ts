@@ -127,6 +127,20 @@ describe("customer decision applier", () => {
     expect(followUpMock.scheduleConversationFollowUps).not.toHaveBeenCalled();
   });
 
+  it("keeps a provider-accepted message ambiguous when local SENT persistence fails", async () => {
+    prismaMock.conversationMessage.updateMany.mockRejectedValueOnce(new Error("database unavailable"));
+    const deliver = vi.fn().mockResolvedValue({ externalId: "wamid.accepted" });
+
+    await expect(applyCustomerDecision({ ...params, deliver }))
+      .rejects.toBeInstanceOf(CustomerDeliveryAmbiguousError);
+
+    expect(deliver).toHaveBeenCalledOnce();
+    expect(prismaMock.conversationMessage.updateMany).not.toHaveBeenCalledWith(expect.objectContaining({
+      data: { status: "FAILED" },
+    }));
+    expect(followUpMock.scheduleConversationFollowUps).not.toHaveBeenCalled();
+  });
+
   it("keeps a message SENDING when the delivery adapter cannot determine provider outcome", async () => {
     const deliver = vi.fn().mockRejectedValue(new CustomerDeliveryAmbiguousError("provider timed out"));
 

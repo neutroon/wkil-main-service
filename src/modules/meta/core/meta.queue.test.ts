@@ -23,6 +23,10 @@ vi.mock("bullmq", () => ({
     add(...args: unknown[]) {
       return mocks.add(...args);
     }
+
+    getJobCounts() {
+      return Promise.resolve({});
+    }
   },
   Worker: class MockWorker {
     constructor(_queueName: string, processor: (job: any) => Promise<unknown>) {
@@ -57,7 +61,7 @@ vi.mock("@modules/media/services/mediaLibrary.service", () => ({
 
 vi.mock("@modules/meta/whatsapp/whatsappCoexistence.service", () => coexistenceMocks);
 
-import { enqueueMetaJob } from "./meta.queue";
+import { enqueueInboundMetaEvent, enqueueMetaJob } from "./meta.queue";
 
 describe("Meta queue failure logging", () => {
   beforeEach(() => {
@@ -139,6 +143,35 @@ describe("Meta queue failure logging", () => {
     expect(coexistenceMocks.processCoexistenceContactsJob).toHaveBeenCalledWith(
       { platform: "whatsapp" },
       "whatsapp-coexistence-contacts-job-1",
+    );
+  });
+
+  it("uses a deterministic channel and external-ID job key for a typed inbound event", async () => {
+    mocks.add.mockResolvedValue({
+      id: "inbound-whatsapp-wamid-typed-1",
+      getState: vi.fn().mockResolvedValue("waiting"),
+    });
+    await enqueueInboundMetaEvent({
+      platform: "whatsapp",
+      eventId: "wamid.typed-1",
+      payload: {
+        channel: "whatsapp",
+        businessProfileId: 11,
+        identifier: "phone-number-id",
+        phoneNumberId: "phone-number-id",
+        senderId: "+201001234567",
+        customerPhone: "+201001234567",
+        externalId: "wamid.typed-1",
+        text: "Hello",
+        receivedAt: "2026-09-16T10:00:00.000Z",
+        attachments: [],
+      },
+    });
+
+    expect(mocks.add).toHaveBeenCalledWith(
+      "message_task",
+      expect.objectContaining({ payload: expect.objectContaining({ channel: "whatsapp" }) }),
+      expect.objectContaining({ jobId: "inbound-whatsapp-wamid-typed-1" }),
     );
   });
 });

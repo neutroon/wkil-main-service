@@ -186,50 +186,49 @@ describe("WhatsApp webhook controller wiring", () => {
 
     expect(response.status).toHaveBeenCalledWith(200);
     expect(response.send).toHaveBeenCalledWith("EVENT_RECEIVED");
-    expect(mocks.enqueueInboundMetaEvent).toHaveBeenCalledTimes(4);
+    expect(mocks.enqueueInboundMetaEvent).toHaveBeenCalledTimes(3);
+    expect(mocks.enqueueMetaJob).toHaveBeenCalledWith(expect.objectContaining({
+      type: "ORDER_ACTION",
+      orderActionId: "opaque-action-token",
+      buttonTitle: "Confirm",
+      phoneNumberId: "phone-number-id",
+      businessProfileId: 42,
+      customerPhone,
+      senderId: customerPhone,
+      externalId: "wamid-action-1",
+    }));
 
     expect(mocks.enqueueInboundMetaEvent).toHaveBeenNthCalledWith(1, {
       platform: "whatsapp",
-      eventId: "wamid-action-1",
+      eventId: "wamid-echo-1",
       payload: expect.objectContaining({
-        type: "ORDER_ACTION",
-        orderActionId: "opaque-action-token",
-        buttonTitle: "Confirm",
+        channel: "whatsapp",
         phoneNumberId: "phone-number-id",
         businessProfileId: 42,
         customerPhone,
         senderId: customerPhone,
-        externalId: "wamid-action-1",
-        isFromBusiness: false,
+        externalId: "wamid-echo-1",
+        text: "business echo",
+        isFromBusiness: true,
       }),
     });
     expect(mocks.enqueueInboundMetaEvent).toHaveBeenNthCalledWith(2, {
       platform: "whatsapp",
-      eventId: "wamid-echo-1",
-      payload: expect.objectContaining({
-        type: "text",
-        messageText: "business echo",
-        senderId: customerPhone,
-        isFromBusiness: true,
-      }),
-    });
-    expect(mocks.enqueueInboundMetaEvent).toHaveBeenNthCalledWith(3, {
-      platform: "whatsapp",
       eventId: "wamid-text-1",
       payload: expect.objectContaining({
-        type: "text",
-        messageText: "hello",
+        channel: "whatsapp",
+        text: "hello",
         senderId: customerPhone,
         isFromBusiness: false,
       }),
     });
-    expect(mocks.enqueueInboundMetaEvent).toHaveBeenNthCalledWith(4, {
+    expect(mocks.enqueueInboundMetaEvent).toHaveBeenNthCalledWith(3, {
       platform: "whatsapp",
       eventId: "wamid-image-1",
       payload: expect.objectContaining({
-        type: "image",
-        messageText: "image caption",
-        mediaId: "media-1",
+        channel: "whatsapp",
+        text: "image caption",
+        attachments: [expect.objectContaining({ id: "media-1", type: "image" })],
         senderId: customerPhone,
         isFromBusiness: false,
       }),

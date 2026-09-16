@@ -14,8 +14,8 @@ const mocks = vi.hoisted(() => ({
   getOrCreateConversation: vi.fn(),
   saveMessage: vi.fn(),
   enqueueOrderAction: vi.fn(),
-  agentRunCapability: vi.fn(),
-  computeBusinessChatReply: vi.fn(),
+  executeCustomerTurn: vi.fn(),
+  applyCustomerDecision: vi.fn(),
   buildUnansweredUserTurnContext: vi.fn(),
   startConversationAiRun: vi.fn(),
   createLatencyTrace: vi.fn(),
@@ -91,12 +91,13 @@ vi.mock("@modules/order-confirmation/orderConfirmation.repository", () => ({
   reconcileNotificationDeliveryStatus: mocks.reconcileNotificationDeliveryStatus,
 }));
 
-vi.mock("@modules/ai-agent/client/agent.client", () => ({
-  AgentClient: { runCapability: mocks.agentRunCapability },
+vi.mock("@modules/ai-agent/customer/customerAgent.service", () => ({
+  executeCustomerTurn: mocks.executeCustomerTurn,
 }));
 
-vi.mock("@modules/ai-agent/chat/businessChatReply.service", () => ({
-  computeBusinessChatReply: mocks.computeBusinessChatReply,
+vi.mock("@modules/ai-agent/customer/customerDecision.service", () => ({
+  applyCustomerDecision: mocks.applyCustomerDecision,
+  CustomerDeliveryAmbiguousError: class CustomerDeliveryAmbiguousError extends Error {},
 }));
 
 vi.mock("@modules/ai-agent/chat/conversationTurnContext", () => ({
@@ -146,6 +147,22 @@ const account = {
   businessProfile: { userId: 3, agentActionSources: [] },
 };
 
+function inboundWhatsApp(overrides: Record<string, unknown> = {}) {
+  return {
+    channel: "whatsapp" as const,
+    businessProfileId: 11,
+    identifier: "phone-number-id",
+    phoneNumberId: "phone-number-id",
+    senderId: "+201001234567",
+    customerPhone: "+201001234567",
+    externalId: "wamid-inbound-1",
+    text: "Hello",
+    receivedAt: "2026-09-16T10:00:00.000Z",
+    attachments: [],
+    ...overrides,
+  };
+}
+
 describe("WhatsApp order action routing and suppression", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -166,7 +183,11 @@ describe("WhatsApp order action routing and suppression", () => {
     mocks.conversationMessageUpdateMany.mockResolvedValue({ count: 1 });
     mocks.reconcileNotificationDeliveryStatus.mockResolvedValue(undefined);
     mocks.enqueueOrderAction.mockResolvedValue(undefined);
-    mocks.agentRunCapability.mockResolvedValue({ action: "RESPOND", content: "" });
+    mocks.executeCustomerTurn.mockResolvedValue({
+      agentTurnId: 90,
+      decision: { action: "NO_REPLY", content: null, reason_code: "POLICY_SUPPRESSED", handoff_category: null },
+    });
+    mocks.applyCustomerDecision.mockResolvedValue({ action: "NO_REPLY" });
     mocks.conversationMessageFindMany.mockResolvedValue([]);
     mocks.classifyInboundMessageSignal.mockReturnValue({
       shouldTriggerAi: true,
@@ -200,24 +221,17 @@ describe("WhatsApp order action routing and suppression", () => {
       correlationId: "meta-order-action-wamid-action-1",
     });
     expect(mocks.whatsappAccountFindFirst).not.toHaveBeenCalled();
-    expect(mocks.computeBusinessChatReply).not.toHaveBeenCalled();
+    expect(mocks.executeCustomerTurn).not.toHaveBeenCalled();
     expect(JSON.stringify(mocks.loggerInfo.mock.calls)).not.toContain("opaque-action-token");
   });
 
   it("persists a WhatsApp opt-out after the inbound message and skips AI", async () => {
     mocks.getOrCreateConversation.mockResolvedValue({ id: 77, aiEnabled: true });
 
-    await processMetaMessage({
-      platform: "whatsapp",
-      identifier: "phone-number-id",
-      phoneNumberId: "phone-number-id",
-      businessProfileId: 11,
-      senderId: "+201001234567",
-      customerPhone: "+201001234567",
-      messageText: "  STOP!!! ",
-      type: "text",
+    await processMetaMessage(inboundWhatsApp({
+      text: "  STOP!!! ",
       externalId: "wamid-opt-out-1",
-    });
+    }));
 
     expect(mocks.saveMessage).toHaveBeenCalledWith(
       77,
@@ -244,7 +258,7 @@ describe("WhatsApp order action routing and suppression", () => {
         source: "WHATSAPP",
       },
     });
-    expect(mocks.computeBusinessChatReply).not.toHaveBeenCalled();
+    expect(mocks.executeCustomerTurn).not.toHaveBeenCalled();
     expect(mocks.startConversationAiRun).not.toHaveBeenCalled();
   });
 
@@ -274,7 +288,7 @@ describe("WhatsApp order action routing and suppression", () => {
 
     expect(mocks.saveMessage).toHaveBeenCalledTimes(1);
     expect(mocks.suppressionUpsert).toHaveBeenCalledTimes(2);
-    expect(mocks.computeBusinessChatReply).not.toHaveBeenCalled();
+    expect(mocks.executeCustomerTurn).not.toHaveBeenCalled();
     expect(mocks.startConversationAiRun).not.toHaveBeenCalled();
   });
 
@@ -298,23 +312,17 @@ describe("WhatsApp order action routing and suppression", () => {
       status: "READ",
       error: undefined,
     });
-    expect(mocks.computeBusinessChatReply).not.toHaveBeenCalled();
+    expect(mocks.executeCustomerTurn).not.toHaveBeenCalled();
   });
 
   it("persists a normal WhatsApp message but skips AI when the connected number disables AI replies", async () => {
     mocks.whatsappAccountFindFirst.mockResolvedValue({ ...account, aiRepliesEnabled: false });
     mocks.getOrCreateConversation.mockResolvedValue({ id: 77, aiEnabled: true });
 
-    await processMetaMessage({
-      platform: "whatsapp",
-      identifier: "phone-number-id",
-      phoneNumberId: "phone-number-id",
-      senderId: "+201001234567",
-      customerPhone: "+201001234567",
-      messageText: "Please send me the catalogue",
-      type: "text",
+    await processMetaMessage(inboundWhatsApp({
+      text: "Please send me the catalogue",
       externalId: "wamid-ai-disabled-1",
-    });
+    }));
 
     expect(mocks.saveMessage).toHaveBeenCalledWith(
       77,
@@ -322,43 +330,38 @@ describe("WhatsApp order action routing and suppression", () => {
       "Please send me the catalogue",
       expect.objectContaining({ externalId: "wamid-ai-disabled-1", type: "text" }),
     );
-    expect(mocks.agentRunCapability).not.toHaveBeenCalled();
+    expect(mocks.executeCustomerTurn).not.toHaveBeenCalled();
   });
 
   it("runs AI for a normal WhatsApp message when both account and conversation AI are enabled", async () => {
     mocks.getOrCreateConversation.mockResolvedValue({ id: 77, aiEnabled: true });
 
-    await processMetaMessage({
-      platform: "whatsapp",
-      identifier: "phone-number-id",
-      phoneNumberId: "phone-number-id",
-      senderId: "+201001234567",
-      customerPhone: "+201001234567",
-      messageText: "What are your opening hours?",
-      type: "text",
+    await processMetaMessage(inboundWhatsApp({
+      text: "What are your opening hours?",
       externalId: "wamid-ai-enabled-1",
-    });
+    }));
 
-    expect(mocks.agentRunCapability).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mocks.executeCustomerTurn).toHaveBeenCalledWith(expect.objectContaining({
       userId: 3,
       businessProfileId: 11,
-      operation: "customer_reply",
+      conversationId: 77,
+      runMode: "inbound",
+      dedupeKey: "message:88",
+    }));
+    expect(mocks.applyCustomerDecision).toHaveBeenCalledWith(expect.objectContaining({
+      businessProfileId: 11,
+      conversationId: 77,
+      agentTurnId: 90,
     }));
   });
 
   it("still respects the per-conversation AI switch when the account switch is enabled", async () => {
     mocks.getOrCreateConversation.mockResolvedValue({ id: 77, aiEnabled: false });
 
-    await processMetaMessage({
-      platform: "whatsapp",
-      identifier: "phone-number-id",
-      phoneNumberId: "phone-number-id",
-      senderId: "+201001234567",
-      customerPhone: "+201001234567",
-      messageText: "This should remain in the inbox",
-      type: "text",
+    await processMetaMessage(inboundWhatsApp({
+      text: "This should remain in the inbox",
       externalId: "wamid-conversation-ai-disabled-1",
-    });
+    }));
 
     expect(mocks.saveMessage).toHaveBeenCalledWith(
       77,
@@ -366,6 +369,6 @@ describe("WhatsApp order action routing and suppression", () => {
       "This should remain in the inbox",
       expect.objectContaining({ externalId: "wamid-conversation-ai-disabled-1" }),
     );
-    expect(mocks.agentRunCapability).not.toHaveBeenCalled();
+    expect(mocks.executeCustomerTurn).not.toHaveBeenCalled();
   });
 });

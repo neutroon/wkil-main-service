@@ -3,6 +3,7 @@ import { Queue, Worker, Job, QueueEvents, type JobsOptions } from "bullmq";
 import { bullConnection, bullQueuePrefix } from "@config/redis";
 import { logger } from "@utils/logger";
 import type { IntegrationActionJob } from "@modules/integrations/external/agentAction.job";
+import type { InboundCustomerMessage } from "./inboundCustomerMessage";
 
 import {
   processMetaMessage,
@@ -73,7 +74,7 @@ export interface MetaEngineJob {
   payload: any;
 }
 
-type InboundMetaPlatform = "whatsapp" | "messenger" | "facebook_comment";
+type InboundMetaPlatform = InboundCustomerMessage["channel"];
 
 export function safeBullMqJobId(value: string): string {
   const sanitized = value
@@ -190,14 +191,19 @@ export async function enqueueMetaJob(
 
 export async function enqueueInboundMetaEvent(params: {
   platform: InboundMetaPlatform;
-  eventId?: string | null;
-  payload: any;
+  /** Kept separate for webhook auditing; must equal the persisted external ID. */
+  eventId: string;
+  payload: InboundCustomerMessage;
 }): Promise<void> {
-  const jobId = params.eventId
-    ? createBullMqJobId("inbound", params.platform, params.eventId)
-    : undefined;
+  if (params.payload.channel !== params.platform) {
+    throw new Error("Inbound Meta event platform does not match its customer envelope");
+  }
+  if (params.payload.externalId !== params.eventId) {
+    throw new Error("Inbound Meta event ID does not match its customer envelope");
+  }
+  const jobId = createBullMqJobId("inbound", params.platform, params.eventId);
 
-  await enqueueMetaJob(params.payload, jobId ? { jobId } : {});
+  await enqueueMetaJob(params.payload, { jobId });
 
   logger.info("meta.queue.inbound_event_enqueued", {
     platform: params.platform,

@@ -92,8 +92,19 @@ async function getOrCreateConversationWithDb(
     opts?.channel ?? null,
   );
 
+  // Comment conversations are anchored to the source comment, not merely the
+  // commenter. Reusing a generic Page/PSID conversation here overwrites the
+  // comment ID and loses the public thread identity needed for safe replies.
+  const commentThread = opts?.channel === "facebook_comment" && opts.externalId
+    ? await db.conversation.findFirst({
+        where: { externalId: opts.externalId, businessProfileId, channel: "facebook_comment" },
+      })
+    : null;
+
   // 1. Try to find an existing primary conversation for this user on this page
-  const existing = await db.conversation.findFirst({
+  const existing = commentThread ?? (opts?.channel === "facebook_comment"
+    ? null
+    : await db.conversation.findFirst({
     where: {
       pageId,
       senderId,
@@ -101,7 +112,7 @@ async function getOrCreateConversationWithDb(
       channel: opts?.channel ?? null,
     },
     orderBy: { updatedAt: "desc" },
-  });
+  }));
 
   if (existing) {
     const updateData: any = {};

@@ -108,23 +108,26 @@ export class MessengerController {
                     }
                   }
 
-                  enqueueInboundMetaEvent({
+                  await enqueueInboundMetaEvent({
                     platform: "facebook_comment",
                     eventId: commentId,
                     payload: {
-                      platform: "messenger",
-                      type: "FACEBOOK_COMMENT",
+                      channel: "facebook_comment",
                       pageId,
                       identifier: pageId,
                       businessProfileId: route.businessProfileId,
                       senderId,
                       commentId,
-                      postId,
-                      parentId,
-                      messageText,
-                      senderName,
+                      postId: postId || commentId,
+                      ...(parentId ? { parentId } : {}),
+                      source: "page_feed",
+                      externalId: commentId,
+                      text: messageText,
+                      customerName: senderName,
+                      receivedAt: new Date().toISOString(),
+                      attachments: [],
                       isFromBusiness,
-                    } as any,
+                    },
                   });
                 }
               }
@@ -221,23 +224,29 @@ export class MessengerController {
             if (msgType === "text" && !messageText) continue;
             if (msgType !== "text" && !attachments) continue;
 
-            enqueueInboundMetaEvent({
+            await enqueueInboundMetaEvent({
               platform: "messenger",
               eventId: messageMid,
               payload: {
-                platform: "messenger",
-                type: msgType,
+                channel: "messenger",
                 pageId,
                 identifier: pageId,
                 businessProfileId: route.businessProfileId,
                 senderId: actualCustomerId,
-                messageText,
                 externalId: messageMid,
-                msgType,
-                mediaId: mediaId?.toString(),
-                mediaMetadata,
+                text: messageText || "",
+                receivedAt: new Date().toISOString(),
+                attachments: mediaId
+                  ? [{
+                      id: mediaId.toString(),
+                      type: normalizeMessengerAttachmentType(msgType),
+                      ...(mediaMetadata?.url ? { url: mediaMetadata.url } : {}),
+                      ...(mediaMetadata?.title ? { title: mediaMetadata.title } : {}),
+                      metadata: mediaMetadata,
+                    }]
+                  : [],
                 isFromBusiness,
-              } as any,
+              },
             });
           }
         }
@@ -416,6 +425,11 @@ export class MessengerController {
 }
 
 export const messengerController = new MessengerController();
+
+function normalizeMessengerAttachmentType(type: string): "image" | "video" | "audio" | "voice" | "document" | "sticker" | "file" {
+  if (type === "image" || type === "video" || type === "audio" || type === "voice" || type === "document" || type === "sticker") return type;
+  return "file";
+}
 
 
 

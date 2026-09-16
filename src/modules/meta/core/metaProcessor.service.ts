@@ -1,4 +1,3 @@
-import { AgentClient } from "@modules/ai-agent/client/agent.client";
 import { UnrecoverableError } from "bullmq";
 import prisma from "@config/prisma";
 import { logger } from "@utils/logger";
@@ -10,24 +9,38 @@ import {
 } from "../core/conversation.service";
 import {
   getFacebookUserProfile,
-  likeComment,
 } from "../facebook/facebook.service";
 import { understandInboundMedia } from "./inboundMediaUnderstanding.service";
-import { createLatencyTrace } from "@utils/latencyTrace";
 import { enqueueOrderAction } from "@modules/order-confirmation/orderConfirmation.queue";
 import { reconcileNotificationDeliveryStatus } from "@modules/order-confirmation/orderConfirmation.repository";
 import {
   isWhatsAppOptOut,
   normalizeOptOutText,
 } from "@modules/order-confirmation/orderConfirmation.whatsapp.parser";
+import {
+  inboundCustomerMessageSchema,
+  type InboundCustomerMessage,
+} from "./inboundCustomerMessage";
+import { executeCustomerTurn } from "@modules/ai-agent/customer/customerAgent.service";
+import {
+  applyCustomerDecision,
+  CustomerDeliveryAmbiguousError,
+  type CustomerDeliveryAdapter,
+} from "@modules/ai-agent/customer/customerDecision.service";
 
-export type MetaPlatform = "messenger" | "whatsapp" | "visual_production" | "visual_refine" | "media_sync" | "facebook" | "instagram" | "linkedin";
+export type MetaPlatform = "messenger" | "whatsapp" | "facebook_comment" | "visual_production" | "visual_refine" | "media_sync" | "facebook" | "instagram" | "linkedin";
 
 export interface MetaMessageJob {
-  platform: MetaPlatform;
+  platform?: MetaPlatform;
+  /** Present only for validated customer envelope jobs. */
+  channel?: InboundCustomerMessage["channel"];
   identifier: string;
   senderId: string;
-  messageText: string;
+  messageText?: string;
+  text?: string;
+  receivedAt?: string;
+  attachments?: InboundCustomerMessage["attachments"];
+  source?: "page_feed" | "group_feed";
   externalId?: string;
   type?: string;
   pageId?: string;
@@ -129,6 +142,9 @@ async function resolveAccountIdentity(job: MetaMessageJob): Promise<IdentityReso
   const routedBusinessProfileId = Number.isInteger(job.businessProfileId)
     ? job.businessProfileId
     : undefined;
+  if (!routedBusinessProfileId || routedBusinessProfileId <= 0) {
+    throw new UnrecoverableError("Meta customer job is missing its tenant route");
+  }
 
   // 1. Try cache (non-sensitive data only)
   const cachedRaw = await cache.get<string>(cacheKey);
@@ -231,21 +247,9 @@ async function resolveAccountIdentity(job: MetaMessageJob): Promise<IdentityReso
       page = await findFacebookPageIdentity(routedBusinessProfileId);
     }
 
-    if (!page && routedBusinessProfileId) {
-      page = await findFacebookPageIdentity();
-      if (page?.businessProfileId) {
-        logger.warn("meta.processor.identity_route_changed", {
-          platform,
-          identifier,
-          routedBusinessProfileId,
-          resolvedBusinessProfileId: page.businessProfileId,
-        });
-      }
-    }
-
     if (!page || !page.businessProfileId) {
       const candidates = await prisma.facebookPage.findMany({
-        where: { pageId: identifier },
+        where: { pageId: identifier, businessProfileId: routedBusinessProfileId },
         orderBy: { updatedAt: "desc" },
         take: 5,
         select: {
@@ -321,21 +325,9 @@ async function resolveAccountIdentity(job: MetaMessageJob): Promise<IdentityReso
       account = await findWhatsAppAccountIdentity(routedBusinessProfileId);
     }
 
-    if (!account && routedBusinessProfileId) {
-      account = await findWhatsAppAccountIdentity();
-      if (account?.businessProfileId) {
-        logger.warn("meta.processor.identity_route_changed", {
-          platform,
-          identifier,
-          routedBusinessProfileId,
-          resolvedBusinessProfileId: account.businessProfileId,
-        });
-      }
-    }
-
     if (!account || !account.businessProfileId) {
       const candidates = await prisma.whatsAppAccount.findMany({
-        where: { phoneNumberId: identifier },
+        where: { phoneNumberId: identifier, businessProfileId: routedBusinessProfileId },
         orderBy: { updatedAt: "desc" },
         take: 5,
         select: {
@@ -382,7 +374,7 @@ async function resolveAccountIdentity(job: MetaMessageJob): Promise<IdentityReso
  * In production grade tier, we NEVER block the AI for Meta profile fetches.
  * We return the best known identity immediately and trigger enrichment in the background.
  */
-function resolveCustomerProfile(job: MetaMessageJob) {
+function resolveCustomerProfile(job: Pick<MetaMessageJob, "senderName" | "customerName">) {
   const { senderName, customerName } = job;
   return {
     name: customerName || senderName || "Guest Customer",
@@ -443,7 +435,9 @@ export async function processMetaMessage(
   job: MetaMessageJob,
   traceOptions: MetaProcessorTraceOptions = {},
 ) {
-  const { platform, identifier, senderId, messageText, externalId, type } = job;
+  const { identifier, senderId, externalId, type } = job;
+  const platform = job.platform ?? job.channel;
+  const messageText = job.messageText ?? job.text ?? "";
 
   // Delivery receipts and order actions must never enter the AI path. Besides
   // wasting a model call, doing so delays or completely drops state changes
@@ -517,7 +511,7 @@ export async function processMetaMessage(
     isWhatsAppOptOut(messageText || "");
 
   if (shouldRecordWhatsAppOptOut) {
-    const { businessProfileId } = await resolveAccountIdentity(job);
+    const { businessProfileId } = await resolveAccountIdentity({ ...job, platform });
     const normalizedPhone = normalizeWhatsAppPhone(job.customerPhone || senderId);
     const existing = externalId
       ? await prisma.conversationMessage.findFirst({
@@ -574,99 +568,222 @@ export async function processMetaMessage(
     return;
   }
 
-  if (platform !== "messenger" && platform !== "whatsapp") return;
-  const identity = await resolveAccountIdentity(job);
-  if (externalId) {
-    const duplicate = await prisma.conversationMessage.findFirst({
-      where: { externalId }, select: { id: true },
+  const inbound = inboundCustomerMessageSchema.safeParse(job);
+  if (!inbound.success) {
+    // Non-customer Meta jobs (typing, receipts, coexistence) intentionally do
+    // not share this queue envelope. Do not let malformed webhook input enter
+    // an agent run.
+    logger.warn("meta.processor.invalid_customer_envelope", {
+      platform,
+      externalId,
+      issueCount: inbound.error.issues.length,
     });
-    if (duplicate) return;
+    return;
   }
-  const customer = resolveCustomerProfile(job);
+
+  await processInboundCustomerMessage(inbound.data);
+}
+
+async function processInboundCustomerMessage(inbound: InboundCustomerMessage): Promise<void> {
+  const accountPlatform = inbound.channel === "whatsapp" ? "whatsapp" : "messenger";
+  const identity = await resolveAccountIdentity({
+    platform: accountPlatform,
+    identifier: inbound.identifier,
+    senderId: inbound.senderId,
+    messageText: inbound.text,
+    externalId: inbound.externalId,
+    businessProfileId: inbound.businessProfileId,
+  });
+
+  if (identity.businessProfileId !== inbound.businessProfileId) {
+    logger.warn("meta.processor.inbound_tenant_mismatch", {
+      channel: inbound.channel,
+      externalId: inbound.externalId,
+      routedBusinessProfileId: inbound.businessProfileId,
+      resolvedBusinessProfileId: identity.businessProfileId,
+    });
+    return;
+  }
+
+  const duplicate = await prisma.conversationMessage.findFirst({
+    where: { externalId: inbound.externalId }, select: { id: true },
+  });
+  if (duplicate) return;
+
+  const customer = resolveCustomerProfile({ customerName: inbound.customerName });
   const conversation = await getOrCreateConversation(
-    identifier,
-    senderId,
+    inbound.identifier,
+    inbound.senderId,
     identity.businessProfileId,
     {
-      channel: platform,
+      channel: inbound.channel,
       customerName: customer.name,
-      customerPhone: job.customerPhone,
+      ...(inbound.channel === "whatsapp" ? { customerPhone: inbound.customerPhone } : {}),
+      ...(inbound.channel === "facebook_comment" ? {
+        externalId: inbound.commentId,
+        postId: inbound.postId,
+        sourceCommentText: inbound.text,
+      } : {}),
     },
   );
-  const mediaInfo = job.mediaId
+
+  const attachment = inbound.attachments[0];
+  const mediaMetadata = attachment
+    ? { ...(attachment.metadata ?? {}), mimeType: attachment.mimeType, url: attachment.url, title: attachment.title }
+    : undefined;
+  const mediaInfo = attachment && inbound.channel !== "facebook_comment"
     ? await understandInboundMedia({
         businessProfileId: identity.businessProfileId,
         userId: identity.businessProfile.userId,
-        platform,
+        platform: inbound.channel,
         accessToken: identity.accessToken,
-        mediaId: job.mediaId,
-        type: job.type,
-        mediaMetadata: job.mediaMetadata,
+        mediaId: attachment.id,
+        type: attachment.type,
+        mediaMetadata,
       })
     : null;
-  await saveMessage(conversation.id, "user", messageText || mediaInfo?.text || "", {
-    externalId,
-    type: type || "text",
-    mediaId: job.mediaId,
-    mediaMetadata: job.mediaMetadata,
+  const saved = await saveMessage(conversation.id, "user", inbound.text || mediaInfo?.text || "", {
+    externalId: inbound.externalId,
+    type: attachment?.type ?? "text",
+    mediaId: attachment?.id,
+    mediaMetadata,
   });
-  if (platform === "whatsapp" && identity.aiRepliesEnabled === false) return;
-  if (conversation.aiEnabled === false) return;
-  const history = await prisma.conversationMessage.findMany({
-    where: { conversationId: conversation.id },
-    orderBy: { createdAt: "asc" }, take: 40,
-    select: { role: true, content: true },
-  });
-  const reply = await AgentClient.runCapability({
+
+  // Echoes are retained for audit/history but never treated as a fresh
+  // customer turn. An AI-disabled conversation is the durable human-control
+  // signal set by handoff and staff controls.
+  if (inbound.isFromBusiness || (inbound.channel === "whatsapp" && identity.aiRepliesEnabled === false) || conversation.aiEnabled === false) return;
+
+  const turn = await executeCustomerTurn({
     userId: identity.businessProfile.userId,
     businessProfileId: identity.businessProfileId,
-    operation: "customer_reply",
-    context: {
-      channel: platform,
-      messageText: messageText || mediaInfo?.text || "",
-      business: identity.businessProfile,
-      historyTurns: history.map((turn) => ({
-        role: turn.role === "user" ? "customer" : "agent",
-        content: turn.content || "",
-      })),
-      mediaInfo,
-      conversationId: conversation.id,
-    },
+    conversationId: conversation.id,
+    channel: inbound.channel,
+    inputMessageId: saved.id,
+    customerText: inbound.text || mediaInfo?.text || "",
+    runMode: "inbound",
+    dedupeKey: `message:${saved.id}`,
+    mediaContext: mediaInfo ? JSON.stringify(mediaInfo) : null,
   });
-  if (reply.action === "RESOLVE_CONVERSATION") {
-    await prisma.conversation.update({ where: { id: conversation.id }, data: { status: "RESOLVED" } });
-    return;
-  }
-  const content = (reply.content || "").trim();
-  if (!content) return;
-  const saved = await saveMessage(conversation.id, "model", content, {
-    status: "SENDING",
-    aiReasoning: reply.reasoning,
-    handoffCategory: reply.handoff_category,
+  await applyCustomerDecision({
+    businessProfileId: identity.businessProfileId,
+    conversationId: conversation.id,
+    agentTurnId: turn.agentTurnId,
+    decision: turn.decision,
+    deliver: createCustomerDeliveryAdapter({ inbound, identity, conversation }),
   });
-  try {
-    if (platform === "whatsapp") {
-      const { sendWhatsAppReply } = await import("../whatsapp/whatsapp.service");
-      const response = await sendWhatsAppReply(senderId, content, identifier, identity.accessToken) as { messages?: Array<{ id?: string }> };
-      await prisma.conversationMessage.update({
-        where: { id: saved.id },
-        data: { status: "SENT", externalId: response?.messages?.[0]?.id },
-      });
-    } else {
-      const { sendMessengerReply } = await import("../messenger/messenger.service");
-      const response = await sendMessengerReply(senderId, content, identity.accessToken) as { message_id?: string };
-      await prisma.conversationMessage.update({
-        where: { id: saved.id },
-        data: { status: "SENT", externalId: response?.message_id },
-      });
+}
+
+function createCustomerDeliveryAdapter(params: {
+  inbound: InboundCustomerMessage;
+  identity: IdentityResolution;
+  conversation: { id: number; senderId: string; externalId?: string | null; postId?: string | null };
+}): CustomerDeliveryAdapter {
+  return async (message) => {
+    try {
+      if (params.inbound.channel === "whatsapp") {
+        const { sendWhatsAppReply } = await import("../whatsapp/whatsapp.service");
+        const response = await sendWhatsAppReply(
+          params.inbound.customerPhone,
+          message.content,
+          params.inbound.phoneNumberId,
+          params.identity.accessToken,
+        ) as { messages?: Array<{ id?: string }> };
+        return { externalId: response.messages?.[0]?.id ?? null };
+      }
+      if (params.inbound.channel === "messenger") {
+        const { sendMessengerReply } = await import("../messenger/messenger.service");
+        const response = await sendMessengerReply(
+          params.inbound.senderId,
+          message.content,
+          params.identity.accessToken,
+        ) as { message_id?: string };
+        return { externalId: response.message_id ?? null };
+      }
+      return deliverFacebookCommentReply(params, message.content);
+    } catch (error) {
+      throw classifyCustomerDeliveryError(error);
     }
-  } catch (error: unknown) {
-    await prisma.conversationMessage.update({
-      where: { id: saved.id },
-      data: { status: "FAILED", aiReasoning: error instanceof Error ? error.message : String(error) },
+  };
+}
+
+async function deliverFacebookCommentReply(
+  params: Parameters<typeof createCustomerDeliveryAdapter>[0],
+  content: string,
+): Promise<{ externalId?: string | null }> {
+  const { replyToComment, sendPrivateReply } = await import("../facebook/facebook.service");
+  const comment = params.inbound;
+  if (comment.channel !== "facebook_comment") throw new Error("Facebook comment delivery requires comment context");
+
+  const publicContent = params.identity.pageSettings?.commentAutoDmEnabled
+    ? commentGreeting(params.identity.pageSettings.commentPublicGreeting, comment.customerName)
+    : content;
+  const publicReply = await replyToComment({
+    commentId: comment.commentId,
+    message: publicContent,
+    accessToken: params.identity.accessToken,
+    pageId: comment.pageId,
+    businessProfileId: params.identity.businessProfileId,
+  });
+
+  if (!params.identity.pageSettings?.commentAutoDmEnabled) return { externalId: String(publicReply?.id ?? "") || null };
+
+  // Meta permits one private reply within a limited window. This policy is a
+  // page setting, never an instruction the model can choose for itself.
+  let privateReply: { id?: string };
+  try {
+    privateReply = await sendPrivateReply({
+      commentId: comment.commentId,
+      message: content,
+      accessToken: params.identity.accessToken,
+      pageId: comment.pageId,
+      businessProfileId: params.identity.businessProfileId,
     });
-    throw error;
+  } catch (error) {
+    // The public comment was already accepted. Retrying this customer turn
+    // would duplicate that public reply, while Meta's private-reply outcome
+    // cannot safely be inferred from an error response alone.
+    const ambiguous = new CustomerDeliveryAmbiguousError(
+      "Facebook public comment was accepted but private reply outcome is ambiguous",
+    );
+    Object.defineProperty(ambiguous, "cause", { value: error, configurable: true });
+    throw ambiguous;
   }
+  const privateId = String(privateReply?.id ?? "");
+  if (privateId) {
+    const { mirrorCommentReplyToMessenger } = await import("./metaDelivery.service");
+    await mirrorCommentReplyToMessenger({
+      pageId: comment.pageId,
+      senderId: comment.senderId,
+      businessProfileId: params.identity.businessProfileId,
+      messageId: privateId,
+      content,
+      postId: comment.postId,
+      commentId: comment.commentId,
+      role: "model",
+    });
+  }
+  return { externalId: privateId || String(publicReply?.id ?? "") || null };
+}
+
+function commentGreeting(template: string | undefined, customerName: string | undefined): string {
+  const greeting = template?.trim() || "Thanks {{name}}! I've sent the details to your inbox.";
+  return greeting.replace(/{{\s*name\s*}}/gi, customerName?.trim() || "there");
+}
+
+function classifyCustomerDeliveryError(error: unknown): unknown {
+  if (error instanceof CustomerDeliveryAmbiguousError) return error;
+  if (isAmbiguousTransportError(error)) {
+    return new CustomerDeliveryAmbiguousError("Customer delivery transport outcome is ambiguous");
+  }
+  return error;
+}
+
+function isAmbiguousTransportError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const code = (error as Error & { code?: string }).code;
+  if (code && ["ECONNRESET", "ECONNABORTED", "ECONNREFUSED", "ETIMEDOUT", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET"].includes(code)) return true;
+  return error.name === "AbortError" || /(?:network|socket|disconnect|connection reset|timed? ?out|fetch failed)/i.test(error.message);
 }
 
 /**

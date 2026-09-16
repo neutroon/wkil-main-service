@@ -265,6 +265,8 @@ export class WhatsAppController {
             logger.warn("whatsapp.webhook.unroutable_account_discarded", { phoneNumberId });
             continue;
           }
+          const businessProfileId = account.businessProfileId;
+          if (!businessProfileId) continue;
 
           const businessDigits = account.displayPhoneNumber.replace(/\D/g, "");
 
@@ -305,26 +307,17 @@ export class WhatsAppController {
             if (!actualCustomerId) continue;
 
             if (interactiveReply && !isFromBusiness) {
-              await enqueueInboundMetaEvent({
+              await enqueueMetaJob({
                 platform: "whatsapp",
-                eventId: wamid,
-                payload: {
-                  platform: "whatsapp",
-                  phoneNumberId,
-                  identifier: phoneNumberId,
-                  businessProfileId: account.businessProfileId,
-                  from,
-                  senderId: actualCustomerId,
-                  customerPhone: actualCustomerId,
-                  messageText: "",
-                  wamid,
-                  externalId: wamid,
-                  customerName,
-                  type: "ORDER_ACTION",
-                  orderActionId: interactiveReply.actionToken,
-                  buttonTitle: interactiveReply.buttonTitle,
-                  isFromBusiness: false,
-                } as any,
+                phoneNumberId,
+                identifier: phoneNumberId,
+                businessProfileId,
+                senderId: actualCustomerId,
+                customerPhone: actualCustomerId,
+                externalId: wamid,
+                type: "ORDER_ACTION",
+                orderActionId: interactiveReply.actionToken,
+                buttonTitle: interactiveReply.buttonTitle,
               });
               continue;
             }
@@ -336,21 +329,26 @@ export class WhatsAppController {
               platform: "whatsapp",
               eventId: wamid,
               payload: {
-                platform: "whatsapp",
+                channel: "whatsapp",
                 phoneNumberId,
                 identifier: phoneNumberId,
-                businessProfileId: account.businessProfileId,
-                from,
+                businessProfileId,
                 senderId: actualCustomerId,
-                messageText,
-                wamid,
+                customerPhone: actualCustomerId,
                 externalId: wamid,
+                text: messageText || "",
+                receivedAt: new Date().toISOString(),
                 customerName,
-                type,
-                mediaId,
-                mediaMetadata,
+                attachments: mediaId
+                  ? [{
+                      id: mediaId,
+                      type: normalizeWhatsAppAttachmentType(type),
+                      ...(mediaMetadata?.mimeType ? { mimeType: mediaMetadata.mimeType } : {}),
+                      metadata: mediaMetadata,
+                    }]
+                  : [],
                 isFromBusiness,
-              } as any,
+              },
             });
           }
         }
@@ -831,3 +829,8 @@ export class WhatsAppController {
 }
 
 export const whatsappController = new WhatsAppController();
+
+function normalizeWhatsAppAttachmentType(type: string): "image" | "video" | "audio" | "voice" | "document" | "sticker" | "file" {
+  if (type === "image" || type === "video" || type === "audio" || type === "voice" || type === "document" || type === "sticker") return type;
+  return "file";
+}

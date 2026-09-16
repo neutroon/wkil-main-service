@@ -19,7 +19,11 @@ const agentClientMock = vi.hoisted(() => ({
 vi.mock("@config/prisma", () => ({ default: prismaMock }));
 vi.mock("@modules/ai-agent/client/agent.client", () => ({ AgentClient: agentClientMock }));
 
-import { executeCustomerTurn, prepareCustomerTurn } from "./customerAgent.service";
+import {
+  executeCustomerTurn,
+  finalizeCustomerTurn,
+  prepareCustomerTurn,
+} from "./customerAgent.service";
 
 const threadId = "11111111-1111-4111-8111-111111111111";
 const runId = "22222222-2222-4222-8222-222222222222";
@@ -203,6 +207,78 @@ describe("customer agent coordinator", () => {
     expect(agentClientMock.startCustomerRun).not.toHaveBeenCalled();
   });
 
+  it("keeps the seed lease while the initial run is queued so a distinct turn cannot reseed", async () => {
+    let seedClaims = 0;
+    prismaMock.conversation.updateMany.mockImplementation(({ data }: { data: Record<string, unknown> }) => {
+      if (data.agentSeedLeaseOwner && data.agentSeedLeaseExpiresAt instanceof Date) {
+        seedClaims += 1;
+        return Promise.resolve({ count: seedClaims === 1 ? 1 : 0 });
+      }
+      return Promise.resolve({ count: 1 });
+    });
+
+    const first = await prepareCustomerTurn(baseParams);
+
+    await expect(prepareCustomerTurn({ ...baseParams, dedupeKey: "message:100" }))
+      .rejects.toMatchObject({ code: "CUSTOMER_AGENT_LEASE_BUSY" });
+
+    expect(first.seedLeaseOwner).toEqual(expect.any(String));
+    expect(prismaMock.conversationMessage.findMany).toHaveBeenCalledOnce();
+    expect(agentClientMock.startCustomerRun).toHaveBeenCalledOnce();
+  });
+
+  it("releases the claimed history lease when thread-state recovery fails", async () => {
+    agentClientMock.getCustomerThreadState.mockRejectedValueOnce(new Error("state unavailable"));
+
+    await expect(prepareCustomerTurn(baseParams)).rejects.toThrow("state unavailable");
+
+    expect(prismaMock.conversation.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        id: 45,
+        businessProfileId: 10,
+        agentSeedLeaseOwner: expect.any(String),
+      }),
+      data: { agentSeedLeaseOwner: null, agentSeedLeaseExpiresAt: null },
+    }));
+  });
+
+  it("aborts a slow create before its lease expires and blocks a retry from creating a duplicate", async () => {
+    vi.useFakeTimers();
+    try {
+      let runLeaseClaims = 0;
+      prismaMock.agentTurn.updateMany.mockImplementation(({ data }: { data: Record<string, unknown> }) => {
+        if (data.runLeaseOwner && data.runLeaseExpiresAt instanceof Date) {
+          runLeaseClaims += 1;
+          return Promise.resolve({ count: runLeaseClaims === 1 ? 1 : 0 });
+        }
+        return Promise.resolve({ count: 1 });
+      });
+      agentClientMock.startCustomerRun.mockImplementationOnce(({ signal }: { signal?: AbortSignal }) => (
+        new Promise((_, reject) => signal?.addEventListener("abort", () => reject(signal.reason), { once: true }))
+      ));
+      prismaMock.agentTurn.findUniqueOrThrow.mockResolvedValue({
+        id: 8, businessProfileId: 10, conversationId: 45, channel: "whatsapp",
+        agentRunId: null, status: "RUNNING", decision: null,
+      });
+
+      const first = prepareCustomerTurn({ ...baseParams, dedupeKey: "slow-create" });
+      const firstOutcome = expect(first).rejects.toThrow("Customer agent run creation timed out");
+      await vi.waitFor(() => expect(agentClientMock.startCustomerRun).toHaveBeenCalledOnce());
+
+      const createSignal = agentClientMock.startCustomerRun.mock.calls[0][0].signal as AbortSignal;
+      expect(createSignal.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(30_000);
+      await firstOutcome;
+      expect(createSignal.aborted).toBe(true);
+
+      await expect(prepareCustomerTurn({ ...baseParams, dedupeKey: "slow-create" }))
+        .rejects.toMatchObject({ code: "CUSTOMER_AGENT_LEASE_BUSY" });
+      expect(agentClientMock.startCustomerRun).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("reclaims an expired conversation seed lease before seeding a new thread", async () => {
     prismaMock.conversation.findFirstOrThrow.mockResolvedValue(conversation({
       agentSeedLeaseOwner: "33333333-3333-4333-8333-333333333333",
@@ -311,6 +387,26 @@ describe("customer agent coordinator", () => {
         failureReason: null,
       },
     });
+  });
+
+  it("finalizes the initial seed claim after a terminal run, and does so idempotently", async () => {
+    const handle = await prepareCustomerTurn(baseParams);
+
+    const completedSeedCallsBefore = prismaMock.conversation.updateMany.mock.calls.filter(([{ data }]) => (
+      data.agentHistorySeededAt instanceof Date && data.agentSeedLeaseOwner === null
+    ));
+    expect(completedSeedCallsBefore).toHaveLength(0);
+
+    await finalizeCustomerTurn(baseParams, handle);
+    prismaMock.conversation.updateMany.mockResolvedValueOnce({ count: 0 });
+    await finalizeCustomerTurn(baseParams, handle);
+    const callsAfterRepeat = prismaMock.conversation.updateMany.mock.calls.filter(([{ data }]) => (
+      data.agentHistorySeededAt instanceof Date && data.agentSeedLeaseOwner === null
+    ));
+    expect(callsAfterRepeat).toHaveLength(2);
+    expect(prismaMock.conversation.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
+      data: { agentSeedLeaseOwner: null, agentSeedLeaseExpiresAt: null },
+    }));
   });
 
   it("returns an already validated decision without joining a TTL-recreated remote run", async () => {

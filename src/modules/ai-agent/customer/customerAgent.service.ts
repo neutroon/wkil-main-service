@@ -27,6 +27,8 @@ export type CustomerTurnHandle = {
   agentTurnId: number;
   threadId: string;
   runId: string;
+  /** Present only while this handle owns the initial-history seed claim. */
+  seedLeaseOwner?: string;
 };
 
 export type CustomerTurnResult = CustomerTurnHandle & {
@@ -53,6 +55,14 @@ type PersistedTurn = {
 };
 
 const LEASE_DURATION_MS = 120_000;
+const RUN_CREATION_TIMEOUT_MS = 30_000;
+
+class CustomerAgentRunCreationTimeoutError extends Error {
+  constructor() {
+    super("Customer agent run creation timed out");
+    this.name = "CustomerAgentRunCreationTimeoutError";
+  }
+}
 
 export class CustomerAgentLeaseBusyError extends Error {
   readonly code = "CUSTOMER_AGENT_LEASE_BUSY";
@@ -128,10 +138,10 @@ async function prepareCustomerTurnOnce(
       leaseOwner,
       durableDedupeKey,
     });
-    if (seed.leaseOwner) await completeHistorySeedLease(params, seed.leaseOwner);
-    return { agentTurnId: turn.id, threadId, runId };
+    return customerTurnHandle(turn.id, threadId, runId, seed.leaseOwner);
   } catch (error) {
-    if (seed.leaseOwner) await releaseHistorySeedLease(params, seed.leaseOwner);
+    // A remote create can be ambiguous. Keep both claims until expiry so a
+    // recovery owner paginates Agent Server metadata before it can create.
     throw error;
   }
 }
@@ -176,7 +186,13 @@ async function claimHistorySeedLease(
   });
   if (claimed.count === 0) throw new CustomerAgentLeaseBusyError("history");
 
-  const state = await AgentClient.getCustomerThreadState(threadId, params.signal);
+  let state: Record<string, unknown>;
+  try {
+    state = await AgentClient.getCustomerThreadState(threadId, params.signal);
+  } catch (error) {
+    await releaseHistorySeedLease(params, owner);
+    throw error;
+  }
   if (hasPersistedMessages(state)) {
     await completeHistorySeedLease(params, owner);
     return { shouldSeed: false, leaseOwner: null };
@@ -226,7 +242,7 @@ async function recoverOrStartRun(input: {
     input.durableDedupeKey,
     input.params.signal,
   );
-  const runId = recovered?.runId ?? (await AgentClient.startCustomerRun({
+  const runId = recovered?.runId ?? (await startCustomerRunWithinLease({
     threadId: input.threadId,
     messages: await messagesForRun(input.params, input.shouldSeed),
     context: {
@@ -255,6 +271,29 @@ async function recoverOrStartRun(input: {
   assertTurnScope(current, input.params);
   if (!current.agentRunId) throw new Error("Customer agent run was not persisted");
   return current.agentRunId;
+}
+
+async function startCustomerRunWithinLease(request: Parameters<typeof AgentClient.startCustomerRun>[0]) {
+  const controller = new AbortController();
+  let timedOut = false;
+  const abortFromCaller = () => controller.abort(request.signal?.reason);
+  if (request.signal?.aborted) abortFromCaller();
+  else request.signal?.addEventListener("abort", abortFromCaller, { once: true });
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort(new CustomerAgentRunCreationTimeoutError());
+  }, RUN_CREATION_TIMEOUT_MS);
+  try {
+    const run = await AgentClient.startCustomerRun({ ...request, signal: controller.signal });
+    if (timedOut) throw new CustomerAgentRunCreationTimeoutError();
+    return run;
+  } catch (error) {
+    if (timedOut) throw new CustomerAgentRunCreationTimeoutError();
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+    request.signal?.removeEventListener("abort", abortFromCaller);
+  }
 }
 
 async function messagesForRun(params: CustomerTurnParams, includeHistory: boolean): Promise<AgentInputMessage[]> {
@@ -290,6 +329,7 @@ export async function executeCustomerTurn(params: CustomerTurnParams): Promise<C
       handle.runId,
       { signal: params.signal },
     ));
+    await finalizeCustomerTurn(params, handle);
     await prisma.agentTurn.update({
       where: { id: handle.agentTurnId },
       data: { decision, status: "COMPLETED", failureReason: null },
@@ -302,6 +342,32 @@ export async function executeCustomerTurn(params: CustomerTurnParams): Promise<C
     });
     throw error;
   }
+}
+
+/**
+ * Marks an initial history seed durable after the caller has observed the run
+ * complete. Streaming callers can invoke this after their terminal event.
+ */
+export async function finalizeCustomerTurn(
+  params: CustomerTurnParams,
+  handle: CustomerTurnHandle,
+): Promise<void> {
+  if (!handle.seedLeaseOwner) return;
+  await completeHistorySeedLease(params, handle.seedLeaseOwner);
+}
+
+function customerTurnHandle(
+  agentTurnId: number,
+  threadId: string,
+  runId: string,
+  seedLeaseOwner: string | null,
+): CustomerTurnHandle {
+  const handle: CustomerTurnHandle = { agentTurnId, threadId, runId };
+  if (seedLeaseOwner) {
+    // This is coordinator state, not a payload for callers or queue data.
+    Object.defineProperty(handle, "seedLeaseOwner", { value: seedLeaseOwner });
+  }
+  return handle;
 }
 
 function customerTurnDedupeKey(params: CustomerTurnParams): string {

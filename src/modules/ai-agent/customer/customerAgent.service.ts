@@ -38,34 +38,53 @@ type ConversationThread = {
   businessProfileId: number;
   agentThreadId: string | null;
   agentHistorySeededAt: Date | null;
+  agentSeedLeaseOwner: string | null;
+  agentSeedLeaseExpiresAt: Date | null;
 };
 
 type PersistedTurn = {
   id: number;
+  businessProfileId: number;
+  conversationId: number;
+  channel: string;
   agentRunId: string | null;
   status: string;
   decision?: unknown;
 };
 
-// Prisma protects the durable cross-process record; this small coalescer also
-// closes the otherwise unavoidable SDK-create race for simultaneous jobs in
-// the same Node worker. Cross-process retries recover by the run metadata.
+const LEASE_DURATION_MS = 120_000;
+
+export class CustomerAgentLeaseBusyError extends Error {
+  readonly code = "CUSTOMER_AGENT_LEASE_BUSY";
+
+  constructor(resource: "run" | "history") {
+    super(`Customer agent ${resource} lease is held by another worker`);
+    this.name = "CustomerAgentLeaseBusyError";
+  }
+}
+
+// This only avoids redundant work inside one Node process. The database lease
+// below remains the correctness mechanism across BullMQ workers and hosts.
 const inFlightPrepares = new Map<string, Promise<CustomerTurnHandle>>();
 
 export function prepareCustomerTurn(params: CustomerTurnParams): Promise<CustomerTurnHandle> {
-  const inFlight = inFlightPrepares.get(params.dedupeKey);
+  const durableDedupeKey = customerTurnDedupeKey(params);
+  const inFlight = inFlightPrepares.get(durableDedupeKey);
   if (inFlight) return inFlight;
 
-  const preparation = prepareCustomerTurnOnce(params).finally(() => {
-    if (inFlightPrepares.get(params.dedupeKey) === preparation) {
-      inFlightPrepares.delete(params.dedupeKey);
+  const preparation = prepareCustomerTurnOnce(params, durableDedupeKey).finally(() => {
+    if (inFlightPrepares.get(durableDedupeKey) === preparation) {
+      inFlightPrepares.delete(durableDedupeKey);
     }
   });
-  inFlightPrepares.set(params.dedupeKey, preparation);
+  inFlightPrepares.set(durableDedupeKey, preparation);
   return preparation;
 }
 
-async function prepareCustomerTurnOnce(params: CustomerTurnParams): Promise<CustomerTurnHandle> {
+async function prepareCustomerTurnOnce(
+  params: CustomerTurnParams,
+  durableDedupeKey: string,
+): Promise<CustomerTurnHandle> {
   const conversation = await ensureConversationThread(params);
   const threadId = conversation.agentThreadId;
   if (!threadId) throw new Error("Customer conversation is missing an agent thread ID");
@@ -76,23 +95,45 @@ async function prepareCustomerTurnOnce(params: CustomerTurnParams): Promise<Cust
     channel: params.channel,
   }, params.signal);
 
-  const shouldSeed = await shouldSeedHistory(conversation, threadId, params.signal);
-  const turn = await upsertTurn(params);
-  const runId = turn.agentRunId ?? await recoverOrStartRun({ params, threadId, turn, shouldSeed });
+  const turn = await upsertTurn(params, durableDedupeKey);
+  if (turn.agentRunId) return { agentTurnId: turn.id, threadId, runId: turn.agentRunId };
 
-  // Do not replace this timestamp on TTL recovery: it is an audit of the
-  // initial seed, while the thread state itself determines whether reseeding is
-  // needed after an Agent Server TTL expiry.
-  await prisma.conversation.updateMany({
-    where: {
-      id: params.conversationId,
-      businessProfileId: params.businessProfileId,
-      agentHistorySeededAt: null,
-    },
-    data: { agentHistorySeededAt: new Date() },
-  });
+  const leaseOwner = crypto.randomUUID();
+  const ownsRunLease = await claimRunLease(turn.id, leaseOwner);
+  if (!ownsRunLease) {
+    const current = await prisma.agentTurn.findUniqueOrThrow({
+      where: { id: turn.id },
+      select: { id: true, businessProfileId: true, conversationId: true, channel: true, agentRunId: true, status: true, decision: true },
+    });
+    assertTurnScope(current, params);
+    if (current.agentRunId) return { agentTurnId: current.id, threadId, runId: current.agentRunId };
+    throw new CustomerAgentLeaseBusyError("run");
+  }
 
-  return { agentTurnId: turn.id, threadId, runId };
+  let seed: { shouldSeed: boolean; leaseOwner: string | null };
+  try {
+    seed = await claimHistorySeedLease(conversation, threadId, params);
+  } catch (error) {
+    // No remote run has been started yet, so this owner can safely release its
+    // turn lease and let the queued job retry after the seed owner finishes.
+    await releaseRunLease(turn.id, leaseOwner);
+    throw error;
+  }
+  try {
+    const runId = await recoverOrStartRun({
+      params,
+      threadId,
+      turn,
+      shouldSeed: seed.shouldSeed,
+      leaseOwner,
+      durableDedupeKey,
+    });
+    if (seed.leaseOwner) await completeHistorySeedLease(params, seed.leaseOwner);
+    return { agentTurnId: turn.id, threadId, runId };
+  } catch (error) {
+    if (seed.leaseOwner) await releaseHistorySeedLease(params, seed.leaseOwner);
+    throw error;
+  }
 }
 
 async function ensureConversationThread(params: CustomerTurnParams): Promise<ConversationThread> {
@@ -108,18 +149,39 @@ async function ensureConversationThread(params: CustomerTurnParams): Promise<Con
 
   return prisma.conversation.findFirstOrThrow({
     where: { id: params.conversationId, businessProfileId: params.businessProfileId },
-    select: { id: true, businessProfileId: true, agentThreadId: true, agentHistorySeededAt: true },
+    select: {
+      id: true, businessProfileId: true, agentThreadId: true, agentHistorySeededAt: true,
+      agentSeedLeaseOwner: true, agentSeedLeaseExpiresAt: true,
+    },
   });
 }
 
-async function shouldSeedHistory(
+async function claimHistorySeedLease(
   conversation: ConversationThread,
   threadId: string,
-  signal?: AbortSignal,
-): Promise<boolean> {
-  if (!conversation.agentHistorySeededAt) return true;
-  const state = await AgentClient.getCustomerThreadState(threadId, signal);
-  return !hasPersistedMessages(state);
+  params: CustomerTurnParams,
+): Promise<{ shouldSeed: boolean; leaseOwner: string | null }> {
+  const owner = crypto.randomUUID();
+  const now = new Date();
+  const claimed = await prisma.conversation.updateMany({
+    where: {
+      id: conversation.id,
+      businessProfileId: params.businessProfileId,
+      OR: [
+        { agentSeedLeaseExpiresAt: null },
+        { agentSeedLeaseExpiresAt: { lt: now } },
+      ],
+    },
+    data: { agentSeedLeaseOwner: owner, agentSeedLeaseExpiresAt: leaseExpiry(now) },
+  });
+  if (claimed.count === 0) throw new CustomerAgentLeaseBusyError("history");
+
+  const state = await AgentClient.getCustomerThreadState(threadId, params.signal);
+  if (hasPersistedMessages(state)) {
+    await completeHistorySeedLease(params, owner);
+    return { shouldSeed: false, leaseOwner: null };
+  }
+  return { shouldSeed: true, leaseOwner: owner };
 }
 
 function hasPersistedMessages(state: Record<string, unknown>): boolean {
@@ -132,9 +194,9 @@ function hasPersistedMessages(state: Record<string, unknown>): boolean {
   return Array.isArray(messages) && messages.length > 0;
 }
 
-async function upsertTurn(params: CustomerTurnParams): Promise<PersistedTurn> {
-  return prisma.agentTurn.upsert({
-    where: { dedupeKey: params.dedupeKey },
+async function upsertTurn(params: CustomerTurnParams, durableDedupeKey: string): Promise<PersistedTurn> {
+  const turn = await prisma.agentTurn.upsert({
+    where: { dedupeKey: durableDedupeKey },
     create: {
       businessProfileId: params.businessProfileId,
       conversationId: params.conversationId,
@@ -142,11 +204,13 @@ async function upsertTurn(params: CustomerTurnParams): Promise<PersistedTurn> {
       channel: params.channel,
       mode: params.runMode === "follow_up" ? "FOLLOW_UP" : "CUSTOMER_MESSAGE",
       status: "RUNNING",
-      dedupeKey: params.dedupeKey,
+      dedupeKey: durableDedupeKey,
       customerText: params.customerText,
     },
     update: {},
   });
+  assertTurnScope(turn, params);
+  return turn;
 }
 
 async function recoverOrStartRun(input: {
@@ -154,10 +218,12 @@ async function recoverOrStartRun(input: {
   threadId: string;
   turn: PersistedTurn;
   shouldSeed: boolean;
+  leaseOwner: string;
+  durableDedupeKey: string;
 }): Promise<string> {
   const recovered = await AgentClient.findCustomerRunByDedupeKey(
     input.threadId,
-    input.params.dedupeKey,
+    input.durableDedupeKey,
     input.params.signal,
   );
   const runId = recovered?.runId ?? (await AgentClient.startCustomerRun({
@@ -172,20 +238,21 @@ async function recoverOrStartRun(input: {
       mediaContext: input.params.mediaContext,
       followUpIndex: input.params.followUpIndex,
     },
-    dedupeKey: input.params.dedupeKey,
+    dedupeKey: input.durableDedupeKey,
     signal: input.params.signal,
   })).runId;
 
   const stored = await prisma.agentTurn.updateMany({
-    where: { id: input.turn.id, agentRunId: null },
-    data: { agentRunId: runId },
+    where: { id: input.turn.id, agentRunId: null, runLeaseOwner: input.leaseOwner },
+    data: { agentRunId: runId, runLeaseOwner: null, runLeaseExpiresAt: null },
   });
   if (stored.count > 0) return runId;
 
   const current = await prisma.agentTurn.findUniqueOrThrow({
     where: { id: input.turn.id },
-    select: { id: true, agentRunId: true },
+    select: { id: true, businessProfileId: true, conversationId: true, channel: true, agentRunId: true, status: true, decision: true },
   });
+  assertTurnScope(current, input.params);
   if (!current.agentRunId) throw new Error("Customer agent run was not persisted");
   return current.agentRunId;
 }
@@ -214,6 +281,8 @@ async function messagesForRun(params: CustomerTurnParams, includeHistory: boolea
 }
 
 export async function executeCustomerTurn(params: CustomerTurnParams): Promise<CustomerTurnResult> {
+  const completed = await completedTurnResult(params);
+  if (completed) return completed;
   const handle = await prepareCustomerTurn(params);
   try {
     const decision = customerAgentDecisionSchema.parse(await AgentClient.joinCustomerRun(
@@ -233,6 +302,85 @@ export async function executeCustomerTurn(params: CustomerTurnParams): Promise<C
     });
     throw error;
   }
+}
+
+function customerTurnDedupeKey(params: CustomerTurnParams): string {
+  // Encode only the caller-supplied local portion. A value that already looks
+  // namespaced remains local data, so it cannot collide or be double-prefixed.
+  return `customer:${params.businessProfileId}:${params.conversationId}:${params.channel}:${encodeURIComponent(params.dedupeKey)}`;
+}
+
+function leaseExpiry(now: Date): Date {
+  return new Date(now.getTime() + LEASE_DURATION_MS);
+}
+
+async function claimRunLease(turnId: number, leaseOwner: string): Promise<boolean> {
+  const now = new Date();
+  const claimed = await prisma.agentTurn.updateMany({
+    where: {
+      id: turnId,
+      agentRunId: null,
+      OR: [{ runLeaseExpiresAt: null }, { runLeaseExpiresAt: { lt: now } }],
+    },
+    data: { runLeaseOwner: leaseOwner, runLeaseExpiresAt: leaseExpiry(now) },
+  });
+  return claimed.count > 0;
+}
+
+async function completeHistorySeedLease(params: CustomerTurnParams, owner: string): Promise<void> {
+  const initialSeed = await prisma.conversation.updateMany({
+    where: {
+      id: params.conversationId, businessProfileId: params.businessProfileId,
+      agentSeedLeaseOwner: owner, agentHistorySeededAt: null,
+    },
+    data: { agentHistorySeededAt: new Date(), agentSeedLeaseOwner: null, agentSeedLeaseExpiresAt: null },
+  });
+  if (initialSeed.count === 0) await releaseHistorySeedLease(params, owner);
+}
+
+async function releaseRunLease(turnId: number, owner: string): Promise<void> {
+  await prisma.agentTurn.updateMany({
+    where: { id: turnId, agentRunId: null, runLeaseOwner: owner },
+    data: { runLeaseOwner: null, runLeaseExpiresAt: null },
+  });
+}
+
+async function releaseHistorySeedLease(params: CustomerTurnParams, owner: string): Promise<void> {
+  await prisma.conversation.updateMany({
+    where: {
+      id: params.conversationId, businessProfileId: params.businessProfileId,
+      agentSeedLeaseOwner: owner,
+    },
+    data: { agentSeedLeaseOwner: null, agentSeedLeaseExpiresAt: null },
+  });
+}
+
+function assertTurnScope(turn: Pick<PersistedTurn, "businessProfileId" | "conversationId" | "channel">, params: CustomerTurnParams): void {
+  if (
+    turn.businessProfileId !== params.businessProfileId ||
+    turn.conversationId !== params.conversationId ||
+    turn.channel !== params.channel
+  ) {
+    throw new Error("Customer agent turn does not belong to this conversation scope");
+  }
+}
+
+async function completedTurnResult(params: CustomerTurnParams): Promise<CustomerTurnResult | null> {
+  const turn = await prisma.agentTurn.findUnique({
+    where: { dedupeKey: customerTurnDedupeKey(params) },
+    select: { id: true, businessProfileId: true, conversationId: true, channel: true, agentRunId: true, status: true, decision: true },
+  });
+  if (!turn || turn.status !== "COMPLETED" || turn.decision == null) return null;
+  assertTurnScope(turn, params);
+  if (!turn.agentRunId) throw new Error("Completed customer agent turn is missing its run ID");
+  const conversation = await ensureConversationThread(params);
+  if (!conversation.agentThreadId) throw new Error("Customer conversation is missing an agent thread ID");
+  return {
+    agentTurnId: turn.id,
+    threadId: conversation.agentThreadId,
+    runId: turn.agentRunId,
+    decision: customerAgentDecisionSchema.parse(turn.decision),
+  };
 }
 
 function redactedFailureCode(error: unknown): string {

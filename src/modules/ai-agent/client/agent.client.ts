@@ -7,6 +7,8 @@ import {
 
 const API_URL = process.env.LANGGRAPH_API_URL ?? "http://localhost:8123";
 const RUN_TIMEOUT_MS = 45_000;
+const CUSTOMER_RUN_SEARCH_PAGE_SIZE = 100;
+const CUSTOMER_RUN_SEARCH_MAX_PAGES = 10;
 
 export class CustomerAgentRunAbortedError extends Error {
   readonly code = "CUSTOMER_AGENT_RUN_ABORTED";
@@ -212,17 +214,25 @@ export class AgentClient {
     dedupeKey: string,
     signal?: AbortSignal,
   ): Promise<{ runId: string } | null> {
-    const runs = await this.client().runs.list(threadId, { limit: 25, offset: 0, signal });
-    // The SDK's list type does not guarantee ordering. Select the newest valid
-    // created_at ourselves; malformed timestamps sort after valid ones, and
-    // run_id descending breaks ties (including when every timestamp is invalid).
-    const match = runs
-      .filter((run) => (
-        typeof run.run_id === "string" && run.run_id.length > 0 &&
-        isRecord(run.metadata) && run.metadata.dedupe_key === dedupeKey
-      ))
-      .sort((left, right) => this.compareCustomerRunsNewestFirst(left, right))[0];
-    return match ? { runId: match.run_id } : null;
+    for (let page = 0; page < CUSTOMER_RUN_SEARCH_MAX_PAGES; page += 1) {
+      const runs = await this.client().runs.list(threadId, {
+        limit: CUSTOMER_RUN_SEARCH_PAGE_SIZE,
+        offset: page * CUSTOMER_RUN_SEARCH_PAGE_SIZE,
+        signal,
+      });
+      // The SDK's list type does not guarantee ordering. Select the newest
+      // valid match within this page; the durable lease makes the key unique.
+      const match = runs
+        .filter((run) => (
+          typeof run.run_id === "string" && run.run_id.length > 0 &&
+          isRecord(run.metadata) && run.metadata.dedupe_key === dedupeKey
+        ))
+        .sort((left, right) => this.compareCustomerRunsNewestFirst(left, right))[0];
+      if (match) return { runId: match.run_id };
+      if (runs.length < CUSTOMER_RUN_SEARCH_PAGE_SIZE) return null;
+    }
+    // Do not create a potentially duplicate run after an inconclusive bounded search.
+    throw new Error("Customer agent run recovery search exceeded its safety limit");
   }
 
   static async joinCustomerRun(

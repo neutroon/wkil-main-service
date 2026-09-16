@@ -504,6 +504,8 @@ model Conversation {
   aiEnabled         Boolean         @default(true) // Toggle automation for this specific thread
   agentThreadId        String?   @unique @db.Uuid
   agentHistorySeededAt DateTime?
+  agentSeedLeaseOwner     String?   @db.Uuid
+  agentSeedLeaseExpiresAt DateTime?
 
   // Facebook Comments / Thread Continuity
   externalId           String?        @unique // Facebook comment_id or similar
@@ -543,6 +545,8 @@ model AgentTurn {
   status            AgentTurnStatus       @default(RUNNING)
   dedupeKey         String?               @unique
   agentRunId        String?               @unique @db.Uuid
+  runLeaseOwner     String?               @db.Uuid
+  runLeaseExpiresAt DateTime?
   decision          Json?
   failureReason     String?               @db.Text
   customerText      String                @db.Text

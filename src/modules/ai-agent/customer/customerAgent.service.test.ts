@@ -6,7 +6,7 @@ const prismaMock = vi.hoisted(() => ({
     findFirstOrThrow: vi.fn(),
   },
   conversationMessage: { findMany: vi.fn() },
-  agentTurn: { upsert: vi.fn(), findUniqueOrThrow: vi.fn(), updateMany: vi.fn(), update: vi.fn() },
+  agentTurn: { findUnique: vi.fn(), upsert: vi.fn(), findUniqueOrThrow: vi.fn(), updateMany: vi.fn(), update: vi.fn() },
 }));
 const agentClientMock = vi.hoisted(() => ({
   ensureCustomerThread: vi.fn(),
@@ -41,6 +41,8 @@ function conversation(overrides: Record<string, unknown> = {}) {
     businessProfileId: 10,
     agentThreadId: threadId,
     agentHistorySeededAt: null,
+    agentSeedLeaseOwner: null,
+    agentSeedLeaseExpiresAt: null,
     ...overrides,
   };
 }
@@ -51,8 +53,15 @@ describe("customer agent coordinator", () => {
     prismaMock.conversation.updateMany.mockResolvedValue({ count: 1 });
     prismaMock.conversation.findFirstOrThrow.mockResolvedValue(conversation());
     prismaMock.conversationMessage.findMany.mockResolvedValue([]);
-    prismaMock.agentTurn.upsert.mockResolvedValue({ id: 8, agentRunId: null, status: "RUNNING" });
-    prismaMock.agentTurn.findUniqueOrThrow.mockResolvedValue({ id: 8, agentRunId: runId });
+    prismaMock.agentTurn.findUnique.mockResolvedValue(null);
+    prismaMock.agentTurn.upsert.mockResolvedValue({
+      id: 8, businessProfileId: 10, conversationId: 45, channel: "whatsapp",
+      agentRunId: null, status: "RUNNING",
+    });
+    prismaMock.agentTurn.findUniqueOrThrow.mockResolvedValue({
+      id: 8, businessProfileId: 10, conversationId: 45, channel: "whatsapp",
+      agentRunId: runId, status: "RUNNING", decision: null,
+    });
     prismaMock.agentTurn.updateMany.mockResolvedValue({ count: 1 });
     prismaMock.agentTurn.update.mockResolvedValue({ id: 8 });
     agentClientMock.ensureCustomerThread.mockResolvedValue(undefined);
@@ -69,20 +78,145 @@ describe("customer agent coordinator", () => {
 
     await prepareCustomerTurn(baseParams);
 
-    expect(randomUUID).toHaveBeenCalledOnce();
+    expect(randomUUID).toHaveBeenCalled();
     expect(prismaMock.conversation.updateMany).toHaveBeenCalledWith({
       where: { id: 45, businessProfileId: 10, agentThreadId: null },
       data: { agentThreadId: threadId },
     });
     expect(prismaMock.conversation.findFirstOrThrow).toHaveBeenCalledWith({
       where: { id: 45, businessProfileId: 10 },
-      select: { id: true, businessProfileId: true, agentThreadId: true, agentHistorySeededAt: true },
+      select: {
+        id: true, businessProfileId: true, agentThreadId: true, agentHistorySeededAt: true,
+        agentSeedLeaseOwner: true, agentSeedLeaseExpiresAt: true,
+      },
     });
     expect(agentClientMock.ensureCustomerThread).toHaveBeenCalledWith(
       threadId,
       { businessProfileId: 10, conversationId: 45, channel: "whatsapp" },
       undefined,
     );
+  });
+
+  it("namespaces the caller dedupe key by tenant, conversation, and channel before persistence", async () => {
+    await prepareCustomerTurn(baseParams);
+
+    expect(prismaMock.agentTurn.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { dedupeKey: "customer:10:45:whatsapp:message%3A99" },
+      create: expect.objectContaining({ dedupeKey: "customer:10:45:whatsapp:message%3A99" }),
+    }));
+  });
+
+  it("keeps identical caller keys isolated across tenant scopes", async () => {
+    prismaMock.conversation.findFirstOrThrow
+      .mockResolvedValueOnce(conversation())
+      .mockResolvedValueOnce(conversation({ id: 46, businessProfileId: 11 }));
+    prismaMock.agentTurn.upsert.mockImplementation(async ({ create }: { create: Record<string, unknown> }) => ({
+      id: 8,
+      businessProfileId: create.businessProfileId,
+      conversationId: create.conversationId,
+      channel: create.channel,
+      agentRunId: null,
+      status: "RUNNING",
+    }));
+
+    await prepareCustomerTurn(baseParams);
+    await prepareCustomerTurn({ ...baseParams, businessProfileId: 11, conversationId: 46 });
+
+    expect(prismaMock.agentTurn.upsert).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      where: { dedupeKey: "customer:10:45:whatsapp:message%3A99" },
+    }));
+    expect(prismaMock.agentTurn.upsert).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      where: { dedupeKey: "customer:11:46:whatsapp:message%3A99" },
+    }));
+  });
+
+  it("refuses a turn returned from a different tenant scope", async () => {
+    prismaMock.agentTurn.upsert.mockResolvedValue({
+      id: 8, businessProfileId: 11, conversationId: 45, channel: "whatsapp",
+      agentRunId: null, status: "RUNNING",
+    });
+
+    await expect(prepareCustomerTurn(baseParams)).rejects.toThrow("does not belong to this conversation scope");
+    expect(agentClientMock.startCustomerRun).not.toHaveBeenCalled();
+  });
+
+  it("claims a durable turn lease before creating a remote run", async () => {
+    vi.spyOn(crypto, "randomUUID")
+      .mockReturnValueOnce(threadId)
+      .mockReturnValueOnce("33333333-3333-4333-8333-333333333333");
+
+    await prepareCustomerTurn(baseParams);
+
+    expect(prismaMock.agentTurn.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        id: 8,
+        agentRunId: null,
+        OR: expect.any(Array),
+      }),
+      data: expect.objectContaining({
+        runLeaseOwner: "33333333-3333-4333-8333-333333333333",
+        runLeaseExpiresAt: expect.any(Date),
+      }),
+    }));
+  });
+
+  it("claims a durable conversation seed lease before the first run", async () => {
+    await prepareCustomerTurn(baseParams);
+
+    expect(prismaMock.conversation.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        id: 45,
+        businessProfileId: 10,
+        OR: expect.any(Array),
+      }),
+      data: expect.objectContaining({
+        agentSeedLeaseOwner: expect.any(String),
+        agentSeedLeaseExpiresAt: expect.any(Date),
+      }),
+    }));
+  });
+
+  it("does not start a duplicate remote run when another worker owns the durable run lease", async () => {
+    prismaMock.agentTurn.updateMany.mockResolvedValueOnce({ count: 0 });
+    prismaMock.agentTurn.findUniqueOrThrow.mockResolvedValue({
+      id: 8, businessProfileId: 10, conversationId: 45, channel: "whatsapp",
+      agentRunId: null, status: "RUNNING", decision: null,
+    });
+
+    await expect(prepareCustomerTurn(baseParams)).rejects.toMatchObject({ code: "CUSTOMER_AGENT_LEASE_BUSY" });
+    expect(agentClientMock.startCustomerRun).not.toHaveBeenCalled();
+  });
+
+  it("releases its run lease when a distinct concurrent turn is waiting for the conversation seed lease", async () => {
+    prismaMock.conversation.updateMany.mockImplementation(({ data }: { data: Record<string, unknown> }) => {
+      if ("agentSeedLeaseOwner" in data) return Promise.resolve({ count: 0 });
+      return Promise.resolve({ count: 1 });
+    });
+
+    await expect(prepareCustomerTurn({ ...baseParams, dedupeKey: "message:100" }))
+      .rejects.toMatchObject({ code: "CUSTOMER_AGENT_LEASE_BUSY" });
+
+    expect(prismaMock.agentTurn.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 8, agentRunId: null, runLeaseOwner: expect.any(String) }),
+      data: { runLeaseOwner: null, runLeaseExpiresAt: null },
+    }));
+    expect(agentClientMock.startCustomerRun).not.toHaveBeenCalled();
+  });
+
+  it("reclaims an expired conversation seed lease before seeding a new thread", async () => {
+    prismaMock.conversation.findFirstOrThrow.mockResolvedValue(conversation({
+      agentSeedLeaseOwner: "33333333-3333-4333-8333-333333333333",
+      agentSeedLeaseExpiresAt: new Date("2026-09-01T00:00:00.000Z"),
+    }));
+
+    await prepareCustomerTurn(baseParams);
+
+    expect(prismaMock.conversation.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        OR: expect.arrayContaining([expect.objectContaining({ agentSeedLeaseExpiresAt: expect.objectContaining({ lt: expect.any(Date) }) })]),
+      }),
+    }));
+    expect(agentClientMock.startCustomerRun).toHaveBeenCalledOnce();
   });
 
   it("seeds at most the newest 24 messages in chronological order and maps roles", async () => {
@@ -111,7 +245,10 @@ describe("customer agent coordinator", () => {
   });
 
   it("rejoins a persisted run instead of generating a second run on retry", async () => {
-    prismaMock.agentTurn.upsert.mockResolvedValue({ id: 8, agentRunId: runId, status: "RUNNING" });
+    prismaMock.agentTurn.upsert.mockResolvedValue({
+      id: 8, businessProfileId: 10, conversationId: 45, channel: "whatsapp",
+      agentRunId: runId, status: "RUNNING",
+    });
 
     const result = await executeCustomerTurn(baseParams);
 
@@ -126,9 +263,10 @@ describe("customer agent coordinator", () => {
     const result = await prepareCustomerTurn(baseParams);
 
     expect(agentClientMock.startCustomerRun).not.toHaveBeenCalled();
-    expect(prismaMock.agentTurn.updateMany).toHaveBeenCalledWith({
-      where: { id: 8, agentRunId: null }, data: { agentRunId: runId },
-    });
+    expect(prismaMock.agentTurn.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 8, agentRunId: null, runLeaseOwner: expect.any(String) }),
+      data: { agentRunId: runId, runLeaseOwner: null, runLeaseExpiresAt: null },
+    }));
     expect(result).toEqual({ agentTurnId: 8, threadId, runId });
   });
 
@@ -173,6 +311,21 @@ describe("customer agent coordinator", () => {
         failureReason: null,
       },
     });
+  });
+
+  it("returns an already validated decision without joining a TTL-recreated remote run", async () => {
+    prismaMock.agentTurn.findUnique.mockResolvedValue({
+      id: 8, businessProfileId: 10, conversationId: 45, channel: "whatsapp", agentRunId: runId,
+      status: "COMPLETED",
+      decision: { action: "REPLY", content: "Welcome", reason_code: "KNOWLEDGE_MATCH", handoff_category: null },
+    });
+
+    await expect(executeCustomerTurn(baseParams)).resolves.toMatchObject({
+      agentTurnId: 8, threadId, runId, decision: { action: "REPLY" },
+    });
+    expect(agentClientMock.ensureCustomerThread).not.toHaveBeenCalled();
+    expect(agentClientMock.joinCustomerRun).not.toHaveBeenCalled();
+    expect(prismaMock.agentTurn.upsert).not.toHaveBeenCalled();
   });
 
   it("persists a redacted failure before rethrowing", async () => {

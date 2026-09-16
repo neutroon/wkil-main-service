@@ -28,7 +28,7 @@ vi.mock("@langchain/langgraph-sdk", () => ({
 import { AgentClient } from "./agent.client";
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   process.env.MONOLITH_AGENT_API_KEY = "internal-service-key";
   process.env.USE_AGENT_SERVICE = "true";
   runsCreateMock.mockResolvedValue({
@@ -156,7 +156,26 @@ describe("AgentClient", () => {
 
     await expect(AgentClient.findCustomerRunByDedupeKey("thread-1", "message:99"))
       .resolves.toEqual({ runId: "newest" });
-    expect(runsListMock).toHaveBeenCalledWith("thread-1", { limit: 25, offset: 0, signal: undefined });
+    expect(runsListMock).toHaveBeenCalledWith("thread-1", { limit: 100, offset: 0, signal: undefined });
+  });
+
+  it("searches later SDK run pages before declaring a crash-window run missing", async () => {
+    runsListMock
+      .mockResolvedValueOnce(Array.from({ length: 100 }, (_, index) => ({
+        run_id: `other-${index}`,
+        metadata: { dedupe_key: "other" },
+      })))
+      .mockResolvedValueOnce([{ run_id: "later-match", metadata: { dedupe_key: "message:99" } }]);
+
+    await expect(AgentClient.findCustomerRunByDedupeKey("thread-1", "message:99"))
+      .resolves.toEqual({ runId: "later-match" });
+
+    expect(runsListMock).toHaveBeenNthCalledWith(1, "thread-1", {
+      limit: 100, offset: 0, signal: undefined,
+    });
+    expect(runsListMock).toHaveBeenNthCalledWith(2, "thread-1", {
+      limit: 100, offset: 100, signal: undefined,
+    });
   });
 
   it("uses a deterministic run id fallback for malformed customer-run timestamps", async () => {

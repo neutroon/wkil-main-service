@@ -279,6 +279,53 @@ describe("customer agent coordinator", () => {
     }
   });
 
+  it("does not create a run after recovery consumes the safe run-lease deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      agentClientMock.findCustomerRunByDedupeKey.mockImplementationOnce(() => (
+        new Promise((resolve) => setTimeout(() => resolve(null), 115_000))
+      ));
+
+      const preparation = prepareCustomerTurn({ ...baseParams, dedupeKey: "recovery-exhausts-lease" });
+      const failure = preparation.then(
+        () => ({ code: "UNEXPECTED_SUCCESS" }),
+        (error) => error,
+      );
+      await vi.advanceTimersByTimeAsync(115_000);
+
+      await expect(failure).resolves.toMatchObject({ code: "CUSTOMER_AGENT_LEASE_BUSY" });
+      expect(agentClientMock.startCustomerRun).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("bounds create abort timing to the safe run-lease budget left after recovery", async () => {
+    vi.useFakeTimers();
+    try {
+      agentClientMock.findCustomerRunByDedupeKey.mockImplementationOnce(() => (
+        new Promise((resolve) => setTimeout(() => resolve(null), 110_000))
+      ));
+      agentClientMock.startCustomerRun.mockImplementationOnce(({ signal }: { signal?: AbortSignal }) => (
+        new Promise((_, reject) => signal?.addEventListener("abort", () => reject(signal.reason), { once: true }))
+      ));
+
+      const preparation = prepareCustomerTurn({ ...baseParams, dedupeKey: "recovery-bounds-create" });
+      const settled = preparation.catch(() => undefined);
+      await vi.advanceTimersByTimeAsync(110_000);
+
+      expect(agentClientMock.startCustomerRun).toHaveBeenCalledOnce();
+      const createSignal = agentClientMock.startCustomerRun.mock.calls[0][0].signal as AbortSignal;
+      expect(createSignal.aborted).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(createSignal.aborted).toBe(true);
+      await settled;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("reclaims an expired conversation seed lease before seeding a new thread", async () => {
     prismaMock.conversation.findFirstOrThrow.mockResolvedValue(conversation({
       agentSeedLeaseOwner: "33333333-3333-4333-8333-333333333333",

@@ -56,6 +56,9 @@ type PersistedTurn = {
 
 const LEASE_DURATION_MS = 120_000;
 const RUN_CREATION_TIMEOUT_MS = 30_000;
+// Reserve a small window for cancellation to propagate before another worker
+// can claim the durable lease and begin its recovery pass.
+const RUN_LEASE_SAFETY_MARGIN_MS = 5_000;
 
 class CustomerAgentRunCreationTimeoutError extends Error {
   constructor() {
@@ -109,8 +112,8 @@ async function prepareCustomerTurnOnce(
   if (turn.agentRunId) return { agentTurnId: turn.id, threadId, runId: turn.agentRunId };
 
   const leaseOwner = crypto.randomUUID();
-  const ownsRunLease = await claimRunLease(turn.id, leaseOwner);
-  if (!ownsRunLease) {
+  const runLeaseExpiresAt = await claimRunLease(turn.id, leaseOwner);
+  if (!runLeaseExpiresAt) {
     const current = await prisma.agentTurn.findUniqueOrThrow({
       where: { id: turn.id },
       select: { id: true, businessProfileId: true, conversationId: true, channel: true, agentRunId: true, status: true, decision: true },
@@ -136,6 +139,7 @@ async function prepareCustomerTurnOnce(
       turn,
       shouldSeed: seed.shouldSeed,
       leaseOwner,
+      runLeaseExpiresAt,
       durableDedupeKey,
     });
     return customerTurnHandle(turn.id, threadId, runId, seed.leaseOwner);
@@ -235,6 +239,7 @@ async function recoverOrStartRun(input: {
   turn: PersistedTurn;
   shouldSeed: boolean;
   leaseOwner: string;
+  runLeaseExpiresAt: Date;
   durableDedupeKey: string;
 }): Promise<string> {
   const recovered = await AgentClient.findCustomerRunByDedupeKey(
@@ -256,7 +261,7 @@ async function recoverOrStartRun(input: {
     },
     dedupeKey: input.durableDedupeKey,
     signal: input.params.signal,
-  })).runId;
+  }, input.runLeaseExpiresAt)).runId;
 
   const stored = await prisma.agentTurn.updateMany({
     where: { id: input.turn.id, agentRunId: null, runLeaseOwner: input.leaseOwner },
@@ -273,7 +278,13 @@ async function recoverOrStartRun(input: {
   return current.agentRunId;
 }
 
-async function startCustomerRunWithinLease(request: Parameters<typeof AgentClient.startCustomerRun>[0]) {
+async function startCustomerRunWithinLease(
+  request: Parameters<typeof AgentClient.startCustomerRun>[0],
+  runLeaseExpiresAt: Date,
+) {
+  const remainingLeaseMs = runLeaseExpiresAt.getTime() - Date.now() - RUN_LEASE_SAFETY_MARGIN_MS;
+  if (remainingLeaseMs <= 0) throw new CustomerAgentLeaseBusyError("run");
+
   const controller = new AbortController();
   let timedOut = false;
   const abortFromCaller = () => controller.abort(request.signal?.reason);
@@ -282,7 +293,7 @@ async function startCustomerRunWithinLease(request: Parameters<typeof AgentClien
   const timeout = setTimeout(() => {
     timedOut = true;
     controller.abort(new CustomerAgentRunCreationTimeoutError());
-  }, RUN_CREATION_TIMEOUT_MS);
+  }, Math.min(RUN_CREATION_TIMEOUT_MS, remainingLeaseMs));
   try {
     const run = await AgentClient.startCustomerRun({ ...request, signal: controller.signal });
     if (timedOut) throw new CustomerAgentRunCreationTimeoutError();
@@ -380,17 +391,18 @@ function leaseExpiry(now: Date): Date {
   return new Date(now.getTime() + LEASE_DURATION_MS);
 }
 
-async function claimRunLease(turnId: number, leaseOwner: string): Promise<boolean> {
+async function claimRunLease(turnId: number, leaseOwner: string): Promise<Date | null> {
   const now = new Date();
+  const expiresAt = leaseExpiry(now);
   const claimed = await prisma.agentTurn.updateMany({
     where: {
       id: turnId,
       agentRunId: null,
       OR: [{ runLeaseExpiresAt: null }, { runLeaseExpiresAt: { lt: now } }],
     },
-    data: { runLeaseOwner: leaseOwner, runLeaseExpiresAt: leaseExpiry(now) },
+    data: { runLeaseOwner: leaseOwner, runLeaseExpiresAt: expiresAt },
   });
-  return claimed.count > 0;
+  return claimed.count > 0 ? expiresAt : null;
 }
 
 async function completeHistorySeedLease(params: CustomerTurnParams, owner: string): Promise<void> {

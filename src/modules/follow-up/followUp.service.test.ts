@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  cancelConversationFollowUps,
   processFollowUpJob,
   scheduleConversationFollowUps,
 } from "./followUp.service";
@@ -30,6 +31,8 @@ vi.mock("@config/prisma", () => ({
 vi.mock("@modules/meta/core/meta.queue", () => ({
   metaExpressQueue: {
     add: vi.fn(),
+    getDelayed: vi.fn(),
+    getWaiting: vi.fn(),
   },
 }));
 
@@ -104,6 +107,8 @@ describe("follow-up service", () => {
     });
     mockedPrisma.conversationMessage.count.mockResolvedValue(0);
     mockedPrisma.conversationMessage.findMany.mockResolvedValue([]);
+    vi.mocked(metaExpressQueue.getDelayed).mockResolvedValue([] as any);
+    vi.mocked(metaExpressQueue.getWaiting).mockResolvedValue([] as any);
     vi.mocked(saveMessage).mockResolvedValue({ id: 202 } as any);
   });
 
@@ -173,5 +178,45 @@ describe("follow-up service", () => {
       status: "SENT",
       origin: "follow_up",
     });
+  });
+
+  it("cancels only waiting or delayed follow-up jobs for the selected conversation", async () => {
+    const matchingDelayed = {
+      id: "followup-45-101-0",
+      name: "follow_up",
+      data: { type: "follow_up", payload: { conversationId: 45 } },
+      getState: vi.fn().mockResolvedValue("delayed"),
+      remove: vi.fn(),
+    };
+    const matchingWaiting = {
+      id: "followup-45-101-1",
+      name: "follow_up",
+      data: { type: "follow_up", payload: { conversationId: 45 } },
+      getState: vi.fn().mockResolvedValue("waiting"),
+      remove: vi.fn(),
+    };
+    const activeMatching = {
+      id: "followup-45-active",
+      name: "follow_up",
+      data: { type: "follow_up", payload: { conversationId: 45 } },
+      getState: vi.fn().mockResolvedValue("active"),
+      remove: vi.fn(),
+    };
+    const differentConversation = {
+      id: "followup-46-101-0",
+      name: "follow_up",
+      data: { type: "follow_up", payload: { conversationId: 46 } },
+      getState: vi.fn(),
+      remove: vi.fn(),
+    };
+    vi.mocked(metaExpressQueue.getDelayed).mockResolvedValue([matchingDelayed, activeMatching, differentConversation] as any);
+    vi.mocked(metaExpressQueue.getWaiting).mockResolvedValue([matchingWaiting] as any);
+
+    await expect(cancelConversationFollowUps(45)).resolves.toBe(2);
+
+    expect(matchingDelayed.remove).toHaveBeenCalledOnce();
+    expect(matchingWaiting.remove).toHaveBeenCalledOnce();
+    expect(activeMatching.remove).not.toHaveBeenCalled();
+    expect(differentConversation.remove).not.toHaveBeenCalled();
   });
 });

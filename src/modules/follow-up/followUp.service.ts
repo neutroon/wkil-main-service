@@ -20,6 +20,47 @@ export type FollowUpJobPayload = {
   channel?: string | null;
 };
 
+/**
+ * Removes only still-pending follow-up jobs for one conversation. A job can
+ * become active between inspection and removal, so active work is never
+ * cancelled or retried here; the follow-up eligibility checks remain its
+ * safety boundary.
+ */
+export async function cancelConversationFollowUps(conversationId: number): Promise<number> {
+  const [delayed, waiting] = await Promise.all([
+    metaExpressQueue.getDelayed(),
+    metaExpressQueue.getWaiting(),
+  ]);
+  const candidates = [...delayed, ...waiting].filter((job) =>
+    job.name === "follow_up" &&
+    job.data?.type === "follow_up" &&
+    job.data?.payload?.conversationId === conversationId,
+  );
+
+  const removedJobIds: string[] = [];
+  for (const job of candidates) {
+    // BullMQ's job lists are snapshots. Re-check state immediately before
+    // remove so a worker that has claimed the job is left untouched.
+    if (await job.getState() === "active") continue;
+    try {
+      await job.remove();
+      if (job.id != null) removedJobIds.push(String(job.id));
+    } catch (error) {
+      // A job can become active after getState(). That race is intentionally
+      // non-destructive; eligibility checks make the active job harmless.
+      logger.warn("follow_up.cancel_remove_failed", {
+        conversationId,
+        jobId: job.id == null ? null : String(job.id),
+      });
+    }
+  }
+
+  if (removedJobIds.length > 0) {
+    logger.info("follow_up.cancelled", { conversationId, jobIds: removedJobIds });
+  }
+  return removedJobIds.length;
+}
+
 const DIRECT_CHANNELS = new Set(["web", "messenger", "whatsapp"]);
 const DELIVERED_TRIGGER_STATUSES = new Set(["SENT", "DELIVERED", "READ"]);
 const MAX_FOLLOW_UP_CHARS = 700;

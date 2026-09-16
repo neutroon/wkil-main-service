@@ -138,15 +138,35 @@ describe("AgentClient", () => {
     );
   });
 
-  it("finds an existing customer run by its exact dedupe key", async () => {
+  it("finds the newest exact dedupe match regardless of SDK list order", async () => {
     runsListMock.mockResolvedValueOnce([
-      { run_id: "old", metadata: { dedupe_key: "message:98" } },
-      { run_id: "current", metadata: { dedupe_key: "message:99" } },
+      {
+        run_id: "old", created_at: "2026-09-05T00:01:00Z",
+        metadata: { dedupe_key: "message:99" },
+      },
+      {
+        run_id: "newest", created_at: "2026-09-05T00:02:00Z",
+        metadata: { dedupe_key: "message:99" },
+      },
+      {
+        run_id: "other", created_at: "2026-09-05T00:03:00Z",
+        metadata: { dedupe_key: "message:98" },
+      },
     ]);
 
     await expect(AgentClient.findCustomerRunByDedupeKey("thread-1", "message:99"))
-      .resolves.toEqual({ runId: "current" });
+      .resolves.toEqual({ runId: "newest" });
     expect(runsListMock).toHaveBeenCalledWith("thread-1", { limit: 25, offset: 0, signal: undefined });
+  });
+
+  it("uses a deterministic run id fallback for malformed customer-run timestamps", async () => {
+    runsListMock.mockResolvedValueOnce([
+      { run_id: "run-a", created_at: "not-a-date", metadata: { dedupe_key: "message:99" } },
+      { run_id: "run-z", metadata: { dedupe_key: "message:99" } },
+    ]);
+
+    await expect(AgentClient.findCustomerRunByDedupeKey("thread-1", "message:99"))
+      .resolves.toEqual({ runId: "run-z" });
   });
 
   it("reads customer thread state and exposes the official join stream", async () => {
@@ -204,6 +224,26 @@ describe("AgentClient", () => {
     await pending;
     expect(runsCancelMock).toHaveBeenCalledWith("thread-1", "run-1", true, "interrupt");
     vi.useRealTimers();
+  });
+
+  it("cancels a customer run on caller abort without reporting a timeout", async () => {
+    const caller = new AbortController();
+    runsJoinMock.mockImplementationOnce(async (_threadId: string, _runId: string, options: { signal: AbortSignal }) => {
+      await new Promise<void>((_resolve, reject) => {
+        options.signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+      });
+      return {};
+    });
+
+    const pending = AgentClient.joinCustomerRun("thread-1", "run-1", { signal: caller.signal });
+    caller.abort("client disconnected");
+
+    await expect(pending).rejects.toMatchObject({
+      name: "CustomerAgentRunAbortedError",
+      code: "CUSTOMER_AGENT_RUN_ABORTED",
+      cause: "client disconnected",
+    });
+    expect(runsCancelMock).toHaveBeenCalledWith("thread-1", "run-1", true, "interrupt");
   });
 
   it.each(["interrupted", "error", "timeout"] as const)(

@@ -8,6 +8,15 @@ import {
 const API_URL = process.env.LANGGRAPH_API_URL ?? "http://localhost:8123";
 const RUN_TIMEOUT_MS = 45_000;
 
+export class CustomerAgentRunAbortedError extends Error {
+  readonly code = "CUSTOMER_AGENT_RUN_ABORTED";
+
+  constructor(reason: unknown) {
+    super("Customer agent run aborted by caller", { cause: reason });
+    this.name = "CustomerAgentRunAbortedError";
+  }
+}
+
 export type CapabilityOperation = "customer_memory" | "business_identity" |
   "strategic_links" | "follow_up" | "content_plan" |
   "content_post" | "content_audit" | "media_understanding";
@@ -204,7 +213,15 @@ export class AgentClient {
     signal?: AbortSignal,
   ): Promise<{ runId: string } | null> {
     const runs = await this.client().runs.list(threadId, { limit: 25, offset: 0, signal });
-    const match = runs.find((run) => isRecord(run.metadata) && run.metadata.dedupe_key === dedupeKey);
+    // The SDK's list type does not guarantee ordering. Select the newest valid
+    // created_at ourselves; malformed timestamps sort after valid ones, and
+    // run_id descending breaks ties (including when every timestamp is invalid).
+    const match = runs
+      .filter((run) => (
+        typeof run.run_id === "string" && run.run_id.length > 0 &&
+        isRecord(run.metadata) && run.metadata.dedupe_key === dedupeKey
+      ))
+      .sort((left, right) => this.compareCustomerRunsNewestFirst(left, right))[0];
     return match ? { runId: match.run_id } : null;
   }
 
@@ -214,25 +231,39 @@ export class AgentClient {
     options?: { signal?: AbortSignal; cancelOnDisconnect?: boolean },
   ): Promise<CustomerAgentDecision> {
     const controller = new AbortController();
-    const onAbort = () => controller.abort(options?.signal?.reason);
+    let callerAbortReason: unknown;
+    let timedOut = false;
+    const onAbort = () => {
+      callerAbortReason = options?.signal?.reason;
+      controller.abort(callerAbortReason);
+    };
     if (options?.signal?.aborted) onAbort();
     else options?.signal?.addEventListener("abort", onAbort, { once: true });
-    const timer = setTimeout(() => controller.abort(), RUN_TIMEOUT_MS);
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, RUN_TIMEOUT_MS);
     try {
       const state = await this.client().runs.join(threadId, runId, {
         signal: controller.signal,
         cancelOnDisconnect: options?.cancelOnDisconnect,
       });
       const run = await this.client().runs.get(threadId, runId, { signal: controller.signal });
+      if (timedOut) throw new Error("Customer agent run timed out");
+      if (options?.signal?.aborted) throw new CustomerAgentRunAbortedError(callerAbortReason);
       if (run.status !== "success") throw new Error(`Customer agent run ${run.status}`);
       if (!isRecord(state) || !("structured_response" in state)) {
         throw new Error("Customer agent run is missing structured_response");
       }
       return customerAgentDecisionSchema.parse(state.structured_response);
     } catch (error: unknown) {
-      if (controller.signal.aborted) {
+      if (timedOut) {
         await this.cancelCustomerRun(threadId, runId).catch(() => undefined);
         throw new Error(`Customer agent run timeout after ${RUN_TIMEOUT_MS}ms`);
+      }
+      if (options?.signal?.aborted) {
+        await this.cancelCustomerRun(threadId, runId).catch(() => undefined);
+        throw new CustomerAgentRunAbortedError(callerAbortReason);
       }
       throw error;
     } finally {
@@ -277,6 +308,22 @@ export class AgentClient {
       ...(context.mediaContext == null ? {} : { media_context: context.mediaContext }),
       ...(context.followUpIndex == null ? {} : { follow_up_index: context.followUpIndex }),
     };
+  }
+
+  private static compareCustomerRunsNewestFirst(left: Run, right: Run): number {
+    const leftCreatedAt = this.validRunTimestamp(left.created_at);
+    const rightCreatedAt = this.validRunTimestamp(right.created_at);
+    if (leftCreatedAt !== null && rightCreatedAt !== null && leftCreatedAt !== rightCreatedAt) {
+      return rightCreatedAt - leftCreatedAt;
+    }
+    if (leftCreatedAt !== null && rightCreatedAt === null) return -1;
+    if (leftCreatedAt === null && rightCreatedAt !== null) return 1;
+    return right.run_id.localeCompare(left.run_id);
+  }
+
+  private static validRunTimestamp(value: string): number | null {
+    const timestamp = Date.parse(value);
+    return Number.isFinite(timestamp) ? timestamp : null;
   }
 
   private static async completedRun(graph: string, input: Record<string, unknown>): Promise<Record<string, unknown>> {

@@ -15,6 +15,7 @@ vi.mock("@config/prisma", () => ({
     },
     conversationMessage: {
       findUnique: vi.fn(),
+      findFirst: vi.fn(),
       findMany: vi.fn(),
       count: vi.fn(),
       update: vi.fn(),
@@ -105,6 +106,15 @@ describe("follow-up service", () => {
       origin: null,
       handoffCategory: null,
     });
+    mockedPrisma.conversationMessage.findFirst.mockResolvedValue({
+      createdAt: new Date("2026-05-10T10:00:05Z"),
+      id: 101,
+      conversationId: 45,
+      role: "model",
+      status: "SENT",
+      origin: null,
+      handoffCategory: null,
+    });
     mockedPrisma.conversationMessage.count.mockResolvedValue(0);
     mockedPrisma.conversationMessage.findMany.mockResolvedValue([]);
     vi.mocked(metaExpressQueue.getDelayed).mockResolvedValue([] as any);
@@ -147,8 +157,9 @@ describe("follow-up service", () => {
   });
 
   it("passes history to the typed capability and saves an eligible follow-up", async () => {
-    mockedPrisma.conversationMessage.findUnique.mockResolvedValueOnce({
+    mockedPrisma.conversationMessage.findFirst.mockResolvedValueOnce({
       createdAt: new Date("2026-05-10T10:00:05Z"),
+      conversationId: 45,
       role: "model",
       status: "READ",
       origin: null,
@@ -194,6 +205,23 @@ describe("follow-up service", () => {
 
     expect(AgentClient.runCapability).toHaveBeenCalledOnce();
     expect(mockedPrisma.conversation.findFirst).toHaveBeenCalledTimes(2);
+    expect(saveMessage).not.toHaveBeenCalled();
+  });
+
+  it("rejects a trigger message that does not belong to the queued conversation", async () => {
+    mockedPrisma.conversationMessage.findFirst.mockResolvedValue(null);
+
+    await processFollowUpJob({
+      conversationId: 45,
+      businessProfileId: 10,
+      triggerMessageId: 999,
+      delayIndex: 0,
+    });
+
+    expect(mockedPrisma.conversationMessage.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 999, conversationId: 45 },
+    }));
+    expect(AgentClient.runCapability).not.toHaveBeenCalled();
     expect(saveMessage).not.toHaveBeenCalled();
   });
 

@@ -397,7 +397,7 @@ export async function processFollowUpJob(payload: FollowUpJobPayload) {
       include: { businessProfile: true, messages: { orderBy: { createdAt: "asc" }, take: 30, select: { role: true, content: true, createdAt: true } } },
     });
     if (!isFollowUpConversationEligible(conversation)) return;
-    const trigger = await prisma.conversationMessage.findUnique({ where: { id: payload.triggerMessageId }, select: { createdAt: true, status: true, role: true, origin: true, handoffCategory: true } });
+    const trigger = await prisma.conversationMessage.findFirst({ where: { id: payload.triggerMessageId, conversationId: payload.conversationId }, select: { createdAt: true, status: true, role: true, origin: true, handoffCategory: true } });
     if (!isFollowUpTriggerEligible(trigger) || await hasNewerHumanOrCustomerMessage(payload.conversationId, trigger!.createdAt)) return;
     if (await customerOptedOut(payload.conversationId)) return;
     if (conversation!.channel === "whatsapp" && !(await isWhatsAppFreeFormWindowOpen(payload.conversationId))) return;
@@ -412,8 +412,8 @@ export async function processFollowUpJob(payload: FollowUpJobPayload) {
       include: { businessProfile: true },
     });
     if (!isFollowUpConversationEligible(currentConversation)) return;
-    const currentTrigger = await prisma.conversationMessage.findUnique({
-      where: { id: payload.triggerMessageId },
+    const currentTrigger = await prisma.conversationMessage.findFirst({
+      where: { id: payload.triggerMessageId, conversationId: payload.conversationId },
       select: { createdAt: true, status: true, role: true, origin: true, handoffCategory: true },
     });
     if (!isFollowUpTriggerEligible(currentTrigger)) return;

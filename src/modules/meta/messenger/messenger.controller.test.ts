@@ -10,6 +10,16 @@ const mocks = vi.hoisted(() => ({
   loggerInfo: vi.fn(),
   loggerWarn: vi.fn(),
   loggerError: vi.fn(),
+  facebookPageFindMany: vi.fn(),
+  facebookPageFindFirst: vi.fn(),
+  getMessengerConversationForUser: vi.fn(),
+  saveManualReplyAndTakeHumanControl: vi.fn(),
+  sendMessengerReply: vi.fn(),
+  replyToComment: vi.fn(),
+  sendPrivateReply: vi.fn(),
+  mirrorCommentReplyToMessenger: vi.fn(),
+  decryptFacebookSecret: vi.fn(),
+  getAccessibleProfileIds: vi.fn(),
 }));
 
 vi.mock("@config/env", () => ({
@@ -23,8 +33,7 @@ vi.mock("@config/env", () => ({
 vi.mock("@config/prisma", () => ({
   default: {
     conversationMessage: { findFirst: mocks.conversationMessageFindFirst },
-    businessProfile: { findMany: vi.fn() },
-    facebookPage: { findFirst: vi.fn(), findMany: vi.fn() },
+    facebookPage: { findFirst: mocks.facebookPageFindFirst, findMany: mocks.facebookPageFindMany },
     conversation: { findUnique: vi.fn() },
   },
 }));
@@ -38,16 +47,46 @@ vi.mock("@utils/logger", () => ({
   },
 }));
 
-vi.mock("@modules/auth/core/tokenCrypto", () => ({ decryptFacebookSecret: vi.fn() }));
+vi.mock("@modules/auth/core/tokenCrypto", () => ({ decryptFacebookSecret: mocks.decryptFacebookSecret }));
+vi.mock("@modules/auth/user/user.service", () => ({
+  getAccessibleProfileIds: mocks.getAccessibleProfileIds,
+}));
 vi.mock("@modules/meta/core/conversation.service", () => ({
   listMessengerConversations: vi.fn(),
   listConversationMessages: vi.fn(),
-  getMessengerConversationForUser: vi.fn(),
+  getMessengerConversationForUser: mocks.getMessengerConversationForUser,
   saveMessage: vi.fn(),
+  saveManualReplyAndTakeHumanControl: mocks.saveManualReplyAndTakeHumanControl,
 }));
-vi.mock("@modules/meta/messenger/messenger.service", () => ({ sendMessengerMedia: vi.fn() }));
+vi.mock("@modules/meta/messenger/messenger.service", () => ({
+  sendMessengerMedia: vi.fn(),
+  sendMessengerReply: mocks.sendMessengerReply,
+}));
+vi.mock("@modules/meta/facebook/facebook.service", () => ({
+  replyToComment: mocks.replyToComment,
+  sendPrivateReply: mocks.sendPrivateReply,
+}));
+vi.mock("@modules/meta/core/metaDelivery.service", () => ({
+  mirrorCommentReplyToMessenger: mocks.mirrorCommentReplyToMessenger,
+}));
+vi.mock("@modules/ai-agent/customer/customerDecision.service", () => ({
+  CustomerDeliveryAmbiguousError: class CustomerDeliveryAmbiguousError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = "CustomerDeliveryAmbiguousError";
+    }
+  },
+}));
 vi.mock("@modules/meta/core/metaUpload.service", () => ({ uploadMessengerMedia: vi.fn() }));
-vi.mock("@middlewares/errorHandler.middleware", () => ({ AppError: class AppError extends Error {} }));
+vi.mock("@middlewares/errorHandler.middleware", () => ({
+  AppError: class AppError extends Error {
+    statusCode: number;
+    constructor(message: string, statusCode: number) {
+      super(message);
+      this.statusCode = statusCode;
+    }
+  },
+}));
 vi.mock("@modules/meta/core/metaWebhook", () => ({ verifyMetaWebhookSignature: mocks.verifyMetaWebhookSignature }));
 vi.mock("@modules/meta/core/meta.queue", () => ({
   enqueueInboundMetaEvent: mocks.enqueueInboundMetaEvent,
@@ -207,5 +246,199 @@ describe("Messenger webhook controller", () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.send).toHaveBeenCalledWith("challenge");
+  });
+});
+
+describe("Messenger manual replies", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getAccessibleProfileIds.mockResolvedValue([10]);
+    mocks.facebookPageFindMany.mockResolvedValue([{ pageId: "owned-page" }]);
+    mocks.decryptFacebookSecret.mockReturnValue("decrypted-page-token");
+    mocks.facebookPageFindFirst.mockResolvedValue({
+      pageId: "owned-page",
+      pageAccessToken: "encrypted-page-token",
+      businessProfileId: 10,
+    });
+    mocks.getMessengerConversationForUser.mockResolvedValue({
+      id: 45,
+      businessProfileId: 10,
+      pageId: "owned-page",
+      senderId: "psid-1",
+      channel: "messenger",
+      externalId: null,
+      postId: null,
+    });
+    mocks.sendMessengerReply.mockResolvedValue({ message_id: "mid.out-1", recipient_id: "psid-1" });
+    mocks.saveManualReplyAndTakeHumanControl.mockImplementation(async (params: any) => {
+      const provider = await params.deliver({
+        id: 501,
+        conversationId: params.conversationId,
+        role: "agent",
+        content: params.content,
+        status: "SENDING",
+        externalId: null,
+      });
+      return {
+        id: 501,
+        conversationId: params.conversationId,
+        role: "agent",
+        content: params.content,
+        status: "SENT",
+        externalId: provider.externalId,
+      };
+    });
+  });
+
+  function manualReplyRequest(overrides: Record<string, unknown> = {}) {
+    return {
+      user: { id: 7 },
+      params: { id: "45" },
+      body: { message: "  Hello  " },
+      ...overrides,
+    } as any;
+  }
+
+  it("returns 404 before any provider call for another tenant's conversation", async () => {
+    mocks.getMessengerConversationForUser.mockResolvedValue(null);
+
+    await expect(messengerController.sendManualReply(manualReplyRequest(), response()))
+      .rejects.toMatchObject({ statusCode: 404 });
+
+    expect(mocks.getMessengerConversationForUser).toHaveBeenCalledWith("45", ["owned-page"]);
+    expect(mocks.getAccessibleProfileIds).toHaveBeenCalledWith(7);
+    expect(mocks.facebookPageFindMany).toHaveBeenCalledWith({
+      where: { businessProfileId: { in: [10] }, isActive: true },
+      select: { pageId: true },
+    });
+    expect(mocks.facebookPageFindFirst).not.toHaveBeenCalled();
+    expect(mocks.sendMessengerReply).not.toHaveBeenCalled();
+    expect(mocks.replyToComment).not.toHaveBeenCalled();
+    expect(mocks.sendPrivateReply).not.toHaveBeenCalled();
+  });
+
+  it("scopes credentials to the authorized conversation page and business", async () => {
+    const res = response();
+
+    await messengerController.sendManualReply(manualReplyRequest(), res);
+
+    expect(mocks.facebookPageFindFirst).toHaveBeenCalledWith({
+      where: { pageId: "owned-page", businessProfileId: 10, isActive: true },
+      select: { pageId: true, pageAccessToken: true, businessProfileId: true },
+    });
+    expect(mocks.sendMessengerReply).toHaveBeenCalledWith("psid-1", "Hello", "decrypted-page-token");
+    expect(mocks.saveManualReplyAndTakeHumanControl).toHaveBeenCalledWith({
+      businessProfileId: 10,
+      conversationId: 45,
+      channel: "messenger",
+      content: "Hello",
+      isPrivate: false,
+      origin: "messenger_manual_reply",
+      deliver: expect.any(Function),
+    });
+    expect(res.status).toHaveBeenCalledWith(201);
+  });
+
+  it("preserves public Facebook comment transport and persists its provider ID", async () => {
+    mocks.getMessengerConversationForUser.mockResolvedValue({
+      id: 46,
+      businessProfileId: 10,
+      pageId: "owned-page",
+      senderId: "commenter-1",
+      channel: "facebook_comment",
+      externalId: "comment.in-1",
+      postId: "post-1",
+    });
+    mocks.replyToComment.mockResolvedValue({ id: "comment.out-1" });
+    const res = response();
+
+    await messengerController.sendManualReply(manualReplyRequest({
+      params: { id: "46" },
+      body: { message: " Public answer ", isPrivate: false },
+    }), res);
+
+    expect(mocks.replyToComment).toHaveBeenCalledWith({
+      commentId: "comment.in-1",
+      message: "Public answer",
+      accessToken: "decrypted-page-token",
+      pageId: "owned-page",
+    });
+    expect(mocks.sendMessengerReply).not.toHaveBeenCalled();
+    expect(mocks.saveManualReplyAndTakeHumanControl).toHaveBeenCalledWith(expect.objectContaining({
+      conversationId: 46,
+      channel: "facebook_comment",
+      isPrivate: false,
+      origin: "facebook_comment_reply",
+      deliver: expect.any(Function),
+    }));
+  });
+
+  it("uses the private comment transport and mirrors only after durable persistence", async () => {
+    mocks.getMessengerConversationForUser.mockResolvedValue({
+      id: 46,
+      businessProfileId: 10,
+      pageId: "owned-page",
+      senderId: "commenter-1",
+      channel: "facebook_comment",
+      externalId: "comment.in-1",
+      postId: "post-1",
+    });
+    mocks.sendPrivateReply.mockResolvedValue({ id: "mid.private-1" });
+
+    await messengerController.sendManualReply(manualReplyRequest({
+      params: { id: "46" },
+      body: { message: " Private answer ", isPrivate: true },
+    }), response());
+
+    expect(mocks.sendPrivateReply).toHaveBeenCalledWith({
+      commentId: "comment.in-1",
+      message: "Private answer",
+      accessToken: "decrypted-page-token",
+      pageId: "owned-page",
+      businessProfileId: 10,
+    });
+    expect(mocks.saveManualReplyAndTakeHumanControl).toHaveBeenCalledWith(expect.objectContaining({
+      isPrivate: true,
+      origin: "facebook_comment_reply",
+      deliver: expect.any(Function),
+    }));
+    expect(mocks.mirrorCommentReplyToMessenger).toHaveBeenCalledWith(expect.objectContaining({
+      pageId: "owned-page",
+      senderId: "commenter-1",
+      businessProfileId: 10,
+      messageId: "mid.private-1",
+      role: "agent",
+    }));
+    expect(mocks.saveManualReplyAndTakeHumanControl.mock.invocationCallOrder[0])
+      .toBeLessThan(mocks.mirrorCommentReplyToMessenger.mock.invocationCallOrder[0]);
+  });
+
+  it("persists the delivery claim before a provider rejection", async () => {
+    mocks.sendMessengerReply.mockRejectedValue(new Error("Meta rejected send"));
+
+    await expect(messengerController.sendManualReply(manualReplyRequest(), response()))
+      .rejects.toThrow("Meta rejected send");
+
+    expect(mocks.saveManualReplyAndTakeHumanControl).toHaveBeenCalledOnce();
+  });
+
+  it("treats a provider success without a message ID as ambiguous", async () => {
+    mocks.sendMessengerReply.mockResolvedValue({ recipient_id: "psid-1" });
+
+    await expect(messengerController.sendManualReply(manualReplyRequest(), response()))
+      .rejects.toMatchObject({ name: "CustomerDeliveryAmbiguousError" });
+
+    expect(mocks.saveManualReplyAndTakeHumanControl).toHaveBeenCalledOnce();
+  });
+
+  it("propagates an ambiguous manual-delivery service outcome", async () => {
+    const error = new Error("provider accepted, local confirmation ambiguous");
+    error.name = "CustomerDeliveryAmbiguousError";
+    mocks.saveManualReplyAndTakeHumanControl.mockRejectedValue(error);
+
+    await expect(messengerController.sendManualReply(manualReplyRequest(), response()))
+      .rejects.toMatchObject({ name: "CustomerDeliveryAmbiguousError" });
+
+    expect(mocks.sendMessengerReply).not.toHaveBeenCalled();
   });
 });

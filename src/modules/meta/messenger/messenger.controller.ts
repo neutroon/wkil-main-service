@@ -6,6 +6,7 @@ import {
   listMessengerConversations,
   listConversationMessages,
   getMessengerConversationForUser,
+  saveManualReplyAndTakeHumanControl,
   saveMessage,
 } from "../core/conversation.service";
 import { sendMessengerMedia } from "./messenger.service";
@@ -15,6 +16,8 @@ import { env } from "@config/env";
 import { verifyMetaWebhookSignature } from "../core/metaWebhook";
 import { enqueueInboundMetaEvent, enqueueMetaJob } from "../core/meta.queue";
 import { getRoutableFacebookPageRoute } from "../core/webhookCache.service";
+import { CustomerDeliveryAmbiguousError } from "@modules/ai-agent/customer/customerDecision.service";
+import { getAccessibleProfileIds } from "@modules/auth/user/user.service";
 
 const isDev = env.NODE_ENV !== "production";
 
@@ -312,55 +315,77 @@ export class MessengerController {
    * POST /v1/messenger/conversations/:id/messages
    */
   async sendManualReply(req: Request, res: Response) {
+    const userId = (req as any).user.id as number;
     const { id: conversationId } = req.params as any;
     const { message: text } = req.body;
 
-    const conversation = await prisma.conversation.findUnique({ where: { id: conversationId } });
+    const pageIds = await this.getUserFacebookPageIds(userId);
+    const conversation = await getMessengerConversationForUser(conversationId, pageIds);
     if (!conversation) throw new AppError("Conversation not found", 404);
 
-    const page = await prisma.facebookPage.findFirst({ where: { pageId: conversation.pageId, isActive: true } });
+    const page = await prisma.facebookPage.findFirst({
+      where: {
+        pageId: conversation.pageId,
+        businessProfileId: conversation.businessProfileId,
+        isActive: true,
+      },
+      select: { pageId: true, pageAccessToken: true, businessProfileId: true },
+    });
     if (!page) throw new AppError("Facebook Page not found", 404);
 
     const pageAccessToken = decryptFacebookSecret(page.pageAccessToken);
     const trimmedText = text.trim();
     const isPrivateRequest = req.body.isPrivate === true;
 
-    let fbData: any;
-    if (conversation.channel === "facebook_comment") {
-      if (!conversation.externalId) throw new AppError("Missing Comment ID", 400);
-
-      if (isPrivateRequest) {
-        const { sendPrivateReply } = await import("../facebook/facebook.service");
-        fbData = await sendPrivateReply({
-          commentId: conversation.externalId,
-          message: trimmedText,
-          accessToken: pageAccessToken,
-          pageId: page.pageId,
-          businessProfileId: page.businessProfileId!
-        });
-      } else {
-        const { replyToComment } = await import("../facebook/facebook.service");
-        fbData = await replyToComment({
-          commentId: conversation.externalId,
-          message: trimmedText,
-          accessToken: pageAccessToken,
-          pageId: page.pageId,
-        });
-      }
-    } else {
-      const { sendMessengerReply } = await import("./messenger.service");
-      fbData = await sendMessengerReply(conversation.senderId, trimmedText, pageAccessToken);
-    }
-
-    const mid = fbData.id || fbData.message_id;
-    const saved = await saveMessage(conversationId, "agent", trimmedText, {
-      externalId: mid?.toString(),
-      status: "SENT",
+    const saved = await saveManualReplyAndTakeHumanControl({
+      businessProfileId: conversation.businessProfileId,
+      conversationId: conversation.id,
+      channel: conversation.channel,
+      content: trimmedText,
       isPrivate: isPrivateRequest,
-      origin: conversation.channel === "facebook_comment" ? "facebook_comment_reply" : undefined
-    });
+      origin: conversation.channel === "facebook_comment"
+        ? "facebook_comment_reply"
+        : "messenger_manual_reply",
+      deliver: async () => {
+        let fbData: any;
+        if (conversation.channel === "facebook_comment") {
+          if (!conversation.externalId) throw new AppError("Missing Comment ID", 400);
 
-    if (conversation.channel === "facebook_comment" && isPrivateRequest && mid && mid !== "ALREADY_REPLIED") {
+          if (isPrivateRequest) {
+            const { sendPrivateReply } = await import("../facebook/facebook.service");
+            fbData = await sendPrivateReply({
+              commentId: conversation.externalId,
+              message: trimmedText,
+              accessToken: pageAccessToken,
+              pageId: page.pageId,
+              businessProfileId: page.businessProfileId!,
+            });
+          } else {
+            const { replyToComment } = await import("../facebook/facebook.service");
+            fbData = await replyToComment({
+              commentId: conversation.externalId,
+              message: trimmedText,
+              accessToken: pageAccessToken,
+              pageId: page.pageId,
+            });
+          }
+        } else {
+          const { sendMessengerReply } = await import("./messenger.service");
+          fbData = await sendMessengerReply(conversation.senderId, trimmedText, pageAccessToken);
+        }
+
+        const mid = fbData?.id || fbData?.message_id;
+        if (!mid) {
+          throw new CustomerDeliveryAmbiguousError(
+            "Meta accepted the manual reply but did not return a message ID",
+          );
+        }
+        return { externalId: mid.toString() };
+      },
+    });
+    const mid = saved.externalId;
+
+    if (conversation.channel === "facebook_comment" && isPrivateRequest && mid !== "ALREADY_REPLIED") {
       try {
         const { mirrorCommentReplyToMessenger } = await import("../core/metaDelivery.service");
         await mirrorCommentReplyToMessenger({
@@ -426,8 +451,7 @@ export class MessengerController {
   }
 
   private async getUserFacebookPageIds(userId: number): Promise<string[]> {
-    const profiles = await prisma.businessProfile.findMany({ where: { userId }, select: { id: true } });
-    const profileIds = profiles.map((p) => p.id);
+    const profileIds = await getAccessibleProfileIds(userId);
     if (profileIds.length === 0) return [];
 
     const pages = await prisma.facebookPage.findMany({
@@ -459,9 +483,6 @@ function normalizeMetaOccurredAt(value: unknown): string | null {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
-
-
-
 
 
 

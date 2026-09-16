@@ -8,6 +8,7 @@ import {
 } from "@modules/business/customer/customer.service";
 import { runOutsideDbQueryTrace } from "@utils/dbQueryTrace";
 import { logger } from "@utils/logger";
+import { CustomerDeliveryAmbiguousError } from "@modules/ai-agent/customer/customerDecision.service";
 
 const HISTORY_LIMIT = 24;
 
@@ -292,6 +293,130 @@ export async function saveMessage(
   });
 
   return msg;
+}
+
+export async function saveManualReplyAndTakeHumanControl(params: {
+  businessProfileId: number;
+  conversationId: number;
+  channel: string | null;
+  content: string;
+  isPrivate: boolean;
+  origin: string;
+  deliver: (message: any) => Promise<{ externalId?: string | null } | void>;
+}) {
+  const message = await prisma.$transaction(async (db) => {
+    const controlTransition = await db.conversation.updateMany({
+      where: {
+        id: params.conversationId,
+        businessProfileId: params.businessProfileId,
+      },
+      data: { aiEnabled: false },
+    });
+    if (controlTransition.count !== 1) {
+      throw new Error("Manual reply conversation scope is no longer available");
+    }
+
+    return db.conversationMessage.create({
+      data: {
+        conversationId: params.conversationId,
+        role: "agent",
+        content: params.content,
+        status: "SENDING",
+        isPrivate: params.isPrivate,
+        origin: params.origin,
+      },
+    });
+  });
+
+  await syncManualReplySoft(params, message);
+
+  runMessagePersistenceSideEffectsInBackground({
+    conversationId: params.conversationId,
+    messageId: message.id,
+    role: "agent",
+  });
+
+  // Disabling AI is the durable safety boundary. Queue removal is best-effort
+  // because a BullMQ job can already be active; active jobs re-check aiEnabled
+  // before delivery and therefore remain harmless.
+  try {
+    const { cancelConversationFollowUps } = await import("@modules/follow-up/followUp.service");
+    await cancelConversationFollowUps(params.conversationId);
+  } catch (error: any) {
+    logger.warn("conversation.manual_reply.follow_up_cancel_failed", {
+      businessProfileId: params.businessProfileId,
+      conversationId: params.conversationId,
+      error: error?.message || String(error),
+    });
+  }
+
+  let provider: { externalId?: string | null } | void;
+  try {
+    provider = await params.deliver(message);
+  } catch (error) {
+    if (error instanceof CustomerDeliveryAmbiguousError) throw error;
+    const failed = await prisma.conversationMessage.updateMany({
+      where: { id: message.id, conversationId: params.conversationId, status: "SENDING" },
+      data: { status: "FAILED" },
+    }).catch(() => ({ count: 0 }));
+    if (failed.count === 1) {
+      await syncManualReplySoft(params, { ...message, status: "FAILED" });
+    }
+    throw error;
+  }
+
+  const externalId = provider?.externalId ?? null;
+  if (!externalId) {
+    throw new CustomerDeliveryAmbiguousError(
+      "Meta accepted the manual reply but did not return a message ID",
+    );
+  }
+
+  try {
+    const confirmation = await prisma.conversationMessage.updateMany({
+      where: { id: message.id, conversationId: params.conversationId, status: "SENDING" },
+      data: { status: "SENT", externalId },
+    });
+    if (confirmation.count !== 1) {
+      throw new Error("Manual reply delivery confirmation was not persisted");
+    }
+  } catch (error) {
+    const ambiguous = new CustomerDeliveryAmbiguousError(
+      "Meta accepted the manual reply but local confirmation is ambiguous",
+    );
+    Object.defineProperty(ambiguous, "cause", { value: error, configurable: true });
+    throw ambiguous;
+  }
+
+  const sentMessage = { ...message, status: "SENT" as const, externalId };
+  await syncManualReplySoft(params, sentMessage);
+  return sentMessage;
+}
+
+async function syncManualReplySoft(
+  params: {
+    businessProfileId: number;
+    conversationId: number;
+    channel: string | null;
+  },
+  message: any,
+) {
+  try {
+    const { syncManualReply } = await import("@modules/realtime/socketSync.service");
+    syncManualReply({
+      businessProfileId: params.businessProfileId,
+      conversationId: params.conversationId,
+      channel: params.channel,
+      message,
+    });
+  } catch (error: any) {
+    logger.warn("conversation.manual_reply.realtime_sync_failed", {
+      businessProfileId: params.businessProfileId,
+      conversationId: params.conversationId,
+      messageId: message.id,
+      error: error?.message || String(error),
+    });
+  }
 }
 
 function runMessagePersistenceSideEffectsInBackground(params: {

@@ -31,7 +31,45 @@ vi.mock("@utils/logger", () => ({
   },
 }));
 
-import { syncCoexistenceHistoryImported } from "./socketSync.service";
+import { syncCoexistenceHistoryImported, syncManualReply } from "./socketSync.service";
+
+describe("Manual reply realtime synchronization", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("emits persisted message, delivery status, and human-control state", () => {
+    const message = {
+      id: 503,
+      conversationId: 45,
+      role: "agent",
+      content: "Human reply",
+      status: "SENT",
+      externalId: "mid.out-1",
+    };
+
+    syncManualReply({
+      businessProfileId: 10,
+      conversationId: 45,
+      channel: "messenger",
+      message,
+    });
+
+    const basePayload = { conversationId: 45, channel: "messenger", message };
+    expect(socketMocks.emitToBusiness).toHaveBeenCalledWith(10, "new_message", basePayload);
+    expect(socketMocks.emitToConversation).toHaveBeenCalledWith(45, "new_message", basePayload);
+    expect(socketMocks.emitToBusiness).toHaveBeenCalledWith(10, "message_status", {
+      conversationId: 45,
+      messageId: 503,
+      status: "SENT",
+      externalId: "mid.out-1",
+    });
+    expect(socketMocks.emitToBusiness).toHaveBeenCalledWith(10, "ai_toggle_updated", {
+      conversationId: 45,
+      aiEnabled: false,
+    });
+  });
+});
 
 describe("Coexistence import realtime synchronization", () => {
   beforeEach(() => {

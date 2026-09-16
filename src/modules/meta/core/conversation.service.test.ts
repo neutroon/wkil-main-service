@@ -8,11 +8,13 @@ vi.mock("@config/prisma", () => ({
       create: vi.fn(),
       findMany: vi.fn(),
       findUnique: vi.fn(),
+      updateMany: vi.fn(),
     },
     conversation: {
       findFirst: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
       findUnique: vi.fn(),
     },
     customer: {
@@ -35,11 +37,23 @@ vi.mock("@utils/logger", () => ({
   },
 }));
 
+const followUpMocks = vi.hoisted(() => ({
+  cancelConversationFollowUps: vi.fn(),
+}));
+
+const realtimeMocks = vi.hoisted(() => ({
+  syncManualReply: vi.fn(),
+}));
+
+vi.mock("@modules/follow-up/followUp.service", () => followUpMocks);
+vi.mock("@modules/realtime/socketSync.service", () => realtimeMocks);
+
 import prisma from "@config/prisma";
 import { upsertCustomerFromConversation } from "@modules/business/customer/customer.service";
 import {
   getOrCreateConversation,
   listConversationMessages,
+  saveManualReplyAndTakeHumanControl,
   saveMessage,
 } from "./conversation.service";
 
@@ -106,6 +120,159 @@ describe("saveMessage", () => {
       where: { id: 99 },
       data: { lastInteractionAt: expect.any(Date) },
     });
+  });
+});
+
+describe("saveManualReplyAndTakeHumanControl", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedPrisma.$transaction.mockImplementation(async (callback: (db: any) => unknown) => callback(mockedPrisma));
+    mockedPrisma.conversation.updateMany.mockResolvedValue({ count: 1 });
+    mockedPrisma.conversationMessage.create.mockResolvedValue({
+      id: 503,
+      conversationId: 45,
+      role: "agent",
+      content: "Human reply",
+      status: "SENDING",
+      externalId: null,
+    });
+    mockedPrisma.conversationMessage.updateMany.mockResolvedValue({ count: 1 });
+    mockedPrisma.conversation.update.mockResolvedValue({
+      id: 45,
+      businessProfileId: 10,
+      customerId: null,
+      channel: "messenger",
+      updatedAt: new Date("2026-09-16T09:00:00.000Z"),
+    });
+    followUpMocks.cancelConversationFollowUps.mockResolvedValue(2);
+  });
+
+  it("atomically persists the agent message and conditionally transfers control", async () => {
+    const deliver = vi.fn().mockResolvedValue({ externalId: "mid.out-1" });
+    const saved = await saveManualReplyAndTakeHumanControl({
+      businessProfileId: 10,
+      conversationId: 45,
+      channel: "messenger",
+      content: "Human reply",
+      isPrivate: false,
+      origin: "messenger_manual_reply",
+      deliver,
+    });
+
+    expect(mockedPrisma.$transaction).toHaveBeenCalledOnce();
+    expect(mockedPrisma.conversation.updateMany).toHaveBeenCalledWith({
+      where: { id: 45, businessProfileId: 10 },
+      data: { aiEnabled: false },
+    });
+    expect(mockedPrisma.conversationMessage.create).toHaveBeenCalledWith({
+      data: {
+        conversationId: 45,
+        role: "agent",
+        content: "Human reply",
+        status: "SENDING",
+        isPrivate: false,
+        origin: "messenger_manual_reply",
+      },
+    });
+    expect(deliver).toHaveBeenCalledWith(expect.objectContaining({
+      id: 503,
+      role: "agent",
+      status: "SENDING",
+    }));
+    expect(mockedPrisma.conversationMessage.updateMany).toHaveBeenCalledWith({
+      where: { id: 503, conversationId: 45, status: "SENDING" },
+      data: { status: "SENT", externalId: "mid.out-1" },
+    });
+    expect(saved).toMatchObject({ id: 503, role: "agent", status: "SENT", externalId: "mid.out-1" });
+    expect(followUpMocks.cancelConversationFollowUps).toHaveBeenCalledWith(45);
+    expect(realtimeMocks.syncManualReply).toHaveBeenCalledWith({
+      businessProfileId: 10,
+      conversationId: 45,
+      channel: "messenger",
+      message: expect.objectContaining({ id: 503, status: "SENT", externalId: "mid.out-1" }),
+    });
+  });
+
+  it("does not persist when the conversation scope disappears before the transaction", async () => {
+    mockedPrisma.conversation.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(saveManualReplyAndTakeHumanControl({
+      businessProfileId: 10,
+      conversationId: 45,
+      channel: "messenger",
+      content: "Human reply",
+      isPrivate: false,
+      origin: "messenger_manual_reply",
+      deliver: vi.fn(),
+    })).rejects.toThrow("Manual reply conversation scope is no longer available");
+
+    expect(mockedPrisma.conversationMessage.create).not.toHaveBeenCalled();
+    expect(realtimeMocks.syncManualReply).not.toHaveBeenCalled();
+  });
+
+  it("keeps the durable human-control transition when queue cleanup races or fails", async () => {
+    followUpMocks.cancelConversationFollowUps.mockRejectedValue(new Error("queue unavailable"));
+    const deliver = vi.fn().mockResolvedValue({ externalId: "mid.out-1" });
+
+    const saved = await saveManualReplyAndTakeHumanControl({
+      businessProfileId: 10,
+      conversationId: 45,
+      channel: "messenger",
+      content: "Human reply",
+      isPrivate: false,
+      origin: "messenger_manual_reply",
+      deliver,
+    });
+
+    expect(saved).toMatchObject({ id: 503, role: "agent" });
+    expect(realtimeMocks.syncManualReply).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      message: expect.objectContaining({ status: "SENDING" }),
+    }));
+    expect(realtimeMocks.syncManualReply).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      message: expect.objectContaining({ status: "SENT", externalId: "mid.out-1" }),
+    }));
+  });
+
+  it("marks a known provider rejection failed without losing human control", async () => {
+    const deliver = vi.fn().mockRejectedValue(new Error("Meta rejected send"));
+
+    await expect(saveManualReplyAndTakeHumanControl({
+      businessProfileId: 10,
+      conversationId: 45,
+      channel: "messenger",
+      content: "Human reply",
+      isPrivate: false,
+      origin: "messenger_manual_reply",
+      deliver,
+    })).rejects.toThrow("Meta rejected send");
+
+    expect(mockedPrisma.conversationMessage.updateMany).toHaveBeenCalledWith({
+      where: { id: 503, conversationId: 45, status: "SENDING" },
+      data: { status: "FAILED" },
+    });
+    expect(mockedPrisma.conversation.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: { aiEnabled: false },
+    }));
+    expect(realtimeMocks.syncManualReply).toHaveBeenLastCalledWith(expect.objectContaining({
+      message: expect.objectContaining({ status: "FAILED" }),
+    }));
+  });
+
+  it("keeps an accepted provider send in SENDING when local confirmation fails", async () => {
+    const deliver = vi.fn().mockResolvedValue({ externalId: "mid.out-1" });
+    mockedPrisma.conversationMessage.updateMany.mockRejectedValue(new Error("database unavailable"));
+
+    await expect(saveManualReplyAndTakeHumanControl({
+      businessProfileId: 10,
+      conversationId: 45,
+      channel: "messenger",
+      content: "Human reply",
+      isPrivate: false,
+      origin: "messenger_manual_reply",
+      deliver,
+    })).rejects.toMatchObject({ name: "CustomerDeliveryAmbiguousError" });
+
+    expect(deliver).toHaveBeenCalledOnce();
   });
 });
 

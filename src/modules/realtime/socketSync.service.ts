@@ -190,6 +190,40 @@ export const syncSocketFromMessage = async (message: any) => {
     logger.warn("socket.sync.failed_soft", { error: error.message });
   }
 };
+
+/**
+ * Synchronizes a persisted human reply and the accompanying transfer to human
+ * control. The client merge path is keyed by the durable message ID, so the
+ * lightweight socket delivery remains safe if the Prisma write hook also
+ * emits the same message.
+ */
+export const syncManualReply = (params: {
+  businessProfileId: number;
+  conversationId: number;
+  channel: string | null;
+  message: any;
+}) => {
+  const messagePayload = {
+    conversationId: params.conversationId,
+    channel: params.channel,
+    message: params.message,
+  };
+  emitToBusiness(params.businessProfileId, "new_message", messagePayload);
+  emitToConversation(params.conversationId, "new_message", messagePayload);
+
+  const statusPayload = {
+    conversationId: params.conversationId,
+    messageId: params.message.id,
+    status: params.message.status,
+    externalId: params.message.externalId,
+  };
+  emitToBusiness(params.businessProfileId, "message_status_updated", statusPayload);
+  emitToBusiness(params.businessProfileId, "message_status", statusPayload);
+  emitToBusiness(params.businessProfileId, "ai_toggle_updated", {
+    conversationId: params.conversationId,
+    aiEnabled: false,
+  });
+};
 /**
  * Handles real-time sync for bulk operations (updateMany) where Prisma 
  * hooks cannot provide the updated objects.

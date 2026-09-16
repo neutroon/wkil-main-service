@@ -39,6 +39,8 @@ const facebookCommentInboundCustomerMessageSchema = baseInboundCustomerMessageSc
   pageId: nonEmptyId,
   commentId: nonEmptyId,
   postId: nonEmptyId,
+  /** Meta feed occurrence time, normalized from its seconds or ISO representation. */
+  occurredAt: z.string().datetime({ offset: true }),
   parentId: nonEmptyId.optional(),
   source: z.enum(["page_feed", "group_feed"]),
 }).strict();

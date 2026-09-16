@@ -60,6 +60,9 @@ describe("customer Meta channel processors", () => {
     mocks.getOrCreateConversation.mockResolvedValue({ id: 45, aiEnabled: true, senderId: "customer-1" });
     mocks.saveMessage.mockResolvedValue({ id: 71 });
     mocks.executeCustomerTurn.mockResolvedValue({ agentTurnId: 81, decision });
+    mocks.replyToComment.mockResolvedValue({ id: "comment.out-default" });
+    mocks.sendPrivateReply.mockResolvedValue({ id: "mid.private-default" });
+    mocks.mirrorCommentReplyToMessenger.mockResolvedValue({ id: 72 });
     mocks.applyCustomerDecision.mockImplementation(async (params: any) => {
       await params.deliver({ id: 99, conversationId: 45, agentTurnId: 81, content: "AI answer", status: "SENDING", externalId: null });
       return { action: "REPLY" };
@@ -96,13 +99,19 @@ describe("customer Meta channel processors", () => {
     await processMetaMessage({
       channel: "facebook_comment", businessProfileId: 11, identifier: "page-1", pageId: "page-1",
       senderId: "commenter-1", externalId: "comment.in-1", commentId: "comment.in-1", postId: "post-1", parentId: "parent-1",
-      source: "page_feed", text: "Need details", customerName: "Ada", receivedAt: "2026-09-16T10:00:00.000Z", attachments: [],
+      source: "page_feed", text: "Need details", customerName: "Ada", occurredAt: "2026-09-16T10:00:00.000Z", receivedAt: "2026-09-16T10:00:00.000Z", attachments: [],
     });
     expect(mocks.getOrCreateConversation).toHaveBeenCalledWith("page-1", "commenter-1", 11, expect.objectContaining({
       channel: "facebook_comment", externalId: "comment.in-1", postId: "post-1",
     }));
     expect(mocks.executeCustomerTurn).toHaveBeenCalledWith(expect.objectContaining({ channel: "facebook_comment" }));
     expect(mocks.replyToComment).toHaveBeenCalledWith(expect.objectContaining({ commentId: "comment.in-1", message: "Thanks Ada! Check your inbox." }));
+    expect(mocks.saveMessage).toHaveBeenNthCalledWith(2, 45, "model", "Thanks Ada! Check your inbox.", {
+      externalId: "comment.out-1",
+      status: "SENT",
+      isPrivate: false,
+      origin: "facebook_comment_public_reply",
+    });
     expect(mocks.sendPrivateReply).toHaveBeenCalledWith(expect.objectContaining({ commentId: "comment.in-1", message: "AI answer" }));
     expect(mocks.mirrorCommentReplyToMessenger).toHaveBeenCalledWith(expect.objectContaining({ commentId: "comment.in-1", messageId: "mid.private-1" }));
   });
@@ -114,8 +123,23 @@ describe("customer Meta channel processors", () => {
     await expect(processMetaMessage({
       channel: "facebook_comment", businessProfileId: 11, identifier: "page-1", pageId: "page-1",
       senderId: "commenter-1", externalId: "comment.in-2", commentId: "comment.in-2", postId: "post-1",
-      source: "page_feed", text: "Need details", receivedAt: "2026-09-16T10:00:00.000Z", attachments: [],
+      source: "page_feed", text: "Need details", occurredAt: "2026-09-16T10:00:00.000Z", receivedAt: "2026-09-16T10:00:00.000Z", attachments: [],
     })).rejects.toThrow("Facebook public comment was accepted but private reply outcome is ambiguous");
     expect(mocks.replyToComment).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a successful public comment non-retryable when its echo audit cannot be persisted", async () => {
+    mocks.pageFindFirst.mockResolvedValue(messengerPage({ commentAutoDmEnabled: true }));
+    mocks.replyToComment.mockResolvedValue({ id: "comment.out-2" });
+    mocks.saveMessage.mockResolvedValueOnce({ id: 71 }).mockRejectedValueOnce(new Error("audit unavailable"));
+
+    await expect(processMetaMessage({
+      channel: "facebook_comment", businessProfileId: 11, identifier: "page-1", pageId: "page-1",
+      senderId: "commenter-1", externalId: "comment.in-3", commentId: "comment.in-3", postId: "post-1",
+      source: "page_feed", text: "Need details", occurredAt: "2026-09-16T10:00:00.000Z", receivedAt: "2026-09-16T10:00:00.000Z", attachments: [],
+    })).rejects.toThrow("Facebook public comment was accepted but public reply audit outcome is ambiguous");
+
+    expect(mocks.replyToComment).toHaveBeenCalledTimes(1);
+    expect(mocks.sendPrivateReply).not.toHaveBeenCalled();
   });
 });

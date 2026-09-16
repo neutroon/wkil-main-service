@@ -39,6 +39,7 @@ export interface MetaMessageJob {
   messageText?: string;
   text?: string;
   receivedAt?: string;
+  occurredAt?: string;
   attachments?: InboundCustomerMessage["attachments"];
   source?: "page_feed" | "group_feed";
   externalId?: string;
@@ -728,6 +729,32 @@ async function deliverFacebookCommentReply(
 
   if (!params.identity.pageSettings?.commentAutoDmEnabled) return { externalId: String(publicReply?.id ?? "") || null };
 
+  const publicId = String(publicReply?.id ?? "");
+  if (!publicId) {
+    throw new CustomerDeliveryAmbiguousError(
+      "Facebook public comment was accepted but its provider identity is unavailable",
+    );
+  }
+
+  // The public reply is intentionally a separate conversation audit record: the
+  // customer decision's primary output remains the private reply, preserving the
+  // one-output-message-per-AgentTurn constraint. Saving the external ID before
+  // private delivery also makes a subsequently delivered Page echo suppressible.
+  try {
+    await saveMessage(params.conversation.id, "model", publicContent, {
+      externalId: publicId,
+      status: "SENT",
+      isPrivate: false,
+      origin: "facebook_comment_public_reply",
+    });
+  } catch (error) {
+    const ambiguous = new CustomerDeliveryAmbiguousError(
+      "Facebook public comment was accepted but public reply audit outcome is ambiguous",
+    );
+    Object.defineProperty(ambiguous, "cause", { value: error, configurable: true });
+    throw ambiguous;
+  }
+
   // Meta permits one private reply within a limited window. This policy is a
   // page setting, never an instruction the model can choose for itself.
   let privateReply: { id?: string };
@@ -750,20 +777,23 @@ async function deliverFacebookCommentReply(
     throw ambiguous;
   }
   const privateId = String(privateReply?.id ?? "");
-  if (privateId) {
-    const { mirrorCommentReplyToMessenger } = await import("./metaDelivery.service");
-    await mirrorCommentReplyToMessenger({
-      pageId: comment.pageId,
-      senderId: comment.senderId,
-      businessProfileId: params.identity.businessProfileId,
-      messageId: privateId,
-      content,
-      postId: comment.postId,
-      commentId: comment.commentId,
-      role: "model",
-    });
+  if (!privateId) {
+    throw new CustomerDeliveryAmbiguousError(
+      "Facebook public comment was accepted but private reply outcome is ambiguous",
+    );
   }
-  return { externalId: privateId || String(publicReply?.id ?? "") || null };
+  const { mirrorCommentReplyToMessenger } = await import("./metaDelivery.service");
+  await mirrorCommentReplyToMessenger({
+    pageId: comment.pageId,
+    senderId: comment.senderId,
+    businessProfileId: params.identity.businessProfileId,
+    messageId: privateId,
+    content,
+    postId: comment.postId,
+    commentId: comment.commentId,
+    role: "model",
+  });
+  return { externalId: privateId };
 }
 
 function commentGreeting(template: string | undefined, customerName: string | undefined): string {

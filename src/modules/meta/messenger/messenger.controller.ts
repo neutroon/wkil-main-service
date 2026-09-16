@@ -51,15 +51,13 @@ export class MessengerController {
    * POST /v1/messenger/webhook
    */
   async handleWebhook(req: Request, res: Response) {
-    res.status(200).send("EVENT_RECEIVED");
-
     try {
       const rawBody = req.body as Buffer | unknown;
       const signature = req.headers["x-hub-signature-256"] as string | undefined;
 
       if (!verifyMetaWebhookSignature(rawBody as Buffer, signature, env.FB_APP_SECRET || "")) {
         logger.error("messenger.webhook.invalid_signature");
-        return;
+        return res.status(401).send("INVALID_SIGNATURE");
       }
 
       let body: any;
@@ -68,7 +66,11 @@ export class MessengerController {
         body = JSON.parse(str);
       } catch {
         logger.error("messenger.webhook.invalid_json");
-        return;
+        return res.status(400).send("INVALID_JSON");
+      }
+
+      if (body.object !== "page" || !Array.isArray(body.entry)) {
+        return res.status(200).send("EVENT_RECEIVED");
       }
 
       for (const entry of body.entry) {
@@ -92,8 +94,9 @@ export class MessengerController {
                 const postId = value.post_id;
                 const parentId = value.parent_id;
                 const senderName = value.from?.name;
+                const occurredAt = normalizeMetaOccurredAt(value.created_time ?? entry.time);
 
-                if (senderId && messageText && commentId) {
+                if (senderId && messageText && commentId && postId && occurredAt) {
                   if (isFromBusiness) {
                     const existingOutbound = await prisma.conversationMessage.findFirst({
                       where: { externalId: commentId },
@@ -118,7 +121,8 @@ export class MessengerController {
                       businessProfileId: route.businessProfileId,
                       senderId,
                       commentId,
-                      postId: postId || commentId,
+                      postId,
+                      occurredAt,
                       ...(parentId ? { parentId } : {}),
                       source: "page_feed",
                       externalId: commentId,
@@ -128,6 +132,15 @@ export class MessengerController {
                       attachments: [],
                       isFromBusiness,
                     },
+                  });
+                } else {
+                  logger.warn("messenger.webhook.invalid_comment_discarded", {
+                    pageId,
+                    hasSenderId: Boolean(senderId),
+                    hasMessage: Boolean(messageText),
+                    hasCommentId: Boolean(commentId),
+                    hasPostId: Boolean(postId),
+                    hasOccurredAt: Boolean(occurredAt),
                   });
                 }
               }
@@ -141,7 +154,7 @@ export class MessengerController {
             const senderId = event.sender?.id;
 
             if (event.sender_action) {
-               enqueueMetaJob({
+               await enqueueMetaJob({
                  platform: "messenger",
                  type: "typing_indicator",
                  identifier: pageId,
@@ -153,7 +166,7 @@ export class MessengerController {
             }
 
             if (event.read) {
-               enqueueMetaJob({
+               await enqueueMetaJob({
                  platform: "messenger",
                  type: "status_update",
                  identifier: pageId,
@@ -167,8 +180,8 @@ export class MessengerController {
 
             if (event.delivery) {
                const mids = event.delivery.mids;
-               if (Array.isArray(mids) && mids.length > 0) {
-                 enqueueMetaJob({
+                if (Array.isArray(mids) && mids.length > 0) {
+                 await enqueueMetaJob({
                    platform: "messenger",
                    type: "status_update",
                    identifier: pageId,
@@ -251,8 +264,10 @@ export class MessengerController {
           }
         }
       }
+      return res.status(200).send("EVENT_RECEIVED");
     } catch (error: any) {
       logger.error("messenger.webhook.handler_error", { error: error.message });
+      return res.status(500).send("WEBHOOK_PROCESSING_FAILED");
     }
   }
 
@@ -431,6 +446,19 @@ function normalizeMessengerAttachmentType(type: string): "image" | "video" | "au
   return "file";
 }
 
+function normalizeMetaOccurredAt(value: unknown): string | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const milliseconds = Math.abs(value) < 100_000_000_000 ? value * 1_000 : value;
+    const date = new Date(milliseconds);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  }
+
+  if (typeof value !== "string" || !value.trim()) return null;
+  if (/^\d+(?:\.\d+)?$/.test(value.trim())) return normalizeMetaOccurredAt(Number(value));
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
 
 
 

@@ -36,6 +36,7 @@ describe("InboundCustomerMessage", () => {
       pageId: "page-1",
       commentId: "comment-1",
       postId: "post-1",
+      occurredAt: "2026-09-16T10:00:00.000Z",
       parentId: "parent-1",
       source: "page_feed",
     });

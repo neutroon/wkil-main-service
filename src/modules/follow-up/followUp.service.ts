@@ -1,9 +1,14 @@
-import { AgentClient } from "@modules/ai-agent/client/agent.client";
 import prisma from "@config/prisma";
 import { logger } from "@utils/logger";
 import { metaExpressQueue } from "@modules/meta/core/meta.queue";
-import { saveMessage } from "@modules/meta/core/conversation.service";
 import { decryptFacebookSecret } from "@modules/auth/core/tokenCrypto";
+import { executeCustomerTurn } from "@modules/ai-agent/customer/customerAgent.service";
+import {
+  applyCustomerDecision,
+  classifyCustomerDeliveryError,
+  type CustomerDeliveryAdapter,
+} from "@modules/ai-agent/customer/customerDecision.service";
+import type { CustomerChannel } from "@modules/ai-agent/customer/customerAgent.types";
 
 type FollowUpDelayUnit = "MINUTES" | "HOURS" | "DAYS";
 
@@ -63,8 +68,6 @@ export async function cancelConversationFollowUps(conversationId: number): Promi
 
 const DIRECT_CHANNELS = new Set(["web", "messenger", "whatsapp"]);
 const DELIVERED_TRIGGER_STATUSES = new Set(["SENT", "DELIVERED", "READ"]);
-const MAX_FOLLOW_UP_CHARS = 700;
-const FOLLOW_UP_TIMEOUT_MS = 8_000;
 const WHATSAPP_FREE_FORM_WINDOW_MS = 23 * 60 * 60 * 1000;
 const OPT_OUT_PATTERN =
   /\b(stop|unsubscribe|do not message|don't message|لا تراسل|وقف الرسائل|الغاء الاشتراك|إلغاء الاشتراك)\b/i;
@@ -121,104 +124,6 @@ function delayToMs(delay: FollowUpDelay): number {
         : 60 * 1000;
 
   return delay.amount * unitMs;
-}
-
-function cleanAiText(text: string): string {
-  const cleaned = text
-    .replace(/^```(?:text|json)?/i, "")
-    .replace(/```$/i, "")
-    .replace(/^["']|["']$/g, "")
-    .trim();
-
-  try {
-    const parsed = JSON.parse(cleaned);
-    if (parsed && typeof parsed === "object" && typeof parsed.content === "string") {
-      return parsed.content.trim();
-    }
-  } catch {
-    // Plain text is expected.
-  }
-
-  return cleaned.slice(0, MAX_FOLLOW_UP_CHARS).trim();
-}
-
-function buildFollowUpPrompt(params: {
-  businessProfile: any;
-  conversation: any;
-  history: Array<{ role: string; content: string; createdAt: Date }>;
-  delayIndex: number;
-}): string {
-  const { businessProfile, conversation, history, delayIndex } = params;
-  const customInstructions =
-    businessProfile.followUpMode === "CUSTOM" && businessProfile.followUpInstructions
-      ? businessProfile.followUpInstructions
-      : "";
-
-  const historyText = history
-    .map((m) => `${m.role.toUpperCase()}: ${m.content}`.trim())
-    .join("\n")
-    .slice(-5000);
-
-  return [
-    "<follow_up_task>",
-    "Write ONE customer-facing follow-up message for an existing support/sales chat.",
-    "Output ONLY the message text. Do not output JSON or markdown.",
-    "The message must be generated from the conversation context, not from a fixed template.",
-    "",
-    "<business_voice>",
-    `Business: ${businessProfile.name}`,
-    `Identity: ${businessProfile.identity}`,
-    `Voice / dialect: ${businessProfile.voice}`,
-    `Tone: ${businessProfile.tone}`,
-    `Target audience: ${businessProfile.targetAudience}`,
-    "</business_voice>",
-    "",
-    "<follow_up_context>",
-    `Channel: ${conversation.channel || "unknown"}`,
-    `Follow-up number: ${delayIndex + 1}`,
-    customInstructions ? `Admin guidance: ${customInstructions}` : "Mode: AI decides the best follow-up from chat context.",
-    "</follow_up_context>",
-    "",
-    "<hard_rules>",
-    "- Do not mention APIs, webhooks, CRM, jobs, databases, queues, or internal systems.",
-    "- Do not invent prices, policies, availability, delivery dates, appointments, identifiers, or contact details.",
-    "- Do not claim anything was confirmed, booked, saved, submitted, delivered, or completed unless the chat history explicitly says so.",
-    "- If the customer was waiting for a human or verification, politely continue that thread without promising an exact time.",
-    "- If the last customer message already closed the conversation, output an empty string.",
-    "- Keep it short: usually 1-2 sentences, plain text only.",
-    "</hard_rules>",
-    "",
-    "<conversation_history>",
-    historyText,
-    "</conversation_history>",
-    "</follow_up_task>",
-  ].join("\n");
-}
-
-async function generateFollowUpText(params: {
-  businessProfile: any;
-  conversation: any;
-  history: Array<{ role: string; content: string; createdAt: Date }>;
-  delayIndex: number;
-  }): Promise<string> {
-    const result = await AgentClient.runCapability({
-      userId: params.businessProfile.userId,
-      businessProfileId: params.businessProfile.id,
-      operation: "follow_up",
-      context: {
-        business: {
-          name: params.businessProfile.name,
-          voice: params.businessProfile.voice,
-          tone: params.businessProfile.tone,
-          follow_up_mode: params.businessProfile.followUpMode,
-          follow_up_instructions: params.businessProfile.followUpInstructions,
-        },
-        conversation: params.conversation,
-        history: params.history.map((item) => ({ role: item.role === "user" ? "customer" : "agent", content: item.content })),
-        delay_index: params.delayIndex,
-      },
-    });
-    return cleanAiText(result.content);
 }
 
 export async function scheduleConversationFollowUps(params: {
@@ -335,7 +240,17 @@ async function isWhatsAppFreeFormWindowOpen(conversationId: number) {
   return Date.now() - latestCustomerMessage.createdAt.getTime() < WHATSAPP_FREE_FORM_WINDOW_MS;
 }
 
-async function deliverFollowUp(conversation: any, businessProfile: any, text: string, messageId: number) {
+function createFollowUpDeliveryAdapter(conversation: any, businessProfile: any): CustomerDeliveryAdapter {
+  return async (message) => {
+    try {
+      return await deliverFollowUp(conversation, businessProfile, message.content);
+    } catch (error) {
+      throw classifyCustomerDeliveryError(error);
+    }
+  };
+}
+
+async function deliverFollowUp(conversation: any, businessProfile: any, text: string) {
   if (conversation.channel === "web") return;
 
   if (conversation.channel === "messenger") {
@@ -352,14 +267,7 @@ async function deliverFollowUp(conversation: any, businessProfile: any, text: st
     const { sendMessengerReply } = await import("@modules/meta/messenger/messenger.service");
     const token = decryptFacebookSecret(page.pageAccessToken);
     const result = await sendMessengerReply(conversation.senderId, text, token);
-    const externalId = (result as any)?.message_id;
-    if (externalId) {
-      await prisma.conversationMessage.update({
-        where: { id: messageId },
-        data: { externalId },
-      });
-    }
-    return;
+    return { externalId: (result as any)?.message_id ?? null };
   }
 
   if (conversation.channel === "whatsapp") {
@@ -381,28 +289,30 @@ async function deliverFollowUp(conversation: any, businessProfile: any, text: st
       account.phoneNumberId,
       token,
     );
-    const externalId = (result as any)?.messages?.[0]?.id;
-    if (externalId) {
-      await prisma.conversationMessage.update({
-        where: { id: messageId },
-        data: { externalId },
-      });
-    }
+    return { externalId: (result as any)?.messages?.[0]?.id ?? null };
   }
 }
 
 export async function processFollowUpJob(payload: FollowUpJobPayload) {
     const conversation = await prisma.conversation.findFirst({
       where: { id: payload.conversationId, businessProfileId: payload.businessProfileId },
-      include: { businessProfile: true, messages: { orderBy: { createdAt: "asc" }, take: 30, select: { role: true, content: true, createdAt: true } } },
+      include: { businessProfile: true },
     });
     if (!isFollowUpConversationEligible(conversation)) return;
     const trigger = await prisma.conversationMessage.findFirst({ where: { id: payload.triggerMessageId, conversationId: payload.conversationId }, select: { createdAt: true, status: true, role: true, origin: true, handoffCategory: true } });
     if (!isFollowUpTriggerEligible(trigger) || await hasNewerHumanOrCustomerMessage(payload.conversationId, trigger!.createdAt)) return;
     if (await customerOptedOut(payload.conversationId)) return;
     if (conversation!.channel === "whatsapp" && !(await isWhatsAppFreeFormWindowOpen(payload.conversationId))) return;
-    const text = await generateFollowUpText({ businessProfile: conversation!.businessProfile, conversation, history: conversation!.messages, delayIndex: payload.delayIndex });
-    if (!text) return;
+    const turn = await executeCustomerTurn({
+      userId: conversation.businessProfile.userId,
+      businessProfileId: payload.businessProfileId,
+      conversationId: payload.conversationId,
+      channel: conversation.channel as CustomerChannel,
+      customerText: "",
+      runMode: "follow_up",
+      followUpIndex: payload.delayIndex,
+      dedupeKey: `follow-up:${payload.conversationId}:${payload.triggerMessageId}:${payload.delayIndex}`,
+    });
 
     // Generation can take seconds. Re-check human control and every delivery
     // guard at the last application boundary so an active job cannot send
@@ -421,14 +331,12 @@ export async function processFollowUpJob(payload: FollowUpJobPayload) {
     if (await customerOptedOut(payload.conversationId)) return;
     if (currentConversation.channel === "whatsapp" && !(await isWhatsAppFreeFormWindowOpen(payload.conversationId))) return;
 
-    const saved = await saveMessage(conversation!.id, "model", text, { status: "SENT", origin: "follow_up" });
-    try {
-      await deliverFollowUp(conversation, conversation!.businessProfile, text, saved.id);
-    } catch (error: unknown) {
-      await prisma.conversationMessage.update({
-        where: { id: saved.id },
-        data: { status: "FAILED", aiReasoning: error instanceof Error ? error.message : String(error) },
-      });
-      throw error;
-    }
+    await applyCustomerDecision({
+      businessProfileId: payload.businessProfileId,
+      conversationId: payload.conversationId,
+      agentTurnId: turn.agentTurnId,
+      decision: turn.decision,
+      deliver: createFollowUpDeliveryAdapter(currentConversation, currentConversation.businessProfile),
+      origin: "follow_up",
+    });
   }

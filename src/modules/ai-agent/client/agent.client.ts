@@ -20,7 +20,7 @@ export class CustomerAgentRunAbortedError extends Error {
 }
 
 export type CapabilityOperation = "customer_memory" | "business_identity" |
-  "strategic_links" | "follow_up" | "content_plan" |
+  "strategic_links" | "content_plan" |
   "content_post" | "content_audit" | "media_understanding";
 
 export type CapabilityResultMap = {
@@ -35,7 +35,6 @@ export type CapabilityResultMap = {
     core_policies: string; confidence: number;
   };
   strategic_links: { links: Array<{ url: string; label: string; reason?: string }> };
-  follow_up: { content: string };
   content_plan: {
     goals: string[];
     posts: Array<{
@@ -75,7 +74,6 @@ const CONTEXT_KEYS: Record<string, string> = {
   currentCustomer: "current_customer",
   baseUrl: "base_url",
   pageContent: "page_content",
-  delayIndex: "delay_index",
   messageText: "message_text",
   historyTurns: "history_turns",
   mediaInfo: "media_info",
@@ -93,8 +91,6 @@ const BUSINESS_KEYS: Record<string, string> = {
   productsServices: "products_services",
   corePolicies: "core_policies",
   aiBehaviorInstructions: "ai_behavior_instructions",
-  followUpMode: "follow_up_mode",
-  followUpInstructions: "follow_up_instructions",
 };
 
 // Prisma profile payloads contain persistence and integration fields that are
@@ -104,8 +100,7 @@ const BUSINESS_KEYS: Record<string, string> = {
 const BUSINESS_ALLOWED_KEYS = new Set([
   "name", "identity", "voice", "tone", "targetAudience", "target_audience",
   "productsServices", "products_services", "corePolicies", "core_policies",
-  "aiBehaviorInstructions", "ai_behavior_instructions", "followUpMode",
-  "follow_up_mode", "followUpInstructions", "follow_up_instructions",
+  "aiBehaviorInstructions", "ai_behavior_instructions",
 ]);
 
 function capabilityContext(value: Record<string, unknown>): Record<string, unknown> {
@@ -125,9 +120,6 @@ function capabilityContext(value: Record<string, unknown>): Record<string, unkno
 
 function validateResult<K extends CapabilityOperation>(operation: K, value: unknown): CapabilityResultMap[K] {
   if (!isRecord(value)) throw new Error(`Agent capability ${operation} returned an invalid result`);
-  if (operation === "follow_up" && typeof value.content !== "string") {
-    throw new Error("Agent capability follow_up returned an invalid result");
-  }
   if (operation === "media_understanding" && typeof value.text !== "string") {
     throw new Error("Agent capability media_understanding returned an invalid result");
   }

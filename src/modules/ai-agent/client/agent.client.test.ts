@@ -49,16 +49,15 @@ describe("AgentClient", () => {
     expect(AgentClient.enabled()).toBe(false);
   });
 
-  it("waits for a pending SDK run and returns the completed typed result", async () => {
+  it("waits for a pending SDK capability run and returns the completed typed result", async () => {
     const output = await AgentClient.runCapability({
       userId: 7,
       businessProfileId: 10,
-      operation: "follow_up",
+      operation: "customer_memory",
       context: {
         business: { name: "Academy" },
-        conversation: { channel: "whatsapp" },
-        history: [{ role: "customer", content: "عاوز تفاصيل" }],
-        delayIndex: 0,
+        latestCustomerMessage: "عاوز تفاصيل",
+        recentMessages: [{ role: "customer", text: "عاوز تفاصيل" }],
       },
     });
 
@@ -67,12 +66,11 @@ describe("AgentClient", () => {
       input: {
         user_id: 7,
         business_profile_id: 10,
-        operation: "follow_up",
+        operation: "customer_memory",
         context: {
           business: { name: "Academy" },
-          conversation: { channel: "whatsapp" },
-          history: [{ role: "customer", content: "عاوز تفاصيل" }],
-          delay_index: 0,
+          latest_customer_message: "عاوز تفاصيل",
+          recent_messages: [{ role: "customer", text: "عاوز تفاصيل" }],
         },
       },
     });
@@ -283,14 +281,15 @@ describe("AgentClient", () => {
   );
 
   it("rejects a successful run with no graph result", async () => {
-    runsJoinMock.mockResolvedValueOnce({ operation: "follow_up" });
+    runsJoinMock.mockResolvedValueOnce({ operation: "customer_memory" });
     await expect(AgentClient.runCapability({
       userId: 7,
       businessProfileId: 10,
-      operation: "follow_up",
+      operation: "customer_memory",
       context: {
-        business: { name: "Academy" }, conversation: { channel: "web" },
-        history: [{ role: "customer", content: "hello" }], delayIndex: 0,
+        business: { name: "Academy" },
+        latestCustomerMessage: "hello",
+        recentMessages: [{ role: "customer", text: "hello" }],
       },
     })).rejects.toThrow("missing a result");
   });

@@ -5,7 +5,11 @@ import {
   scheduleConversationFollowUps,
 } from "./followUp.service";
 import { metaExpressQueue } from "@modules/meta/core/meta.queue";
-import { saveMessage } from "@modules/meta/core/conversation.service";
+
+const agentMocks = vi.hoisted(() => ({
+  executeCustomerTurn: vi.fn(),
+  applyCustomerDecision: vi.fn(),
+}));
 
 vi.mock("@config/prisma", () => ({
   default: {
@@ -37,8 +41,12 @@ vi.mock("@modules/meta/core/meta.queue", () => ({
   },
 }));
 
-vi.mock("@modules/meta/core/conversation.service", () => ({
-  saveMessage: vi.fn(),
+vi.mock("@modules/ai-agent/customer/customerAgent.service", () => ({
+  executeCustomerTurn: agentMocks.executeCustomerTurn,
+}));
+
+vi.mock("@modules/ai-agent/customer/customerDecision.service", () => ({
+  applyCustomerDecision: agentMocks.applyCustomerDecision,
 }));
 
 vi.mock("@modules/auth/core/tokenCrypto", () => ({
@@ -53,14 +61,7 @@ vi.mock("@utils/logger", () => ({
   },
 }));
 
-vi.mock("@modules/ai-agent/client/agent.client", () => ({
-  AgentClient: {
-    runCapability: vi.fn().mockResolvedValue({ content: "لسه مهتم بالبرنامج؟" }),
-  },
-}));
-
 import prisma from "@config/prisma";
-import { AgentClient } from "@modules/ai-agent/client/agent.client";
 
 const mockedPrisma = prisma as any;
 
@@ -119,7 +120,18 @@ describe("follow-up service", () => {
     mockedPrisma.conversationMessage.findMany.mockResolvedValue([]);
     vi.mocked(metaExpressQueue.getDelayed).mockResolvedValue([] as any);
     vi.mocked(metaExpressQueue.getWaiting).mockResolvedValue([] as any);
-    vi.mocked(saveMessage).mockResolvedValue({ id: 202 } as any);
+    agentMocks.executeCustomerTurn.mockResolvedValue({
+      agentTurnId: 303,
+      threadId: "thread-45",
+      runId: "run-follow-up",
+      decision: {
+        action: "REPLY",
+        content: "لسه مهتم بالبرنامج؟",
+        reason_code: "KNOWLEDGE_MATCH",
+        handoff_category: null,
+      },
+    });
+    agentMocks.applyCustomerDecision.mockResolvedValue({ action: "REPLY", delivery: "sent" });
   });
 
   it("schedules every configured follow-up delay", async () => {
@@ -156,7 +168,7 @@ describe("follow-up service", () => {
     );
   });
 
-  it("passes history to the typed capability and saves an eligible follow-up", async () => {
+  it("continues the persistent customer thread without inserting a fake customer message", async () => {
     mockedPrisma.conversationMessage.findFirst.mockResolvedValueOnce({
       createdAt: new Date("2026-05-10T10:00:05Z"),
       conversationId: 45,
@@ -173,22 +185,50 @@ describe("follow-up service", () => {
       delayIndex: 0,
     });
 
-    expect(AgentClient.runCapability).toHaveBeenCalledWith(expect.objectContaining({
+    expect(agentMocks.executeCustomerTurn).toHaveBeenCalledWith({
       userId: 7,
       businessProfileId: 10,
-      operation: "follow_up",
-      context: expect.objectContaining({
-        history: [
-          expect.objectContaining({ content: "عاوز اعرف التفاصيل" }),
-          expect.objectContaining({ content: "أكيد يا فندم." }),
-        ],
-        delay_index: 0,
-      }),
-    }));
-    expect(saveMessage).toHaveBeenCalledWith(45, "model", "لسه مهتم بالبرنامج؟", {
-      status: "SENT",
-      origin: "follow_up",
+      conversationId: 45,
+      channel: "web",
+      customerText: "",
+      runMode: "follow_up",
+      followUpIndex: 0,
+      dedupeKey: "follow-up:45:101:0",
     });
+    expect(agentMocks.applyCustomerDecision).toHaveBeenCalledWith(expect.objectContaining({
+      businessProfileId: 10,
+      conversationId: 45,
+      agentTurnId: 303,
+      decision: expect.objectContaining({ action: "REPLY", content: "لسه مهتم بالبرنامج؟" }),
+      origin: "follow_up",
+      deliver: expect.any(Function),
+    }));
+  });
+
+  it("reuses the deterministic turn identity and completed decision on retry", async () => {
+    const payload = {
+      conversationId: 45,
+      businessProfileId: 10,
+      triggerMessageId: 101,
+      delayIndex: 1,
+    };
+
+    await processFollowUpJob(payload);
+    await processFollowUpJob(payload);
+
+    expect(agentMocks.executeCustomerTurn).toHaveBeenCalledTimes(2);
+    expect(agentMocks.executeCustomerTurn).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      dedupeKey: "follow-up:45:101:1",
+    }));
+    expect(agentMocks.executeCustomerTurn).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      dedupeKey: "follow-up:45:101:1",
+    }));
+    expect(agentMocks.applyCustomerDecision).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      agentTurnId: 303,
+    }));
+    expect(agentMocks.applyCustomerDecision).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      agentTurnId: 303,
+    }));
   });
 
   it("does not persist or deliver when human handoff happens during generation", async () => {
@@ -203,9 +243,118 @@ describe("follow-up service", () => {
       delayIndex: 0,
     });
 
-    expect(AgentClient.runCapability).toHaveBeenCalledOnce();
+    expect(agentMocks.executeCustomerTurn).toHaveBeenCalledOnce();
     expect(mockedPrisma.conversation.findFirst).toHaveBeenCalledTimes(2);
-    expect(saveMessage).not.toHaveBeenCalled();
+    expect(agentMocks.applyCustomerDecision).not.toHaveBeenCalled();
+  });
+
+  it("does not start a run after newer customer or human activity", async () => {
+    mockedPrisma.conversationMessage.count.mockResolvedValueOnce(1);
+
+    await processFollowUpJob({
+      conversationId: 45,
+      businessProfileId: 10,
+      triggerMessageId: 101,
+      delayIndex: 0,
+    });
+
+    expect(agentMocks.executeCustomerTurn).not.toHaveBeenCalled();
+    expect(agentMocks.applyCustomerDecision).not.toHaveBeenCalled();
+  });
+
+  it("does not start a run after the customer opts out", async () => {
+    mockedPrisma.conversationMessage.findMany.mockResolvedValueOnce([{ content: "Please stop" }]);
+
+    await processFollowUpJob({
+      conversationId: 45,
+      businessProfileId: 10,
+      triggerMessageId: 101,
+      delayIndex: 0,
+    });
+
+    expect(agentMocks.executeCustomerTurn).not.toHaveBeenCalled();
+  });
+
+  it("does not start a WhatsApp run outside the free-form window", async () => {
+    mockedPrisma.conversation.findFirst.mockResolvedValue({ ...baseConversation, channel: "whatsapp" });
+    mockedPrisma.conversationMessage.findFirst
+      .mockResolvedValueOnce({
+        createdAt: new Date("2026-05-10T10:00:05Z"),
+        role: "model",
+        status: "SENT",
+        origin: null,
+        handoffCategory: null,
+      })
+      .mockResolvedValueOnce({ createdAt: new Date("2020-01-01T00:00:00Z") });
+
+    await processFollowUpJob({
+      conversationId: 45,
+      businessProfileId: 10,
+      triggerMessageId: 101,
+      delayIndex: 0,
+    });
+
+    expect(agentMocks.executeCustomerTurn).not.toHaveBeenCalled();
+  });
+
+  it("rechecks newer activity after generation before applying the decision", async () => {
+    mockedPrisma.conversationMessage.count
+      .mockResolvedValueOnce(0)
+      .mockResolvedValueOnce(1);
+
+    await processFollowUpJob({
+      conversationId: 45,
+      businessProfileId: 10,
+      triggerMessageId: 101,
+      delayIndex: 0,
+    });
+
+    expect(agentMocks.executeCustomerTurn).toHaveBeenCalledOnce();
+    expect(agentMocks.applyCustomerDecision).not.toHaveBeenCalled();
+  });
+
+  it("rechecks the trigger delivery status after generation", async () => {
+    mockedPrisma.conversationMessage.findFirst
+      .mockResolvedValueOnce({
+        createdAt: new Date("2026-05-10T10:00:05Z"),
+        role: "model",
+        status: "SENT",
+        origin: null,
+        handoffCategory: null,
+      })
+      .mockResolvedValueOnce({
+        createdAt: new Date("2026-05-10T10:00:05Z"),
+        role: "model",
+        status: "FAILED",
+        origin: null,
+        handoffCategory: null,
+      });
+
+    await processFollowUpJob({
+      conversationId: 45,
+      businessProfileId: 10,
+      triggerMessageId: 101,
+      delayIndex: 0,
+    });
+
+    expect(agentMocks.executeCustomerTurn).toHaveBeenCalledOnce();
+    expect(agentMocks.applyCustomerDecision).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { status: "RESOLVED", aiEnabled: true },
+    { status: "OPEN", aiEnabled: false },
+  ])("does not start a run for an ineligible conversation %#", async (override) => {
+    mockedPrisma.conversation.findFirst.mockResolvedValueOnce({ ...baseConversation, ...override });
+
+    await processFollowUpJob({
+      conversationId: 45,
+      businessProfileId: 10,
+      triggerMessageId: 101,
+      delayIndex: 0,
+    });
+
+    expect(agentMocks.executeCustomerTurn).not.toHaveBeenCalled();
   });
 
   it("rejects a trigger message that does not belong to the queued conversation", async () => {
@@ -221,8 +370,8 @@ describe("follow-up service", () => {
     expect(mockedPrisma.conversationMessage.findFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: 999, conversationId: 45 },
     }));
-    expect(AgentClient.runCapability).not.toHaveBeenCalled();
-    expect(saveMessage).not.toHaveBeenCalled();
+    expect(agentMocks.executeCustomerTurn).not.toHaveBeenCalled();
+    expect(agentMocks.applyCustomerDecision).not.toHaveBeenCalled();
   });
 
   it("cancels only waiting or delayed follow-up jobs for the selected conversation", async () => {

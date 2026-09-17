@@ -30,6 +30,23 @@ export class CustomerDeliveryAmbiguousError extends Error {
   }
 }
 
+export function classifyCustomerDeliveryError(error: unknown): unknown {
+  if (error instanceof CustomerDeliveryAmbiguousError) return error;
+  if (!(error instanceof Error)) return error;
+  const code = (error as Error & { code?: string }).code;
+  if (
+    (code && [
+      "ECONNRESET", "ECONNABORTED", "ECONNREFUSED", "ETIMEDOUT",
+      "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET",
+    ].includes(code)) ||
+    error.name === "AbortError" ||
+    /(?:network|socket|disconnect|connection reset|timed? ?out|fetch failed)/i.test(error.message)
+  ) {
+    return new CustomerDeliveryAmbiguousError("Customer delivery transport outcome is ambiguous");
+  }
+  return error;
+}
+
 export type ApplyCustomerDecisionParams = {
   businessProfileId: number;
   conversationId: number;

@@ -17,6 +17,7 @@ vi.mock("@modules/realtime/socketSync.service", () => socketMock);
 
 import {
   applyCustomerDecision,
+  classifyCustomerDeliveryError,
   CustomerDeliveryAmbiguousError,
 } from "./customerDecision.service";
 
@@ -45,6 +46,14 @@ function message(overrides: Record<string, unknown> = {}) {
 }
 
 describe("customer decision applier", () => {
+  it("classifies uncertain transport failures as ambiguous delivery outcomes", () => {
+    const timeout = Object.assign(new Error("socket timed out"), { code: "ETIMEDOUT" });
+
+    expect(classifyCustomerDeliveryError(timeout)).toBeInstanceOf(CustomerDeliveryAmbiguousError);
+    expect(classifyCustomerDeliveryError(new Error("provider rejected request")))
+      .not.toBeInstanceOf(CustomerDeliveryAmbiguousError);
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     prismaMock.conversation.findFirst.mockResolvedValue({ id: 45, businessProfileId: 10 });

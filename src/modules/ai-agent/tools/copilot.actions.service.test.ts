@@ -471,6 +471,7 @@ describe("agent settings", () => {
     prismaMock.businessProfile.findFirst.mockResolvedValue({
       id: 3, name: "Acme", voice: "Friendly", tone: "Calm", handoffEnabled: true,
       corePolicies: "No refunds.", aiBehaviorInstructions: "Be brief.",
+      followUpMode: "CUSTOM", followUpInstructions: "Mention the application deadline.",
       setupCompletedAt: null,
     });
     const out = await getAgentSettingsForUser({ userId: 7 });
@@ -480,6 +481,7 @@ describe("agent settings", () => {
     expect(out.settings).toEqual({
       name: "Acme", voice: "Friendly", tone: "Calm", handoffEnabled: true,
       corePolicies: "No refunds.", aiBehaviorInstructions: "Be brief.",
+      followUpMode: "CUSTOM", followUpInstructions: "Mention the application deadline.",
       setupCompleted: false,
     });
   });

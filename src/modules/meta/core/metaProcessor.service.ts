@@ -24,6 +24,7 @@ import {
 import { executeCustomerTurn } from "@modules/ai-agent/customer/customerAgent.service";
 import {
   applyCustomerDecision,
+  classifyCustomerDeliveryError,
   CustomerDeliveryAmbiguousError,
   type CustomerDeliveryAdapter,
 } from "@modules/ai-agent/customer/customerDecision.service";
@@ -799,21 +800,6 @@ async function deliverFacebookCommentReply(
 function commentGreeting(template: string | undefined, customerName: string | undefined): string {
   const greeting = template?.trim() || "Thanks {{name}}! I've sent the details to your inbox.";
   return greeting.replace(/{{\s*name\s*}}/gi, customerName?.trim() || "there");
-}
-
-function classifyCustomerDeliveryError(error: unknown): unknown {
-  if (error instanceof CustomerDeliveryAmbiguousError) return error;
-  if (isAmbiguousTransportError(error)) {
-    return new CustomerDeliveryAmbiguousError("Customer delivery transport outcome is ambiguous");
-  }
-  return error;
-}
-
-function isAmbiguousTransportError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  const code = (error as Error & { code?: string }).code;
-  if (code && ["ECONNRESET", "ECONNABORTED", "ECONNREFUSED", "ETIMEDOUT", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET"].includes(code)) return true;
-  return error.name === "AbortError" || /(?:network|socket|disconnect|connection reset|timed? ?out|fetch failed)/i.test(error.message);
 }
 
 /**

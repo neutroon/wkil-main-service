@@ -116,6 +116,64 @@ describe("processWidgetChatMessage", () => {
     });
   });
 
+  it("fails and releases the prepared turn when the final decision is invalid", async () => {
+    agentClientMock.joinCustomerRun.mockResolvedValueOnce({
+      action: "REPLY",
+      content: null,
+      reason_code: "KNOWLEDGE_MATCH",
+      handoff_category: null,
+    });
+
+    await expect(processWidgetChatMessage({
+      install,
+      visitorId: "visitor-123",
+      message: "Hello",
+    })).rejects.toThrow();
+
+    expect(customerTurnMock.finalizeCustomerTurn).toHaveBeenCalledOnce();
+    expect(prismaMock.agentTurn.update).toHaveBeenCalledWith({
+      where: { id: 8 },
+      data: { status: "FAILED", failureReason: "CUSTOMER_AGENT_FAILURE" },
+    });
+  });
+
+  it("fails and releases the prepared turn when durable history finalization fails", async () => {
+    customerTurnMock.finalizeCustomerTurn
+      .mockRejectedValueOnce(new Error("history unavailable"))
+      .mockResolvedValueOnce(undefined);
+
+    await expect(processWidgetChatMessage({
+      install,
+      visitorId: "visitor-123",
+      message: "Hello",
+    })).rejects.toThrow("history unavailable");
+
+    expect(customerTurnMock.finalizeCustomerTurn).toHaveBeenCalledTimes(2);
+    expect(prismaMock.agentTurn.update).toHaveBeenCalledWith({
+      where: { id: 8 },
+      data: { status: "FAILED", failureReason: "CUSTOMER_AGENT_FAILURE" },
+    });
+  });
+
+  it("marks the prepared turn failed when persisting durable completion fails", async () => {
+    prismaMock.agentTurn.update
+      .mockRejectedValueOnce(new Error("completion persistence unavailable"))
+      .mockResolvedValueOnce({ id: 8 });
+
+    await expect(processWidgetChatMessage({
+      install,
+      visitorId: "visitor-123",
+      message: "Hello",
+    })).rejects.toThrow("completion persistence unavailable");
+
+    expect(customerTurnMock.finalizeCustomerTurn).toHaveBeenCalledTimes(2);
+    expect(prismaMock.agentTurn.update).toHaveBeenLastCalledWith({
+      where: { id: 8 },
+      data: { status: "FAILED", failureReason: "CUSTOMER_AGENT_FAILURE" },
+    });
+    expect(decisionMock.applyCustomerDecision).not.toHaveBeenCalled();
+  });
+
   it("finalizes history seeding and records a redacted failure when the exact run join fails", async () => {
     const aborted = Object.assign(new Error("socket contained secret provider data"), {
       code: "CUSTOMER_AGENT_RUN_ABORTED",

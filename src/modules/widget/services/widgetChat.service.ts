@@ -9,6 +9,7 @@ import {
 import { applyCustomerDecision } from "@modules/ai-agent/customer/customerDecision.service";
 import {
   customerAgentDecisionSchema,
+  type CustomerAgentDecision,
 } from "@modules/ai-agent/customer/customerAgent.types";
 import {
   getOrCreateConversation,
@@ -112,16 +113,17 @@ export async function processWidgetChatMessage(
 ): Promise<WidgetChatResult> {
   const prepared = await prepareWidgetChatMessage(params);
   if (prepared.result) return prepared.result;
+  let decision: unknown;
   try {
-    const decision = await AgentClient.joinCustomerRun(
+    decision = await AgentClient.joinCustomerRun(
       prepared.handle.threadId,
       prepared.handle.runId,
     );
-    return completeWidgetChatMessage(prepared, decision);
   } catch (error) {
     await failWidgetChatMessage(prepared, error);
     throw error;
   }
+  return completeWidgetChatMessage(prepared, decision);
 }
 
 /** Completes the prepared turn from an already-observed Agent Server decision. */
@@ -129,12 +131,18 @@ export async function completeWidgetChatMessage(
   prepared: Exclude<PreparedWidgetChat, { result: WidgetChatResult }>,
   rawDecision: unknown,
 ): Promise<WidgetChatResult> {
-  const decision = customerAgentDecisionSchema.parse(rawDecision);
-  await finalizeCustomerTurn(prepared.turnParams, prepared.handle);
-  await prisma.agentTurn.update({
-    where: { id: prepared.handle.agentTurnId },
-    data: { decision, status: "COMPLETED", failureReason: null },
-  });
+  let decision: CustomerAgentDecision;
+  try {
+    decision = customerAgentDecisionSchema.parse(rawDecision);
+    await finalizeCustomerTurn(prepared.turnParams, prepared.handle);
+    await prisma.agentTurn.update({
+      where: { id: prepared.handle.agentTurnId },
+      data: { decision, status: "COMPLETED", failureReason: null },
+    });
+  } catch (error) {
+    await failWidgetChatMessage(prepared, error);
+    throw error;
+  }
 
   let attachment: WidgetChatResult["attachment"] = null;
   const applied = await applyCustomerDecision({
@@ -143,12 +151,12 @@ export async function completeWidgetChatMessage(
     agentTurnId: prepared.handle.agentTurnId,
     decision,
     deliver: async (message) => {
-      attachment = await resolveWidgetAttachment(rawDecision, prepared.businessProfileId);
+      attachment = await resolveWidgetAttachment(decision.attachment, prepared.businessProfileId);
       return { externalId: `widget:${message.id}` };
     },
   });
   if (applied.action === "REPLY" && !attachment) {
-    attachment = await resolveWidgetAttachment(rawDecision, prepared.businessProfileId);
+    attachment = await resolveWidgetAttachment(decision.attachment, prepared.businessProfileId);
   }
   return {
     reply: applied.action === "REPLY" ? applied.message.content : "",
@@ -186,15 +194,10 @@ function widgetMediaContext(message: { mediaMetadata?: unknown }): string | null
 }
 
 async function resolveWidgetAttachment(
-  rawDecision: unknown,
+  attachment: { asset_name: string; caption?: string | null } | null | undefined,
   businessProfileId: number,
 ): Promise<WidgetChatResult["attachment"]> {
-  const attachment = isRecord(rawDecision) && isRecord(rawDecision.attachment)
-    ? rawDecision.attachment
-    : null;
-  const assetName = attachment && typeof attachment.asset_name === "string"
-    ? attachment.asset_name.trim()
-    : "";
+  const assetName = attachment?.asset_name.trim() ?? "";
   if (!assetName) return null;
   const { resolveAssetForChannel } = await import("@modules/media/services/mediaLibrary.service");
   const resolved = await resolveAssetForChannel(assetName, businessProfileId, "web");
@@ -202,7 +205,7 @@ async function resolveWidgetAttachment(
   return {
     url: resolved.url,
     type: resolved.mediaType,
-    caption: typeof attachment?.caption === "string" ? attachment.caption : null,
+    caption: attachment?.caption ?? null,
   };
 }
 

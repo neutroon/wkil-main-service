@@ -16,6 +16,10 @@ export const customerAgentDecisionSchema = z
       .enum(["SALES", "SUPPORT", "COMPLAINT", "OTHER"])
       .nullable()
       .optional(),
+    attachment: z.object({
+      asset_name: z.string().trim().min(1).max(255),
+      caption: z.string().trim().max(1000).nullable().optional(),
+    }).nullable().optional(),
   })
   .superRefine((value, ctx) => {
     if (value.action === "REPLY" && !value.content) {
@@ -30,6 +34,13 @@ export const customerAgentDecisionSchema = z
         code: "custom",
         path: ["content"],
         message: "Only REPLY may contain content",
+      });
+    }
+    if (value.action !== "REPLY" && value.attachment) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["attachment"],
+        message: "Only REPLY may request an attachment",
       });
     }
   });

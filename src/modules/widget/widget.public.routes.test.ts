@@ -321,7 +321,7 @@ describe("POST /chat (public widget)", () => {
     expect(res.body).toContain("data: [DONE]");
   });
 
-  it("joins the prepared exact run stream and applies its structured terminal action", async () => {
+  it("consumes the exact run stream to exhaustion and joins its final state", async () => {
     vi.mocked(prisma.widgetInstall.findFirst).mockResolvedValue({
       ...baseInstall,
       allowedOrigins: ["https://shop.example"],
@@ -332,19 +332,29 @@ describe("POST /chat (public widget)", () => {
       businessProfileId: 20,
       conversationId: 101,
     } as any);
+    let streamExhausted = false;
     agentClientMock.joinCustomerRunStream.mockReturnValue((async function* () {
       yield {
         event: "values",
         data: {
           structured_response: {
-            action: "HANDOFF",
-            content: null,
-            reason_code: "HUMAN_ACTION_REQUIRED",
-            handoff_category: "SUPPORT",
+            action: "REPLY",
+            content: "Intermediate response",
+            reason_code: "KNOWLEDGE_MATCH",
+            handoff_category: null,
           },
         },
       };
+      yield { event: "metadata", data: { run_id: "run-1", phase: "complete" } };
+      streamExhausted = true;
     })());
+    const finalDecision = {
+      action: "HANDOFF",
+      content: null,
+      reason_code: "HUMAN_ACTION_REQUIRED",
+      handoff_category: "SUPPORT",
+    };
+    agentClientMock.joinCustomerRun.mockResolvedValue(finalDecision);
     vi.mocked((await import("./services/widgetChat.service")).completeWidgetChatMessage)
       .mockResolvedValue({ reply: "", action: "HANDOFF", conversationId: 101, attachment: null });
 
@@ -369,6 +379,14 @@ describe("POST /chat (public widget)", () => {
     );
     expect(res.body).toContain("\"event\":\"values\"");
     expect(res.body).toContain("\"action\":\"HANDOFF\"");
+    expect(streamExhausted).toBe(true);
+    expect(agentClientMock.joinCustomerRun).toHaveBeenCalledWith(
+      "thread-1",
+      "run-1",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect((await import("./services/widgetChat.service")).completeWidgetChatMessage)
+      .toHaveBeenCalledWith(expect.anything(), finalDecision);
     expect(agentClientMock.cancelCustomerRun).not.toHaveBeenCalled();
   });
 

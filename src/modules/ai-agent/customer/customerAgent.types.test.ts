@@ -20,4 +20,16 @@ describe("customerAgentDecisionSchema", () => {
       }),
     ).toThrow();
   });
+
+  it("preserves a validated attachment request in a reply decision", () => {
+    expect(customerAgentDecisionSchema.parse({
+      action: "REPLY",
+      content: "Here is the brochure.",
+      reason_code: "KNOWLEDGE_MATCH",
+      handoff_category: null,
+      attachment: { asset_name: "brochure", caption: "Product details" },
+    })).toMatchObject({
+      attachment: { asset_name: "brochure", caption: "Product details" },
+    });
+  });
 });

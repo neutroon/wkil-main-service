@@ -3055,11 +3055,21 @@ paths:
               schema: { $ref: "#/components/schemas/PublicWidgetChatResponse" }
             text/event-stream:
               schema:
-                type: object
-                description: SSE data frames. The terminal `final` frame contains a PublicWidgetChatResponse.
-                required: [final]
-                properties:
-                  final: { $ref: "#/components/schemas/PublicWidgetChatResponse" }
+                type: string
+                description: >-
+                  SSE `data:` frames. Progress frames contain `{ "status": "processing", "event": string }`;
+                  failure frames contain `{ "error": string }`; the successful terminal frame contains
+                  `{ "final": PublicWidgetChatResponse }`; and every stream ends with the literal `[DONE]` frame.
+              examples:
+                processing:
+                  summary: Run progress
+                  value: "data: {\"status\":\"processing\",\"event\":\"values\"}\n\n"
+                error:
+                  summary: Sanitized stream failure
+                  value: "data: {\"error\":\"Unable to complete chat response.\"}\n\ndata: [DONE]\n\n"
+                final:
+                  summary: Successful terminal response
+                  value: "data: {\"final\":{\"reply\":\"Hello\",\"conversationId\":101,\"action\":\"REPLY\",\"attachment\":null}}\n\ndata: [DONE]\n\n"
   /v1/public/widget/chat/media:
     options:
       tags: [Public Widget]

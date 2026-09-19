@@ -9,7 +9,6 @@ import {
   type PreparedWidgetChat,
 } from "./services/widgetChat.service";
 import { AgentClient } from "@modules/ai-agent/client/agent.client";
-import { customerAgentDecisionSchema } from "@modules/ai-agent/customer/customerAgent.types";
 import { mergeVisitorConversations } from "./services/widgetMigration.service";
 import { listConversationMessages } from "@modules/meta/core/conversation.service";
 import type { WidgetRequest } from "@modules/widget/widgetInstall.middleware";
@@ -49,12 +48,6 @@ function writeSseDone(res: Response): void {
   if (res.destroyed || res.writableEnded) return;
   res.write("data: [DONE]\n\n");
   res.end();
-}
-
-function streamDecision(data: unknown): unknown | null {
-  const values = isRecord(data) && isRecord(data.values) ? data.values : null;
-  const candidate = values?.structured_response ?? (isRecord(data) ? data.structured_response : undefined);
-  return customerAgentDecisionSchema.safeParse(candidate).success ? candidate : null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -207,7 +200,6 @@ widgetPublicRoutes.post(
           result = preparedRun.result;
           remoteRunCompleted = true;
         } else {
-          let decision: unknown | null = null;
           for await (const event of AgentClient.joinCustomerRunStream(
             preparedRun.handle.threadId,
             preparedRun.handle.runId,
@@ -215,27 +207,17 @@ widgetPublicRoutes.post(
           )) {
             if (clientClosed) break;
             writeSseData(res, { status: "processing", event: event.event });
-            const terminalDecision = streamDecision(event.data);
-            if (terminalDecision) {
-              decision = terminalDecision;
-              remoteRunCompleted = true;
-              break;
-            }
           }
-          if (!decision) {
-            // joinStream is intentionally unbuffered. A fast background run
-            // can finish before this request attaches, so read the terminal
-            // state from the same durable run rather than fabricating a result
-            // or starting a replacement run.
-            decision = await AgentClient.joinCustomerRun(
-              preparedRun.handle.threadId,
-              preparedRun.handle.runId,
-              { signal: controller.signal },
-            );
-            remoteRunCompleted = true;
-          }
-          // The terminal structured decision comes from this exact stream, so a
-          // later request-close callback must never interrupt the completed run.
+          // Values frames are snapshots, not completion signals. Consume the
+          // stream fully, then use the SDK's exact-run join to verify success
+          // and obtain the final persisted structured response. Joined stream
+          // output is intentionally unbuffered.
+          const decision = await AgentClient.joinCustomerRun(
+            preparedRun.handle.threadId,
+            preparedRun.handle.runId,
+            { signal: controller.signal },
+          );
+          remoteRunCompleted = true;
           result = await completeWidgetChatMessage(preparedRun, decision);
         }
         if (!clientClosed) {
@@ -394,4 +376,3 @@ widgetPublicRoutes.get(
 );
 
 export default widgetPublicRoutes;
-

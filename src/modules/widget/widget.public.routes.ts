@@ -1,4 +1,5 @@
 import { Router, Response } from "express";
+import { randomUUID } from "node:crypto";
 import multer from "multer";
 import prisma from "@config/prisma";
 import {
@@ -52,6 +53,13 @@ function writeSseDone(res: Response): void {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function widgetErrorCode(error: unknown): string {
+  const code = isRecord(error) && typeof error.code === "string" ? error.code : null;
+  if (code === "CUSTOMER_AGENT_RUN_ABORTED") return code;
+  if (error instanceof Error && /timeout/i.test(error.message)) return "CUSTOMER_AGENT_TIMEOUT";
+  return "CUSTOMER_AGENT_FAILURE";
 }
 
 function isPreparedRun(value: PreparedWidgetChat): value is Exclude<PreparedWidgetChat, { result: unknown }> {
@@ -161,6 +169,7 @@ widgetPublicRoutes.post(
       let remoteRunCompleted = false;
       let cancelRequested = false;
       let preparedRun: PreparedWidgetChat | null = null;
+      const correlationId = randomUUID();
       const cancelPreparedRun = () => {
         if (!cancelRequested && !remoteRunTerminal && !remoteRunCompleted && preparedRun && isPreparedRun(preparedRun)) {
           cancelRequested = true;
@@ -168,7 +177,8 @@ widgetPublicRoutes.post(
             .catch((error) => logger.warn("widget.chat.cancel_failed", {
               widgetInstallId: install.id,
               businessProfileId: install.businessProfileId,
-              error: error instanceof Error ? error.message : String(error),
+              errorCode: widgetErrorCode(error),
+              correlationId,
             }));
         }
       };
@@ -246,21 +256,22 @@ widgetPublicRoutes.post(
         if (
           preparedRun &&
           isPreparedRun(preparedRun) &&
-          !remoteRunCompleted &&
-          !(remoteRunTerminal && clientClosed)
+          !remoteRunCompleted
         ) {
           await Promise.resolve(failWidgetChatMessage(preparedRun, error)).catch((finalizeError) => {
             logger.warn("widget.chat.finalize_failed", {
               widgetInstallId: install.id,
               businessProfileId: install.businessProfileId,
-              error: finalizeError instanceof Error ? finalizeError.message : String(finalizeError),
+              errorCode: widgetErrorCode(finalizeError),
+              correlationId,
             });
           });
         }
         logger.error("widget.chat.stream_failed", {
           widgetInstallId: install.id,
           businessProfileId: install.businessProfileId,
-          error: error instanceof Error ? error.message : String(error),
+          errorCode: widgetErrorCode(error),
+          correlationId,
         });
         if (!clientClosed) {
           writeSseData(res, {

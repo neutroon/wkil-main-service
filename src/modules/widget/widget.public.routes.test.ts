@@ -513,6 +513,85 @@ describe("POST /chat (public widget)", () => {
     expect(failWidgetChatMessage).not.toHaveBeenCalled();
   });
 
+  it("finalizes a terminal run when exact final-state retrieval rejects after disconnect", async () => {
+    vi.mocked(prisma.widgetInstall.findFirst).mockResolvedValue({
+      ...baseInstall,
+      allowedOrigins: ["https://shop.example"],
+    });
+    const prepared = {
+      handle: { agentTurnId: 8, threadId: "thread-terminal-failure", runId: "run-terminal-failure" },
+      turnParams: {},
+      businessProfileId: 20,
+      conversationId: 101,
+    } as any;
+    vi.mocked(prepareWidgetChatMessage).mockResolvedValue(prepared);
+
+    let streamExhausted = false;
+    let finalJoinStarted = false;
+    let rejectFinalJoin!: (error: Error) => void;
+    const finalJoinRejected = new Promise<never>((_resolve, reject) => { rejectFinalJoin = reject; });
+    agentClientMock.joinCustomerRunStream.mockReturnValue((async function* () {
+      yield { event: "metadata", data: { run_id: "run-terminal-failure", phase: "complete" } };
+      streamExhausted = true;
+    })());
+    agentClientMock.joinCustomerRun.mockImplementationOnce(async () => {
+      finalJoinStarted = true;
+      return finalJoinRejected;
+    });
+    vi.mocked(completeWidgetChatMessage).mockResolvedValue({
+      reply: "",
+      action: "NO_REPLY",
+      conversationId: 101,
+      attachment: null,
+    });
+
+    const requestClosed = new Promise<void>((resolve, reject) => {
+      const addr = server.address() as { port: number };
+      const req = http.request({
+        hostname: "127.0.0.1",
+        port: addr.port,
+        path: "/chat",
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "content-length": String(Buffer.byteLength(JSON.stringify({
+            visitorId: "12345678-abcd-ef00-0000-000000000001",
+            message: "Please wait",
+            stream: true,
+          }))),
+          "x-widget-site-key": "wsk_test_xxxxxxxx",
+          origin: "https://shop.example",
+        },
+      });
+      req.on("error", (error) => {
+        if ((error as NodeJS.ErrnoException).code !== "ECONNRESET") reject(error);
+      });
+      req.on("close", resolve);
+      req.end(JSON.stringify({
+        visitorId: "12345678-abcd-ef00-0000-000000000001",
+        message: "Please wait",
+        stream: true,
+      }));
+
+      void (async () => {
+        await vi.waitFor(() => expect(streamExhausted).toBe(true));
+        await vi.waitFor(() => expect(finalJoinStarted).toBe(true));
+        req.destroy();
+        await requestClosed;
+        rejectFinalJoin(new Error("provider payload contains customer secret"));
+      })().catch(reject);
+    });
+
+    await requestClosed;
+    await vi.waitFor(() => expect(failWidgetChatMessage).toHaveBeenCalledWith(
+      prepared,
+      expect.objectContaining({ message: "provider payload contains customer secret" }),
+    ));
+
+    expect(agentClientMock.cancelCustomerRun).not.toHaveBeenCalled();
+    expect(completeWidgetChatMessage).not.toHaveBeenCalled();
+  });
+
   it("interrupts only the prepared exact run when the SSE client disconnects before completion", async () => {
     vi.mocked(prisma.widgetInstall.findFirst).mockResolvedValue({
       ...baseInstall,
@@ -531,6 +610,7 @@ describe("POST /chat (public widget)", () => {
         });
       })(),
     );
+    agentClientMock.cancelCustomerRun.mockRejectedValueOnce(new Error("provider credential leaked"));
 
     await abortAfterFirstSseData(server, JSON.stringify({
       visitorId: "12345678-abcd-ef00-0000-000000000001",
@@ -542,16 +622,34 @@ describe("POST /chat (public widget)", () => {
       "thread-cancel",
       "run-cancel",
     ));
+    await vi.waitFor(() => expect(logger.warn).toHaveBeenCalledWith(
+      "widget.chat.cancel_failed",
+      expect.objectContaining({
+        widgetInstallId: 1,
+        businessProfileId: 20,
+        errorCode: "CUSTOMER_AGENT_FAILURE",
+        correlationId: expect.any(String),
+      }),
+    ));
+    expect(JSON.stringify(vi.mocked(logger.warn).mock.calls)).not.toContain("provider credential leaked");
   });
 
-  it("sanitizes public SSE errors while logging internal details", async () => {
+  it("sanitizes public SSE errors and keeps finalization and stream logs redacted", async () => {
     vi.mocked(prisma.widgetInstall.findFirst).mockResolvedValue({
       ...baseInstall,
       allowedOrigins: ["https://shop.example"],
     });
-    vi.mocked(prepareWidgetChatMessage).mockRejectedValue(
-      new Error("database password leaked"),
-    );
+    const prepared = {
+      handle: { agentTurnId: 8, threadId: "thread-error", runId: "run-error" },
+      turnParams: {},
+      businessProfileId: 20,
+      conversationId: 101,
+    } as any;
+    vi.mocked(prepareWidgetChatMessage).mockResolvedValue(prepared);
+    agentClientMock.joinCustomerRunStream.mockReturnValue((async function* () {
+      throw new Error("database password leaked");
+    })());
+    vi.mocked(failWidgetChatMessage).mockRejectedValueOnce(new Error("SQL credential leaked"));
 
     const res = await doRequest(server, {
       method: "POST",
@@ -571,14 +669,30 @@ describe("POST /chat (public widget)", () => {
     expect(res.body).toContain("\"error\":\"Unable to complete chat response.\"");
     expect(res.body).not.toContain("database password leaked");
     expect(res.body).toContain("data: [DONE]");
+    await vi.waitFor(() => expect(logger.warn).toHaveBeenCalledWith(
+      "widget.chat.finalize_failed",
+      expect.objectContaining({
+        widgetInstallId: 1,
+        businessProfileId: 20,
+        errorCode: "CUSTOMER_AGENT_FAILURE",
+        correlationId: expect.any(String),
+      }),
+    ));
     expect(logger.error).toHaveBeenCalledWith(
       "widget.chat.stream_failed",
       expect.objectContaining({
         widgetInstallId: 1,
         businessProfileId: 20,
-        error: "database password leaked",
+        errorCode: "CUSTOMER_AGENT_FAILURE",
+        correlationId: expect.any(String),
       }),
     );
+    const serializedLogs = JSON.stringify([
+      ...vi.mocked(logger.warn).mock.calls,
+      ...vi.mocked(logger.error).mock.calls,
+    ]);
+    expect(serializedLogs).not.toContain("database password leaked");
+    expect(serializedLogs).not.toContain("SQL credential leaked");
   });
 });
 

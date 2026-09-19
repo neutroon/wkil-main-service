@@ -98,7 +98,7 @@ Server's Postgres database is separate from the business database.
 | `MONOLITH_TOOL_BASE_URL` | Agent callback URL: Compose uses `http://host.docker.internal:8080/internal/agent`; host development uses `http://localhost:8080/internal/agent` |
 | `NEXT_PUBLIC_API` | Browser's public gateway URL, default `http://localhost:8080`; never an Agent Server credential |
 
-Set `USE_AGENT_SERVICE=true` for backend background agent-service paths. Keep
+The backend uses Agent Server directly for background agent-service paths. Keep
 auth/CORS configuration aligned with the browser origin. Changing port 8080
 requires updating the browser gateway URL and the agent callback URL. Changing
 port 8123 requires updating the backend Agent Server URL.

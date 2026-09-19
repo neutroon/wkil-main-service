@@ -30,7 +30,6 @@ import { AgentClient } from "./agent.client";
 beforeEach(() => {
   vi.resetAllMocks();
   process.env.MONOLITH_AGENT_API_KEY = "internal-service-key";
-  process.env.USE_AGENT_SERVICE = "true";
   runsCreateMock.mockResolvedValue({
     run_id: "run-1", thread_id: "thread-1", assistant_id: "capability", status: "pending",
     created_at: "2026-09-05T00:00:00Z", updated_at: "2026-09-05T00:00:00Z",
@@ -44,11 +43,6 @@ beforeEach(() => {
 });
 
 describe("AgentClient", () => {
-  it("is disabled when USE_AGENT_SERVICE is off", () => {
-    process.env.USE_AGENT_SERVICE = "false";
-    expect(AgentClient.enabled()).toBe(false);
-  });
-
   it("waits for a pending SDK capability run and returns the completed typed result", async () => {
     const output = await AgentClient.runCapability({
       userId: 7,

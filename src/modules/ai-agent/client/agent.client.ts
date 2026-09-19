@@ -130,8 +130,6 @@ function validateResult<K extends CapabilityOperation>(operation: K, value: unkn
 }
 
 export class AgentClient {
-  static enabled() { return process.env.USE_AGENT_SERVICE === "true"; }
-
   private static client(): Client {
     const apiKey = process.env.MONOLITH_AGENT_API_KEY;
     if (!apiKey) throw new Error("MONOLITH_AGENT_API_KEY is required for backend agent calls");

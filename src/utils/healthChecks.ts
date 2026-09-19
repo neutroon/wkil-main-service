@@ -203,7 +203,7 @@ export const runHealthChecks = async (): Promise<HealthReport> => {
     checkRedis(),
     checkBullWorkers(),
     checkMetaApi(),
-    ...(env.USE_AGENT_SERVICE ? [checkAgentService()] : []),
+    checkAgentService(),
     checkRealtime(),
   ]);
   return {

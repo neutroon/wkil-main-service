@@ -12,7 +12,6 @@ primary_region = 'cdg'
   release_command = 'sh -c "DATABASE_URL=$DIRECT_URL npx prisma migrate deploy"'
 
 [env]
-  USE_AGENT_SERVICE = "true"
   # Private 6PN: the agent container runs an IPv6 forwarder ([::]:8123 -> 127.0.0.1:8123).
   LANGGRAPH_API_URL = "http://wkil-agent-service.internal:8123"
 

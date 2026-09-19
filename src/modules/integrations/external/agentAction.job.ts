@@ -1,14 +1,13 @@
-import { AgentClient } from "@modules/ai-agent/client/agent.client";
 import prisma from "@config/prisma";
 import { logger } from "@utils/logger";
 import { decryptFacebookSecret } from "@modules/auth/core/tokenCrypto";
 import { executeExternalQuery } from "./agentActionExecutor.service";
-import { getConversationHistory, saveMessage } from "@modules/meta/core/conversation.service";
-import { scheduleConversationFollowUps } from "@modules/follow-up/followUp.service";
+import { executeCustomerTurn } from "@modules/ai-agent/customer/customerAgent.service";
 import {
-  listActiveAgentActionWorkflows,
-  nextMutationSourceForCompletedLookup,
-} from "./agentActionWorkflow.service";
+  applyCustomerDecision,
+  classifyCustomerDeliveryError,
+  type CustomerDeliveryAdapter,
+} from "@modules/ai-agent/customer/customerDecision.service";
 import {
   markIntegrationActionRunRunning,
   markIntegrationActionRunSkipped,
@@ -60,37 +59,41 @@ export async function processIntegrationActionJob(
   }
   const staleAfter = await findNewerCustomerMessageAfterActionStart(job);
   if (staleAfter) { await markActionRunFromEnvelope({ actionRunId: job.actionRunId, envelope }); return; }
-  const historyRows = await getConversationHistory(job.conversationId);
-  const historyTurns = historyRows.map((row: any) => ({ role: row.role === "user" ? "user" as const : "model" as const, text: String(row.content || "") }));
-  const capabilityHistory = historyTurns.map((turn) => ({ role: turn.role === "user" ? "customer" as const : "agent" as const, content: turn.text }));
   const channel = normalizeChannel(conversation.channel);
-  const actionMessage = completedActionOriginalRequest(job, historyTurns);
-  const workflows = await listActiveAgentActionWorkflows(job.businessProfileId);
-  const workflow = (job.workflowId ? workflows.find((item) => item.id === job.workflowId) : workflows.find((item) => item.lookupSourceId === source.id)) || null;
-  const nextMutationSource = envelope.success && envelope.verification === "verified" ? nextMutationSourceForCompletedLookup(workflow, source) : null;
-  const replyResult = await AgentClient.runCapability({
+  const actionMessage = completedActionOriginalRequest(job);
+  // The customer reply is always a persistent LangGraph customer run, never a
+  // one-off capability or a copied history/decision loop in this worker.
+  const turn = await executeCustomerTurn({
     userId: conversation.businessProfile.userId,
     businessProfileId: job.businessProfileId,
-    operation: "customer_reply",
-    context: {
-      channel,
-      messageText: actionMessage,
-      business: { name: conversation.businessProfile.name, voice: conversation.businessProfile.voice, tone: conversation.businessProfile.tone, corePolicies: conversation.businessProfile.corePolicies, aiBehaviorInstructions: conversation.businessProfile.aiBehaviorInstructions },
-      historyTurns: capabilityHistory,
-      conversationId: job.conversationId,
-    },
+    conversationId: job.conversationId,
+    channel,
+    customerText: actionMessage,
+    runMode: "inbound",
+    dedupeKey: `integration-action:${job.actionRunId ?? job.sourceId}:${job.stepKey ?? "action"}`,
   });
-  const reply: any = { ...replyResult, handoffCategory: replyResult.handoff_category, content: replyResult.content || "" };
-  if (reply.action === "RESOLVE_CONVERSATION") { await prisma.conversation.update({ where: { id: job.conversationId }, data: { status: "RESOLVED" } }); await markActionRunFromEnvelope({ actionRunId: job.actionRunId, envelope }); return; }
-  const content = (reply.privateContent || reply.content || "").trim();
-  if (reply.action === "REPLY_AUTO" && !content && !reply.attachment) { await markActionRunFromEnvelope({ actionRunId: job.actionRunId, envelope }); return; }
-  const status: string = content ? "SENDING" : "FAILED";
-  const saved = await saveMessage(job.conversationId, "model", content, { status: status as any, aiReasoning: reply.reasoning, handoffCategory: reply.handoffCategory, intent: reply.intent, isPrivate: channel === "messenger" || channel === "whatsapp", origin: "integration_action_result" });
-  await markActionRunFromEnvelope({ actionRunId: job.actionRunId, envelope, resultMessageId: saved.id });
-  if (status === "SENDING" && content) {
-    const delivered = await deliverExternalLookupReply({ conversation: { id: conversation.id, businessProfileId: job.businessProfileId, pageId: conversation.pageId, senderId: conversation.senderId, externalId: conversation.externalId }, channel, messageId: saved.id, content });
-    if (delivered) await scheduleConversationFollowUps({ businessProfileId: job.businessProfileId, conversationId: job.conversationId, triggerMessageId: saved.id });
-  }
+  const decisionResult = await applyCustomerDecision({
+    businessProfileId: job.businessProfileId,
+    conversationId: job.conversationId,
+    agentTurnId: turn.agentTurnId,
+    decision: turn.decision,
+    origin: "integration_action_result",
+    deliver: createExternalLookupDeliveryAdapter({
+      conversation: {
+        id: conversation.id,
+        businessProfileId: job.businessProfileId,
+        pageId: conversation.pageId,
+        senderId: conversation.senderId,
+        externalId: conversation.externalId,
+      },
+      channel,
+    }),
+  });
+  await markActionRunFromEnvelope({
+    actionRunId: job.actionRunId,
+    envelope,
+    resultMessageId: "message" in decisionResult ? decisionResult.message.id : null,
+  });
 }
 
 async function markActionRunFromEnvelope(params: {
@@ -126,20 +129,11 @@ function normalizeChannel(
   return "messenger";
 }
 
-function latestUserMessage(
-  historyTurns: { role: "user" | "model"; text: string }[],
-): string | undefined {
-  return [...historyTurns].reverse().find((turn) => turn.role === "user")?.text;
-}
-
 function completedActionOriginalRequest(
   job: IntegrationActionJob,
-  historyTurns: { role: "user" | "model"; text: string }[],
 ): string {
-  const historyText = actionRequestHistoryText(historyTurns) ||
-    (job.historyText || "").trim();
-  const latestText =
-    (job.latestUserText || latestUserMessage(historyTurns) || "").trim();
+  const historyText = (job.historyText || "").trim();
+  const latestText = (job.latestUserText || "").trim();
 
   if (historyText && latestText && !historyText.includes(latestText)) {
     return [
@@ -153,19 +147,6 @@ function completedActionOriginalRequest(
   if (historyText) return `Recent chat context before the action:\n${historyText}`;
   if (latestText) return latestText;
   return "the customer's request";
-}
-
-function actionRequestHistoryText(
-  historyTurns: { role: "user" | "model"; text: string }[],
-): string {
-  return historyTurns
-    .map((turn) => {
-      const text = turn.text.trim();
-      if (!text) return "";
-      return `${turn.role === "user" ? "Customer" : "Assistant"}: ${text}`;
-    })
-    .filter(Boolean)
-    .join("\n");
 }
 
 async function findNewerCustomerMessageAfterActionStart(
@@ -212,7 +193,7 @@ async function findNewerCustomerMessageAfterActionStart(
   });
 }
 
-async function deliverExternalLookupReply(params: {
+function createExternalLookupDeliveryAdapter(params: {
   conversation: {
     id: number;
     businessProfileId: number;
@@ -221,87 +202,59 @@ async function deliverExternalLookupReply(params: {
     externalId: string | null;
   };
   channel: "messenger" | "whatsapp" | "web" | "facebook_comment";
-  messageId: number;
-  content: string;
-}): Promise<boolean> {
-  const { conversation, channel, messageId, content } = params;
+}): CustomerDeliveryAdapter {
+  const { conversation, channel } = params;
 
-  if (channel === "web") {
-    await prisma.conversationMessage.update({
-      where: { id: messageId },
-      data: { status: "SENT" },
-    });
-    return true;
-  }
+  return async (message) => {
+    if (channel === "web") return { externalId: null };
 
-  try {
-    if (channel === "whatsapp") {
-      const account = await prisma.whatsAppAccount.findFirst({
-        where: { phoneNumberId: conversation.pageId, isActive: true },
-        select: { accessToken: true },
-      });
-      if (!account) throw new Error("WhatsApp account not found");
-
-      const { sendWhatsAppReply } = await import(
-        "@modules/meta/whatsapp/whatsapp.service"
-      );
-      const res = await sendWhatsAppReply(
-        conversation.senderId,
-        content,
-        conversation.pageId,
-        decryptFacebookSecret(account.accessToken),
-      ) as { messages?: Array<{ id?: string }> };
-      const wamid = res?.messages?.[0]?.id;
-      if (wamid) {
-        await prisma.conversationMessage.update({
-          where: { id: messageId },
-          data: { status: "SENT", externalId: wamid },
+    try {
+      if (channel === "whatsapp") {
+        const account = await prisma.whatsAppAccount.findFirst({
+          where: { phoneNumberId: conversation.pageId, isActive: true },
+          select: { accessToken: true },
         });
-        return true;
+        if (!account) throw new Error("WhatsApp account not found");
+
+        const { sendWhatsAppReply } = await import(
+          "@modules/meta/whatsapp/whatsapp.service"
+        );
+        const res = await sendWhatsAppReply(
+          conversation.senderId,
+          message.content,
+          conversation.pageId,
+          decryptFacebookSecret(account.accessToken),
+        ) as { messages?: Array<{ id?: string }> };
+        return { externalId: res?.messages?.[0]?.id ?? null };
       }
-      return false;
-    }
 
-    if (channel === "messenger") {
-      const page = await prisma.facebookPage.findFirst({
-        where: { pageId: conversation.pageId, isActive: true },
-        select: { pageAccessToken: true },
-      });
-      if (!page) throw new Error("Messenger page not found");
-
-      const { sendMessengerReply } = await import(
-        "@modules/meta/messenger/messenger.service"
-      );
-      const res = await sendMessengerReply(
-        conversation.senderId,
-        content,
-        decryptFacebookSecret(page.pageAccessToken),
-      ) as { message_id?: string };
-      if (res?.message_id) {
-        await prisma.conversationMessage.update({
-          where: { id: messageId },
-          data: { status: "SENT", externalId: res.message_id },
+      if (channel === "messenger") {
+        const page = await prisma.facebookPage.findFirst({
+          where: { pageId: conversation.pageId, isActive: true },
+          select: { pageAccessToken: true },
         });
-        return true;
-      }
-      return false;
-    }
+        if (!page) throw new Error("Messenger page not found");
 
-    logger.info("integration_action.job.comment_delivery_deferred", {
-      conversationId: conversation.id,
-    });
-    return false;
-  } catch (error: any) {
-    logger.error("integration_action.job.delivery_failed", {
-      conversationId: conversation.id,
-      messageId,
-      channel,
-      error: error?.message || String(error),
-    });
-    await prisma.conversationMessage.update({
-      where: { id: messageId },
-      data: { status: "FAILED" },
-    });
-    return false;
-  }
+        const { sendMessengerReply } = await import(
+          "@modules/meta/messenger/messenger.service"
+        );
+        const res = await sendMessengerReply(
+          conversation.senderId,
+          message.content,
+          decryptFacebookSecret(page.pageAccessToken),
+        ) as { message_id?: string };
+        return { externalId: res?.message_id ?? null };
+      }
+
+      throw new Error("Facebook comment action delivery requires comment context");
+    } catch (error: any) {
+      logger.error("integration_action.job.delivery_failed", {
+        conversationId: conversation.id,
+        messageId: message.id,
+        channel,
+        error: error?.message || String(error),
+      });
+      throw classifyCustomerDeliveryError(error);
+    }
+  };
 }

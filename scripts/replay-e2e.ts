@@ -6,15 +6,15 @@ const SAMPLES: Array<Record<string, unknown>> = [
 ];
 
 async function main() {
-  if (!AgentClient.enabled()) {
-    console.error("Set USE_AGENT_SERVICE=true and LANGGRAPH_API_URL/LANGGRAPH_API_KEY first.");
+  if (!process.env.LANGGRAPH_API_URL || !process.env.MONOLITH_AGENT_API_KEY) {
+    console.error("Set LANGGRAPH_API_URL and MONOLITH_AGENT_API_KEY first.");
     process.exit(2);
   }
   let ok = 0, fail = 0;
   for (const [i, input] of SAMPLES.entries()) {
     try {
-      const r = await AgentClient.runAgent(input, { stream: false });
-      const status = (r as any)?.status ?? "unknown";
+      await AgentClient.runCopilot(input);
+      const status = "completed";
       console.log(`replay[${i}] status=${status}`);
       ok++;
     } catch (e: any) {

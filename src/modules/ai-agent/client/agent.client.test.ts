@@ -130,6 +130,38 @@ describe("AgentClient", () => {
     );
   });
 
+  it("passes a structured continuation through Agent Server context", async () => {
+    const continuation = {
+      type: "external_action_result" as const,
+      envelope: {
+        success: true,
+        verification: "verified" as const,
+        actionType: "integration_action_22",
+        reason: "data_returned",
+        data: { available: true },
+      },
+    };
+
+    await AgentClient.startCustomerRun({
+      threadId: "11111111-1111-4111-8111-111111111111",
+      messages: [],
+      context: {
+        userId: 7, businessProfileId: 10, conversationId: 45,
+        channel: "whatsapp", runMode: "inbound", continuation,
+      },
+      dedupeKey: "integration-action:81:action",
+    });
+
+    expect(runsCreateMock).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      "customer_agent",
+      expect.objectContaining({
+        input: expect.objectContaining({ messages: [] }),
+        context: continuation,
+      }),
+    );
+  });
+
   it("finds the newest exact dedupe match regardless of SDK list order", async () => {
     runsListMock.mockResolvedValueOnce([
       {

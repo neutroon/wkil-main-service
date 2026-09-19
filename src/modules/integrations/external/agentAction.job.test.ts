@@ -111,7 +111,17 @@ describe("integration action customer continuation", () => {
       businessProfileId: 10,
       conversationId: 45,
       channel: "web",
-      customerText: "Is it available?",
+      customerText: "",
+      continuation: {
+        type: "external_action_result",
+        envelope: {
+          success: true,
+          verification: "verified",
+          actionType: "integration_action_22",
+          reason: "data_returned",
+          data: { available: true },
+        },
+      },
       runMode: "inbound",
       dedupeKey: "integration-action:81:action",
     }));

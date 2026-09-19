@@ -2,6 +2,7 @@ import prisma from "@config/prisma";
 import { AgentClient } from "@modules/ai-agent/client/agent.client";
 import {
   customerAgentDecisionSchema,
+  type CustomerAgentContinuation,
   type CustomerAgentDecision,
   type CustomerChannel,
 } from "./customerAgent.types";
@@ -18,6 +19,7 @@ export type CustomerTurnParams = {
   customerText: string;
   runMode: RunMode;
   dedupeKey: string;
+  continuation?: CustomerAgentContinuation | null;
   mediaContext?: string | null;
   followUpIndex?: number | null;
   signal?: AbortSignal;
@@ -256,6 +258,7 @@ async function recoverOrStartRun(input: {
       conversationId: input.params.conversationId,
       channel: input.params.channel,
       runMode: input.params.runMode,
+      continuation: input.params.continuation,
       mediaContext: input.params.mediaContext,
       followUpIndex: input.params.followUpIndex,
     },
@@ -309,7 +312,10 @@ async function startCustomerRunWithinLease(
 
 async function messagesForRun(params: CustomerTurnParams, includeHistory: boolean): Promise<AgentInputMessage[]> {
   const messages: AgentInputMessage[] = [];
-  if (includeHistory) {
+  // A continuation resumes the existing persistent thread with one typed
+  // runtime context value. Never copy backend history or replay the original
+  // customer turn into the continuation run.
+  if (includeHistory && !params.continuation) {
     const history = await prisma.conversationMessage.findMany({
       where: {
         conversationId: params.conversationId,

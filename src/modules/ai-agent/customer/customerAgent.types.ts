@@ -51,3 +51,17 @@ export type CustomerChannel =
   | "messenger"
   | "whatsapp"
   | "facebook_comment";
+
+export type CustomerAgentExternalActionEnvelope = {
+  success: boolean;
+  verification: "verified" | "unverified" | "failed";
+  actionType: string;
+  reason: string;
+  data: unknown;
+  error?: string;
+};
+
+export type CustomerAgentContinuation = {
+  type: "external_action_result";
+  envelope: CustomerAgentExternalActionEnvelope;
+};

@@ -60,16 +60,18 @@ export async function processIntegrationActionJob(
   const staleAfter = await findNewerCustomerMessageAfterActionStart(job);
   if (staleAfter) { await markActionRunFromEnvelope({ actionRunId: job.actionRunId, envelope }); return; }
   const channel = normalizeChannel(conversation.channel);
-  const actionMessage = completedActionOriginalRequest(job);
   // The customer reply is always a persistent LangGraph customer run, never a
-  // one-off capability or a copied history/decision loop in this worker.
+  // one-off capability or a copied history/decision loop in this worker. The
+  // completed external result is transient structured run context; it is not
+  // re-added as a customer message and the original turn is not replayed.
   const turn = await executeCustomerTurn({
     userId: conversation.businessProfile.userId,
     businessProfileId: job.businessProfileId,
     conversationId: job.conversationId,
     channel,
-    customerText: actionMessage,
+    customerText: "",
     runMode: "inbound",
+    continuation: { type: "external_action_result", envelope },
     dedupeKey: `integration-action:${job.actionRunId ?? job.sourceId}:${job.stepKey ?? "action"}`,
   });
   const decisionResult = await applyCustomerDecision({
@@ -127,26 +129,6 @@ function normalizeChannel(
   if (channel === "web") return "web";
   if (channel === "facebook_comment") return "facebook_comment";
   return "messenger";
-}
-
-function completedActionOriginalRequest(
-  job: IntegrationActionJob,
-): string {
-  const historyText = (job.historyText || "").trim();
-  const latestText = (job.latestUserText || "").trim();
-
-  if (historyText && latestText && !historyText.includes(latestText)) {
-    return [
-      "Recent chat context before the action:",
-      historyText,
-      "",
-      "Latest customer message:",
-      latestText,
-    ].join("\n");
-  }
-  if (historyText) return `Recent chat context before the action:\n${historyText}`;
-  if (latestText) return latestText;
-  return "the customer's request";
 }
 
 async function findNewerCustomerMessageAfterActionStart(

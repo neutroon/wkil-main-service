@@ -23,36 +23,35 @@ Before starting the cutover, ALL of the following must be true:
   - `MONOLITH_SERVICE_TOKEN` — for agent-svc → monolith internal callbacks.
   - `QDRANT_URL` — Qdrant instance URL.
   - `QDRANT_COLLECTION` — collection name (e.g. `business_profile_chunks`).
-- [ ] `USE_AGENT_SERVICE=true` has been set in production for **≥ 1 week** with stable replay parity (see `scripts/replay-e2e.ts`, Task 25).
+- [ ] Agent Server is reachable from the monolith and the replay smoke has been stable for **≥ 1 week** (see `scripts/replay-e2e.ts`, Task 25).
 - [ ] `agent-svc` is deployed via docker compose and reachable from the monolith. The Python service lives in the sibling repo at `/agent-svc/` (workspace root, NOT inside `back-end/`).
 - [ ] Database backup / point-in-time recovery is available.
 - [ ] Maintenance window scheduled (table drop + monolith redeploy).
 
 ---
 
-## 2. Step 1 — Remove `USE_AGENT_SERVICE` flag branches from callers
+## 2. Step 1 — Make Agent Server the sole path for callers
 
 ✅ **COMPLETED** on this branch (commit `4726e4f`).
 
-Twelve caller files were wired in Tasks 21–22. Each contained the dual-path guard:
+Twelve caller files were wired in Tasks 21–22. Each contained a dual-path guard:
 
 ```ts
-if (AgentClient.enabled()) {
-  return AgentClient.runAgent({ /* ... */ } as any) as any;
+// legacy path selected by a runtime feature flag
+if (legacyPathEnabled()) {
+  return runLegacyAgentPath(payload);
 }
-
-// legacy body using core/nodes/rag modules below
 ```
 
-After cutover, `AgentClient` is the **sole** path. The transformation was:
+After cutover, the typed `AgentClient` methods are the **sole** path. The transformation was:
 
-1. **Delete** the entire `if (AgentClient.enabled()) { ... }` guard block at the top of the function.
+1. **Delete** the runtime guard and legacy branch at the top of the function.
 2. **Delete** the entire legacy body below the guard.
 3. **Replace** the function body with a direct call:
 
    ```ts
    export async function processFoo(payload: FooPayload) {
-     return AgentClient.runAgent({
+     return AgentClient.runCopilot({
        business_profile_id: payload.businessProfileId,
        user_id: payload.userId,
        messages: payload.messages ?? [],
@@ -163,9 +162,8 @@ docker compose -f docker-compose.agent-svc.yml up -d
 python scripts/smoke.py
 
 # 5. End-to-end replay against the live monolith (Task 25).
-USE_AGENT_SERVICE=true \
-  LANGGRAPH_API_URL=https://agent-svc.internal \
-  LANGGRAPH_API_KEY=*** \
+LANGGRAPH_API_URL=https://agent-svc.internal \
+  MONOLITH_AGENT_API_KEY=*** \
   npx ts-node scripts/replay-e2e.ts
 ```
 
@@ -179,7 +177,7 @@ If any step fails, **STOP** and consult Rollback.
 
 ## 6. Rollback
 
-After cutover, the `USE_AGENT_SERVICE` flag and the legacy `core/nodes/rag` modules are gone. Rollback = single `git revert` + redeploy.
+After cutover, the legacy runtime branch and `core/nodes/rag` modules are gone. Rollback = single `git revert` + redeploy.
 
 ```bash
 # Identify the cutover commits (Steps 1–3 in this order).
@@ -214,9 +212,8 @@ grep -RIn "ai-agent/rag" src/             || echo OK
 grep -RIn "BusinessProfileChunk" src/     || echo OK
 grep -RIn "BusinessProfileChunk" prisma/  || echo OK
 
-# No flag references remain.
-grep -RIn "USE_AGENT_SERVICE" src/        || echo OK
-grep -RIn "AgentClient\.enabled" src/     || echo OK
+# No obsolete caller API references remain.
+grep -RIn "runAgent" src/ scripts/        || echo OK
 ```
 
 > **Known follow-up:** The `ai-agent/chat/` directory still contains files (e.g. `aiFallbackPolicy.ts`, `deliveryPolicy.ts`, `replySideEffects.service.ts`) that import types from the now-deleted `ai-agent/core/aiEngine.utils`. These are type-only imports and do not affect the AgentClient-direct code path, but they will surface as TypeScript errors in the real-env build. They need to be cleaned up in a follow-up commit.

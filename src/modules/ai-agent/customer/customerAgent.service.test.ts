@@ -367,6 +367,32 @@ describe("customer agent coordinator", () => {
     }));
   });
 
+  it("starts an external-action continuation with only structured context", async () => {
+    const continuation = {
+      type: "external_action_result" as const,
+      envelope: {
+        success: true,
+        verification: "verified" as const,
+        actionType: "integration_action_22",
+        reason: "data_returned",
+        data: { available: true },
+      },
+    };
+
+    await prepareCustomerTurn({
+      ...baseParams,
+      customerText: "",
+      continuation,
+      dedupeKey: "integration-action:81:action",
+    });
+
+    expect(prismaMock.conversationMessage.findMany).not.toHaveBeenCalled();
+    expect(agentClientMock.startCustomerRun).toHaveBeenCalledWith(expect.objectContaining({
+      messages: [],
+      context: expect.objectContaining({ continuation }),
+    }));
+  });
+
   it("rejoins a persisted run instead of generating a second run on retry", async () => {
     prismaMock.agentTurn.upsert.mockResolvedValue({
       id: 8, businessProfileId: 10, conversationId: 45, channel: "whatsapp",

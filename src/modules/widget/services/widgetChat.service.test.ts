@@ -237,4 +237,36 @@ describe("processWidgetChatMessage", () => {
 
     expect(mediaLibraryMock.resolveAssetForChannel).toHaveBeenCalledWith("brochure", 10, "web");
   });
+
+  it("does not expose a model reply or attachment when delivery remains pending", async () => {
+    agentClientMock.joinCustomerRun.mockResolvedValueOnce({
+      action: "REPLY",
+      content: "This must stay server-side until delivery is confirmed",
+      reason_code: "KNOWLEDGE_MATCH",
+      handoff_category: null,
+      attachment: { asset_name: "brochure", caption: "Details" },
+    });
+    decisionMock.applyCustomerDecision.mockResolvedValueOnce({
+      action: "REPLY",
+      delivery: "pending",
+      message: { id: 100, content: "This must stay server-side until delivery is confirmed" },
+    });
+    mediaLibraryMock.resolveAssetForChannel.mockResolvedValueOnce({
+      url: "https://cdn.example/brochure.pdf",
+      mediaType: "document",
+    });
+
+    await expect(processWidgetChatMessage({
+      install,
+      visitorId: "visitor-123",
+      message: "Send the brochure",
+    })).resolves.toEqual({
+      reply: "",
+      conversationId: 45,
+      action: "NO_REPLY",
+      attachment: null,
+    });
+
+    expect(mediaLibraryMock.resolveAssetForChannel).not.toHaveBeenCalled();
+  });
 });

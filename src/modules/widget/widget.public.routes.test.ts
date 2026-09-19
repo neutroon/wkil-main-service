@@ -43,8 +43,10 @@ vi.mock("@modules/ai-agent/client/agent.client", () => ({
 import widgetPublicRoutes from "./widget.public.routes";
 import prisma from "@config/prisma";
 import {
+  completeWidgetChatMessage,
   prepareWidgetChatMessage,
   processWidgetChatMessage,
+  failWidgetChatMessage,
 } from "@modules/widget/services/widgetChat.service";
 import { logger } from "@utils/logger";
 
@@ -383,7 +385,6 @@ describe("POST /chat (public widget)", () => {
     expect(agentClientMock.joinCustomerRun).toHaveBeenCalledWith(
       "thread-1",
       "run-1",
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect((await import("./services/widgetChat.service")).completeWidgetChatMessage)
       .toHaveBeenCalledWith(expect.anything(), finalDecision);
@@ -410,7 +411,7 @@ describe("POST /chat (public widget)", () => {
       reason_code: "POLICY_SUPPRESSED",
       handoff_category: null,
     });
-    vi.mocked((await import("./services/widgetChat.service")).completeWidgetChatMessage)
+    vi.mocked(completeWidgetChatMessage)
       .mockResolvedValue({ reply: "", action: "NO_REPLY", conversationId: 101, attachment: null });
 
     const res = await doRequest(server, {
@@ -430,10 +431,86 @@ describe("POST /chat (public widget)", () => {
     expect(agentClientMock.joinCustomerRun).toHaveBeenCalledWith(
       "thread-fast",
       "run-fast",
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(res.body).toContain("\"action\":\"NO_REPLY\"");
     expect(res.body).not.toContain("\"error\"");
+  });
+
+  it("does not cancel or fail a terminal run when the client closes during final-state retrieval", async () => {
+    vi.mocked(prisma.widgetInstall.findFirst).mockResolvedValue({
+      ...baseInstall,
+      allowedOrigins: ["https://shop.example"],
+    });
+    vi.mocked(prepareWidgetChatMessage).mockResolvedValue({
+      handle: { agentTurnId: 8, threadId: "thread-terminal", runId: "run-terminal" },
+      turnParams: {},
+      businessProfileId: 20,
+      conversationId: 101,
+    } as any);
+
+    let streamExhausted = false;
+    let finalJoinStarted = false;
+    let releaseFinalJoin!: () => void;
+    const finalJoinReleased = new Promise<void>((resolve) => { releaseFinalJoin = resolve; });
+    agentClientMock.joinCustomerRunStream.mockReturnValue((async function* () {
+      yield { event: "metadata", data: { run_id: "run-terminal", phase: "complete" } };
+      streamExhausted = true;
+    })());
+    const finalDecision = {
+      action: "NO_REPLY",
+      content: null,
+      reason_code: "POLICY_SUPPRESSED",
+      handoff_category: null,
+    };
+    agentClientMock.joinCustomerRun.mockImplementationOnce(async () => {
+      finalJoinStarted = true;
+      await finalJoinReleased;
+      return finalDecision;
+    });
+    vi.mocked((await import("./services/widgetChat.service")).completeWidgetChatMessage)
+      .mockResolvedValue({ reply: "", action: "NO_REPLY", conversationId: 101, attachment: null });
+
+    const requestClosed = new Promise<void>((resolve, reject) => {
+      const addr = server.address() as { port: number };
+      const req = http.request({
+        hostname: "127.0.0.1",
+        port: addr.port,
+        path: "/chat",
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "content-length": String(Buffer.byteLength(JSON.stringify({
+            visitorId: "12345678-abcd-ef00-0000-000000000001",
+            message: "Please wait",
+            stream: true,
+          }))),
+          "x-widget-site-key": "wsk_test_xxxxxxxx",
+          origin: "https://shop.example",
+        },
+      });
+      req.on("error", (error) => {
+        if ((error as NodeJS.ErrnoException).code !== "ECONNRESET") reject(error);
+      });
+      req.on("close", resolve);
+      req.end(JSON.stringify({
+        visitorId: "12345678-abcd-ef00-0000-000000000001",
+        message: "Please wait",
+        stream: true,
+      }));
+
+      void (async () => {
+        await vi.waitFor(() => expect(streamExhausted).toBe(true));
+        await vi.waitFor(() => expect(finalJoinStarted).toBe(true));
+        req.destroy();
+      })().catch(reject);
+    });
+
+    await requestClosed;
+    releaseFinalJoin();
+    await vi.waitFor(() => expect(completeWidgetChatMessage).toHaveBeenCalled());
+
+    expect(agentClientMock.cancelCustomerRun).not.toHaveBeenCalled();
+    expect(failWidgetChatMessage).not.toHaveBeenCalled();
   });
 
   it("interrupts only the prepared exact run when the SSE client disconnects before completion", async () => {

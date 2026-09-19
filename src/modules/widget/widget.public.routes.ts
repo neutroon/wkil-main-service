@@ -157,11 +157,12 @@ widgetPublicRoutes.post(
 
       const controller = new AbortController();
       let clientClosed = false;
+      let remoteRunTerminal = false;
       let remoteRunCompleted = false;
       let cancelRequested = false;
       let preparedRun: PreparedWidgetChat | null = null;
       const cancelPreparedRun = () => {
-        if (!cancelRequested && !remoteRunCompleted && preparedRun && isPreparedRun(preparedRun)) {
+        if (!cancelRequested && !remoteRunTerminal && !remoteRunCompleted && preparedRun && isPreparedRun(preparedRun)) {
           cancelRequested = true;
           Promise.resolve(AgentClient.cancelCustomerRun(preparedRun.handle.threadId, preparedRun.handle.runId))
             .catch((error) => logger.warn("widget.chat.cancel_failed", {
@@ -200,14 +201,26 @@ widgetPublicRoutes.post(
           result = preparedRun.result;
           remoteRunCompleted = true;
         } else {
+          let streamEndedNaturally = true;
           for await (const event of AgentClient.joinCustomerRunStream(
             preparedRun.handle.threadId,
             preparedRun.handle.runId,
             { signal: controller.signal, cancelOnDisconnect: true },
           )) {
-            if (clientClosed) break;
+            if (clientClosed) {
+              streamEndedNaturally = false;
+              break;
+            }
             writeSseData(res, { status: "processing", event: event.event });
           }
+          if (!streamEndedNaturally) {
+            throw controller.signal.reason ?? new Error("Widget client disconnected before the customer run completed");
+          }
+          // A naturally exhausted exact-run stream is terminal. The final
+          // state read below must finish even if the client closes in this
+          // small gap; otherwise cancellation can race a completed remote
+          // run and rewrite its durable turn as FAILED.
+          remoteRunTerminal = true;
           // Values frames are snapshots, not completion signals. Consume the
           // stream fully, then use the SDK's exact-run join to verify success
           // and obtain the final persisted structured response. Joined stream
@@ -215,7 +228,6 @@ widgetPublicRoutes.post(
           const decision = await AgentClient.joinCustomerRun(
             preparedRun.handle.threadId,
             preparedRun.handle.runId,
-            { signal: controller.signal },
           );
           remoteRunCompleted = true;
           result = await completeWidgetChatMessage(preparedRun, decision);
@@ -231,7 +243,12 @@ widgetPublicRoutes.post(
           });
         }
       } catch (error) {
-        if (preparedRun && isPreparedRun(preparedRun) && !remoteRunCompleted) {
+        if (
+          preparedRun &&
+          isPreparedRun(preparedRun) &&
+          !remoteRunCompleted &&
+          !(remoteRunTerminal && clientClosed)
+        ) {
           await Promise.resolve(failWidgetChatMessage(preparedRun, error)).catch((finalizeError) => {
             logger.warn("widget.chat.finalize_failed", {
               widgetInstallId: install.id,

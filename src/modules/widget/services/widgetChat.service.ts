@@ -155,6 +155,17 @@ export async function completeWidgetChatMessage(
       return { externalId: `widget:${message.id}` };
     },
   });
+  if (applied.action === "REPLY" && applied.delivery === "pending") {
+    // A pending claim means another owner (or the human-control gate) still
+    // owns delivery. Do not leak the model output or resolve its attachment
+    // into an HTTP/SSE response until the provider send is confirmed.
+    return {
+      reply: "",
+      conversationId: prepared.conversationId,
+      action: "NO_REPLY",
+      attachment: null,
+    };
+  }
   if (applied.action === "REPLY" && !attachment) {
     attachment = await resolveWidgetAttachment(decision.attachment, prepared.businessProfileId);
   }

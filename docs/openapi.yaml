@@ -3052,9 +3052,14 @@ paths:
           description: Chat response, or SSE stream when stream is true.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/GenericObject" }
+              schema: { $ref: "#/components/schemas/PublicWidgetChatResponse" }
             text/event-stream:
-              schema: { type: string }
+              schema:
+                type: object
+                description: SSE data frames. The terminal `final` frame contains a PublicWidgetChatResponse.
+                required: [final]
+                properties:
+                  final: { $ref: "#/components/schemas/PublicWidgetChatResponse" }
   /v1/public/widget/chat/media:
     options:
       tags: [Public Widget]
@@ -3075,7 +3080,11 @@ paths:
         - $ref: "#/components/parameters/WidgetSiteKeyHeader"
       requestBody: { $ref: "#/components/requestBodies/PublicWidgetMediaChat" }
       responses:
-        "200": { $ref: "#/components/responses/Ok" }
+        "200":
+          description: Chat response.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublicWidgetChatResponse" }
   /v1/public/widget/chat/history:
     get:
       tags: [Public Widget]
@@ -4418,6 +4427,19 @@ components:
         conversationId: { type: [integer, "null"] }
         stream: { type: boolean }
         siteKey: { type: string, description: Optional alternative to X-Widget-Site-Key header for POST requests. }
+    PublicWidgetChatResponse:
+      type: object
+      required: [reply, conversationId, action]
+      properties:
+        reply: { type: string }
+        conversationId: { type: integer }
+        action: { type: string, enum: [REPLY, HANDOFF, RESOLVE, NO_REPLY] }
+        attachment:
+          type: [object, "null"]
+          properties:
+            url: { type: string, format: uri }
+            type: { type: string }
+            caption: { type: [string, "null"] }
     ContentAuditRequest:
       type: object
       properties:

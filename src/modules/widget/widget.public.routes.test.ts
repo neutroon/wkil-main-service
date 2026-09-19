@@ -6,6 +6,12 @@ import http from "http";
 import express, { Application } from "express";
 import type { WidgetInstall } from "@prisma/client";
 
+const agentClientMock = vi.hoisted(() => ({
+  joinCustomerRun: vi.fn(),
+  joinCustomerRunStream: vi.fn(),
+  cancelCustomerRun: vi.fn(),
+}));
+
 vi.mock("@config/prisma", () => ({
   default: {
     widgetInstall: {
@@ -16,6 +22,9 @@ vi.mock("@config/prisma", () => ({
 
 vi.mock("./services/widgetChat.service", () => ({
   processWidgetChatMessage: vi.fn(),
+  prepareWidgetChatMessage: vi.fn(),
+  completeWidgetChatMessage: vi.fn(),
+  failWidgetChatMessage: vi.fn(),
 }));
 
 vi.mock("@utils/logger", () => ({
@@ -27,9 +36,16 @@ vi.mock("@utils/logger", () => ({
   },
 }));
 
+vi.mock("@modules/ai-agent/client/agent.client", () => ({
+  AgentClient: agentClientMock,
+}));
+
 import widgetPublicRoutes from "./widget.public.routes";
 import prisma from "@config/prisma";
-import { processWidgetChatMessage } from "@modules/widget/services/widgetChat.service";
+import {
+  prepareWidgetChatMessage,
+  processWidgetChatMessage,
+} from "@modules/widget/services/widgetChat.service";
 import { logger } from "@utils/logger";
 
 function makeApp(): Application {
@@ -82,6 +98,35 @@ function doRequest(
   });
 }
 
+function abortAfterFirstSseData(
+  server: http.Server,
+  body: string,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const addr = server.address() as { port: number };
+    const req = http.request({
+      hostname: "127.0.0.1",
+      port: addr.port,
+      path: "/chat",
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "content-length": String(Buffer.byteLength(body)),
+        "x-widget-site-key": "wsk_test_xxxxxxxx",
+        origin: "https://shop.example",
+      },
+    });
+    req.on("error", (error) => {
+      if ((error as NodeJS.ErrnoException).code !== "ECONNRESET") reject(error);
+    });
+    req.on("close", () => resolve());
+    req.on("response", (res) => {
+      res.once("data", () => req.destroy());
+    });
+    req.end(body);
+  });
+}
+
 const baseInstall: WidgetInstall = {
   id: 1,
   userId: 10,
@@ -103,6 +148,7 @@ describe("POST /chat (public widget)", () => {
     () =>
       new Promise<void>((resolve) => {
         vi.clearAllMocks();
+        agentClientMock.cancelCustomerRun.mockResolvedValue(undefined);
         prevNodeEnv = process.env.NODE_ENV;
         process.env.NODE_ENV = "production";
         server = http.createServer(makeApp()).listen(0, "127.0.0.1", resolve);
@@ -200,6 +246,8 @@ describe("POST /chat (public widget)", () => {
     vi.mocked(processWidgetChatMessage).mockResolvedValue({
       reply: "Hello from widget",
       conversationId: 99,
+      action: "REPLY",
+      attachment: null,
     });
 
     const res = await doRequest(server, {
@@ -219,6 +267,7 @@ describe("POST /chat (public widget)", () => {
     expect(JSON.parse(res.body)).toEqual({
       reply: "Hello from widget",
       conversationId: 99,
+      action: "REPLY",
       attachment: null,
     });
     expect(processWidgetChatMessage).toHaveBeenCalledWith(
@@ -238,10 +287,13 @@ describe("POST /chat (public widget)", () => {
       ...baseInstall,
       allowedOrigins: ["https://shop.example"],
     });
-    vi.mocked(processWidgetChatMessage).mockResolvedValue({
-      reply: "Hello from SSE widget",
-      conversationId: 101,
-      attachment: null,
+    vi.mocked(prepareWidgetChatMessage).mockResolvedValue({
+      result: {
+        reply: "Hello from SSE widget",
+        conversationId: 101,
+        action: "REPLY",
+        attachment: null,
+      },
     });
 
     const res = await doRequest(server, {
@@ -265,7 +317,136 @@ describe("POST /chat (public widget)", () => {
     expect(res.body).toContain("data: ");
     expect(res.body).toContain("\"reply\":\"Hello from SSE widget\"");
     expect(res.body).toContain("\"conversationId\":101");
+    expect(res.body).toContain("\"action\":\"REPLY\"");
     expect(res.body).toContain("data: [DONE]");
+  });
+
+  it("joins the prepared exact run stream and applies its structured terminal action", async () => {
+    vi.mocked(prisma.widgetInstall.findFirst).mockResolvedValue({
+      ...baseInstall,
+      allowedOrigins: ["https://shop.example"],
+    });
+    vi.mocked(prepareWidgetChatMessage).mockResolvedValue({
+      handle: { agentTurnId: 8, threadId: "thread-1", runId: "run-1" },
+      turnParams: {},
+      businessProfileId: 20,
+      conversationId: 101,
+    } as any);
+    agentClientMock.joinCustomerRunStream.mockReturnValue((async function* () {
+      yield {
+        event: "values",
+        data: {
+          structured_response: {
+            action: "HANDOFF",
+            content: null,
+            reason_code: "HUMAN_ACTION_REQUIRED",
+            handoff_category: "SUPPORT",
+          },
+        },
+      };
+    })());
+    vi.mocked((await import("./services/widgetChat.service")).completeWidgetChatMessage)
+      .mockResolvedValue({ reply: "", action: "HANDOFF", conversationId: 101, attachment: null });
+
+    const res = await doRequest(server, {
+      method: "POST",
+      path: "/chat",
+      headers: {
+        "x-widget-site-key": "wsk_test_xxxxxxxx",
+        origin: "https://shop.example",
+      },
+      body: JSON.stringify({
+        visitorId: "12345678-abcd-ef00-0000-000000000001",
+        message: "Please help",
+        stream: true,
+      }),
+    });
+
+    expect(agentClientMock.joinCustomerRunStream).toHaveBeenCalledWith(
+      "thread-1",
+      "run-1",
+      expect.objectContaining({ cancelOnDisconnect: true, signal: expect.any(AbortSignal) }),
+    );
+    expect(res.body).toContain("\"event\":\"values\"");
+    expect(res.body).toContain("\"action\":\"HANDOFF\"");
+    expect(agentClientMock.cancelCustomerRun).not.toHaveBeenCalled();
+  });
+
+  it("reads the exact run final state when an unbuffered join stream has already ended", async () => {
+    vi.mocked(prisma.widgetInstall.findFirst).mockResolvedValue({
+      ...baseInstall,
+      allowedOrigins: ["https://shop.example"],
+    });
+    vi.mocked(prepareWidgetChatMessage).mockResolvedValue({
+      handle: { agentTurnId: 8, threadId: "thread-fast", runId: "run-fast" },
+      turnParams: {},
+      businessProfileId: 20,
+      conversationId: 101,
+    } as any);
+    agentClientMock.joinCustomerRunStream.mockReturnValue((async function* () {
+      yield { event: "metadata", data: { run_id: "run-fast" } };
+    })());
+    agentClientMock.joinCustomerRun.mockResolvedValue({
+      action: "NO_REPLY",
+      content: null,
+      reason_code: "POLICY_SUPPRESSED",
+      handoff_category: null,
+    });
+    vi.mocked((await import("./services/widgetChat.service")).completeWidgetChatMessage)
+      .mockResolvedValue({ reply: "", action: "NO_REPLY", conversationId: 101, attachment: null });
+
+    const res = await doRequest(server, {
+      method: "POST",
+      path: "/chat",
+      headers: {
+        "x-widget-site-key": "wsk_test_xxxxxxxx",
+        origin: "https://shop.example",
+      },
+      body: JSON.stringify({
+        visitorId: "12345678-abcd-ef00-0000-000000000001",
+        message: "Please help",
+        stream: true,
+      }),
+    });
+
+    expect(agentClientMock.joinCustomerRun).toHaveBeenCalledWith(
+      "thread-fast",
+      "run-fast",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(res.body).toContain("\"action\":\"NO_REPLY\"");
+    expect(res.body).not.toContain("\"error\"");
+  });
+
+  it("interrupts only the prepared exact run when the SSE client disconnects before completion", async () => {
+    vi.mocked(prisma.widgetInstall.findFirst).mockResolvedValue({
+      ...baseInstall,
+      allowedOrigins: ["https://shop.example"],
+    });
+    vi.mocked(prepareWidgetChatMessage).mockResolvedValue({
+      handle: { agentTurnId: 8, threadId: "thread-cancel", runId: "run-cancel" },
+      turnParams: {},
+      businessProfileId: 20,
+      conversationId: 101,
+    } as any);
+    agentClientMock.joinCustomerRunStream.mockImplementationOnce(
+      (_threadId: string, _runId: string, options: { signal: AbortSignal }) => (async function* () {
+        await new Promise<void>((_resolve, reject) => {
+          options.signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+        });
+      })(),
+    );
+
+    await abortAfterFirstSseData(server, JSON.stringify({
+      visitorId: "12345678-abcd-ef00-0000-000000000001",
+      message: "Please help",
+      stream: true,
+    }));
+
+    await vi.waitFor(() => expect(agentClientMock.cancelCustomerRun).toHaveBeenCalledWith(
+      "thread-cancel",
+      "run-cancel",
+    ));
   });
 
   it("sanitizes public SSE errors while logging internal details", async () => {
@@ -273,7 +454,7 @@ describe("POST /chat (public widget)", () => {
       ...baseInstall,
       allowedOrigins: ["https://shop.example"],
     });
-    vi.mocked(processWidgetChatMessage).mockRejectedValue(
+    vi.mocked(prepareWidgetChatMessage).mockRejectedValue(
       new Error("database password leaked"),
     );
 
@@ -371,7 +552,3 @@ describe("OPTIONS /chat (CORS preflight)", () => {
     );
   });
 });
-
-
-
-

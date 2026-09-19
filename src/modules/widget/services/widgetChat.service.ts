@@ -1,6 +1,15 @@
 import { AgentClient } from "@modules/ai-agent/client/agent.client";
 import prisma from "@config/prisma";
-import { logger } from "@utils/logger";
+import {
+  finalizeCustomerTurn,
+  prepareCustomerTurn,
+  type CustomerTurnHandle,
+  type CustomerTurnParams,
+} from "@modules/ai-agent/customer/customerAgent.service";
+import { applyCustomerDecision } from "@modules/ai-agent/customer/customerDecision.service";
+import {
+  customerAgentDecisionSchema,
+} from "@modules/ai-agent/customer/customerAgent.types";
 import {
   getOrCreateConversation,
   saveMessage,
@@ -29,73 +38,183 @@ type WidgetInboundMedia = {
   size: number;
 };
 
-export async function processWidgetChatMessage(params: {
+export type WidgetChatResult = {
+  reply: string;
+  conversationId: number;
+  action: "REPLY" | "HANDOFF" | "RESOLVE" | "NO_REPLY";
+  attachment: { url: string; type: string; caption?: string | null } | null;
+};
+
+type WidgetChatParams = {
   install: WidgetInstall;
   visitorId: string;
   message: string;
   conversationId?: number;
   media?: WidgetInboundMedia;
   verifiedUser?: VerifiedWidgetUser;
-}): Promise<{
-  reply: string;
-  conversationId: number;
-  attachment?: { url: string; type: string; caption?: string | null } | null;
-}> {
+};
+
+export type PreparedWidgetChat =
+  | { result: WidgetChatResult; handle?: never; turnParams?: never; businessProfileId?: never; conversationId?: never }
+  | {
+    result?: never;
+    handle: CustomerTurnHandle;
+    turnParams: CustomerTurnParams;
+    businessProfileId: number;
+    conversationId: number;
+  };
+
+/**
+ * Persists the public inbound message, then prepares its durable customer-agent
+ * turn. Streaming callers use the returned exact run handle instead of
+ * creating a second stateless capability invocation.
+ */
+export async function prepareWidgetChatMessage(
+  params: WidgetChatParams,
+  signal?: AbortSignal,
+): Promise<PreparedWidgetChat> {
   const prepared = await setupWidgetChat(params, createLatencyTrace());
   if (prepared.conversation.aiEnabled === false) {
-    return { reply: "", conversationId: prepared.conversation.id };
+    return {
+      result: {
+        reply: "",
+        conversationId: prepared.conversation.id,
+        action: "NO_REPLY",
+        attachment: null,
+      },
+    };
   }
-  const rows = await prisma.conversationMessage.findMany({
-    where: { conversationId: prepared.conversation.id },
-    orderBy: { createdAt: "asc" },
-    take: 40,
-    select: { role: true, content: true },
-  });
-  const result = await AgentClient.runCapability({
+  const turnParams: CustomerTurnParams = {
     userId: prepared.businessProfile.userId,
     businessProfileId: prepared.businessProfile.id,
-    operation: "customer_reply",
-    context: {
-      channel: "web",
-      messageText: params.message,
-      business: prepared.businessProfile,
-      historyTurns: rows.map((row) => ({
-        role: row.role === "user" ? "customer" : "agent",
-        content: row.content || "",
-      })),
-      mediaInfo: null,
-      conversationId: prepared.conversation.id,
+    conversationId: prepared.conversation.id,
+    channel: "web",
+    inputMessageId: prepared.userMessage.id,
+    customerText: params.message,
+    runMode: "inbound",
+    // The durable coordinator namespaces this local message identity by
+    // tenant, conversation, and web channel before persisting it.
+    dedupeKey: `message:${prepared.userMessage.id}`,
+    mediaContext: widgetMediaContext(prepared.userMessage),
+    signal,
+  };
+  const handle = await prepareCustomerTurn(turnParams);
+  return {
+    handle,
+    turnParams,
+    businessProfileId: prepared.businessProfile.id,
+    conversationId: prepared.conversation.id,
+  };
+}
+
+export async function processWidgetChatMessage(
+  params: WidgetChatParams,
+): Promise<WidgetChatResult> {
+  const prepared = await prepareWidgetChatMessage(params);
+  if (prepared.result) return prepared.result;
+  try {
+    const decision = await AgentClient.joinCustomerRun(
+      prepared.handle.threadId,
+      prepared.handle.runId,
+    );
+    return completeWidgetChatMessage(prepared, decision);
+  } catch (error) {
+    await failWidgetChatMessage(prepared, error);
+    throw error;
+  }
+}
+
+/** Completes the prepared turn from an already-observed Agent Server decision. */
+export async function completeWidgetChatMessage(
+  prepared: Exclude<PreparedWidgetChat, { result: WidgetChatResult }>,
+  rawDecision: unknown,
+): Promise<WidgetChatResult> {
+  const decision = customerAgentDecisionSchema.parse(rawDecision);
+  await finalizeCustomerTurn(prepared.turnParams, prepared.handle);
+  await prisma.agentTurn.update({
+    where: { id: prepared.handle.agentTurnId },
+    data: { decision, status: "COMPLETED", failureReason: null },
+  });
+
+  let attachment: WidgetChatResult["attachment"] = null;
+  const applied = await applyCustomerDecision({
+    businessProfileId: prepared.businessProfileId,
+    conversationId: prepared.conversationId,
+    agentTurnId: prepared.handle.agentTurnId,
+    decision,
+    deliver: async (message) => {
+      attachment = await resolveWidgetAttachment(rawDecision, prepared.businessProfileId);
+      return { externalId: `widget:${message.id}` };
     },
   });
-  if (result.action === "RESOLVE_CONVERSATION") {
-    await prisma.conversation.update({
-      where: { id: prepared.conversation.id }, data: { status: "RESOLVED" },
+  if (applied.action === "REPLY" && !attachment) {
+    attachment = await resolveWidgetAttachment(rawDecision, prepared.businessProfileId);
+  }
+  return {
+    reply: applied.action === "REPLY" ? applied.message.content : "",
+    conversationId: prepared.conversationId,
+    action: applied.action,
+    attachment,
+  };
+}
+
+/**
+ * Release/complete the coordinator's history claim even when the stream is
+ * interrupted, then leave only a redacted durable failure classification.
+ */
+export async function failWidgetChatMessage(
+  prepared: Exclude<PreparedWidgetChat, { result: WidgetChatResult }>,
+  error: unknown,
+): Promise<void> {
+  try {
+    await finalizeCustomerTurn(prepared.turnParams, prepared.handle);
+  } finally {
+    await prisma.agentTurn.update({
+      where: { id: prepared.handle.agentTurnId },
+      data: { status: "FAILED", failureReason: widgetTurnFailureCode(error) },
     });
-    return { reply: "", conversationId: prepared.conversation.id };
   }
-  const reply = (result.content || "").trim();
-  if (reply) {
-    await saveMessage(prepared.conversation.id, "model", reply, {
-      status: "SENT",
-      aiReasoning: result.reasoning,
-      handoffCategory: result.handoff_category,
-    });
+}
+
+function widgetMediaContext(message: { mediaMetadata?: unknown }): string | null {
+  if (message.mediaMetadata == null) return null;
+  try {
+    return JSON.stringify(message.mediaMetadata);
+  } catch {
+    return null;
   }
-  let attachment: { url: string; type: string; caption?: string | null } | null = null;
-  if (result.attachment?.asset_name) {
-    const { resolveAssetForChannel } = await import("@modules/media/services/mediaLibrary.service");
-    const resolved = await resolveAssetForChannel(
-      result.attachment.asset_name, prepared.businessProfile.id, "web",
-    );
-    if (resolved?.url) {
-      attachment = {
-        url: resolved.url,
-        type: resolved.mediaType,
-        caption: result.attachment.caption ?? null,
-      };
-    }
-  }
-  return { reply, conversationId: prepared.conversation.id, attachment };
+}
+
+async function resolveWidgetAttachment(
+  rawDecision: unknown,
+  businessProfileId: number,
+): Promise<WidgetChatResult["attachment"]> {
+  const attachment = isRecord(rawDecision) && isRecord(rawDecision.attachment)
+    ? rawDecision.attachment
+    : null;
+  const assetName = attachment && typeof attachment.asset_name === "string"
+    ? attachment.asset_name.trim()
+    : "";
+  if (!assetName) return null;
+  const { resolveAssetForChannel } = await import("@modules/media/services/mediaLibrary.service");
+  const resolved = await resolveAssetForChannel(assetName, businessProfileId, "web");
+  if (!resolved?.url) return null;
+  return {
+    url: resolved.url,
+    type: resolved.mediaType,
+    caption: typeof attachment?.caption === "string" ? attachment.caption : null,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function widgetTurnFailureCode(error: unknown): string {
+  const code = isRecord(error) && typeof error.code === "string" ? error.code : null;
+  if (code === "CUSTOMER_AGENT_RUN_ABORTED") return code;
+  if (error instanceof Error && /timeout/i.test(error.message)) return "CUSTOMER_AGENT_TIMEOUT";
+  return "CUSTOMER_AGENT_FAILURE";
 }
 
 /**

@@ -1,7 +1,15 @@
 import { Router, Response } from "express";
 import multer from "multer";
 import prisma from "@config/prisma";
-import { processWidgetChatMessage } from "./services/widgetChat.service";
+import {
+  completeWidgetChatMessage,
+  failWidgetChatMessage,
+  prepareWidgetChatMessage,
+  processWidgetChatMessage,
+  type PreparedWidgetChat,
+} from "./services/widgetChat.service";
+import { AgentClient } from "@modules/ai-agent/client/agent.client";
+import { customerAgentDecisionSchema } from "@modules/ai-agent/customer/customerAgent.types";
 import { mergeVisitorConversations } from "./services/widgetMigration.service";
 import { listConversationMessages } from "@modules/meta/core/conversation.service";
 import type { WidgetRequest } from "@modules/widget/widgetInstall.middleware";
@@ -41,6 +49,20 @@ function writeSseDone(res: Response): void {
   if (res.destroyed || res.writableEnded) return;
   res.write("data: [DONE]\n\n");
   res.end();
+}
+
+function streamDecision(data: unknown): unknown | null {
+  const values = isRecord(data) && isRecord(data.values) ? data.values : null;
+  const candidate = values?.structured_response ?? (isRecord(data) ? data.structured_response : undefined);
+  return customerAgentDecisionSchema.safeParse(candidate).success ? candidate : null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isPreparedRun(value: PreparedWidgetChat): value is Exclude<PreparedWidgetChat, { result: unknown }> {
+  return "handle" in value;
 }
 
 widgetPublicRoutes.options("/chat", widgetInstallAndCors);
@@ -140,25 +162,102 @@ widgetPublicRoutes.post(
       res.setHeader("X-Accel-Buffering", "no");
       res.flushHeaders?.();
 
+      const controller = new AbortController();
       let clientClosed = false;
-      req.on("close", () => {
+      let remoteRunCompleted = false;
+      let cancelRequested = false;
+      let preparedRun: PreparedWidgetChat | null = null;
+      const cancelPreparedRun = () => {
+        if (!cancelRequested && !remoteRunCompleted && preparedRun && isPreparedRun(preparedRun)) {
+          cancelRequested = true;
+          Promise.resolve(AgentClient.cancelCustomerRun(preparedRun.handle.threadId, preparedRun.handle.runId))
+            .catch((error) => logger.warn("widget.chat.cancel_failed", {
+              widgetInstallId: install.id,
+              businessProfileId: install.businessProfileId,
+              error: error instanceof Error ? error.message : String(error),
+            }));
+        }
+      };
+      const onClose = () => {
         clientClosed = true;
-      });
+        controller.abort(new Error("widget client disconnected"));
+        cancelPreparedRun();
+      };
+      req.on("close", onClose);
+      // Once the request body has been fully read, Node may only signal a
+      // browser-disconnected SSE response through the response socket.
+      res.on("close", onClose);
 
       try {
         writeSseData(res, { status: "processing" });
-        const result = await runChat();
+        preparedRun = await prepareWidgetChatMessage({
+          install,
+          visitorId: visitorId.trim(),
+          message: normalizedMessage,
+          conversationId,
+          verifiedUser: verifiedUser ?? undefined,
+        }, controller.signal);
+        if (clientClosed) {
+          cancelPreparedRun();
+          throw new Error("Widget client disconnected before the customer run stream joined");
+        }
+
+        let result;
+        if (preparedRun.result) {
+          result = preparedRun.result;
+          remoteRunCompleted = true;
+        } else {
+          let decision: unknown | null = null;
+          for await (const event of AgentClient.joinCustomerRunStream(
+            preparedRun.handle.threadId,
+            preparedRun.handle.runId,
+            { signal: controller.signal, cancelOnDisconnect: true },
+          )) {
+            if (clientClosed) break;
+            writeSseData(res, { status: "processing", event: event.event });
+            const terminalDecision = streamDecision(event.data);
+            if (terminalDecision) {
+              decision = terminalDecision;
+              remoteRunCompleted = true;
+              break;
+            }
+          }
+          if (!decision) {
+            // joinStream is intentionally unbuffered. A fast background run
+            // can finish before this request attaches, so read the terminal
+            // state from the same durable run rather than fabricating a result
+            // or starting a replacement run.
+            decision = await AgentClient.joinCustomerRun(
+              preparedRun.handle.threadId,
+              preparedRun.handle.runId,
+              { signal: controller.signal },
+            );
+            remoteRunCompleted = true;
+          }
+          // The terminal structured decision comes from this exact stream, so a
+          // later request-close callback must never interrupt the completed run.
+          result = await completeWidgetChatMessage(preparedRun, decision);
+        }
         if (!clientClosed) {
           writeSseData(res, {
             final: {
               reply: result.reply,
-              action: "REPLY_AUTO",
+              action: result.action,
               attachment: result.attachment ?? null,
               conversationId: result.conversationId,
             },
           });
         }
       } catch (error) {
+        if (preparedRun && isPreparedRun(preparedRun) && !remoteRunCompleted) {
+          await Promise.resolve(failWidgetChatMessage(preparedRun, error)).catch((finalizeError) => {
+            logger.warn("widget.chat.finalize_failed", {
+              widgetInstallId: install.id,
+              businessProfileId: install.businessProfileId,
+              error: finalizeError instanceof Error ? finalizeError.message : String(finalizeError),
+            });
+          });
+        }
         logger.error("widget.chat.stream_failed", {
           widgetInstallId: install.id,
           businessProfileId: install.businessProfileId,
@@ -171,6 +270,8 @@ widgetPublicRoutes.post(
         }
       }
 
+      req.off("close", onClose);
+      res.off("close", onClose);
       if (!clientClosed) {
         writeSseDone(res);
       }
@@ -180,11 +281,7 @@ widgetPublicRoutes.post(
     // ── Standard JSON Path ───────────────────────────────────────────
     const result = await runChat();
 
-    return res.json({
-      reply: result.reply,
-      conversationId: result.conversationId,
-      attachment: result.attachment ?? null,
-    });
+    return res.json(result);
   },
 );
 
@@ -218,11 +315,7 @@ widgetPublicRoutes.post(
       },
     });
 
-    return res.json({
-      reply: result.reply,
-      conversationId: result.conversationId,
-      attachment: result.attachment ?? null,
-    });
+    return res.json(result);
   },
 );
 
@@ -301,10 +394,4 @@ widgetPublicRoutes.get(
 );
 
 export default widgetPublicRoutes;
-
-
-
-
-
-
 

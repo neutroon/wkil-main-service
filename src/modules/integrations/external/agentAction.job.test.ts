@@ -150,4 +150,29 @@ describe("integration action customer continuation", () => {
       resultMessageId: 901,
     }));
   });
+
+  it("passes the complete external envelope to the coordinator for one boundary projection", async () => {
+    const completeData = { raw: "😀".repeat(5_000) };
+    executorMocks.executeExternalQuery.mockResolvedValueOnce({
+      success: true,
+      verification: "verified",
+      actionType: "integration_action_22",
+      reason: "data_returned",
+      data: completeData,
+    });
+
+    await processIntegrationActionJob({
+      businessProfileId: 10,
+      trigger: "CHAT_REQUESTED",
+      sourceId: 22,
+      actionRunId: 81,
+      conversationId: 45,
+    });
+
+    expect(agentMocks.executeCustomerTurn).toHaveBeenCalledWith(expect.objectContaining({
+      continuation: expect.objectContaining({
+        envelope: expect.objectContaining({ data: completeData }),
+      }),
+    }));
+  });
 });

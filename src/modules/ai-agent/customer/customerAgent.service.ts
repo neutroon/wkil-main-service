@@ -2,7 +2,7 @@ import prisma from "@config/prisma";
 import { AgentClient } from "@modules/ai-agent/client/agent.client";
 import {
   customerAgentDecisionSchema,
-  type CustomerAgentContinuation,
+  type CustomerAgentContinuationInput,
   type CustomerAgentDecision,
   type CustomerChannel,
 } from "./customerAgent.types";
@@ -19,7 +19,7 @@ export type CustomerTurnParams = {
   customerText: string;
   runMode: RunMode;
   dedupeKey: string;
-  continuation?: CustomerAgentContinuation | null;
+  continuation?: CustomerAgentContinuationInput | null;
   mediaContext?: string | null;
   followUpIndex?: number | null;
   signal?: AbortSignal;

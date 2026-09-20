@@ -1,7 +1,8 @@
 import { Client, type Run } from "@langchain/langgraph-sdk";
 import {
   customerAgentDecisionSchema,
-  type CustomerAgentContinuation,
+  projectCustomerAgentContinuation,
+  type CustomerAgentContinuationInput,
   type CustomerAgentDecision,
   type CustomerChannel,
 } from "../customer/customerAgent.types";
@@ -178,19 +179,22 @@ export class AgentClient {
       conversationId: number;
       channel: CustomerChannel;
       runMode: "inbound" | "follow_up";
-      continuation?: CustomerAgentContinuation | null;
+      continuation?: CustomerAgentContinuationInput | null;
       mediaContext?: string | null;
       followUpIndex?: number | null;
     };
     dedupeKey: string;
     signal?: AbortSignal;
   }): Promise<{ runId: string }> {
+    const continuation = request.context.continuation == null
+      ? undefined
+      : projectCustomerAgentContinuation(request.context.continuation);
     const run = await this.client().runs.create(
       request.threadId,
       "customer_agent",
       {
         input: this.customerRunInput(request.messages, request.context),
-        ...(request.context.continuation == null ? {} : { context: request.context.continuation }),
+        ...(continuation == null ? {} : { context: continuation }),
         multitaskStrategy: "enqueue",
         durability: "async",
         config: { recursion_limit: 6 },
@@ -297,7 +301,7 @@ export class AgentClient {
       conversationId: number;
       channel: CustomerChannel;
       runMode: "inbound" | "follow_up";
-      continuation?: CustomerAgentContinuation | null;
+      continuation?: CustomerAgentContinuationInput | null;
       mediaContext?: string | null;
       followUpIndex?: number | null;
     },

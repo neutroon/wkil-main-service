@@ -69,6 +69,33 @@ parent directory containing the three repositories.
    authorization. Login, navigation, business ownership, English/Arabic layout,
    and RTL remain in the existing application flow.
 
+## External-action continuations
+
+An integration-action worker keeps the complete external result in its backend
+action-run response/audit envelope, then starts the existing persistent
+`customer_agent` thread with one transient `external_action_result` value in
+Agent Server run `context`. It does not replay the original customer message,
+copy backend history, or put tenant/conversation identity in that envelope;
+canonical identity remains in graph state and server authorization.
+
+The model-facing projection is deterministic and JSON-only. Both the backend
+TypeScript boundary and `agent-svc` Python schema enforce the same limits:
+
+| Field | Limit |
+| --- | ---: |
+| compact UTF-8 serialized `context` | 16,384 bytes |
+| `actionType` / `reason` / `error` | 128 / 256 / 512 Unicode code points |
+| nested data depth | 5 container levels |
+| object keys / array items | 32 each |
+| nested data strings / keys | 1,024 / 128 Unicode code points |
+
+Long strings, keys, arrays, objects, and deep containers are reduced with the
+stable `[truncated]` marker while preserving valid JSON; object keys are ordered
+deterministically. Cycles, non-JSON values, non-finite or unsafe numbers, and
+unpaired Unicode surrogates are rejected before `runs.create`. The projection
+is only the bounded model context: the full envelope remains available to the
+backend action-run audit and status persistence.
+
 ## Installation and private configuration
 
 Use Node 24 (the backend manifest's engine), pnpm, Python 3.11+, uv, and Docker

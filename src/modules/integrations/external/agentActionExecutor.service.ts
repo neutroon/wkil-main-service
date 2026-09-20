@@ -12,7 +12,7 @@ import dns from "dns/promises";
 import net from "net";
 import type { AgentActionTrigger, AgentActionType } from "@prisma/client";
 
-type CanonicalVerification = "verified" | "unverified" | "failed";
+type CanonicalVerification = "verified" | "failed";
 const MASKED_SECRET = "********";
 const MAX_EXTERNAL_RESPONSE_BYTES = 1_000_000;
 const MAX_EXTERNAL_REDIRECTS = 3;
@@ -1289,6 +1289,4 @@ export async function testAgentActionWorkflowRequest(
     steps,
   };
 }
-
-
 

@@ -13,7 +13,6 @@
     "start": "node dist/server.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "smoke:chat-latency": "node scripts/chat-latency-smoke.js",
     "test:push:list": "ts-node -r tsconfig-paths/register scripts/test-push.ts --list",
     "test:push:status": "ts-node -r tsconfig-paths/register scripts/test-push.ts --status",
     "test:push:token": "ts-node -r tsconfig-paths/register scripts/test-push.ts --token",

@@ -162,6 +162,38 @@ describe("AgentClient", () => {
     );
   });
 
+  it("bounds continuation context before the official runs.create boundary", async () => {
+    await AgentClient.startCustomerRun({
+      threadId: "11111111-1111-4111-8111-111111111111",
+      messages: [],
+      context: {
+        userId: 7, businessProfileId: 10, conversationId: 45,
+        channel: "whatsapp", runMode: "inbound",
+        continuation: {
+          type: "external_action_result",
+          envelope: {
+            success: true,
+            verification: "verified",
+            actionType: "integration_action_22",
+            reason: "data_returned",
+            data: {
+              items: Array.from({ length: 200 }, (_, index) => ({
+                index,
+                description: "😀".repeat(2_000),
+              })),
+            },
+          },
+        },
+      },
+      dedupeKey: "integration-action:large",
+    });
+
+    const payload = runsCreateMock.mock.calls[0][2];
+    expect(Buffer.byteLength(JSON.stringify(payload.context), "utf8"))
+      .toBeLessThanOrEqual(16_384);
+    expect(JSON.stringify(payload.context)).toContain("[truncated]");
+  });
+
   it("finds the newest exact dedupe match regardless of SDK list order", async () => {
     runsListMock.mockResolvedValueOnce([
       {

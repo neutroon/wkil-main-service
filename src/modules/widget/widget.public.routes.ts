@@ -193,7 +193,7 @@ widgetPublicRoutes.post(
       res.on("close", onClose);
 
       try {
-        writeSseData(res, { status: "processing" });
+        writeSseData(res, { status: "processing", event: "values" });
         preparedRun = await prepareWidgetChatMessage({
           install,
           visitorId: visitorId.trim(),

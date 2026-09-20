@@ -317,6 +317,11 @@ describe("POST /chat (public widget)", () => {
     expect(res.headers["cache-control"]).toContain("no-transform");
     expect(res.headers["x-accel-buffering"]).toBe("no");
     expect(res.body).toContain("data: ");
+    const [initialFrame] = res.body.split("\n\n");
+    expect(JSON.parse(initialFrame.replace(/^data:\s*/, ""))).toEqual({
+      status: "processing",
+      event: "values",
+    });
     expect(res.body).toContain("\"reply\":\"Hello from SSE widget\"");
     expect(res.body).toContain("\"conversationId\":101");
     expect(res.body).toContain("\"action\":\"REPLY\"");

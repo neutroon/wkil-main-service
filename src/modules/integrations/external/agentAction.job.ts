@@ -193,7 +193,11 @@ function createExternalLookupDeliveryAdapter(params: {
     try {
       if (channel === "whatsapp") {
         const account = await prisma.whatsAppAccount.findFirst({
-          where: { phoneNumberId: conversation.pageId, isActive: true },
+          where: {
+            phoneNumberId: conversation.pageId,
+            businessProfileId: conversation.businessProfileId,
+            isActive: true,
+          },
           select: { accessToken: true },
         });
         if (!account) throw new Error("WhatsApp account not found");
@@ -212,7 +216,11 @@ function createExternalLookupDeliveryAdapter(params: {
 
       if (channel === "messenger") {
         const page = await prisma.facebookPage.findFirst({
-          where: { pageId: conversation.pageId, isActive: true },
+          where: {
+            pageId: conversation.pageId,
+            businessProfileId: conversation.businessProfileId,
+            isActive: true,
+          },
           select: { pageAccessToken: true },
         });
         if (!page) throw new Error("Messenger page not found");

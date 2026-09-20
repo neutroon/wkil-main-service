@@ -3,8 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const agentMocks = vi.hoisted(() => ({
   executeCustomerTurn: vi.fn(),
   applyCustomerDecision: vi.fn(),
+  classifyCustomerDeliveryError: vi.fn((error: unknown) => error),
 }));
 const executorMocks = vi.hoisted(() => ({ executeExternalQuery: vi.fn() }));
+const deliveryMocks = vi.hoisted(() => ({
+  decryptFacebookSecret: vi.fn((value: string) => `decrypted:${value}`),
+  sendMessengerReply: vi.fn(),
+  sendWhatsAppReply: vi.fn(),
+}));
 const workflowMocks = vi.hoisted(() => ({
   listActiveAgentActionWorkflows: vi.fn(),
   nextMutationSourceForCompletedLookup: vi.fn(),
@@ -23,7 +29,12 @@ vi.mock("@config/prisma", () => ({
     integrationActionRun: { findUnique: vi.fn() },
     agentActionWorkflow: { findFirst: vi.fn() },
     conversationMessage: { findFirst: vi.fn() },
+    whatsAppAccount: { findFirst: vi.fn() },
+    facebookPage: { findFirst: vi.fn() },
   },
+}));
+vi.mock("@modules/auth/core/tokenCrypto", () => ({
+  decryptFacebookSecret: deliveryMocks.decryptFacebookSecret,
 }));
 vi.mock("@modules/ai-agent/customer/customerAgent.service", () => agentMocks);
 vi.mock("@modules/ai-agent/customer/customerDecision.service", () => agentMocks);
@@ -42,6 +53,12 @@ vi.mock("@modules/meta/core/conversation.service", () => ({
 }));
 vi.mock("@modules/follow-up/followUp.service", () => ({
   scheduleConversationFollowUps: vi.fn(),
+}));
+vi.mock("@modules/meta/messenger/messenger.service", () => ({
+  sendMessengerReply: deliveryMocks.sendMessengerReply,
+}));
+vi.mock("@modules/meta/whatsapp/whatsapp.service", () => ({
+  sendWhatsAppReply: deliveryMocks.sendWhatsAppReply,
 }));
 
 import prisma from "@config/prisma";
@@ -92,6 +109,8 @@ describe("integration action customer continuation", () => {
       delivery: "sent",
       message: { id: 901 },
     });
+    deliveryMocks.sendWhatsAppReply.mockResolvedValue({ messages: [{ id: "wamid-a" }] });
+    deliveryMocks.sendMessengerReply.mockResolvedValue({ message_id: "mid-a" });
   });
 
   it("continues a completed external action through the persistent customer coordinator", async () => {
@@ -174,5 +193,188 @@ describe("integration action customer continuation", () => {
         envelope: expect.objectContaining({ data: completeData }),
       }),
     }));
+  });
+
+  it("delivers WhatsApp replies with the credential owned by the conversation profile", async () => {
+    mockedPrisma.conversation.findFirst.mockResolvedValueOnce({
+      id: 45,
+      businessProfileId: 10,
+      channel: "whatsapp",
+      pageId: "phone-number-1",
+      senderId: "customer-1",
+      externalId: null,
+      businessProfile: { userId: 7 },
+    });
+    const accounts = [
+      { phoneNumberId: "phone-number-1", businessProfileId: 20, accessToken: "tenant-b-token", isActive: true },
+      { phoneNumberId: "phone-number-1", businessProfileId: 10, accessToken: "tenant-a-token", isActive: true },
+    ];
+    mockedPrisma.whatsAppAccount.findFirst.mockImplementation(({ where }: any) => Promise.resolve(
+      accounts.find((account) =>
+        account.phoneNumberId === where.phoneNumberId &&
+        account.isActive !== false &&
+        (where.businessProfileId === undefined || account.businessProfileId === where.businessProfileId),
+      ),
+    ));
+
+    await processIntegrationActionJob({
+      businessProfileId: 10,
+      trigger: "CHAT_REQUESTED",
+      sourceId: 22,
+      actionRunId: 81,
+      conversationId: 45,
+    });
+
+    const { deliver } = agentMocks.applyCustomerDecision.mock.calls[0][0];
+    await expect(deliver({
+      id: 901,
+      conversationId: 45,
+      agentTurnId: 303,
+      content: "Yes, it is available.",
+      status: "SENDING",
+      externalId: null,
+    })).resolves.toEqual({ externalId: "wamid-a" });
+
+    expect(mockedPrisma.whatsAppAccount.findFirst).toHaveBeenCalledWith({
+      where: {
+        phoneNumberId: "phone-number-1",
+        businessProfileId: 10,
+        isActive: true,
+      },
+      select: { accessToken: true },
+    });
+    expect(deliveryMocks.sendWhatsAppReply).toHaveBeenCalledWith(
+      "customer-1",
+      "Yes, it is available.",
+      "phone-number-1",
+      "decrypted:tenant-a-token",
+    );
+  });
+
+  it("rejects WhatsApp delivery when only a same-identifier account from another profile exists", async () => {
+    mockedPrisma.conversation.findFirst.mockResolvedValueOnce({
+      id: 45,
+      businessProfileId: 10,
+      channel: "whatsapp",
+      pageId: "phone-number-1",
+      senderId: "customer-1",
+      externalId: null,
+      businessProfile: { userId: 7 },
+    });
+    mockedPrisma.whatsAppAccount.findFirst.mockImplementation(({ where }: any) => Promise.resolve(
+      where.businessProfileId === undefined
+        ? { phoneNumberId: "phone-number-1", businessProfileId: 20, accessToken: "tenant-b-token", isActive: true }
+        : null,
+    ));
+
+    await processIntegrationActionJob({
+      businessProfileId: 10,
+      trigger: "CHAT_REQUESTED",
+      sourceId: 22,
+      actionRunId: 81,
+      conversationId: 45,
+    });
+
+    const { deliver } = agentMocks.applyCustomerDecision.mock.calls[0][0];
+    await expect(deliver({
+      id: 901,
+      conversationId: 45,
+      agentTurnId: 303,
+      content: "Yes, it is available.",
+      status: "SENDING",
+      externalId: null,
+    })).rejects.toThrow("WhatsApp account not found");
+    expect(deliveryMocks.sendWhatsAppReply).not.toHaveBeenCalled();
+  });
+
+  it("delivers Messenger replies with the credential owned by the conversation profile", async () => {
+    mockedPrisma.conversation.findFirst.mockResolvedValueOnce({
+      id: 45,
+      businessProfileId: 10,
+      channel: "messenger",
+      pageId: "page-1",
+      senderId: "customer-1",
+      externalId: null,
+      businessProfile: { userId: 7 },
+    });
+    const pages = [
+      { pageId: "page-1", businessProfileId: 20, pageAccessToken: "tenant-b-token", isActive: true },
+      { pageId: "page-1", businessProfileId: 10, pageAccessToken: "tenant-a-token", isActive: true },
+    ];
+    mockedPrisma.facebookPage.findFirst.mockImplementation(({ where }: any) => Promise.resolve(
+      pages.find((page) =>
+        page.pageId === where.pageId &&
+        page.isActive !== false &&
+        (where.businessProfileId === undefined || page.businessProfileId === where.businessProfileId),
+      ),
+    ));
+
+    await processIntegrationActionJob({
+      businessProfileId: 10,
+      trigger: "CHAT_REQUESTED",
+      sourceId: 22,
+      actionRunId: 81,
+      conversationId: 45,
+    });
+
+    const { deliver } = agentMocks.applyCustomerDecision.mock.calls[0][0];
+    await expect(deliver({
+      id: 901,
+      conversationId: 45,
+      agentTurnId: 303,
+      content: "Yes, it is available.",
+      status: "SENDING",
+      externalId: null,
+    })).resolves.toEqual({ externalId: "mid-a" });
+
+    expect(mockedPrisma.facebookPage.findFirst).toHaveBeenCalledWith({
+      where: {
+        pageId: "page-1",
+        businessProfileId: 10,
+        isActive: true,
+      },
+      select: { pageAccessToken: true },
+    });
+    expect(deliveryMocks.sendMessengerReply).toHaveBeenCalledWith(
+      "customer-1",
+      "Yes, it is available.",
+      "decrypted:tenant-a-token",
+    );
+  });
+
+  it("rejects Messenger delivery when only a same-identifier page from another profile exists", async () => {
+    mockedPrisma.conversation.findFirst.mockResolvedValueOnce({
+      id: 45,
+      businessProfileId: 10,
+      channel: "messenger",
+      pageId: "page-1",
+      senderId: "customer-1",
+      externalId: null,
+      businessProfile: { userId: 7 },
+    });
+    mockedPrisma.facebookPage.findFirst.mockImplementation(({ where }: any) => Promise.resolve(
+      where.businessProfileId === undefined
+        ? { pageId: "page-1", businessProfileId: 20, pageAccessToken: "tenant-b-token", isActive: true }
+        : null,
+    ));
+
+    await processIntegrationActionJob({
+      businessProfileId: 10,
+      trigger: "CHAT_REQUESTED",
+      sourceId: 22,
+      actionRunId: 81,
+      conversationId: 45,
+    });
+
+    const { deliver } = agentMocks.applyCustomerDecision.mock.calls[0][0];
+    await expect(deliver({
+      id: 901,
+      conversationId: 45,
+      agentTurnId: 303,
+      content: "Yes, it is available.",
+      status: "SENDING",
+      externalId: null,
+    })).rejects.toThrow("Messenger page not found");
+    expect(deliveryMocks.sendMessengerReply).not.toHaveBeenCalled();
   });
 });

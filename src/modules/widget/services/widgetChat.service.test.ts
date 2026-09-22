@@ -13,7 +13,7 @@ const customerTurnMock = vi.hoisted(() => ({
   finalizeCustomerTurn: vi.fn(),
 }));
 const decisionMock = vi.hoisted(() => ({ applyCustomerDecision: vi.fn() }));
-const agentClientMock = vi.hoisted(() => ({ joinCustomerRun: vi.fn() }));
+const agentClientMock = vi.hoisted(() => ({ joinCustomerRun: vi.fn(), cancelCustomerRun: vi.fn() }));
 const mediaLibraryMock = vi.hoisted(() => ({ resolveAssetForChannel: vi.fn() }));
 
 vi.mock("@config/prisma", () => ({ default: prismaMock }));
@@ -29,7 +29,7 @@ vi.mock("@utils/latencyTrace", () => ({
   createLatencyTrace: () => ({ measure: async (_label: string, fn: () => unknown) => fn(), measureDb: async (_label: string, fn: () => unknown) => fn() }),
 }));
 
-import { processWidgetChatMessage } from "./widgetChat.service";
+import { prepareWidgetChatMessage, processWidgetChatMessage } from "./widgetChat.service";
 
 const install = {
   id: 1,
@@ -55,6 +55,7 @@ describe("processWidgetChatMessage", () => {
     agentClientMock.joinCustomerRun.mockResolvedValue({
       action: "REPLY", content: "Welcome", reason_code: "KNOWLEDGE_MATCH", handoff_category: null,
     });
+    agentClientMock.cancelCustomerRun.mockResolvedValue(undefined);
     prismaMock.agentTurn.update.mockResolvedValue({ id: 8 });
     decisionMock.applyCustomerDecision.mockResolvedValue({
       action: "REPLY", delivery: "sent", message: { id: 100, content: "Welcome" },
@@ -82,7 +83,7 @@ describe("processWidgetChatMessage", () => {
       customerText: "Hello",
       dedupeKey: "message:99",
     }));
-    expect(agentClientMock.joinCustomerRun).toHaveBeenCalledWith("thread-1", "run-1");
+    expect(agentClientMock.joinCustomerRun).toHaveBeenCalledWith("thread-1", "run-1", { signal: undefined });
     expect(decisionMock.applyCustomerDecision).toHaveBeenCalledWith(expect.objectContaining({
       businessProfileId: 10,
       conversationId: 45,
@@ -90,6 +91,70 @@ describe("processWidgetChatMessage", () => {
       decision: expect.objectContaining({ action: "REPLY" }),
       deliver: expect.any(Function),
     }));
+  });
+
+  it("passes one request signal through preparation and the exact run join", async () => {
+    const controller = new AbortController();
+
+    await expect(processWidgetChatMessage({
+      install,
+      visitorId: "visitor-123",
+      message: "Hello",
+    }, controller.signal)).resolves.toMatchObject({
+      reply: "Welcome",
+      action: "REPLY",
+    });
+
+    expect(customerTurnMock.prepareCustomerTurn).toHaveBeenCalledWith(expect.objectContaining({
+      signal: controller.signal,
+    }));
+    expect(agentClientMock.joinCustomerRun).toHaveBeenCalledWith(
+      "thread-1",
+      "run-1",
+      { signal: controller.signal },
+    );
+  });
+
+  it("does not join or broad-cancel when preparation is aborted before a handle exists", async () => {
+    const controller = new AbortController();
+    controller.abort("widget disconnected");
+    customerTurnMock.prepareCustomerTurn.mockRejectedValueOnce(new Error("preparation aborted"));
+
+    await expect(prepareWidgetChatMessage({
+      install,
+      visitorId: "visitor-123",
+      message: "Hello",
+    }, controller.signal)).rejects.toThrow("preparation aborted");
+
+    expect(agentClientMock.joinCustomerRun).not.toHaveBeenCalled();
+    expect(agentClientMock.cancelCustomerRun).not.toHaveBeenCalled();
+  });
+
+  it("continues durable completion after the request aborts once exact join has returned", async () => {
+    const controller = new AbortController();
+    agentClientMock.joinCustomerRun.mockImplementationOnce(async () => {
+      controller.abort("widget disconnected after remote completion");
+      return {
+        action: "REPLY",
+        content: "Welcome",
+        reason_code: "KNOWLEDGE_MATCH",
+        handoff_category: null,
+      };
+    });
+
+    await expect(processWidgetChatMessage({
+      install,
+      visitorId: "visitor-123",
+      message: "Hello",
+    }, controller.signal)).resolves.toMatchObject({
+      reply: "Welcome",
+      action: "REPLY",
+    });
+
+    expect(prismaMock.agentTurn.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: "COMPLETED" }),
+    }));
+    expect(agentClientMock.cancelCustomerRun).not.toHaveBeenCalled();
   });
 
   it("does not mark a completed customer run failed when applying its decision fails", async () => {
@@ -175,6 +240,8 @@ describe("processWidgetChatMessage", () => {
   });
 
   it("finalizes history seeding and records a redacted failure when the exact run join fails", async () => {
+    const controller = new AbortController();
+    controller.abort("widget disconnected");
     const aborted = Object.assign(new Error("socket contained secret provider data"), {
       code: "CUSTOMER_AGENT_RUN_ABORTED",
     });
@@ -184,9 +251,14 @@ describe("processWidgetChatMessage", () => {
       install,
       visitorId: "visitor-123",
       message: "Hello",
-    })).rejects.toBe(aborted);
+    }, controller.signal)).rejects.toBe(aborted);
 
     expect(customerTurnMock.finalizeCustomerTurn).toHaveBeenCalledOnce();
+    expect(agentClientMock.joinCustomerRun).toHaveBeenCalledWith(
+      "thread-1",
+      "run-1",
+      { signal: controller.signal },
+    );
     expect(prismaMock.agentTurn.update).toHaveBeenCalledWith({
       where: { id: 8 },
       data: {

@@ -66,6 +66,44 @@ function isPreparedRun(value: PreparedWidgetChat): value is Exclude<PreparedWidg
   return "handle" in value;
 }
 
+async function runWidgetJsonTransport(
+  res: Response,
+  install: NonNullable<WidgetRequest["widgetInstall"]>,
+  process: (signal: AbortSignal) => Promise<unknown>,
+): Promise<void> {
+  const controller = new AbortController();
+  const correlationId = randomUUID();
+  let workSettled = false;
+  let clientClosed = false;
+  const onClose = () => {
+    if (!res.writableEnded && !workSettled) {
+      clientClosed = true;
+      controller.abort(new Error("widget client disconnected"));
+    }
+  };
+
+  res.once("close", onClose);
+  try {
+    const result = await process(controller.signal);
+    workSettled = true;
+    if (clientClosed || res.destroyed || res.closed || res.writableEnded) return;
+    res.json(result);
+  } catch (error) {
+    workSettled = true;
+    if (clientClosed || controller.signal.aborted) {
+      logger.info("widget.chat.client_disconnected", {
+        widgetInstallId: install.id,
+        businessProfileId: install.businessProfileId,
+        correlationId,
+      });
+      return;
+    }
+    throw error;
+  } finally {
+    res.off("close", onClose);
+  }
+}
+
 widgetPublicRoutes.options("/chat", widgetInstallAndCors);
 widgetPublicRoutes.options("/chat/media", widgetInstallAndCors);
 widgetPublicRoutes.options("/config", widgetInstallAndCors);
@@ -147,14 +185,14 @@ widgetPublicRoutes.post(
       user,
     );
 
-    const runChat = () =>
+    const runChat = (signal: AbortSignal) =>
       processWidgetChatMessage({
         install,
         visitorId: visitorId.trim(),
         message: normalizedMessage,
         conversationId,
         verifiedUser: verifiedUser ?? undefined,
-      });
+      }, signal);
 
     if (stream === true) {
       res.setHeader("Content-Type", "text/event-stream");
@@ -187,10 +225,9 @@ widgetPublicRoutes.post(
         controller.abort(new Error("widget client disconnected"));
         cancelPreparedRun();
       };
-      req.on("close", onClose);
       // Once the request body has been fully read, Node may only signal a
       // browser-disconnected SSE response through the response socket.
-      res.on("close", onClose);
+      res.once("close", onClose);
 
       try {
         writeSseData(res, { status: "processing", event: "values" });
@@ -215,7 +252,7 @@ widgetPublicRoutes.post(
           for await (const event of AgentClient.joinCustomerRunStream(
             preparedRun.handle.threadId,
             preparedRun.handle.runId,
-            { signal: controller.signal, cancelOnDisconnect: true },
+            { signal: controller.signal },
           )) {
             if (clientClosed) {
               streamEndedNaturally = false;
@@ -280,7 +317,6 @@ widgetPublicRoutes.post(
         }
       }
 
-      req.off("close", onClose);
       res.off("close", onClose);
       if (!clientClosed) {
         writeSseDone(res);
@@ -289,9 +325,7 @@ widgetPublicRoutes.post(
     }
 
     // ── Standard JSON Path ───────────────────────────────────────────
-    const result = await runChat();
-
-    return res.json(result);
+    return runWidgetJsonTransport(res, install, runChat);
   },
 );
 
@@ -308,24 +342,23 @@ widgetPublicRoutes.post(
     if (!req.file) {
       throw new AppError("file is required", 400);
     }
+    const file = req.file;
 
     const { visitorId, message = "", conversationId } = req.body;
     const normalizedMessage = normalizeWidgetText(String(message || ""));
 
-    const result = await processWidgetChatMessage({
+    return runWidgetJsonTransport(res, install, (signal) => processWidgetChatMessage({
       install,
       visitorId: visitorId.trim(),
       message: normalizedMessage,
       conversationId,
       media: {
-        buffer: req.file.buffer,
-        originalName: req.file.originalname,
-        mimeType: req.file.mimetype,
-        size: req.file.size,
+        buffer: file.buffer,
+        originalName: file.originalname,
+        mimeType: file.mimetype,
+        size: file.size,
       },
-    });
-
-    return res.json(result);
+    }, signal));
   },
 );
 

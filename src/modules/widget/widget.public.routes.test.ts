@@ -100,6 +100,53 @@ function doRequest(
   });
 }
 
+function abortRequest(
+  server: http.Server,
+  opts: {
+    path: string;
+    headers?: Record<string, string>;
+    body: string;
+  },
+  afterStarted: () => Promise<void>,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const addr = server.address() as { port: number };
+    const payload = Buffer.from(opts.body, "utf8");
+    const req = http.request(
+      {
+        hostname: "127.0.0.1",
+        port: addr.port,
+        path: opts.path,
+        method: "POST",
+        headers: {
+          "content-length": String(payload.length),
+          ...opts.headers,
+        },
+      },
+      () => reject(new Error("aborted request unexpectedly received a response")),
+    );
+    req.on("error", (error) => {
+      if ((error as NodeJS.ErrnoException).code !== "ECONNRESET") reject(error);
+    });
+    req.on("close", resolve);
+    req.end(payload);
+    void afterStarted()
+      .then(() => req.destroy())
+      .catch(reject);
+  });
+}
+
+function multipartBody(): { body: string; contentType: string } {
+  const boundary = "----wkil-widget-test-boundary";
+  const body = [
+    `--${boundary}\r\nContent-Disposition: form-data; name="visitorId"\r\n\r\n12345678-abcd-ef00-0000-000000000001\r\n`,
+    `--${boundary}\r\nContent-Disposition: form-data; name="message"\r\n\r\nPlease inspect this\r\n`,
+    `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="note.txt"\r\nContent-Type: text/plain\r\n\r\nhello\r\n`,
+    `--${boundary}--\r\n`,
+  ].join("");
+  return { body, contentType: `multipart/form-data; boundary=${boundary}` };
+}
+
 function abortAfterFirstSseData(
   server: http.Server,
   body: string,
@@ -278,10 +325,116 @@ describe("POST /chat (public widget)", () => {
         message: "Hi there",
         install: expect.objectContaining({ id: 1 }),
       }),
+      expect.any(AbortSignal),
     );
     expect(res.headers["access-control-allow-origin"]).toBe(
       "https://shop.example",
     );
+  });
+
+  it("aborts shared JSON processing on /chat response disconnect without writing a 500", async () => {
+    vi.mocked(prisma.widgetInstall.findFirst).mockResolvedValue({
+      ...baseInstall,
+      allowedOrigins: ["https://shop.example"],
+    });
+    let signal: AbortSignal | undefined;
+    vi.mocked(processWidgetChatMessage).mockImplementationOnce(async (_params, requestSignal) => {
+      signal = requestSignal;
+      await new Promise<void>((_resolve, reject) => {
+        requestSignal?.addEventListener("abort", () => reject(requestSignal.reason), { once: true });
+      });
+      throw new Error("request aborted");
+    });
+
+    await abortRequest(server, {
+      path: "/chat",
+      headers: {
+        "content-type": "application/json",
+        "x-widget-site-key": "wsk_test_xxxxxxxx",
+        origin: "https://shop.example",
+      },
+      body: JSON.stringify({
+        visitorId: "12345678-abcd-ef00-0000-000000000001",
+        message: "Please wait",
+      }),
+    }, async () => {
+      await vi.waitFor(() => expect(signal).toBeInstanceOf(AbortSignal));
+    });
+
+    await vi.waitFor(() => expect(signal?.aborted).toBe(true));
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it("uses the same disconnect-safe JSON transport for successful media chat", async () => {
+    vi.mocked(prisma.widgetInstall.findFirst).mockResolvedValue({
+      ...baseInstall,
+      allowedOrigins: ["https://shop.example"],
+    });
+    vi.mocked(processWidgetChatMessage).mockResolvedValueOnce({
+      reply: "I can inspect that",
+      conversationId: 100,
+      action: "REPLY",
+      attachment: null,
+    });
+    const multipart = multipartBody();
+
+    const res = await doRequest(server, {
+      method: "POST",
+      path: "/chat/media",
+      headers: {
+        "content-type": multipart.contentType,
+        "x-widget-site-key": "wsk_test_xxxxxxxx",
+        origin: "https://shop.example",
+      },
+      body: multipart.body,
+    });
+
+    expect(res.status).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({
+      reply: "I can inspect that",
+      conversationId: 100,
+      action: "REPLY",
+      attachment: null,
+    });
+    expect(processWidgetChatMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        install: expect.objectContaining({ id: 1 }),
+        message: "Please inspect this",
+        media: expect.objectContaining({ originalName: "note.txt" }),
+      }),
+      expect.any(AbortSignal),
+    );
+  });
+
+  it("aborts shared JSON processing on /chat/media response disconnect", async () => {
+    vi.mocked(prisma.widgetInstall.findFirst).mockResolvedValue({
+      ...baseInstall,
+      allowedOrigins: ["https://shop.example"],
+    });
+    let signal: AbortSignal | undefined;
+    vi.mocked(processWidgetChatMessage).mockImplementationOnce(async (_params, requestSignal) => {
+      signal = requestSignal;
+      await new Promise<void>((_resolve, reject) => {
+        requestSignal?.addEventListener("abort", () => reject(requestSignal.reason), { once: true });
+      });
+      throw new Error("request aborted");
+    });
+    const multipart = multipartBody();
+
+    await abortRequest(server, {
+      path: "/chat/media",
+      headers: {
+        "content-type": multipart.contentType,
+        "x-widget-site-key": "wsk_test_xxxxxxxx",
+        origin: "https://shop.example",
+      },
+      body: multipart.body,
+    }, async () => {
+      await vi.waitFor(() => expect(signal).toBeInstanceOf(AbortSignal));
+    });
+
+    await vi.waitFor(() => expect(signal?.aborted).toBe(true));
+    expect(logger.error).not.toHaveBeenCalled();
   });
 
   it("keeps final-only SSE compatibility when stream is requested", async () => {
@@ -382,7 +535,7 @@ describe("POST /chat (public widget)", () => {
     expect(agentClientMock.joinCustomerRunStream).toHaveBeenCalledWith(
       "thread-1",
       "run-1",
-      expect.objectContaining({ cancelOnDisconnect: true, signal: expect.any(AbortSignal) }),
+      { signal: expect.any(AbortSignal) },
     );
     expect(res.body).toContain("\"event\":\"values\"");
     expect(res.body).toContain("\"action\":\"HANDOFF\"");
@@ -627,6 +780,7 @@ describe("POST /chat (public widget)", () => {
       "thread-cancel",
       "run-cancel",
     ));
+    expect(agentClientMock.cancelCustomerRun).toHaveBeenCalledTimes(1);
     await vi.waitFor(() => expect(logger.warn).toHaveBeenCalledWith(
       "widget.chat.cancel_failed",
       expect.objectContaining({

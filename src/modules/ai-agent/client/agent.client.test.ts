@@ -319,6 +319,70 @@ describe("AgentClient", () => {
       cause: "client disconnected",
     });
     expect(runsCancelMock).toHaveBeenCalledWith("thread-1", "run-1", true, "interrupt");
+    expect(runsCancelMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not cancel a terminal run when the caller aborts during final status retrieval", async () => {
+    const caller = new AbortController();
+    let releaseGet!: (run: { status: string }) => void;
+    const getPending = new Promise<{ status: string }>((resolve) => { releaseGet = resolve; });
+    runsJoinMock.mockResolvedValueOnce({
+      structured_response: {
+        action: "REPLY",
+        content: "Completed",
+        reason_code: "KNOWLEDGE_MATCH",
+        handoff_category: null,
+      },
+    });
+    runsGetMock.mockImplementationOnce(async () => getPending);
+
+    const pending = AgentClient.joinCustomerRun("thread-1", "run-1", { signal: caller.signal });
+    await vi.waitFor(() => expect(runsGetMock).toHaveBeenCalled());
+    caller.abort("client disconnected after remote completion");
+    releaseGet({ status: "success" });
+
+    await expect(pending).resolves.toEqual({
+      action: "REPLY",
+      content: "Completed",
+      reason_code: "KNOWLEDGE_MATCH",
+      handoff_category: null,
+    });
+    expect(runsCancelMock).not.toHaveBeenCalled();
+  });
+
+  it("does not cancel a terminal run when the timeout fires during final status retrieval", async () => {
+    vi.useFakeTimers();
+    try {
+      let releaseGet!: (run: { status: string }) => void;
+      const getPending = new Promise<{ status: string }>((resolve) => { releaseGet = resolve; });
+      runsJoinMock.mockResolvedValueOnce({
+        structured_response: {
+          action: "NO_REPLY",
+          content: null,
+          reason_code: "POLICY_SUPPRESSED",
+          handoff_category: null,
+        },
+      });
+      runsGetMock.mockImplementationOnce(async () => getPending);
+
+      const pending = AgentClient.joinCustomerRun("thread-1", "run-1");
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(runsGetMock).toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(45_000);
+      releaseGet({ status: "success" });
+
+      await expect(pending).resolves.toEqual({
+        action: "NO_REPLY",
+        content: null,
+        reason_code: "POLICY_SUPPRESSED",
+        handoff_category: null,
+      });
+      expect(runsCancelMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it.each(["interrupted", "error", "timeout"] as const)(

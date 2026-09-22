@@ -110,14 +110,16 @@ export async function prepareWidgetChatMessage(
 
 export async function processWidgetChatMessage(
   params: WidgetChatParams,
+  signal?: AbortSignal,
 ): Promise<WidgetChatResult> {
-  const prepared = await prepareWidgetChatMessage(params);
+  const prepared = await prepareWidgetChatMessage(params, signal);
   if (prepared.result) return prepared.result;
   let decision: unknown;
   try {
     decision = await AgentClient.joinCustomerRun(
       prepared.handle.threadId,
       prepared.handle.runId,
+      { signal },
     );
   } catch (error) {
     await failWidgetChatMessage(prepared, error);

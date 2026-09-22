@@ -235,47 +235,79 @@ export class AgentClient {
   static async joinCustomerRun(
     threadId: string,
     runId: string,
-    options?: { signal?: AbortSignal; cancelOnDisconnect?: boolean },
+    options?: { signal?: AbortSignal },
   ): Promise<CustomerAgentDecision> {
     const controller = new AbortController();
     let callerAbortReason: unknown;
     let timedOut = false;
+    let remoteRunTerminal = false;
+    let joinResolvedAfterAbort = false;
+    let cancellation: Promise<void> | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let lifecycleCleaned = false;
+    const cleanupLifecycle = () => {
+      if (lifecycleCleaned) return;
+      lifecycleCleaned = true;
+      if (timer) clearTimeout(timer);
+      options?.signal?.removeEventListener("abort", onAbort);
+    };
+    const cancelExactRunOnce = () => {
+      if (remoteRunTerminal || cancellation) return cancellation;
+      cancellation = Promise.resolve()
+        .then(() => this.cancelCustomerRun(threadId, runId))
+        .catch(() => undefined);
+      return cancellation;
+    };
     const onAbort = () => {
       callerAbortReason = options?.signal?.reason;
       controller.abort(callerAbortReason);
     };
     if (options?.signal?.aborted) onAbort();
     else options?.signal?.addEventListener("abort", onAbort, { once: true });
-    const timer = setTimeout(() => {
+    timer = setTimeout(() => {
       timedOut = true;
       controller.abort();
     }, RUN_TIMEOUT_MS);
     try {
       const state = await this.client().runs.join(threadId, runId, {
         signal: controller.signal,
-        cancelOnDisconnect: options?.cancelOnDisconnect,
+      }).then((joinedState) => {
+        if (timedOut || options?.signal?.aborted) {
+          joinResolvedAfterAbort = true;
+        } else {
+          // The remote join is the terminal boundary. From this point on,
+          // caller aborts and timeout callbacks must not cancel the exact run.
+          remoteRunTerminal = true;
+        }
+        cleanupLifecycle();
+        return joinedState;
+      }, (error: unknown) => {
+        cleanupLifecycle();
+        throw error;
       });
-      const run = await this.client().runs.get(threadId, runId, { signal: controller.signal });
-      if (timedOut) throw new Error("Customer agent run timed out");
-      if (options?.signal?.aborted) throw new CustomerAgentRunAbortedError(callerAbortReason);
+      if (joinResolvedAfterAbort) {
+        await cancelExactRunOnce();
+        if (timedOut) throw new Error("Customer agent run timed out");
+        throw new CustomerAgentRunAbortedError(callerAbortReason);
+      }
+      const run = await this.client().runs.get(threadId, runId);
       if (run.status !== "success") throw new Error(`Customer agent run ${run.status}`);
       if (!isRecord(state) || !("structured_response" in state)) {
         throw new Error("Customer agent run is missing structured_response");
       }
       return customerAgentDecisionSchema.parse(state.structured_response);
     } catch (error: unknown) {
-      if (timedOut) {
-        await this.cancelCustomerRun(threadId, runId).catch(() => undefined);
+      if (timedOut && !remoteRunTerminal) {
+        await cancelExactRunOnce();
         throw new Error(`Customer agent run timeout after ${RUN_TIMEOUT_MS}ms`);
       }
-      if (options?.signal?.aborted) {
-        await this.cancelCustomerRun(threadId, runId).catch(() => undefined);
+      if (options?.signal?.aborted && !remoteRunTerminal) {
+        await cancelExactRunOnce();
         throw new CustomerAgentRunAbortedError(callerAbortReason);
       }
       throw error;
     } finally {
-      clearTimeout(timer);
-      options?.signal?.removeEventListener("abort", onAbort);
+      cleanupLifecycle();
     }
   }
 

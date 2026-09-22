@@ -238,6 +238,7 @@ export class AgentClient {
     options?: { signal?: AbortSignal },
   ): Promise<CustomerAgentDecision> {
     const controller = new AbortController();
+    const deadline = Date.now() + RUN_TIMEOUT_MS;
     let callerAbortReason: unknown;
     let timedOut = false;
     let remoteRunTerminal = false;
@@ -290,7 +291,25 @@ export class AgentClient {
         if (timedOut) throw new Error("Customer agent run timed out");
         throw new CustomerAgentRunAbortedError(callerAbortReason);
       }
-      const run = await this.client().runs.get(threadId, runId);
+      const statusController = new AbortController();
+      let statusTimedOut = false;
+      const remainingMs = Math.max(0, deadline - Date.now());
+      const statusTimer = setTimeout(() => {
+        statusTimedOut = true;
+        timedOut = true;
+        statusController.abort();
+      }, remainingMs);
+      let run;
+      try {
+        run = await this.client().runs.get(threadId, runId, { signal: statusController.signal });
+      } catch (error: unknown) {
+        if (statusTimedOut) {
+          throw new Error(`Customer agent run timeout after ${RUN_TIMEOUT_MS}ms`);
+        }
+        throw error;
+      } finally {
+        clearTimeout(statusTimer);
+      }
       if (run.status !== "success") throw new Error(`Customer agent run ${run.status}`);
       if (!isRecord(state) || !("structured_response" in state)) {
         throw new Error("Customer agent run is missing structured_response");

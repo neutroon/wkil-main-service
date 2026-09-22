@@ -353,8 +353,6 @@ describe("AgentClient", () => {
   it("does not cancel a terminal run when the timeout fires during final status retrieval", async () => {
     vi.useFakeTimers();
     try {
-      let releaseGet!: (run: { status: string }) => void;
-      const getPending = new Promise<{ status: string }>((resolve) => { releaseGet = resolve; });
       runsJoinMock.mockResolvedValueOnce({
         structured_response: {
           action: "NO_REPLY",
@@ -363,22 +361,27 @@ describe("AgentClient", () => {
           handoff_category: null,
         },
       });
-      runsGetMock.mockImplementationOnce(async () => getPending);
+      runsGetMock.mockImplementationOnce(async (
+        _threadId: string,
+        _runId: string,
+        options: { signal: AbortSignal },
+      ) => new Promise<never>((_resolve, reject) => {
+        options.signal.addEventListener(
+          "abort",
+          () => reject(new DOMException("Aborted", "AbortError")),
+          { once: true },
+        );
+      }));
 
-      const pending = AgentClient.joinCustomerRun("thread-1", "run-1");
+      const pending = expect(AgentClient.joinCustomerRun("thread-1", "run-1"))
+        .rejects.toThrow("Customer agent run timeout after 45000ms");
       await Promise.resolve();
       await Promise.resolve();
       expect(runsGetMock).toHaveBeenCalled();
 
       await vi.advanceTimersByTimeAsync(45_000);
-      releaseGet({ status: "success" });
 
-      await expect(pending).resolves.toEqual({
-        action: "NO_REPLY",
-        content: null,
-        reason_code: "POLICY_SUPPRESSED",
-        handoff_category: null,
-      });
+      await pending;
       expect(runsCancelMock).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();

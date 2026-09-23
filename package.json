@@ -38,7 +38,7 @@
     "@google-cloud/vertexai": "^1.10.0",
     "@google/genai": "^1.46.0",
     "@langchain/core": "^1.1.41",
-    "@langchain/langgraph-sdk": "^1.10.2",
+    "@langchain/langgraph-sdk": "1.11.0",
     "@prisma/client": "^6.16.2",
     "@sentry/node": "^10.51.0",
     "@sentry/profiling-node": "^10.51.0",

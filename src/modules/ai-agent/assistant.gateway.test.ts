@@ -1,7 +1,24 @@
-import { describe, expect, it, vi } from "vitest";
-import { assistantGatewayInternals } from "./assistant.gateway";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const workspaceAccess = vi.hoisted(() => ({
+  getActiveProfileId: vi.fn(async () => 7),
+  requireWorkspaceProfileAccess: vi.fn(),
+}));
+
+vi.mock("@modules/workspace/workspace.service", () => workspaceAccess);
+
+import { assistantGateway, assistantGatewayInternals } from "./assistant.gateway";
 
 const scope = { userId: 42, profileId: 7, workspaceId: 11 };
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  workspaceAccess.getActiveProfileId.mockResolvedValue(7);
+  workspaceAccess.requireWorkspaceProfileAccess.mockResolvedValue({
+    workspaceId: 11,
+    role: "owner",
+  });
+});
 
 describe("assistant gateway contract", () => {
   it.each([
@@ -260,6 +277,51 @@ describe("assistant gateway contract", () => {
     }, scope)).toMatchObject({
       metadata: { workspace_id: 11, title: "Renamed title" },
     });
+  });
+
+  it("ignores client tenant metadata and stamps the authorized workspace", () => {
+    expect(assistantGatewayInternals.normalizeBody("create", {
+      metadata: { title: " Owner chat ", workspace_id: 999 },
+    }, scope)).toEqual({
+      metadata: { workspace_id: 11, title: "Owner chat" },
+      input: {
+        user_id: 42,
+        business_profile_id: 7,
+        workspace_id: 11,
+        channel: "internal_copilot",
+      },
+    });
+  });
+
+  it.each([
+    { command: { resume: { approved: true } }, checkpoint_id: "cp-1" },
+    { command: { resume: { approved: true } }, input: { messages: [{ type: "human", content: "also send" }] } },
+  ])("rejects mixed interrupt resume payloads: %j", (payload) => {
+    expect(() => assistantGatewayInternals.normalizeBody("run", {
+      assistant_id: "agent",
+      ...payload,
+    }, scope)).toThrow();
+  });
+
+  it("rejects an unauthorized workspace selector before contacting Agent Server", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    workspaceAccess.requireWorkspaceProfileAccess.mockRejectedValueOnce(
+      Object.assign(new Error("forbidden"), { statusCode: 403 }),
+    );
+
+    await expect(assistantGateway({
+      user: { id: 42 },
+      path: "threads",
+      method: "POST",
+      query: {},
+      headers: { "x-workspace-id": "999" },
+      cookies: {},
+      body: {},
+    } as never, {} as never)).rejects.toMatchObject({ statusCode: 403 });
+
+    expect(workspaceAccess.getActiveProfileId).toHaveBeenCalledWith(42, undefined, 999);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
   });
 
   it("derives a deterministic title from the normalized first human message", () => {

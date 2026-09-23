@@ -1340,6 +1340,8 @@ paths:
       tags: [Copilot]
       operationId: createAssistantThread
       summary: Create an assistant thread for the active workspace
+      parameters:
+        - $ref: "#/components/parameters/AssistantWorkspaceId"
       security:
         - bearerAuth: []
         - accessTokenCookie: []
@@ -1349,13 +1351,16 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               properties:
                 metadata:
                   type: object
+                  additionalProperties: false
                   properties:
                     title: { type: string, maxLength: 200 }
                 input:
                   type: object
+                  additionalProperties: false
                   properties:
                     messages: { type: array, maxItems: 0, items: { type: object } }
       responses:
@@ -1369,6 +1374,8 @@ paths:
       tags: [Copilot]
       operationId: searchAssistantThreads
       summary: List assistant threads in the active workspace
+      parameters:
+        - $ref: "#/components/parameters/AssistantWorkspaceId"
       security:
         - bearerAuth: []
         - accessTokenCookie: []
@@ -1400,6 +1407,8 @@ paths:
       tags: [Copilot]
       operationId: getAssistantThread
       summary: Get an assistant thread in the active workspace
+      parameters:
+        - $ref: "#/components/parameters/AssistantWorkspaceId"
       security:
         - bearerAuth: []
         - accessTokenCookie: []
@@ -1411,6 +1420,8 @@ paths:
       tags: [Copilot]
       operationId: updateAssistantThread
       summary: Update an assistant thread title
+      parameters:
+        - $ref: "#/components/parameters/AssistantWorkspaceId"
       security:
         - bearerAuth: []
         - accessTokenCookie: []
@@ -1435,6 +1446,8 @@ paths:
       tags: [Copilot]
       operationId: deleteAssistantThread
       summary: Delete an assistant thread
+      parameters:
+        - $ref: "#/components/parameters/AssistantWorkspaceId"
       security:
         - bearerAuth: []
         - accessTokenCookie: []
@@ -1452,6 +1465,7 @@ paths:
         - bearerAuth: []
         - accessTokenCookie: []
       parameters:
+        - $ref: "#/components/parameters/AssistantWorkspaceId"
         - name: threadId
           in: path
           required: true
@@ -1474,6 +1488,7 @@ paths:
         - bearerAuth: []
         - accessTokenCookie: []
       parameters:
+        - $ref: "#/components/parameters/AssistantWorkspaceId"
         - name: threadId
           in: path
           required: true
@@ -1510,6 +1525,7 @@ paths:
         - bearerAuth: []
         - accessTokenCookie: []
       parameters:
+        - $ref: "#/components/parameters/AssistantWorkspaceId"
         - name: threadId
           in: path
           required: true
@@ -1648,6 +1664,7 @@ paths:
         - bearerAuth: []
         - accessTokenCookie: []
       parameters:
+        - $ref: "#/components/parameters/AssistantWorkspaceId"
         - name: threadId
           in: path
           required: true
@@ -3341,6 +3358,14 @@ components:
       in: header
       name: X-Widget-Site-Key
   parameters:
+    AssistantWorkspaceId:
+      name: x-workspace-id
+      in: header
+      required: false
+      description: Authenticated workspace selected by the client; the server verifies membership and resolves canonical tenant scope.
+      schema:
+        type: string
+        pattern: "^[1-9][0-9]*$"
     IdPath: { name: id, in: path, required: true, schema: { type: integer } }
     PositiveIdPath: { name: id, in: path, required: true, schema: { type: integer, minimum: 1 } }
     IntegrationKeyPath:

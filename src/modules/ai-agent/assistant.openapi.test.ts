@@ -8,15 +8,27 @@ import { assistantGatewayInternals } from "./assistant.gateway";
 
 type JsonRecord = Record<string, unknown>;
 
+const ASSISTANT_OPERATION_IDS = [
+  "createAssistantThread",
+  "searchAssistantThreads",
+  "getAssistantThread",
+  "updateAssistantThread",
+  "deleteAssistantThread",
+  "getAssistantThreadState",
+  "getAssistantThreadHistory",
+  "streamAssistantRun",
+  "cancelAssistantRun",
+] as const;
+
+const document = parse(
+  fs.readFileSync(path.resolve(process.cwd(), "docs/openapi.yaml"), "utf8"),
+) as JsonRecord;
+
 const scope = { userId: 42, profileId: 7, workspaceId: 11 };
 
-function assistantRunSchema(): JsonRecord {
-  const document = parse(
-    fs.readFileSync(path.resolve(process.cwd(), "docs/openapi.yaml"), "utf8"),
-  ) as JsonRecord;
+function requestSchema(pathName: string, method: "post" | "patch"): JsonRecord {
   const paths = document.paths as JsonRecord;
-  const operation = (paths["/v1/assistant/threads/{threadId}/runs/stream"] as JsonRecord)
-    .post as JsonRecord;
+  const operation = (paths[pathName] as JsonRecord)[method] as JsonRecord;
   const requestBody = operation.requestBody as JsonRecord;
   const content = requestBody.content as JsonRecord;
   return {
@@ -25,10 +37,36 @@ function assistantRunSchema(): JsonRecord {
   };
 }
 
+describe("assistant gateway OpenAPI contract", () => {
+  it("publishes the optional workspace selector on every LangGraph gateway operation", () => {
+    const operations = Object.values(document.paths as JsonRecord)
+      .flatMap((pathItem) => Object.values(pathItem as JsonRecord))
+      .filter((value): value is JsonRecord => Boolean(value) && typeof value === "object")
+      .filter((operation) => ASSISTANT_OPERATION_IDS.includes(operation.operationId as never));
+
+    expect(operations).toHaveLength(ASSISTANT_OPERATION_IDS.length);
+    for (const operation of operations) {
+      expect(operation.parameters).toEqual(expect.arrayContaining([
+        { $ref: "#/components/parameters/AssistantWorkspaceId" },
+      ]));
+    }
+    expect(((document.components as JsonRecord).parameters as JsonRecord).AssistantWorkspaceId)
+      .toMatchObject({ name: "x-workspace-id", in: "header", required: false });
+  });
+
+  it("does not publish workspace_id as client-owned thread metadata", () => {
+    const ajv = new Ajv2020({ strict: false });
+    addFormats(ajv);
+    const validate = ajv.compile(requestSchema("/v1/assistant/threads", "post"));
+    expect(validate({ metadata: { title: "Quarterly review" } })).toBe(true);
+    expect(validate({ metadata: { workspace_id: 999 } })).toBe(false);
+  });
+});
+
 describe("assistant run OpenAPI contract", () => {
   const ajv = new Ajv2020({ strict: false });
   addFormats(ajv);
-  const validate = ajv.compile(assistantRunSchema());
+  const validate = ajv.compile(requestSchema("/v1/assistant/threads/{threadId}/runs/stream", "post"));
   const maxLengthText = "x".repeat(16_000);
 
   const contentFixtures: ReadonlyArray<readonly [string, unknown, boolean]> = [

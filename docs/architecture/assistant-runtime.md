@@ -6,9 +6,12 @@ There are two durable conversation paths:
    through `/v1/assistant`; Agent Server owns their messages, runs, checkpoints,
    interrupts, and cancellation.
 2. Customer-channel conversations (web widget, WhatsApp, Messenger, and Facebook
-   comments) are backend/Prisma business records. Each record points to a stable
-   `customer_agent` Agent Server thread for execution state. The backend owns
-   delivery, human handoff, follow-up schedules, audit state, and channel effects.
+   comments) are backend/Prisma business records. A `Conversation` can exist
+   before it has an Agent Server thread. When customer-agent execution first
+   begins, the backend associates the `Conversation` with one stable
+   `customer_agent` Agent Server thread and retains that link for subsequent
+   runs. The backend owns delivery, human handoff, follow-up schedules, audit
+   state, and channel effects.
 
 Follow-ups are ordinary backend-scheduled jobs. When work is due, the backend
 starts or resumes the existing customer graph run; the graph does not sleep as a
@@ -31,13 +34,17 @@ usage recording.
 | TypeScript gateway | Authentication, workspace/business-profile authorization, canonical tenant input, allowed paths/payloads, private Agent Server credentials, SSE forwarding |
 | Agent Server | Business-owner copilot threads, messages, runs, checkpoints/history, interrupts, cancellation; graph execution state for each stable `customer_agent` thread |
 | Python graphs | Orchestration, model calls, validated tools, reducers, RAG, approvals before effects |
-| Backend/Prisma business services | Customer-channel conversation records; delivery, human handoff, follow-up schedules/jobs, audit state, channel effects, business authorization, database mutations, billing, and external integrations through authenticated callbacks |
+| Backend/Prisma business services | Customer-channel `Conversation` and `ConversationMessage` records; delivery, human handoff, follow-up schedules/jobs, audit state, channel effects, business authorization, database mutations, billing, and external integrations through authenticated callbacks |
 
-Application code does not add a parallel message store, SSE parser, Next.js
-agent proxy, or AssistantCloud persistence layer. The gateway strips/rejects
-client overrides and supplies authenticated user, workspace, and business-profile
-identifiers. Agent Server custom auth stamps and scopes threads by owner/workspace.
-Caller credentials for interactive traffic and backend jobs are distinct.
+For business-owner copilot sessions, web and mobile application code does not
+maintain a parallel copilot message store, SSE parser, Next.js agent proxy, or
+AssistantCloud persistence layer. Agent Server remains authoritative for
+business-owner copilot messages and execution history; backend/Prisma separately
+owns customer-channel `Conversation` and `ConversationMessage` records. The
+gateway strips/rejects client overrides and supplies authenticated user,
+workspace, and business-profile identifiers. Agent Server custom auth stamps and
+scopes copilot threads by owner/workspace. Caller credentials for interactive
+traffic and backend jobs are distinct.
 
 Relevant implementation: `app/src/lib/assistanceClient.ts`,
 `app/src/components/user/copilot/overlay/CopilotRuntime.tsx`,
@@ -45,23 +52,29 @@ Relevant implementation: `app/src/lib/assistanceClient.ts`,
 `agent-svc/src/agent_svc/security.py`. Paths in this page are relative to the
 parent directory containing the three repositories.
 
-## Conversation lifecycle
+## Business-owner copilot session lifecycle
 
-1. The user signs in and selects a workspace. The remote thread adapter lists
-   only that workspace's threads. Opening the welcome screen creates no thread.
-2. First send lazily creates a thread and streams the latest human message through
-   the gateway. The SDK consumes `messages`, `updates`, and `custom` events, and
-   assistant-ui renders them. The gateway fixes the permitted assistant and tenant
-   context; browser-supplied identities cannot replace them.
-3. Opening a thread or refreshing its `threadId` URL loads Agent Server state:
-   messages, persisted `ui` events, and pending interrupts (top-level or in tasks).
+The lifecycle below describes only business-owner copilot sessions and their
+Agent Server threads; customer-channel `ConversationMessage` history remains
+backend/Prisma-owned.
+
+1. The copilot user signs in and selects a workspace. The remote thread adapter
+   lists only that workspace's threads. Opening the welcome screen creates no
+   thread.
+2. The first copilot send lazily creates a thread and streams the latest human
+   message through the gateway. The SDK consumes `messages`, `updates`, and
+   `custom` events, and assistant-ui renders them. The gateway fixes the permitted
+   assistant and tenant context; browser-supplied identities cannot replace them.
+3. Opening a copilot thread or refreshing its `threadId` URL loads Agent Server
+   state: messages, persisted `ui` events, and pending interrupts (top-level or
+   in tasks).
    Rename/delete persist through the same gateway. LangGraph has no archive state,
    so the current adapter's archive/unarchive methods are no-ops.
-4. Editing a human message or regenerating a response requests history using
-   SDK `threads.getHistory`, which sends `POST /threads/{id}/history`. The gateway
-   accepts an optional limit of 1–100, defaulting to 10. The frontend matches the
-   exact ordered stable message IDs and message count for the parent history,
-   then supplies that checkpoint as SDK `checkpointId`.
+4. Editing a copilot human message or regenerating a copilot response requests
+   history using SDK `threads.getHistory`, which sends `POST /threads/{id}/history`.
+   The gateway accepts an optional limit of 1–100, defaulting to 10. The frontend
+   matches the exact ordered stable message IDs and message count for the parent
+   history, then supplies that checkpoint as SDK `checkpointId`.
    `@langchain/langgraph-sdk` 1.11.0 serializes it as scalar `checkpoint_id`.
    Edited human input remains a one-message run;
    regeneration sends SDK `input: null` so Agent Server continues from that
@@ -71,20 +84,21 @@ parent directory containing the three repositories.
    config/namespaces and the legacy nested `checkpoint` object. The lookup returns
    null when there is no exact match; current history lookup is bounded, not a
    full-history pagination search.
-5. A write tool raises a LangGraph interrupt before its effect. The existing tool
-   UI shows the proposal, and refresh restores it. Approve/reject sends top-level
-   `command: { resume: ... }` on the same thread, with no new human input or
-   checkpoint selector. Rejection has no write effect; approved callbacks use
-   stable operation/idempotency identifiers across replay.
-6. Stop aborts the SDK stream. The gateway propagates premature disconnect through
-   its AbortController and forces `on_disconnect: "cancel"` upstream. The
+5. A copilot write tool raises a LangGraph interrupt before its effect. The
+   existing tool UI shows the proposal, and refresh restores it. Approve/reject
+   sends top-level `command: { resume: ... }` on the same thread, with no new
+   human input or checkpoint selector. Rejection has no write effect; approved
+   callbacks use stable operation/idempotency identifiers across replay.
+6. Stopping the copilot stream aborts the SDK stream. The gateway propagates
+   premature disconnect through its AbortController and forces
+   `on_disconnect: "cancel"` upstream. The
    allow-listed cancel endpoint accepts interrupt cancellation. This stops
    unfinished work; it cannot undo a business effect already committed. No extra
    assistant message is fabricated to represent an abort.
-7. Switching workspaces remounts the runtime and changes the workspace-scoped
-   client and thread list. An old workspace's deep link cannot bypass server
-   authorization. Login, navigation, business ownership, English/Arabic layout,
-   and RTL remain in the existing application flow.
+7. Switching workspaces remounts the copilot runtime and changes the
+   workspace-scoped client and thread list. An old workspace's deep link cannot
+   bypass server authorization. Login, navigation, business ownership,
+   English/Arabic layout, and RTL remain in the existing application flow.
 
 ## External-action continuations
 

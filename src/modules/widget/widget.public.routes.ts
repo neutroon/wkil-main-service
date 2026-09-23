@@ -98,7 +98,19 @@ async function runWidgetJsonTransport(
       });
       return;
     }
-    throw error;
+    if (error instanceof AppError) throw error;
+    logger.error("widget.chat.request_failed", {
+      widgetInstallId: install.id,
+      businessProfileId: install.businessProfileId,
+      errorCode: widgetErrorCode(error),
+      correlationId,
+    });
+    throw new AppError(
+      "Unable to complete chat response.",
+      503,
+      true,
+      "WIDGET_CHAT_UNAVAILABLE",
+    );
   } finally {
     res.off("close", onClose);
   }

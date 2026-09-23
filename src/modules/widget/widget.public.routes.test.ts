@@ -49,11 +49,13 @@ import {
   failWidgetChatMessage,
 } from "@modules/widget/services/widgetChat.service";
 import { logger } from "@utils/logger";
+import { errorHandler } from "@middlewares/errorHandler.middleware";
 
 function makeApp(): Application {
   const app = express();
   app.use(express.json({ limit: "32kb" }));
   app.use(widgetPublicRoutes);
+  app.use(errorHandler);
   return app;
 }
 
@@ -330,6 +332,38 @@ describe("POST /chat (public widget)", () => {
     expect(res.headers["access-control-allow-origin"]).toBe(
       "https://shop.example",
     );
+  });
+
+  it("returns a stable retryable error without exposing agent failure details", async () => {
+    vi.mocked(prisma.widgetInstall.findFirst).mockResolvedValue({
+      ...baseInstall,
+      allowedOrigins: ["https://shop.example"],
+    });
+    vi.mocked(processWidgetChatMessage).mockRejectedValue(
+      new Error("private agent provider detail"),
+    );
+
+    const res = await doRequest(server, {
+      method: "POST",
+      path: "/chat",
+      headers: {
+        "x-widget-site-key": "wsk_test_xxxxxxxx",
+        origin: "https://shop.example",
+      },
+      body: JSON.stringify({
+        visitorId: "12345678-abcd-ef00-0000-000000000001",
+        message: "Hi there",
+      }),
+    });
+
+    expect(res.status).toBe(503);
+    expect(JSON.parse(res.body)).toMatchObject({
+      status: "error",
+      message: "Unable to complete chat response.",
+      code: "WIDGET_CHAT_UNAVAILABLE",
+    });
+    expect(res.body).not.toContain("private agent provider detail");
+    expect(res.body).not.toContain("debug");
   });
 
   it("aborts shared JSON processing on /chat response disconnect without writing a 500", async () => {

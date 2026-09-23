@@ -3099,6 +3099,15 @@ paths:
                 final:
                   summary: Successful terminal response
                   value: "data: {\"final\":{\"reply\":\"Hello\",\"conversationId\":101,\"action\":\"REPLY\",\"attachment\":null}}\n\ndata: [DONE]\n\n"
+        "503":
+          description: The customer agent could not complete the chat request. The request may be retried.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+              example:
+                status: error
+                message: Unable to complete chat response.
+                code: WIDGET_CHAT_UNAVAILABLE
   /v1/public/widget/chat/media:
     options:
       tags: [Public Widget]
@@ -3124,6 +3133,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/PublicWidgetChatResponse" }
+        "503":
+          description: The customer agent could not complete the chat request. The request may be retried.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
   /v1/public/widget/chat/history:
     get:
       tags: [Public Widget]

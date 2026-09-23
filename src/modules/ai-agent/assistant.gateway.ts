@@ -312,22 +312,40 @@ function normalizeHumanMessage(value: unknown, userId: number): {
   };
 }
 
-function normalizeHistoryBody(body: unknown): PlainRecord {
+function normalizeHistoryBody(body: unknown, threadId?: string): PlainRecord {
   if (body === undefined) return { limit: 10 };
   if (!isPlainRecord(body)) {
     throw new AppError("Invalid request body", 400, true, "INVALID_BODY");
   }
-  // The SDK also types checkpoint/metadata cursors, but those can carry
-  // client-controlled namespaces or tenant metadata. This BFF only exposes
-  // the bounded page-size control needed by checkpoint lookup.
-  if (!hasOnly(body, ["limit"])) {
+  // The SDK's `before` option is a RunnableConfig. Accept only its opaque
+  // checkpoint ID and rebuild all structured scope from the authorized path.
+  if (!hasOnly(body, ["limit", "before"])) {
     throw new AppError("Invalid history fields", 400, true, "INVALID_BODY_FIELDS");
   }
   const limit = body.limit === undefined ? 10 : body.limit;
   if (!Number.isInteger(limit) || Number(limit) < 1 || Number(limit) > 100) {
     throw new AppError("Invalid pagination", 400, true, "INVALID_PAGINATION");
   }
-  return { limit: Number(limit) };
+  const normalized: PlainRecord = { limit: Number(limit) };
+  if (body.before !== undefined) {
+    if (!isPlainRecord(body.before) || !hasOnly(body.before, ["configurable"]) ||
+        !isPlainRecord(body.before.configurable) ||
+        !hasOnly(body.before.configurable, ["checkpoint_id"])) {
+      throw new AppError("Invalid history cursor", 400, true, "INVALID_HISTORY_CURSOR");
+    }
+    const checkpointId = normalizeCheckpointId(body.before.configurable.checkpoint_id);
+    if (!threadId || !checkpointId) {
+      throw new AppError("Invalid history cursor", 400, true, "INVALID_HISTORY_CURSOR");
+    }
+    normalized.before = {
+      configurable: {
+        thread_id: threadId,
+        checkpoint_ns: "",
+        checkpoint_id: checkpointId,
+      },
+    };
+  }
+  return normalized;
 }
 
 function normalizeCheckpointId(value: unknown): string | undefined {
@@ -346,6 +364,7 @@ function normalizeBody(
   endpoint: GatewayEndpoint,
   body: unknown,
   scope: { userId: number; profileId: number; workspaceId: number },
+  pathThreadId?: string,
 ): PlainRecord | undefined {
   if (!["create", "search", "update", "history", "run"].includes(endpoint)) {
     if (body !== undefined && endpoint !== "read" && endpoint !== "state" && endpoint !== "delete" && endpoint !== "cancel") {
@@ -353,7 +372,7 @@ function normalizeBody(
     }
     return undefined;
   }
-  if (endpoint === "history") return normalizeHistoryBody(body);
+  if (endpoint === "history") return normalizeHistoryBody(body, pathThreadId);
 
   if (!isPlainRecord(body)) {
     throw new AppError("Invalid request body", 400, true, "INVALID_BODY");
@@ -530,6 +549,7 @@ export async function assistantGateway(req: AuthRequest, res: Response): Promise
     throw new AppError("Assistant operation is not allowed", 403, true, "OPERATION_NOT_ALLOWED");
   }
   validateQuery(endpoint, req);
+  const pathParts = req.path.replace(/^\/+/, "").split("/");
 
   const requestedWorkspace = req.headers["x-workspace-id"];
   const headerWorkspaceId = typeof requestedWorkspace === "string" && requestedWorkspace.trim()
@@ -549,9 +569,8 @@ export async function assistantGateway(req: AuthRequest, res: Response): Promise
     userId,
     profileId,
     workspaceId: resolvedWorkspaceId,
-  });
+  }, pathParts[1]);
   const apiUrl = (process.env.LANGGRAPH_API_URL ?? "http://localhost:8123").replace(/\/+$/, "");
-  const pathParts = req.path.replace(/^\/+/, "").split("/");
   const target = `${apiUrl}/${req.path.replace(/^\/+/, "")}${queryString(req)}`;
   // Interactive user traffic must use the BFF-scoped key. The monolith key
   // intentionally represents an unrestricted service caller and remains

@@ -50,6 +50,22 @@ describe("assistant gateway contract", () => {
     expect(normalized).not.toBe(body);
   });
 
+  it("rebuilds SDK history cursors from an opaque checkpoint ID and the authorized path thread", () => {
+    expect(assistantGatewayInternals.normalizeBody("history", {
+      limit: 25,
+      before: { configurable: { checkpoint_id: "cp-page-1" } },
+    }, scope, "thread-authorized")).toEqual({
+      limit: 25,
+      before: {
+        configurable: {
+          thread_id: "thread-authorized",
+          checkpoint_ns: "",
+          checkpoint_id: "cp-page-1",
+        },
+      },
+    });
+  });
+
   it("defaults history pages to the SDK's bounded page size", () => {
     expect(assistantGatewayInternals.normalizeBody("history", {}, scope)).toEqual({ limit: 10 });
   });
@@ -68,6 +84,12 @@ describe("assistant gateway contract", () => {
     { assistant_id: "agent" },
     { metadata: { workspace_id: 999 } },
     { before: { configurable: { thread_id: "other-thread" } } },
+    { before: { configurable: { checkpoint_id: "cp-1", thread_id: "other-thread" } } },
+    { before: { configurable: { checkpoint_id: "cp-1", checkpoint_ns: "other-namespace" } } },
+    { before: { configurable: { checkpoint_id: "cp-1", user_id: 999 } } },
+    { before: { configurable: { checkpoint_id: "cp-1" }, arbitrary: true } },
+    { before: { configurable: { checkpoint_id: "" } } },
+    { before: { configurable: { checkpoint_id: "cp-1" } } },
     { checkpoint: { checkpoint_ns: "other-namespace" } },
     { arbitrary: true },
   ])("rejects unsafe history body %j", (body) => {

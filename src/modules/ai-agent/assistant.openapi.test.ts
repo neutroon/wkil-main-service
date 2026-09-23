@@ -38,6 +38,26 @@ function requestSchema(pathName: string, method: "post" | "patch"): JsonRecord {
 }
 
 describe("assistant gateway OpenAPI contract", () => {
+  it("documents the SDK history cursor as only an opaque checkpoint ID", () => {
+    const schema = requestSchema("/v1/assistant/threads/{threadId}/history", "post");
+    expect((schema.properties as JsonRecord).before).toEqual({
+      type: "object",
+      additionalProperties: false,
+      description: "SDK history cursor. The server stamps thread_id from the path and checkpoint_ns as the root namespace.",
+      properties: {
+        configurable: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            checkpoint_id: { type: "string", minLength: 1, maxLength: 256 },
+          },
+          required: ["checkpoint_id"],
+        },
+      },
+      required: ["configurable"],
+    });
+  });
+
   it("publishes the optional workspace selector on every LangGraph gateway operation", () => {
     const operations = Object.values(document.paths as JsonRecord)
       .flatMap((pathItem) => Object.values(pathItem as JsonRecord))

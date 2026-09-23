@@ -1502,6 +1502,18 @@ paths:
               additionalProperties: false
               properties:
                 limit: { type: integer, minimum: 1, maximum: 100, default: 10 }
+                before:
+                  type: object
+                  additionalProperties: false
+                  description: SDK history cursor. The server stamps thread_id from the path and checkpoint_ns as the root namespace.
+                  properties:
+                    configurable:
+                      type: object
+                      additionalProperties: false
+                      properties:
+                        checkpoint_id: { type: string, minLength: 1, maxLength: 256 }
+                      required: [checkpoint_id]
+                  required: [configurable]
       responses:
         "200":
           description: LangGraph checkpoint states, newest first.

@@ -374,6 +374,11 @@ function normalizeBody(
   }
   if (endpoint === "history") return normalizeHistoryBody(body, pathThreadId);
 
+  // The official SDK's argument-free threads.create() sends no request body.
+  // Treat that as the documented empty create request, then stamp all
+  // scope-owned fields below.
+  if (endpoint === "create" && body === undefined) body = {};
+
   if (!isPlainRecord(body)) {
     throw new AppError("Invalid request body", 400, true, "INVALID_BODY");
   }
@@ -394,6 +399,14 @@ function normalizeBody(
   if (endpoint === "create") {
     if (!hasOnly(body, ["metadata", "input"])) {
       throw new AppError("Invalid thread fields", 400, true, "INVALID_BODY_FIELDS");
+    }
+    if (body.metadata !== undefined &&
+        (!isPlainRecord(body.metadata) || !hasOnly(body.metadata, ["title"]))) {
+      throw new AppError("Invalid thread metadata", 400, true, "INVALID_BODY_FIELDS");
+    }
+    if (isPlainRecord(body.metadata) && body.metadata.title !== undefined &&
+        !validTitle(body.metadata.title)) {
+      throw new AppError("Invalid thread title", 400, true, "INVALID_THREAD_TITLE");
     }
     if (body.input !== undefined && (!isPlainRecord(body.input) || !hasOnly(body.input, ["messages"]) ||
         !Array.isArray(body.input.messages) || body.input.messages.length !== 0)) {

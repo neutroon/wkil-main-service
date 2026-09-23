@@ -301,11 +301,27 @@ describe("assistant gateway contract", () => {
     });
   });
 
-  it("ignores client tenant metadata and stamps the authorized workspace", () => {
-    expect(assistantGatewayInternals.normalizeBody("create", {
-      metadata: { title: " Owner chat ", workspace_id: 999 },
-    }, scope)).toEqual({
-      metadata: { workspace_id: 11, title: "Owner chat" },
+  it.each([
+    { metadata: { title: " Owner chat ", workspace_id: 999 } },
+    { metadata: { unexpected: "value" } },
+    { metadata: null },
+  ])("rejects create metadata outside the title-only contract: %j", (body) => {
+    expect(() => assistantGatewayInternals.normalizeBody("create", body, scope)).toThrow();
+  });
+
+  it("accepts argument-free SDK thread creation and stamps canonical server metadata", () => {
+    expect(assistantGatewayInternals.normalizeBody("create", undefined, scope)).toEqual({
+      metadata: { workspace_id: 11 },
+      input: {
+        user_id: 42,
+        business_profile_id: 7,
+        workspace_id: 11,
+        channel: "internal_copilot",
+      },
+    });
+
+    expect(assistantGatewayInternals.normalizeBody("create", {}, scope)).toEqual({
+      metadata: { workspace_id: 11 },
       input: {
         user_id: 42,
         business_profile_id: 7,

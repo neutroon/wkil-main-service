@@ -1,10 +1,34 @@
+import fs from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   CUSTOMER_AGENT_CONTINUATION_LIMITS,
+  CUSTOMER_AGENT_DECISION_CONTRACT_VERSION,
   customerAgentContinuationSchema,
   customerAgentDecisionSchema,
   projectCustomerAgentContinuation,
 } from "./customerAgent.types";
+
+const decisionFixture = JSON.parse(fs.readFileSync(
+  path.resolve(process.cwd(), "src/modules/ai-agent/customer/fixtures/customer-agent-decision.v1.json"),
+  "utf8",
+)) as {
+  contract_version: number;
+  valid: Array<{ name: string; value: unknown }>;
+  invalid: Array<{ name: string; value: unknown }>;
+};
+
+it("matches customer decision contract version 1", () => {
+  expect(decisionFixture.contract_version).toBe(CUSTOMER_AGENT_DECISION_CONTRACT_VERSION);
+});
+
+it.each(decisionFixture.valid)("accepts parity fixture $name", ({ value }) => {
+  expect(() => customerAgentDecisionSchema.parse(value)).not.toThrow();
+});
+
+it.each(decisionFixture.invalid)("rejects parity fixture $name", ({ value }) => {
+  expect(() => customerAgentDecisionSchema.parse(value)).toThrow();
+});
 
 describe("customerAgentDecisionSchema", () => {
   it("accepts a reply and rejects content on NO_REPLY", () => {

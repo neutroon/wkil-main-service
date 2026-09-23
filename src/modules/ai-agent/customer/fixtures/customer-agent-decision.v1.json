@@ -1,0 +1,81 @@
+{
+  "contract_version": 1,
+  "valid": [
+    {
+      "name": "reply_with_attachment",
+      "value": {
+        "action": "REPLY",
+        "content": "Here is the brochure.",
+        "reason_code": "KNOWLEDGE_MATCH",
+        "handoff_category": null,
+        "attachment": { "asset_name": "brochure", "caption": "Product details" }
+      }
+    },
+    {
+      "name": "handoff_without_content",
+      "value": {
+        "action": "HANDOFF",
+        "content": null,
+        "reason_code": "HUMAN_ACTION_REQUIRED",
+        "handoff_category": "SUPPORT",
+        "attachment": null
+      }
+    },
+    {
+      "name": "policy_no_reply",
+      "value": {
+        "action": "NO_REPLY",
+        "reason_code": "POLICY_SUPPRESSED"
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "reply_without_content",
+      "value": { "action": "REPLY", "reason_code": "KNOWLEDGE_MATCH" }
+    },
+    {
+      "name": "no_reply_with_content",
+      "value": {
+        "action": "NO_REPLY",
+        "content": "must not send",
+        "reason_code": "POLICY_SUPPRESSED"
+      }
+    },
+    {
+      "name": "attachment_on_handoff",
+      "value": {
+        "action": "HANDOFF",
+        "reason_code": "HUMAN_ACTION_REQUIRED",
+        "handoff_category": "SUPPORT",
+        "attachment": { "asset_name": "brochure" }
+      }
+    },
+    {
+      "name": "blank_attachment_name",
+      "value": {
+        "action": "REPLY",
+        "content": "Attached.",
+        "reason_code": "KNOWLEDGE_MATCH",
+        "attachment": { "asset_name": "   " }
+      }
+    },
+    {
+      "name": "unknown_top_level_field",
+      "value": {
+        "action": "NO_REPLY",
+        "reason_code": "POLICY_SUPPRESSED",
+        "workspace_id": 999
+      }
+    },
+    {
+      "name": "unknown_attachment_field",
+      "value": {
+        "action": "REPLY",
+        "content": "Attached.",
+        "reason_code": "KNOWLEDGE_MATCH",
+        "attachment": { "asset_name": "brochure", "url": "https://untrusted.test" }
+      }
+    }
+  ]
+}

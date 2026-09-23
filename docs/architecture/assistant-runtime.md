@@ -1,10 +1,26 @@
 # Assistant runtime and local runbook
 
-The supported chat path is Next.js/assistant-ui → TypeScript `/v1/assistant` →
-Python LangGraph Agent Server. Mobile clients use the same authenticated gateway.
-LangChain provider, message, tool, embedding, splitter, and Qdrant packages are
-used inside the Python workflows. Explicit LangGraph nodes retain quota checks,
-context loading, bounded tool loops, human approval, and usage recording.
+There are two durable conversation paths:
+
+1. Business-owner copilot sessions are LangGraph Agent Server threads reached
+   through `/v1/assistant`; Agent Server owns their messages, runs, checkpoints,
+   interrupts, and cancellation.
+2. Customer-channel conversations (web widget, WhatsApp, Messenger, and Facebook
+   comments) are backend/Prisma business records. Each record points to a stable
+   `customer_agent` Agent Server thread for execution state. The backend owns
+   delivery, human handoff, follow-up schedules, audit state, and channel effects.
+
+Follow-ups are ordinary backend-scheduled jobs. When work is due, the backend
+starts or resumes the existing customer graph run; the graph does not sleep as a
+scheduler and does not replace the business conversation record.
+
+The business-owner copilot path is Next.js/assistant-ui → TypeScript
+`/v1/assistant` → Python LangGraph Agent Server. Mobile clients use the same
+authenticated gateway. The backend uses `@langchain/langgraph-sdk` 1.11.0 for
+Agent Server calls. LangChain provider, message, tool, embedding, splitter, and
+Qdrant packages are used inside the Python workflows. Explicit LangGraph nodes
+retain quota checks, context loading, bounded tool loops, human approval, and
+usage recording.
 
 ## Ownership
 
@@ -13,9 +29,9 @@ context loading, bounded tool loops, human approval, and usage recording.
 | assistant-ui and `@assistant-ui/react-langgraph` | Composer, messages as rendered from graph state, stream/run UI, selection, tool and approval presentation |
 | App integration | Session/CSRF transport, workspace context, localization/RTL, URL selection, product renderers |
 | TypeScript gateway | Authentication, workspace/business-profile authorization, canonical tenant input, allowed paths/payloads, private Agent Server credentials, SSE forwarding |
-| Agent Server | Threads, checkpoints/history, run lifecycle, durable graph state, persisted interrupts, cancellation |
+| Agent Server | Business-owner copilot threads, messages, runs, checkpoints/history, interrupts, cancellation; graph execution state for each stable `customer_agent` thread |
 | Python graphs | Orchestration, model calls, validated tools, reducers, RAG, approvals before effects |
-| TypeScript business services | Business authorization, database mutations, billing, external integrations and irreversible effects through authenticated callbacks |
+| Backend/Prisma business services | Customer-channel conversation records; delivery, human handoff, follow-up schedules/jobs, audit state, channel effects, business authorization, database mutations, billing, and external integrations through authenticated callbacks |
 
 Application code does not add a parallel message store, SSE parser, Next.js
 agent proxy, or AssistantCloud persistence layer. The gateway strips/rejects
@@ -45,8 +61,9 @@ parent directory containing the three repositories.
    SDK `threads.getHistory`, which sends `POST /threads/{id}/history`. The gateway
    accepts an optional limit of 1–100, defaulting to 10. The frontend matches the
    exact ordered stable message IDs and message count for the parent history,
-   then supplies that checkpoint as SDK `checkpointId`. SDK 1.11.0 serializes it
-   as scalar `checkpoint_id`. Edited human input remains a one-message run;
+   then supplies that checkpoint as SDK `checkpointId`.
+   `@langchain/langgraph-sdk` 1.11.0 serializes it as scalar `checkpoint_id`.
+   Edited human input remains a one-message run;
    regeneration sends SDK `input: null` so Agent Server continues from that
    checkpoint without fabricating another human message. If there is no exact
    stable-ID checkpoint match, the frontend finishes the attempted reload

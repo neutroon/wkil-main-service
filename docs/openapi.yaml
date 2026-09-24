@@ -898,6 +898,15 @@ paths:
           in: query
           required: false
           schema: { $ref: "#/components/schemas/OrderStatus" }
+        - name: search
+          in: query
+          required: false
+          description: >-
+            Optional search is trimmed before validation and matching; the trimmed value must contain 1 to 120 characters. Matching is literal: order number and customer name use case-insensitive substring matching, while customer phone uses a case-sensitive substring match without phone normalization. Backslash (\), percent (%), underscore (_), plus (+), and interior spaces are treated as literal characters, not wildcards or formatting instructions. Percent-encode a plus sign as %2B in the query string because an unescaped plus is decoded as a space.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 120
       responses:
         "200": { $ref: "#/components/responses/OrderSummaryList" }
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -3578,12 +3587,12 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/OrderTemplateConfigResponse" }
     OrderSummaryList:
-      description: Paginated order confirmation summaries.
+      description: Paginated compact order confirmation summaries.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/OrderSummaryListResponse" }
     OrderSummaryDetail:
-      description: Order confirmation summary.
+      description: Complete normalized order confirmation detail and safe operational timelines.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/OrderSummaryDetailResponse" }
@@ -5014,7 +5023,7 @@ components:
       type: object
       additionalProperties: false
       required:
-        [id, kind, status, providerMessageId, conversationMessageId, attemptCount, lastError, queuedAt, sentAt, deliveredAt, readAt, failedAt, createdAt, updatedAt]
+        [id, kind, mode, status, providerMessageId, conversationMessageId, attemptCount, lastError, queuedAt, sentAt, deliveredAt, readAt, failedAt, createdAt, updatedAt]
       properties:
         id: { type: integer, minimum: 1 }
         kind: { $ref: "#/components/schemas/OrderNotificationKind" }
@@ -5031,6 +5040,31 @@ components:
         failedAt: { type: [string, "null"], format: date-time }
         createdAt: { type: [string, "null"], format: date-time }
         updatedAt: { type: [string, "null"], format: date-time }
+    OrderNotificationDetail:
+      type: object
+      additionalProperties: false
+      required:
+        [id, kind, mode, status, providerMessageId, conversationMessageId, attemptCount, lastError, queuedAt, sentAt, deliveredAt, readAt, failedAt, createdAt, updatedAt, renderedVariables]
+      properties:
+        id: { type: integer, minimum: 1 }
+        kind: { $ref: "#/components/schemas/OrderNotificationKind" }
+        mode: { type: string, enum: [CONFIRMATION, NOTIFICATION_ONLY] }
+        status: { $ref: "#/components/schemas/OrderNotificationStatus" }
+        providerMessageId: { type: [string, "null"] }
+        conversationMessageId: { type: [integer, "null"], minimum: 1 }
+        attemptCount: { type: integer, minimum: 0 }
+        lastError: { type: [string, "null"] }
+        queuedAt: { type: [string, "null"], format: date-time }
+        sentAt: { type: [string, "null"], format: date-time }
+        deliveredAt: { type: [string, "null"], format: date-time }
+        readAt: { type: [string, "null"], format: date-time }
+        failedAt: { type: [string, "null"], format: date-time }
+        createdAt: { type: [string, "null"], format: date-time }
+        updatedAt: { type: [string, "null"], format: date-time }
+        renderedVariables:
+          description: Stored rendered-variable snapshot; action-token values are not returned.
+          type: [object, "null"]
+          additionalProperties: true
     OrderStoreSync:
       type: object
       additionalProperties: false
@@ -5049,7 +5083,44 @@ components:
         failedAt: { type: [string, "null"], format: date-time }
         createdAt: { type: [string, "null"], format: date-time }
         updatedAt: { type: [string, "null"], format: date-time }
+    OrderStoreSyncDetail:
+      type: object
+      additionalProperties: false
+      required:
+        [id, requestedStatus, status, providerStatus, attemptCount, lastError, nextAttemptAt, startedAt, completedAt, failedAt, createdAt, updatedAt]
+      properties:
+        id: { type: integer, minimum: 1 }
+        requestedStatus: { $ref: "#/components/schemas/OrderStatus" }
+        status: { $ref: "#/components/schemas/OrderStoreSyncStatus" }
+        providerStatus: { type: [string, "null"] }
+        attemptCount: { type: integer, minimum: 0 }
+        lastError: { type: [string, "null"] }
+        nextAttemptAt: { type: [string, "null"], format: date-time }
+        startedAt: { type: [string, "null"], format: date-time }
+        completedAt: { type: [string, "null"], format: date-time }
+        failedAt: { type: [string, "null"], format: date-time }
+        createdAt: { type: [string, "null"], format: date-time }
+        updatedAt: { type: [string, "null"], format: date-time }
+    OrderEventDetail:
+      type: object
+      additionalProperties: false
+      required:
+        [id, externalEventId, eventType, schemaVersion, occurredAt, status, attemptCount, lastError, receivedAt, processedAt, createdAt, updatedAt]
+      properties:
+        id: { type: integer, minimum: 1 }
+        externalEventId: { type: string }
+        eventType: { type: string }
+        schemaVersion: { type: string }
+        occurredAt: { type: [string, "null"], format: date-time }
+        status: { $ref: "#/components/schemas/OrderEventStatus" }
+        attemptCount: { type: integer, minimum: 0 }
+        lastError: { type: [string, "null"] }
+        receivedAt: { type: [string, "null"], format: date-time }
+        processedAt: { type: [string, "null"], format: date-time }
+        createdAt: { type: [string, "null"], format: date-time }
+        updatedAt: { type: [string, "null"], format: date-time }
     OrderSummary:
+      description: Compact order data for authenticated, tenant-scoped management list responses.
       type: object
       additionalProperties: false
       required:
@@ -5061,7 +5132,9 @@ components:
         externalOrderId: { type: string }
         orderNumber: { type: string }
         status: { $ref: "#/components/schemas/OrderStatus" }
-        customerPhone: { type: [string, "null"] }
+        customerPhone:
+          description: Complete, unmasked customer phone number on authenticated management endpoints.
+          type: string
         customerName: { type: [string, "null"] }
         locale: { $ref: "#/components/schemas/OrderLocale" }
         total: { type: [string, "null"] }
@@ -5079,6 +5152,54 @@ components:
         sourceUpdatedAt: { type: [string, "null"], format: date-time }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+    OrderDetail:
+      description: >-
+        Complete normalized order details for the authenticated tenant-scoped management endpoint. Includes every safe event in the order timeline; raw event payloads, action-token values or hashes, and integration secrets are not returned.
+      type: object
+      additionalProperties: false
+      required:
+        [id, businessProfileId, integrationId, externalOrderId, orderNumber, status, customerPhone, customerName, locale, total, currency, sourceEventId, notification, notifications, storeSync, storeSyncs, sourceCreatedAt, sourceUpdatedAt, createdAt, updatedAt, lineItems, shippingAddress, metadata, sourceStatus, paymentMethod, events]
+      properties:
+        id: { type: integer, minimum: 1 }
+        businessProfileId: { type: integer, minimum: 1 }
+        integrationId: { type: integer, minimum: 1 }
+        externalOrderId: { type: string }
+        orderNumber: { type: string }
+        status: { $ref: "#/components/schemas/OrderStatus" }
+        customerPhone:
+          description: Complete, unmasked customer phone number on authenticated management endpoints.
+          type: string
+        customerName: { type: [string, "null"] }
+        locale: { $ref: "#/components/schemas/OrderLocale" }
+        total: { type: [string, "null"] }
+        currency: { type: string, pattern: "^[A-Z]{3}$" }
+        sourceEventId: { type: [string, "null"] }
+        notification: { oneOf: [{ $ref: "#/components/schemas/OrderNotificationDetail" }, { type: "null" }] }
+        notifications:
+          type: array
+          items: { $ref: "#/components/schemas/OrderNotificationDetail" }
+        storeSync: { oneOf: [{ $ref: "#/components/schemas/OrderStoreSyncDetail" }, { type: "null" }] }
+        storeSyncs:
+          type: array
+          items: { $ref: "#/components/schemas/OrderStoreSyncDetail" }
+        sourceCreatedAt: { type: [string, "null"], format: date-time }
+        sourceUpdatedAt: { type: [string, "null"], format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        lineItems:
+          type: [array, "null"]
+          items: { $ref: "#/components/schemas/CanonicalOrderItem" }
+        shippingAddress:
+          oneOf:
+            - $ref: "#/components/schemas/CanonicalShippingAddress"
+            - type: "null"
+        metadata: { type: [object, "null"], additionalProperties: true }
+        sourceStatus: { type: [string, "null"] }
+        paymentMethod: { type: [string, "null"] }
+        events:
+          description: All associated safe events, ordered by occurredAt descending; rawPayload is excluded.
+          type: array
+          items: { $ref: "#/components/schemas/OrderEventDetail" }
     OrderPaginationMeta:
       type: object
       additionalProperties: false
@@ -5102,7 +5223,7 @@ components:
       additionalProperties: false
       required: [data]
       properties:
-        data: { $ref: "#/components/schemas/OrderSummary" }
+        data: { $ref: "#/components/schemas/OrderDetail" }
     OrderRetryRequest:
       type: object
       additionalProperties: false

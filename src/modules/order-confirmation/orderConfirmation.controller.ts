@@ -29,6 +29,8 @@ import {
   updateOrderIntegration,
   updateOrderTemplateConfig,
   type OrderIntegrationManagementRecord,
+  type ManagedOrderSummaryRecord,
+  type ManagedOrderDetailRecord,
 } from "./orderConfirmation.repository";
 import {
   enqueueNotificationRetry,
@@ -195,15 +197,103 @@ function serializeDate(value: unknown): string | null {
   return value instanceof Date ? value.toISOString() : String(value);
 }
 
-function maskPhone(phone: unknown): string | null {
-  if (typeof phone !== "string" || phone.length === 0) return null;
-  if (phone.length <= 5) return "***";
-  return `${phone.slice(0, 3)}***${phone.slice(-2)}`;
+type OrderNotificationResponse = {
+  mode: "CONFIRMATION" | "NOTIFICATION_ONLY";
+  id: number;
+  kind: string;
+  status: string;
+  providerMessageId: string | null;
+  conversationMessageId: number | null;
+  attemptCount: number;
+  lastError: string | null;
+  queuedAt: string | null;
+  sentAt: string | null;
+  deliveredAt: string | null;
+  readAt: string | null;
+  failedAt: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  renderedVariables?: unknown;
+};
+
+type OrderStoreSyncResponse = {
+  id: number;
+  requestedStatus: string;
+  status: string;
+  providerStatus: string | null;
+  attemptCount: number;
+  lastError: string | null;
+  nextAttemptAt: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  failedAt: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+type OrderSummaryResponse = {
+  id: number;
+  businessProfileId: number;
+  integrationId: number;
+  externalOrderId: string;
+  orderNumber: string;
+  status: string;
+  customerPhone: string;
+  customerName: string | null;
+  locale: string;
+  total: string | null;
+  currency: string;
+  sourceEventId: string | null;
+  notification: OrderNotificationResponse | null;
+  notifications: OrderNotificationResponse[];
+  storeSync: OrderStoreSyncResponse | null;
+  storeSyncs: OrderStoreSyncResponse[];
+  sourceCreatedAt: string | null;
+  sourceUpdatedAt: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+type OrderDetailResponse = OrderSummaryResponse & {
+  lineItems: unknown;
+  shippingAddress: unknown;
+  sourceStatus: string | null;
+  paymentMethod: string | null;
+  metadata: unknown;
+  events: OrderEventResponse[];
+};
+
+type OrderEventResponse = {
+  id: number;
+  externalEventId: string;
+  eventType: string;
+  schemaVersion: string;
+  occurredAt: string | null;
+  status: string;
+  attemptCount: number;
+  lastError: string | null;
+  receivedAt: string | null;
+  processedAt: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+function jsonRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
 }
 
-function serializeNotification(notification: any): Record<string, unknown> {
-  return {
-    mode: notification.renderedVariables?.mode === "NOTIFICATION_ONLY" ? "NOTIFICATION_ONLY" : "CONFIRMATION",
+function serializeNotification(
+  value: unknown,
+  options?: { includeRenderedVariables?: boolean },
+): OrderNotificationResponse {
+  const notification = value as ManagedOrderDetailRecord["notifications"][number] & {
+    summaryMode?: string | null;
+  };
+  const renderedVariables = notification.renderedVariables;
+  const mode = notification.summaryMode ?? jsonRecord(renderedVariables).mode;
+  const response: OrderNotificationResponse = {
+    mode: mode === "NOTIFICATION_ONLY" ? "NOTIFICATION_ONLY" : "CONFIRMATION",
     id: notification.id,
     kind: notification.kind,
     status: notification.status,
@@ -219,9 +309,14 @@ function serializeNotification(notification: any): Record<string, unknown> {
     createdAt: serializeDate(notification.createdAt),
     updatedAt: serializeDate(notification.updatedAt),
   };
+  if (options?.includeRenderedVariables) {
+    response.renderedVariables = renderedVariables ?? null;
+  }
+  return response;
 }
 
-function serializeStoreSync(sync: any): Record<string, unknown> {
+function serializeStoreSync(value: unknown): OrderStoreSyncResponse {
+  const sync = value as ManagedOrderDetailRecord["storeSyncs"][number];
   return {
     id: sync.id,
     requestedStatus: sync.requestedStatus,
@@ -238,12 +333,28 @@ function serializeStoreSync(sync: any): Record<string, unknown> {
   };
 }
 
-function serializeOrder(order: any): Record<string, unknown> {
-  const notifications = Array.isArray(order.notifications)
-    ? order.notifications.map(serializeNotification)
-    : [];
-  const storeSyncs = Array.isArray(order.storeSyncs) ? order.storeSyncs.map(serializeStoreSync) : [];
-  const confirmation = notifications.find((notification: any) => notification.kind === "CONFIRMATION_REQUEST") ?? null;
+function serializeOrderEvent(value: unknown): OrderEventResponse {
+  const event = value as ManagedOrderDetailRecord["events"][number];
+  return {
+    id: event.id,
+    externalEventId: event.externalEventId,
+    eventType: event.eventType,
+    schemaVersion: event.schemaVersion,
+    occurredAt: serializeDate(event.occurredAt),
+    status: event.status,
+    attemptCount: event.attemptCount,
+    lastError: event.lastError ?? null,
+    receivedAt: serializeDate(event.receivedAt),
+    processedAt: serializeDate(event.processedAt),
+    createdAt: serializeDate(event.createdAt),
+    updatedAt: serializeDate(event.updatedAt),
+  };
+}
+
+function serializeOrderSummary(order: ManagedOrderSummaryRecord): OrderSummaryResponse {
+  const notifications = order.notifications.map((notification) => serializeNotification(notification));
+  const storeSyncs = order.storeSyncs.map(serializeStoreSync);
+  const confirmation = notifications.find((notification) => notification.kind === "CONFIRMATION_REQUEST") ?? null;
 
   return {
     id: order.id,
@@ -252,7 +363,7 @@ function serializeOrder(order: any): Record<string, unknown> {
     externalOrderId: order.externalOrderId,
     orderNumber: order.orderNumber,
     status: order.status,
-    customerPhone: maskPhone(order.customerPhone),
+    customerPhone: order.customerPhone,
     customerName: order.customerName ?? null,
     locale: order.locale,
     total: order.total === null || order.total === undefined ? null : String(order.total),
@@ -266,6 +377,26 @@ function serializeOrder(order: any): Record<string, unknown> {
     sourceUpdatedAt: serializeDate(order.sourceUpdatedAt),
     createdAt: serializeDate(order.createdAt),
     updatedAt: serializeDate(order.updatedAt),
+  };
+}
+
+function serializeOrderDetail(order: ManagedOrderDetailRecord): OrderDetailResponse {
+  const summary = serializeOrderSummary(order);
+  const notifications = order.notifications.map((notification) =>
+    serializeNotification(notification, { includeRenderedVariables: true }),
+  );
+  const confirmation = notifications.find((notification) => notification.kind === "CONFIRMATION_REQUEST") ?? null;
+
+  return {
+    ...summary,
+    lineItems: order.lineItems ?? null,
+    shippingAddress: order.shippingAddress ?? null,
+    sourceStatus: order.sourceStatus ?? null,
+    paymentMethod: order.paymentMethod ?? null,
+    metadata: order.metadata ?? null,
+    events: order.events.map(serializeOrderEvent),
+    notification: confirmation,
+    notifications,
   };
 }
 
@@ -868,17 +999,18 @@ export async function listOrders(req: Request, res: Response): Promise<void> {
     businessProfileId,
     integrationId: (req.query as any).integrationId,
     status: (req.query as any).status,
+    search: (req.query as any).search,
     page: (req.query as any).page,
     limit: (req.query as any).limit,
   });
-  res.json({ data: result.data.map(serializeOrder), meta: result.meta });
+  res.json({ data: result.data.map(serializeOrderSummary), meta: result.meta });
 }
 
 export async function getOrder(req: Request, res: Response): Promise<void> {
   const profileIds = await accessibleProfiles(req as ProfileScopedRequest);
   const order = await findManagedOrder(req.params.id as unknown as number, profileIds);
   if (!order) notFound("Order confirmation not found");
-  res.json({ data: serializeOrder(order) });
+  res.json({ data: serializeOrderDetail(order) });
 }
 
 export async function retryNotification(req: Request, res: Response): Promise<void> {

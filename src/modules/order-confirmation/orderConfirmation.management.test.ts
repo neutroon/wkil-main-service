@@ -611,8 +611,12 @@ describe("order-confirmation management APIs", () => {
           id: 31,
           status: "AWAITING_CONFIRMATION",
           sourceEventId: "evt-31",
-          notifications: [{ id: 41, status: "FAILED", lastError: "provider unavailable",
-            renderedVariables: { mode: "NOTIFICATION_ONLY", body: ["private rendered content"] } }],
+          notifications: [{
+            id: 41,
+            status: "FAILED",
+            lastError: "provider unavailable",
+            summaryMode: "NOTIFICATION_ONLY",
+          }],
           storeSyncs: [],
           rawPayload: { customerPhone: "+12025550123" },
           actionTokens: [{ tokenHash: "hash-only" }],
@@ -632,8 +636,389 @@ describe("order-confirmation management APIs", () => {
     );
     expect(JSON.stringify(response.json)).not.toContain("rawPayload");
     expect(JSON.stringify(response.json)).not.toContain("hash-only");
-    expect(JSON.stringify(response.json)).not.toContain("private rendered content");
     expect(response.json.data[0].notifications[0].mode).toBe("NOTIFICATION_ONLY");
+    expect(response.json.data[0].notifications[0]).not.toHaveProperty("renderedVariables");
+    expect(response.json.data[0].notifications[0]).not.toHaveProperty("summaryMode");
+  });
+
+  it("forwards trimmed order search within the selected profile and returns the full phone number", async () => {
+    mocks.listManagedOrders.mockResolvedValue({
+      data: [{
+        id: 31,
+        businessProfileId: 11,
+        integrationId: 4,
+        externalOrderId: "order-31",
+        orderNumber: "#31",
+        status: "AWAITING_CONFIRMATION",
+        customerPhone: "+201005550184",
+        customerName: "Nadia",
+        locale: "en",
+        total: "42.50",
+        currency: "EGP",
+        events: [{ externalEventId: "evt-31" }],
+        notifications: [],
+        storeSyncs: [],
+      }],
+      meta: { total: 1, page: 1, limit: 20, totalPages: 1 },
+    });
+
+    const response = await request(server, {
+      method: "GET",
+      path: "/order-confirmations/orders?businessProfileId=11&search=%2B20%20100&page=1&limit=20",
+    });
+
+    expect(response.status).toBe(200);
+    expect(mocks.listManagedOrders).toHaveBeenCalledWith({
+      profileIds: [11],
+      businessProfileId: 11,
+      integrationId: undefined,
+      status: undefined,
+      search: "+20 100",
+      page: 1,
+      limit: 20,
+    });
+    expect(response.json.data[0].customerPhone).toBe("+201005550184");
+  });
+
+  it("rejects order search longer than 120 characters before repository access", async () => {
+    const search = "a".repeat(121);
+    const response = await request(server, {
+      method: "GET",
+      path: `/order-confirmations/orders?search=${encodeURIComponent(search)}`,
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.json.message).toContain("Too big");
+    expect(mocks.listManagedOrders).not.toHaveBeenCalled();
+  });
+
+  it("does not query orders for an inaccessible profile", async () => {
+    const response = await request(server, {
+      method: "GET",
+      path: "/order-confirmations/orders?businessProfileId=12",
+    });
+
+    expect(response.status).toBe(404);
+    expect(mocks.listManagedOrders).not.toHaveBeenCalled();
+  });
+
+  it("returns complete normalized order details without infrastructure secrets or action tokens", async () => {
+    const lineItems = [{ id: "line-1", name: "Notebook", quantity: 2, unitPrice: "12.50", total: "25.00" }];
+    const shippingAddress = {
+      addressLine1: "10 Nile St",
+      city: "Cairo",
+      state: "Cairo Governorate",
+      postalCode: "11511",
+      country: "EG",
+    };
+    const metadata = { source: "shop-platform", campaign: "summer", flags: { gift: false } };
+    mocks.findManagedOrder.mockResolvedValue({
+      id: 31,
+      businessProfileId: 11,
+      integrationId: 4,
+      externalOrderId: "external-31",
+      orderNumber: "#31",
+      status: "CONFIRMED",
+      customerPhone: "+201005550184",
+      customerName: "Nadia",
+      locale: "ar",
+      total: "25.00",
+      currency: "EGP",
+      lineItems,
+      shippingAddress,
+      metadata,
+      sourceStatus: "paid",
+      paymentMethod: "card",
+      sourceCreatedAt: new Date("2026-08-13T09:00:00.000Z"),
+      sourceUpdatedAt: new Date("2026-08-13T09:30:00.000Z"),
+      createdAt: new Date("2026-08-13T09:00:01.000Z"),
+      updatedAt: new Date("2026-08-13T09:31:00.000Z"),
+      events: [
+        {
+          id: 61,
+          externalEventId: "evt-31",
+          eventType: "order.updated",
+          schemaVersion: "2",
+          status: "PROCESSED",
+          attemptCount: 1,
+          lastError: null,
+          occurredAt: new Date("2026-08-13T09:30:00.000Z"),
+          receivedAt: new Date("2026-08-13T09:30:01.000Z"),
+          processedAt: new Date("2026-08-13T09:30:02.000Z"),
+          createdAt: new Date("2026-08-13T09:30:01.000Z"),
+          updatedAt: new Date("2026-08-13T09:30:02.000Z"),
+          rawPayload: { "private-payload": true },
+        },
+        {
+          id: 60,
+          externalEventId: "evt-30",
+          eventType: "order.created",
+          schemaVersion: "1",
+          status: "PROCESSED",
+          attemptCount: 1,
+          lastError: null,
+          occurredAt: new Date("2026-08-13T09:00:00.000Z"),
+          receivedAt: new Date("2026-08-13T09:00:01.000Z"),
+          processedAt: null,
+          createdAt: new Date("2026-08-13T09:00:01.000Z"),
+          updatedAt: new Date("2026-08-13T09:00:02.000Z"),
+          rawPayload: { "private-payload": true },
+        },
+      ],
+      notifications: [
+        {
+          id: 41,
+          kind: "CONFIRMATION_REQUEST",
+          renderedVariables: {
+            body: ["Order #31"],
+            previewText: "Order #31",
+            buttonMapping: ["confirmToken", "cancelToken"],
+            mode: "CONFIRMATION",
+          },
+          status: "FAILED",
+          providerMessageId: "wamid-41",
+          conversationMessageId: 88,
+          attemptCount: 2,
+          lastError: "provider unavailable",
+          queuedAt: new Date("2026-08-13T09:01:00.000Z"),
+          sentAt: null,
+          deliveredAt: null,
+          readAt: null,
+          failedAt: new Date("2026-08-13T09:02:00.000Z"),
+          createdAt: new Date("2026-08-13T09:01:00.000Z"),
+          updatedAt: new Date("2026-08-13T09:02:00.000Z"),
+        },
+        {
+          id: 42,
+          kind: "ACKNOWLEDGEMENT",
+          renderedVariables: { action: "CONFIRM" },
+          status: "SENT",
+          providerMessageId: "wamid-42",
+          conversationMessageId: null,
+          attemptCount: 1,
+          lastError: null,
+          queuedAt: new Date("2026-08-13T09:03:00.000Z"),
+          sentAt: new Date("2026-08-13T09:03:30.000Z"),
+          deliveredAt: null,
+          readAt: null,
+          failedAt: null,
+          createdAt: new Date("2026-08-13T09:03:00.000Z"),
+          updatedAt: new Date("2026-08-13T09:03:30.000Z"),
+        },
+      ],
+      storeSyncs: [
+        {
+          id: 51,
+          requestedStatus: "CONFIRMED",
+          status: "FAILED",
+          providerStatus: "ERROR",
+          attemptCount: 2,
+          lastError: "store unavailable",
+          nextAttemptAt: null,
+          startedAt: new Date("2026-08-13T09:04:00.000Z"),
+          completedAt: null,
+          failedAt: new Date("2026-08-13T09:05:00.000Z"),
+          createdAt: new Date("2026-08-13T09:04:00.000Z"),
+          updatedAt: new Date("2026-08-13T09:05:00.000Z"),
+        },
+        {
+          id: 52,
+          requestedStatus: "CANCELED",
+          status: "SUCCEEDED",
+          providerStatus: "cancelled",
+          attemptCount: 1,
+          lastError: null,
+          nextAttemptAt: null,
+          startedAt: new Date("2026-08-13T09:06:00.000Z"),
+          completedAt: new Date("2026-08-13T09:06:30.000Z"),
+          failedAt: null,
+          createdAt: new Date("2026-08-13T09:06:00.000Z"),
+          updatedAt: new Date("2026-08-13T09:06:30.000Z"),
+        },
+      ],
+      rawPayload: { "private-payload": true },
+      actionTokens: [{ token: "private-action-token", tokenHash: "private-token-hash" }],
+      signingSecret: "private-signing-secret",
+      callbackSecret: "private-callback-secret",
+      accessToken: "private-access-token",
+    });
+
+    const response = await request(server, {
+      method: "GET",
+      path: "/order-confirmations/orders/31",
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.json.data).toEqual({
+      id: 31,
+      businessProfileId: 11,
+      integrationId: 4,
+      externalOrderId: "external-31",
+      orderNumber: "#31",
+      status: "CONFIRMED",
+      customerPhone: "+201005550184",
+      customerName: "Nadia",
+      locale: "ar",
+      total: "25.00",
+      currency: "EGP",
+      lineItems,
+      shippingAddress,
+      sourceStatus: "paid",
+      paymentMethod: "card",
+      metadata,
+      sourceEventId: "evt-31",
+      events: [
+        {
+          id: 61,
+          externalEventId: "evt-31",
+          eventType: "order.updated",
+          schemaVersion: "2",
+          status: "PROCESSED",
+          attemptCount: 1,
+          lastError: null,
+          occurredAt: "2026-08-13T09:30:00.000Z",
+          receivedAt: "2026-08-13T09:30:01.000Z",
+          processedAt: "2026-08-13T09:30:02.000Z",
+          createdAt: "2026-08-13T09:30:01.000Z",
+          updatedAt: "2026-08-13T09:30:02.000Z",
+        },
+        {
+          id: 60,
+          externalEventId: "evt-30",
+          eventType: "order.created",
+          schemaVersion: "1",
+          status: "PROCESSED",
+          attemptCount: 1,
+          lastError: null,
+          occurredAt: "2026-08-13T09:00:00.000Z",
+          receivedAt: "2026-08-13T09:00:01.000Z",
+          processedAt: null,
+          createdAt: "2026-08-13T09:00:01.000Z",
+          updatedAt: "2026-08-13T09:00:02.000Z",
+        },
+      ],
+      notification: {
+        mode: "CONFIRMATION",
+        id: 41,
+        kind: "CONFIRMATION_REQUEST",
+        status: "FAILED",
+        providerMessageId: "wamid-41",
+        conversationMessageId: 88,
+        attemptCount: 2,
+        lastError: "provider unavailable",
+        queuedAt: "2026-08-13T09:01:00.000Z",
+        sentAt: null,
+        deliveredAt: null,
+        readAt: null,
+        failedAt: "2026-08-13T09:02:00.000Z",
+        createdAt: "2026-08-13T09:01:00.000Z",
+        updatedAt: "2026-08-13T09:02:00.000Z",
+        renderedVariables: {
+          body: ["Order #31"],
+          previewText: "Order #31",
+          buttonMapping: ["confirmToken", "cancelToken"],
+          mode: "CONFIRMATION",
+        },
+      },
+      notifications: [
+        {
+          mode: "CONFIRMATION",
+          id: 41,
+          kind: "CONFIRMATION_REQUEST",
+          status: "FAILED",
+          providerMessageId: "wamid-41",
+          conversationMessageId: 88,
+          attemptCount: 2,
+          lastError: "provider unavailable",
+          queuedAt: "2026-08-13T09:01:00.000Z",
+          sentAt: null,
+          deliveredAt: null,
+          readAt: null,
+          failedAt: "2026-08-13T09:02:00.000Z",
+          createdAt: "2026-08-13T09:01:00.000Z",
+          updatedAt: "2026-08-13T09:02:00.000Z",
+          renderedVariables: {
+            body: ["Order #31"],
+            previewText: "Order #31",
+            buttonMapping: ["confirmToken", "cancelToken"],
+            mode: "CONFIRMATION",
+          },
+        },
+        {
+          mode: "CONFIRMATION",
+          id: 42,
+          kind: "ACKNOWLEDGEMENT",
+          status: "SENT",
+          providerMessageId: "wamid-42",
+          conversationMessageId: null,
+          attemptCount: 1,
+          lastError: null,
+          queuedAt: "2026-08-13T09:03:00.000Z",
+          sentAt: "2026-08-13T09:03:30.000Z",
+          deliveredAt: null,
+          readAt: null,
+          failedAt: null,
+          createdAt: "2026-08-13T09:03:00.000Z",
+          updatedAt: "2026-08-13T09:03:30.000Z",
+          renderedVariables: { action: "CONFIRM" },
+        },
+      ],
+      storeSync: {
+        id: 51,
+        requestedStatus: "CONFIRMED",
+        status: "FAILED",
+        providerStatus: "ERROR",
+        attemptCount: 2,
+        lastError: "store unavailable",
+        nextAttemptAt: null,
+        startedAt: "2026-08-13T09:04:00.000Z",
+        completedAt: null,
+        failedAt: "2026-08-13T09:05:00.000Z",
+        createdAt: "2026-08-13T09:04:00.000Z",
+        updatedAt: "2026-08-13T09:05:00.000Z",
+      },
+      storeSyncs: [
+        {
+          id: 51,
+          requestedStatus: "CONFIRMED",
+          status: "FAILED",
+          providerStatus: "ERROR",
+          attemptCount: 2,
+          lastError: "store unavailable",
+          nextAttemptAt: null,
+          startedAt: "2026-08-13T09:04:00.000Z",
+          completedAt: null,
+          failedAt: "2026-08-13T09:05:00.000Z",
+          createdAt: "2026-08-13T09:04:00.000Z",
+          updatedAt: "2026-08-13T09:05:00.000Z",
+        },
+        {
+          id: 52,
+          requestedStatus: "CANCELED",
+          status: "SUCCEEDED",
+          providerStatus: "cancelled",
+          attemptCount: 1,
+          lastError: null,
+          nextAttemptAt: null,
+          startedAt: "2026-08-13T09:06:00.000Z",
+          completedAt: "2026-08-13T09:06:30.000Z",
+          failedAt: null,
+          createdAt: "2026-08-13T09:06:00.000Z",
+          updatedAt: "2026-08-13T09:06:30.000Z",
+        },
+      ],
+      sourceCreatedAt: "2026-08-13T09:00:00.000Z",
+      sourceUpdatedAt: "2026-08-13T09:30:00.000Z",
+      createdAt: "2026-08-13T09:00:01.000Z",
+      updatedAt: "2026-08-13T09:31:00.000Z",
+    });
+    const serialized = JSON.stringify(response.json);
+    expect(serialized).not.toContain("private-payload");
+    expect(serialized).not.toContain("private-action-token");
+    expect(serialized).not.toContain("private-token-hash");
+    expect(serialized).not.toContain("private-signing-secret");
+    expect(serialized).not.toContain("private-callback-secret");
+    expect(serialized).not.toContain("private-access-token");
   });
 
   it("does not retry a notification belonging to another profile", async () => {

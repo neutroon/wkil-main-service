@@ -1242,7 +1242,88 @@ export async function updateOrderTemplateConfig(params: {
   });
 }
 
-const managedOrderSelect = {
+const managedOrderEventsSelect = {
+  orderBy: { occurredAt: "desc" as const },
+  take: 1,
+  select: { externalEventId: true },
+} as const;
+
+const managedOrderDetailEventsSelect = {
+  orderBy: { occurredAt: "desc" as const },
+  select: {
+    id: true,
+    externalEventId: true,
+    eventType: true,
+    schemaVersion: true,
+    occurredAt: true,
+    status: true,
+    attemptCount: true,
+    lastError: true,
+    receivedAt: true,
+    processedAt: true,
+    createdAt: true,
+    updatedAt: true,
+  },
+} as const;
+
+const managedOrderNotificationFieldsSelect = {
+  id: true,
+  kind: true,
+  status: true,
+  providerMessageId: true,
+  conversationMessageId: true,
+  attemptCount: true,
+  lastError: true,
+  queuedAt: true,
+  sentAt: true,
+  deliveredAt: true,
+  readAt: true,
+  failedAt: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
+
+const managedOrderSummaryNotificationsSelect = {
+  orderBy: { createdAt: "asc" as const },
+  take: 2,
+  select: managedOrderNotificationFieldsSelect,
+} as const;
+
+const managedOrderDetailNotificationsSelect = {
+  orderBy: { createdAt: "asc" as const },
+  select: {
+    ...managedOrderNotificationFieldsSelect,
+    renderedVariables: true,
+  },
+} as const;
+
+const managedOrderStoreSyncFieldsSelect = {
+  id: true,
+  requestedStatus: true,
+  status: true,
+  providerStatus: true,
+  attemptCount: true,
+  lastError: true,
+  nextAttemptAt: true,
+  startedAt: true,
+  completedAt: true,
+  failedAt: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
+
+const managedOrderSummaryStoreSyncsSelect = {
+  orderBy: { createdAt: "asc" as const },
+  take: 3,
+  select: managedOrderStoreSyncFieldsSelect,
+} as const;
+
+const managedOrderDetailStoreSyncsSelect = {
+  orderBy: { createdAt: "asc" as const },
+  select: managedOrderStoreSyncFieldsSelect,
+} as const;
+
+const managedOrderSummarySelect = {
   id: true,
   businessProfileId: true,
   integrationId: true,
@@ -1254,69 +1335,44 @@ const managedOrderSelect = {
   locale: true,
   total: true,
   currency: true,
+  sourceCreatedAt: true,
+  sourceUpdatedAt: true,
+  createdAt: true,
+  updatedAt: true,
+  events: managedOrderEventsSelect,
+  notifications: managedOrderSummaryNotificationsSelect,
+  storeSyncs: managedOrderSummaryStoreSyncsSelect,
+} as const;
+
+const managedOrderDetailSelect = {
+  ...managedOrderSummarySelect,
+  events: managedOrderDetailEventsSelect,
+  notifications: managedOrderDetailNotificationsSelect,
+  storeSyncs: managedOrderDetailStoreSyncsSelect,
   lineItems: true,
   shippingAddress: true,
   metadata: true,
   sourceStatus: true,
   paymentMethod: true,
-  sourceCreatedAt: true,
-  sourceUpdatedAt: true,
-  createdAt: true,
-  updatedAt: true,
-  events: {
-    orderBy: { occurredAt: "desc" as const },
-    take: 1,
-    select: { externalEventId: true },
-  },
-  notifications: {
-    orderBy: { createdAt: "asc" as const },
-    select: {
-      id: true,
-      kind: true,
-      renderedVariables: true,
-      status: true,
-      providerMessageId: true,
-      conversationMessageId: true,
-      attemptCount: true,
-      lastError: true,
-      queuedAt: true,
-      sentAt: true,
-      deliveredAt: true,
-      readAt: true,
-      failedAt: true,
-      createdAt: true,
-      updatedAt: true,
-    },
-  },
-  storeSyncs: {
-    orderBy: { createdAt: "asc" as const },
-    select: {
-      id: true,
-      requestedStatus: true,
-      status: true,
-      providerStatus: true,
-      attemptCount: true,
-      lastError: true,
-      nextAttemptAt: true,
-      startedAt: true,
-      completedAt: true,
-      failedAt: true,
-      createdAt: true,
-      updatedAt: true,
-    },
-  },
 } as const;
 
-export type ManagedOrderRecord = Prisma.OrderGetPayload<{ select: typeof managedOrderSelect }>;
+export type ManagedOrderSummaryRecord = Prisma.OrderGetPayload<{ select: typeof managedOrderSummarySelect }>;
+type ManagedOrderSummaryListRecord = Omit<ManagedOrderSummaryRecord, "notifications"> & {
+  notifications: Array<
+    ManagedOrderSummaryRecord["notifications"][number] & { summaryMode: string | null }
+  >;
+};
+export type ManagedOrderDetailRecord = Prisma.OrderGetPayload<{ select: typeof managedOrderDetailSelect }>;
 
 export async function listManagedOrders(params: {
   profileIds: number[];
   businessProfileId?: number;
   integrationId?: number;
   status?: string;
+  search?: string;
   page: number;
   limit: number;
-}): Promise<{ data: ManagedOrderRecord[]; meta: { total: number; page: number; limit: number; totalPages: number } }> {
+}): Promise<{ data: ManagedOrderSummaryListRecord[]; meta: { total: number; page: number; limit: number; totalPages: number } }> {
   if (params.profileIds.length === 0) {
     return {
       data: [],
@@ -1324,27 +1380,54 @@ export async function listManagedOrders(params: {
     };
   }
 
+  const search = params.search?.trim();
+  const literalSearch = search?.replace(/[\\%_]/g, "\\$&");
   const where: Prisma.OrderWhereInput = {
     businessProfileId:
       params.businessProfileId === undefined
         ? { in: params.profileIds }
         : { in: params.profileIds, equals: params.businessProfileId },
     ...(params.integrationId === undefined ? {} : { integrationId: params.integrationId }),
-    ...(params.status === undefined ? {} : { status: params.status as any }),
+    ...(params.status === undefined ? {} : { status: params.status as OrderStatus }),
+    ...(literalSearch
+      ? {
+          OR: [
+            { orderNumber: { contains: literalSearch, mode: "insensitive" } },
+            { customerName: { contains: literalSearch, mode: "insensitive" } },
+            { customerPhone: { contains: literalSearch } },
+          ],
+        }
+      : {}),
   };
   const [total, data] = await Promise.all([
     prisma.order.count({ where }),
     prisma.order.findMany({
       where,
-      select: managedOrderSelect,
+      select: managedOrderSummarySelect,
       orderBy: { updatedAt: "desc" },
       skip: (params.page - 1) * params.limit,
       take: params.limit,
     }),
   ]);
+  const notificationIds = data.flatMap((order) => order.notifications.map((notification) => notification.id));
+  const notificationModes = notificationIds.length
+    ? await prisma.$queryRaw<Array<{ id: number; mode: string | null }>>(Prisma.sql`
+        SELECT "id", "renderedVariables" ->> 'mode' AS "mode"
+        FROM "OrderNotification"
+        WHERE "id" IN (${Prisma.join(notificationIds)})
+      `)
+    : [];
+  const notificationModesById = new Map(notificationModes.map(({ id, mode }) => [id, mode]));
+  const dataWithSummaryModes: ManagedOrderSummaryListRecord[] = data.map((order) => ({
+    ...order,
+    notifications: order.notifications.map((notification) => ({
+      ...notification,
+      summaryMode: notificationModesById.get(notification.id) ?? null,
+    })),
+  }));
 
   return {
-    data,
+    data: dataWithSummaryModes,
     meta: {
       total,
       page: params.page,
@@ -1357,12 +1440,12 @@ export async function listManagedOrders(params: {
 export async function findManagedOrder(
   id: number,
   profileIds: number[],
-): Promise<ManagedOrderRecord | null> {
+): Promise<ManagedOrderDetailRecord | null> {
   if (profileIds.length === 0) return null;
 
   return prisma.order.findFirst({
     where: { id, businessProfileId: { in: profileIds } },
-    select: managedOrderSelect,
+    select: managedOrderDetailSelect,
   });
 }
 

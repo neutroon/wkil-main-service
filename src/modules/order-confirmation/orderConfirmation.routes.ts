@@ -135,6 +135,7 @@ const ordersListSchema = z.object({
       businessProfileId: positiveId.optional(),
       integrationId: positiveId.optional(),
       status: orderStatus.optional(),
+      search: z.string().trim().min(1).max(120).optional(),
     })
     .strict(),
 });

@@ -15,10 +15,19 @@ const mocks = vi.hoisted(() => ({
   notificationFindMany: vi.fn(),
   conversationMessageFindUnique: vi.fn(),
   storeSyncFindMany: vi.fn(),
+  orderCount: vi.fn(),
+  orderFindMany: vi.fn(),
+  orderFindFirst: vi.fn(),
+  queryRaw: vi.fn(),
 }));
 
 vi.mock("@config/prisma", () => ({
   default: {
+    order: {
+      count: mocks.orderCount,
+      findMany: mocks.orderFindMany,
+      findFirst: mocks.orderFindFirst,
+    },
     orderIntegration: {
       findFirst: mocks.findFirst,
     },
@@ -40,6 +49,7 @@ vi.mock("@config/prisma", () => ({
       findMany: mocks.storeSyncFindMany,
     },
     $transaction: mocks.transaction,
+    $queryRaw: mocks.queryRaw,
   },
 }));
 
@@ -54,6 +64,8 @@ import {
   findPendingOrderStoreSyncs,
   findUnattemptedQueuedOrderNotifications,
   requeueNotificationForRetry,
+  listManagedOrders,
+  findManagedOrder,
 } from "./orderConfirmation.repository";
 import { hashOrderActionToken } from "./orderConfirmation.crypto";
 
@@ -95,6 +107,10 @@ describe("order confirmation repository", () => {
     mocks.notificationUpdate.mockResolvedValue(undefined);
     mocks.notificationFindMany.mockResolvedValue([]);
     mocks.conversationMessageFindUnique.mockResolvedValue({ id: 88 });
+    mocks.orderCount.mockResolvedValue(0);
+    mocks.orderFindMany.mockResolvedValue([]);
+    mocks.orderFindFirst.mockResolvedValue(null);
+    mocks.queryRaw.mockResolvedValue([]);
     mocks.transaction.mockImplementation(async (callback: (tx: unknown) => unknown) =>
       callback({
         order: {
@@ -106,6 +122,118 @@ describe("order confirmation repository", () => {
         orderNotification: { upsert: mocks.txAcknowledgementUpsert },
       }),
     );
+  });
+
+  it("applies trimmed literal search to exactly three fields within the accessible profile scope", async () => {
+    await listManagedOrders({
+      profileIds: [11, 12],
+      businessProfileId: 11,
+      integrationId: 7,
+      status: "CONFIRMED",
+      search: "  +20_AbC%\\tail  ",
+      page: 2,
+      limit: 5,
+    });
+
+    expect(mocks.orderCount).toHaveBeenCalledWith({
+      where: {
+        businessProfileId: { in: [11, 12], equals: 11 },
+        integrationId: 7,
+        status: "CONFIRMED",
+        OR: [
+          { orderNumber: { contains: "+20\\_AbC\\%\\\\tail", mode: "insensitive" } },
+          { customerName: { contains: "+20\\_AbC\\%\\\\tail", mode: "insensitive" } },
+          { customerPhone: { contains: "+20\\_AbC\\%\\\\tail" } },
+        ],
+      },
+    });
+    expect(mocks.orderFindMany.mock.calls[0]?.[0].where).toEqual(
+      mocks.orderCount.mock.calls[0]?.[0].where,
+    );
+  });
+
+  it("keeps list selection compact while detail selection includes normalized operational fields", async () => {
+    await listManagedOrders({ profileIds: [11], page: 1, limit: 20 });
+    const summarySelect = mocks.orderFindMany.mock.calls[0]?.[0].select as Record<string, unknown>;
+
+    expect(summarySelect).not.toHaveProperty("lineItems");
+    expect(summarySelect).not.toHaveProperty("shippingAddress");
+    expect(summarySelect).not.toHaveProperty("metadata");
+    expect(summarySelect).not.toHaveProperty("sourceStatus");
+    expect(summarySelect).not.toHaveProperty("paymentMethod");
+    expect(summarySelect.events).toEqual({
+      orderBy: { occurredAt: "desc" },
+      take: 1,
+      select: { externalEventId: true },
+    });
+    expect(summarySelect.notifications).toMatchObject({
+      orderBy: { createdAt: "asc" },
+      take: 2,
+    });
+    expect((summarySelect.notifications as Record<string, any>).select).not.toHaveProperty(
+      "renderedVariables",
+    );
+    expect(summarySelect.storeSyncs).toMatchObject({
+      orderBy: { createdAt: "asc" },
+      take: 3,
+    });
+
+    await findManagedOrder(31, [11]);
+    const detailQuery = mocks.orderFindFirst.mock.calls[0]?.[0];
+    const detailSelect = detailQuery?.select as Record<string, any>;
+
+    expect(detailQuery?.where).toEqual({ id: 31, businessProfileId: { in: [11] } });
+    expect(detailSelect).toMatchObject({
+      lineItems: true,
+      shippingAddress: true,
+      metadata: true,
+      sourceStatus: true,
+      paymentMethod: true,
+      notifications: { select: { renderedVariables: true } },
+    });
+    expect(detailSelect).not.toHaveProperty("actionTokens");
+    expect(detailSelect.notifications).not.toHaveProperty("take");
+    expect(detailSelect.storeSyncs).not.toHaveProperty("take");
+    expect(detailSelect.events).toMatchObject({
+      orderBy: { occurredAt: "desc" },
+      select: {
+        id: true,
+        externalEventId: true,
+        eventType: true,
+        schemaVersion: true,
+        occurredAt: true,
+        status: true,
+        attemptCount: true,
+        lastError: true,
+        receivedAt: true,
+        processedAt: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+    expect(detailSelect.events.select).not.toHaveProperty("rawPayload");
+  });
+
+  it("preserves notification mode in the compact summary without selecting rendered variables", async () => {
+    mocks.orderFindMany.mockResolvedValue([
+      {
+        id: 31,
+        notifications: [{ id: 41, kind: "CONFIRMATION_REQUEST", status: "SENT" }],
+        events: [],
+        storeSyncs: [],
+      },
+    ]);
+    mocks.queryRaw.mockResolvedValue([{ id: 41, mode: "NOTIFICATION_ONLY" }]);
+
+    const result = await listManagedOrders({ profileIds: [11], page: 1, limit: 20 });
+
+    expect(mocks.queryRaw).toHaveBeenCalledTimes(1);
+    expect(result.data[0].notifications[0]).toMatchObject({
+      id: 41,
+      summaryMode: "NOTIFICATION_ONLY",
+    });
+    const summarySelect = mocks.orderFindMany.mock.calls[0]?.[0].select as Record<string, any>;
+    expect(summarySelect.notifications.select).not.toHaveProperty("renderedVariables");
   });
 
   it("selects only verification fields for an active integration", async () => {

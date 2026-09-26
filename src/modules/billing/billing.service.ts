@@ -238,6 +238,8 @@ export async function recordAiUsage(params: {
     const existing = await prisma.aiCallLog.findUnique({ where: { eventId: params.eventId } });
     if (!existing) return false;
     if (existing.userId !== userId || existing.businessProfileId !== (businessProfileId || 0) ||
+        existing.operation !== (operation || "generic") ||
+        (existing.conversationId ?? null) !== (conversationId ?? null) ||
         existing.modelName !== modelName || existing.promptTokens !== promptTokens ||
         existing.completionTokens !== completionTokens || existing.embeddingTokens !== embeddingTokens || existing.groundingCalls !== groundingCalls) {
       throw new Error("usage_event_conflict");
@@ -383,6 +385,8 @@ export async function recordAiUsage(params: {
       }),
     ]);
 
+    clearQuotaCache(userId);
+
     logger.debug("billing.record_usage_success", {
       businessProfileId,
       modelName,
@@ -390,14 +394,18 @@ export async function recordAiUsage(params: {
       customerCost,
     });
 
-    // Notify Frontend to refresh credits in real-time
-    const { syncCreditsUpdate } = await import("@modules/realtime/socketSync.service");
-    syncCreditsUpdate({
-      businessProfileId: businessProfileId || 0,
-      userId,
-      creditsUsed,
-      totalCreditsUsed: (await prisma.user.findUnique({ where: { id: userId }, select: { monthlyCreditsUsed: true } }))?.monthlyCreditsUsed || 0
-    });
+    // Notification is best-effort; the usage transaction has already committed.
+    try {
+      const { syncCreditsUpdate } = await import("@modules/realtime/socketSync.service");
+      syncCreditsUpdate({
+        businessProfileId: businessProfileId || 0,
+        userId,
+        creditsUsed,
+        totalCreditsUsed: (await prisma.user.findUnique({ where: { id: userId }, select: { monthlyCreditsUsed: true } }))?.monthlyCreditsUsed || 0,
+      });
+    } catch {
+      logger.warn("billing.credit_realtime_sync_failed", { userId });
+    }
   } catch (error: any) {
     // The call log's unique event ID is in the same transaction as every
     // balance/aggregate update. A concurrent replay rolls back completely.
@@ -433,5 +441,4 @@ export async function recordAiUsage(params: {
       });
   }
 }
-
 

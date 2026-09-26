@@ -8,6 +8,11 @@ import router from "./agent.tools.controller";
 // mapping without requiring a live Prisma connection.
 vi.mock("./agent.scope", () => ({ authorizeAgentScope: (_req: any, _res: any, next: any) => next() }));
 vi.mock("./agent.operation", () => ({ durableAgentOperation: (_req: any, _res: any, next: any) => next() }));
+vi.mock("../../billing/billing.service", () => ({
+  assertQuotaAvailable: vi.fn(),
+  recordAiUsage: vi.fn(),
+  calculateCustomerCost: vi.fn(),
+}));
 
 vi.mock("./copilot.actions.service", () => ({
   listCopilotConversations: vi.fn(),
@@ -78,6 +83,8 @@ import {
   createCopilotPost,
   replyCopilotComment,
 } from "./socialCopilot.service";
+import { assertQuotaAvailable, recordAiUsage } from "../../billing/billing.service";
+import { AppError } from "@middlewares/errorHandler.middleware";
 
 function makeApp() {
   const app = express();
@@ -100,6 +107,82 @@ describe("agent tools controller", () => {
       .set("x-service-token", "test-token")
       .send({ tool: "noop", tool_call_id: "c1", args: {} });
     expect(res.status).toBe(400);
+  });
+});
+
+describe("GET /quota", () => {
+  const getQuota = (query: string) => request(makeApp())
+    .get(`/internal/agent/quota${query}`)
+    .set("x-service-token", "test-token");
+
+  it("distinguishes a confirmed exhausted quota", async () => {
+    process.env.MONOLITH_SERVICE_TOKEN = "test-token";
+    vi.mocked(assertQuotaAvailable).mockRejectedValueOnce(new AppError("limit", 402));
+
+    const response = await getQuota("?userId=7&businessProfileId=3");
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ ok: false, reason: "quota_exceeded" });
+  });
+
+  it("returns a retryable outage instead of a false quota denial", async () => {
+    process.env.MONOLITH_SERVICE_TOKEN = "test-token";
+    vi.mocked(assertQuotaAvailable).mockRejectedValueOnce(new Error("database unavailable"));
+
+    const response = await getQuota("?userId=7&businessProfileId=3");
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({ error: "quota_unavailable" });
+    expect(JSON.stringify(response.body)).not.toContain("database unavailable");
+  });
+
+  it("rejects invalid identity without querying quota", async () => {
+    process.env.MONOLITH_SERVICE_TOKEN = "test-token";
+    vi.mocked(assertQuotaAvailable).mockClear();
+
+    const response = await getQuota("?userId=NaN");
+
+    expect(response.status).toBe(400);
+    expect(assertQuotaAvailable).not.toHaveBeenCalled();
+  });
+
+  it("preserves an unknown-user response", async () => {
+    process.env.MONOLITH_SERVICE_TOKEN = "test-token";
+    vi.mocked(assertQuotaAvailable).mockRejectedValueOnce(new AppError("User not found", 404));
+
+    const response = await getQuota("?userId=999");
+
+    expect(response.status).toBe(404);
+    expect(response.body).toEqual({ error: "user_not_found" });
+  });
+});
+
+describe("POST /usage", () => {
+  const payload = {
+    eventId: "run-1", userId: 7, modelName: "test-model",
+    promptTokens: 10, completionTokens: 5,
+  };
+
+  it("distinguishes an event conflict from a storage outage", async () => {
+    process.env.MONOLITH_SERVICE_TOKEN = "test-token";
+    vi.mocked(recordAiUsage).mockRejectedValueOnce(new Error("usage_event_conflict"));
+
+    const response = await request(makeApp()).post("/internal/agent/usage")
+      .set("x-service-token", "test-token").send(payload);
+
+    expect(response.status).toBe(409);
+    expect(response.body).toEqual({ error: "usage_event_conflict" });
+  });
+
+  it("does not claim that an uncommitted usage event was recorded", async () => {
+    process.env.MONOLITH_SERVICE_TOKEN = "test-token";
+    vi.mocked(recordAiUsage).mockRejectedValueOnce(new Error("database unavailable"));
+
+    const response = await request(makeApp()).post("/internal/agent/usage")
+      .set("x-service-token", "test-token").send(payload);
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({ error: "usage_not_recorded" });
   });
 });
 

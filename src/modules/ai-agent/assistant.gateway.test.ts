@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 
 const workspaceAccess = vi.hoisted(() => ({
   getActiveProfileId: vi.fn(async () => 7),
@@ -21,6 +23,47 @@ beforeEach(() => {
 });
 
 describe("assistant gateway contract", () => {
+  it("forwards streamed run errors unchanged to the client", async () => {
+    vi.stubEnv("LANGGRAPH_API_KEY", "test-key");
+    const event = 'event: error\ndata: {"error":"ServiceUnavailable","message":"try again"}\n\n';
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(event, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      }),
+    );
+    const response = Object.assign(new PassThrough(), {
+      statusCode: 200,
+      headers: new Map<string, string>(),
+      status(code: number) { this.statusCode = code; return this; },
+      setHeader(name: string, value: string) { this.headers.set(name.toLowerCase(), value); },
+      flushHeaders() {},
+    });
+    const chunks: Buffer[] = [];
+    response.on("data", (chunk: Buffer) => chunks.push(chunk));
+    const ended = new Promise<void>((resolve) => response.once("end", resolve));
+    const request = Object.assign(new EventEmitter(), {
+      user: { id: 42 },
+      path: "/threads/thread-1/runs/stream",
+      method: "POST",
+      query: {},
+      headers: { accept: "text/event-stream" },
+      cookies: {},
+      body: { assistant_id: "agent", input: null, checkpoint_id: "cp-1" },
+    });
+
+    try {
+      await assistantGateway(request as never, response as never);
+      await ended;
+      expect(response.statusCode).toBe(200);
+      expect(response.headers.get("content-type")).toBe("text/event-stream");
+      expect(Buffer.concat(chunks).toString()).toBe(event);
+    } finally {
+      fetchSpy.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it.each([
     ["POST", ["threads"], "create"],
     ["POST", ["threads", "search"], "search"],

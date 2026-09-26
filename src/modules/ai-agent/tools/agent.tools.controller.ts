@@ -106,8 +106,20 @@ router.post("/tools/run", authorizeAgentScope, durableAgentOperation, async (req
 router.use("/model-calls", modelReservations);
 
 router.get("/quota", async (req, res) => {
-  const ok = await assertQuotaAvailable(Number(req.query.userId), Number(req.query.businessProfileId)).then(() => true).catch(() => false);
-  res.json({ ok });
+  const userId = Number(req.query.userId);
+  const businessProfileId = req.query.businessProfileId == null ? undefined : Number(req.query.businessProfileId);
+  if (!Number.isSafeInteger(userId) || userId <= 0 ||
+      (businessProfileId !== undefined && (!Number.isSafeInteger(businessProfileId) || businessProfileId <= 0))) {
+    return res.status(400).json({ error: "invalid_quota_scope" });
+  }
+  try {
+    await assertQuotaAvailable(userId, businessProfileId);
+    return res.json({ ok: true });
+  } catch (error: any) {
+    if (error?.statusCode === 402) return res.json({ ok: false, reason: "quota_exceeded" });
+    if (error?.statusCode === 404) return res.status(404).json({ error: "user_not_found" });
+    return res.status(503).json({ error: "quota_unavailable" });
+  }
 });
 
 router.post("/usage", async (req, res) => {
@@ -120,7 +132,10 @@ router.post("/usage", async (req, res) => {
     return res.status(400).json({ error: "invalid_usage_event" });
   }
   try { await recordAiUsage(payload); res.json({ ok: true }); }
-  catch { res.status(503).json({ error: "usage_not_recorded" }); }
+  catch (error: any) {
+    if (error?.message === "usage_event_conflict") return res.status(409).json({ error: "usage_event_conflict" });
+    return res.status(503).json({ error: "usage_not_recorded" });
+  }
 });
 
 router.get("/profile/:id", async (req, res) => {

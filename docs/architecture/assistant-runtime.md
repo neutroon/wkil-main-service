@@ -100,6 +100,54 @@ backend/Prisma-owned.
    bypass server authorization. Login, navigation, business ownership,
    English/Arabic layout, and RTL remain in the existing application flow.
 
+## Confirmed model usage and quota operations
+
+The backend's `/internal/agent/quota` gate checks recorded monthly credits before
+model work. An explicit `quota_exceeded` result is a plan-limit decision; a
+timeout, missing identity, or unavailable billing service is a retryable run
+error, not an upgrade prompt. Agent Server records actual provider-reported
+tokens only after a successful model response. `/internal/agent/usage` applies
+one atomic debit per `AiCallLog.eventId`; an identical replay is safe and a
+conflicting replay is rejected. Successful debits invalidate the user's quota
+cache. No estimated charge or pre-model credit reservation is made.
+
+This is a monthly allowance, not a strict prepaid cap. Concurrent admitted
+runs may cause bounded overage. A provider failure or missing usage evidence
+leaves no debit or hold. If usage reporting fails after its bounded same-event
+retry, the valid model reply remains available and the event is logged as
+`model_usage_unrecorded` with only event ID, model name, and failure category.
+Never infer a customer charge from that log alone; any later adjustment needs
+authoritative evidence and its own audited process. There is no automatic
+waiver, customer hold, or manual review prerequisite for another chat.
+
+For a coordinated release, deploy the backend's nonblocking legacy
+`/model-calls/reserve` and `/release` compatibility behavior first, then the
+agent that posts confirmed `/usage` events, then web and mobile clients with
+visible failed-run Retry. Keep the compatibility routes during mixed-version
+rollout. On rollback, revert clients and agent first; retain the nonblocking
+backend compatibility behavior until no older agent can call it and historical
+reservation rows cannot reintroduce a user-wide lock. Do not delete old
+`AgentModelReservation` rows in this rollout; retention/cleanup requires a
+separate approval and recovery plan.
+
+Before production deployment, exercise these staging cases without customer
+data or live provider credentials: an unresolved historical reservation does
+not block a new chat; provider 503 followed by a successful new run; quota
+outage produces a retryable error while real exhaustion produces a limit
+message; duplicate identical usage posts debit once, while a conflicting
+event returns 409; a post-commit notification failure does not turn a
+committed debit into a retryable usage failure. Confirm a successful client
+Retry replaces its inline error on both web and mobile.
+
+After deployment, alert on any `model_usage_unrecorded` event and investigate
+the associated run/event ID in agent traces and backend usage logs without
+copying prompts, replies, email, or credentials into alerts. Track counts by
+failure category and model, usage-post 5xx/409 rates, per-user concurrent
+runs, and monthly overage. Verify that the idempotency event has at most one
+`AiCallLog` entry and that aggregate credits agree with it. If failures rise,
+restore the last healthy agent version or billing service while preserving the
+nonblocking compatibility routes; do not revive user-wide reservation locks.
+
 ## External-action continuations
 
 An integration-action worker keeps the complete external result in its backend

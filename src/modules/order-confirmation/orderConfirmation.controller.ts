@@ -42,6 +42,7 @@ import {
   validateOrderTemplateMapping,
   type OrderTemplateMapping,
 } from "./orderConfirmation.template.service";
+import { validateOrderEventForTemplate } from "./orderConfirmation.template-validation.service";
 import { normalizeCanonicalOrderEvent } from "./orderConfirmation.normalizer";
 
 const GLOBAL_SETTING_KEY = "order_confirmations_global_enabled";
@@ -206,6 +207,8 @@ type OrderNotificationResponse = {
   conversationMessageId: number | null;
   attemptCount: number;
   lastError: string | null;
+  failureCode: string | null;
+  failureDetails: unknown;
   queuedAt: string | null;
   sentAt: string | null;
   deliveredAt: string | null;
@@ -301,6 +304,8 @@ function serializeNotification(
     conversationMessageId: notification.conversationMessageId ?? null,
     attemptCount: notification.attemptCount,
     lastError: notification.lastError ?? null,
+    failureCode: notification.failureCode ?? null,
+    failureDetails: notification.failureDetails ?? null,
     queuedAt: serializeDate(notification.queuedAt),
     sentAt: serializeDate(notification.sentAt),
     deliveredAt: serializeDate(notification.deliveredAt),
@@ -953,40 +958,8 @@ export async function testEvent(req: Request, res: Response): Promise<void> {
       badRequest("templateConfigId must be a positive integer");
     }
   }
-  const config = await findOrderTemplateConfigForTest({
-    id: templateConfigId,
-    integrationId: integration.id,
-    businessProfileId: integration.businessProfileId,
-    whatsappAccountId: integration.whatsappAccountId,
-    eventType: DEFAULT_EVENT_TYPE,
-    locale,
-  });
-  if (!config || !config.isActive || config.approvalStatus !== "APPROVED") {
-    notFound("No active approved WhatsApp order template is configured for this locale");
-  }
-
-  let mapping: OrderTemplateMapping;
-  try {
-    mapping = validateOrderTemplateMapping(config.variableMapping);
-  } catch (error) {
-    badRequest(error instanceof Error ? error.message : "Invalid template variable mapping");
-  }
-  const rendered = renderOrderTemplateVariables(
-    event.order,
-    mapping,
-    orderTemplateUsesActions(mapping) ? { confirm: "preview-confirm", cancel: "preview-cancel" } : undefined,
-    locale,
-  );
-
-  res.json({
-    data: {
-      templateConfigId: config.id,
-      templateName: config.templateName,
-      languageCode: config.languageCode,
-      locale,
-      ...rendered,
-    },
-  });
+  const result = await validateOrderEventForTemplate(rawEvent, { integrationId: integration.id, businessProfileId: integration.businessProfileId, whatsappAccountId: integration.whatsappAccountId, defaultLocale: integration.defaultLocale === "ar" ? "ar" : "en" }, { locale, templateConfigId, canonicalOnly: false });
+  res.status(result.status).json(result.body);
 }
 
 export async function listOrders(req: Request, res: Response): Promise<void> {

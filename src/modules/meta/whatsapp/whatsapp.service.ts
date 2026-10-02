@@ -1,3 +1,4 @@
+import { WhatsAppTemplateRejectedError } from "./whatsapp.delivery-errors";
 import { logger } from "@utils/logger";
 import { AppError } from "@middlewares/errorHandler.middleware";
 
@@ -178,7 +179,7 @@ export async function sendWhatsAppTemplate(
 
   if (!response.ok) {
     const error = await response.json();
-    throw new AppError(`WhatsApp Template Send error: ${JSON.stringify(error)}`, 502);
+    throw new WhatsAppTemplateRejectedError(response.status, error);
   }
 
   return response.json();

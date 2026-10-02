@@ -8,7 +8,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "nodemon --exec ts-node -r tsconfig-paths/register src/server.ts",
-    "prebuild": "prisma generate",
+    "prebuild": "prisma generate && npm run integration:assets",
     "build": "tsc && tsc-alias && redocly bundle docs/openapi.yaml --output dist/openapi.json --ext json",
     "start": "node dist/server.js",
     "test": "vitest run",
@@ -28,7 +28,9 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
-    "prisma:migrate:status": "prisma migrate status"
+    "prisma:migrate:status": "prisma migrate status",
+    "integration:assets": "node scripts/generate-order-integration-assets.js",
+    "integration:assets:check": "node scripts/generate-order-integration-assets.js --check"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1030.0",

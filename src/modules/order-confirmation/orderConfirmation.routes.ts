@@ -1,3 +1,4 @@
+import { listTemplateFields, downloadOrderSchema, downloadIntegrationGuide } from "./orderConfirmation.integration-assets.controller";
 import { Router } from "express";
 import { z } from "zod";
 import { requireAdmin } from "@modules/auth/core/auth.middleware";
@@ -150,6 +151,9 @@ const retrySchema = z.object({
 });
 
 const orderConfirmationRoutes = Router();
+orderConfirmationRoutes.get("/order-confirmations/fields", listTemplateFields);
+orderConfirmationRoutes.get("/order-confirmations/schema", downloadOrderSchema);
+orderConfirmationRoutes.get("/order-confirmations/integration-guide", downloadIntegrationGuide);
 
 orderConfirmationRoutes.get("/order-integrations", validate(integrationsListSchema), listIntegrations);
 orderConfirmationRoutes.post("/order-integrations", validate(createIntegrationSchema), createIntegration);

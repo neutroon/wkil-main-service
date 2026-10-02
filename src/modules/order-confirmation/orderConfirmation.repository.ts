@@ -1,6 +1,7 @@
 import prisma from "@config/prisma";
 import { Prisma } from "@prisma/client";
 import { hashOrderActionToken, issueOrderActionToken } from "./orderConfirmation.crypto";
+import type { TemplateVariableIssue } from "./orderConfirmation.integration.types";
 import type { CanonicalOrderEvent, OrderAction, OrderStatus } from "./orderConfirmation.types";
 
 export type ActiveOrderIntegration = {
@@ -38,6 +39,10 @@ export async function findActiveIntegrationByPublicKey(
       isActive: true,
     },
   });
+}
+
+export async function findOrderIntegrationForSetup(publicKey: string) {
+  return prisma.orderIntegration.findUnique({ where: { integrationKey: publicKey }, select: { id: true, businessProfileId: true, whatsappAccountId: true, defaultLocale: true, signingSecret: true, previousSigningSecret: true, isActive: true } });
 }
 
 function isUniqueConstraintError(error: unknown): boolean {
@@ -434,6 +439,8 @@ export async function markNotificationSending(notificationId: number): Promise<b
     data: {
       status: "SENDING",
       lastError: null,
+      failureCode: null,
+      failureDetails: Prisma.DbNull,
       failedAt: null,
     },
   });
@@ -472,6 +479,8 @@ export async function markNotificationSent(
       conversationMessageId: message?.id,
       sentAt: new Date(),
       lastError: null,
+      failureCode: null,
+      failureDetails: Prisma.DbNull,
       failedAt: null,
     },
   });
@@ -514,16 +523,17 @@ export async function reconcileNotificationDeliveryStatus(params: {
             }
           : { status: "SENT" as const, sentAt: occurredAt };
 
-  await prisma.orderNotification.updateMany({ where, data });
+  await prisma.orderNotification.updateMany({ where, data: params.status === "FAILED" ? data : { ...data, failureCode: null, failureDetails: Prisma.DbNull } });
 }
 
 export async function markNotificationFailed(
   notificationId: number,
   errorMessage: string,
+  diagnostic?: { code: string; details: TemplateVariableIssue[] },
 ): Promise<void> {
   await prisma.orderNotification.update({
     where: { id: notificationId },
-    data: { status: "FAILED", failedAt: new Date(), lastError: errorMessage },
+    data: { status: "FAILED", failedAt: new Date(), lastError: errorMessage, failureCode: diagnostic?.code ?? null, failureDetails: diagnostic ? diagnostic.details as unknown as Prisma.InputJsonValue : Prisma.DbNull },
   });
 }
 
@@ -1107,6 +1117,8 @@ export async function findOrderTemplateConfigForTest(params: {
       whatsappAccountId: params.whatsappAccountId,
       eventType: params.eventType,
       locale: params.locale,
+      isActive: true,
+      approvalStatus: "APPROVED",
       whatsappAccount: {
         orderIntegrations: {
           some: { id: params.integrationId, businessProfileId: params.businessProfileId },
@@ -1114,6 +1126,7 @@ export async function findOrderTemplateConfigForTest(params: {
       },
     },
     select: templateConfigPublicSelect,
+    orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
   });
 }
 
@@ -1274,6 +1287,8 @@ const managedOrderNotificationFieldsSelect = {
   conversationMessageId: true,
   attemptCount: true,
   lastError: true,
+  failureCode: true,
+  failureDetails: true,
   queuedAt: true,
   sentAt: true,
   deliveredAt: true,
@@ -1493,7 +1508,7 @@ export async function requeueNotificationForRetry(
         },
       ],
     },
-    data: { status: "QUEUED", lastError: null, failedAt: null, queuedAt: new Date() },
+    data: { status: "QUEUED", lastError: null, failureCode: null, failureDetails: Prisma.DbNull, failedAt: null, queuedAt: new Date() },
   });
   return result.count > 0;
 }

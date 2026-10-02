@@ -1,3 +1,4 @@
+import type { TemplateVariableIssue } from "./orderConfirmation.integration.types";
 import { logger } from "@utils/logger";
 import {
   createOrderConfirmationWorkflow,
@@ -128,6 +129,11 @@ export async function sendOrderNotification(notificationId: number): Promise<voi
     await markNotificationSent(notificationId, result.providerMessageId);
   } catch (error) {
     const code = errorCode(error);
+    if (code === "TEMPLATE_DATA_INCOMPLETE") {
+      const issues = (error as { issues: TemplateVariableIssue[] }).issues;
+      await markNotificationFailed(notificationId, errorMessage(error), { code, details: issues });
+      return;
+    }
     if (error instanceof OrderConfirmationRateLimitError || code === "ORDER_CONFIRMATION_RATE_LIMIT") {
       await markNotificationQueued(notificationId);
       throw error;
@@ -157,6 +163,10 @@ export async function sendOrderNotification(notificationId: number): Promise<voi
       return;
     }
 
+    if (code === "WHATSAPP_TEMPLATE_REJECTED" && (error as { retryable?: boolean }).retryable === false) {
+      await markNotificationFailed(notificationId, errorMessage(error), { code, details: [] });
+      return;
+    }
     const message = errorMessage(error);
     await markNotificationFailed(notificationId, message);
     throw error;

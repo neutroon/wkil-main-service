@@ -107,6 +107,16 @@ const notification = {
 };
 
 describe("WhatsApp confirmation adapter", () => {
+  it("stops missing fields before action tokens, rate permits, attempts or Meta", async () => {
+    mocks.getSystemSetting.mockResolvedValue("true");
+    mocks.findNotificationForSending.mockResolvedValue(notification);
+    mocks.resolveActiveTemplateConfig.mockResolvedValue({ id: 8, locale: "en", variableMapping: { body: { "5": "shippingCountry" }, buttons: ["confirmToken", "cancelToken"] } });
+    await expect(sendConfirmationNotification(18)).rejects.toMatchObject({ code: "TEMPLATE_DATA_INCOMPLETE", issues: [{ placeholder: "5", field: "shippingCountry", paths: ["order.shippingAddress.country"] }] });
+    expect(mocks.sendWhatsAppTemplate).not.toHaveBeenCalled();
+    expect(mocks.markNotificationAttempted).not.toHaveBeenCalled();
+    expect(mocks.prepareOrderActionTokensForSend).not.toHaveBeenCalled();
+    expect(mocks.acquireBusinessSendPermit).not.toHaveBeenCalled();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getSystemSetting.mockResolvedValue("true");

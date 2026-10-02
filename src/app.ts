@@ -136,6 +136,10 @@ app.use(
   orderWebhookLimiter,
   express.raw({ type: "application/json", limit: "256kb" }),
 );
+app.use(
+  ["/v1/order-integrations/:integrationKey/requirements", "/v1/order-integrations/:integrationKey/validate"],
+  express.raw({ type: "application/json", limit: "256kb" }),
+);
 app.use("/v1/order-integrations", orderConfirmationPublicRoutes);
 app.use(generalLimiter);
 

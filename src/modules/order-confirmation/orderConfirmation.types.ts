@@ -9,7 +9,8 @@ export type OrderTemplateField =
   | "quantity"
   | "total"
   | "shippingCity"
-  | "shippingCountry";
+  | "shippingCountry"
+  | "shippingFullAddress";
 
 export type CanonicalOrderCustomer = {
   name?: string;

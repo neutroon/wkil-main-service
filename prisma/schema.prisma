@@ -786,6 +786,8 @@ model OrderNotification {
   idempotencyKey        String                  @unique
   attemptCount          Int                     @default(0)
   lastError             String?                 @db.Text
+  failureCode           String?
+  failureDetails        Json?
   queuedAt              DateTime                @default(now())
   sentAt                DateTime?
   deliveredAt           DateTime?

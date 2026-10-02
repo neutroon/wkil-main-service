@@ -646,6 +646,218 @@ paths:
         "200": { $ref: "#/components/responses/Ok" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /v1/order-integrations/{integrationKey}/requirements:
+    post:
+      tags:
+        - Order Confirmations
+      operationId: requirementsOrderIntegrationSetup
+      summary: Signed requirements without sending a message
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/IntegrationKeyPath"
+        - $ref: "#/components/parameters/WkilTimestampHeader"
+        - $ref: "#/components/parameters/WkilSignatureHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - schemaVersion
+              properties:
+                schemaVersion:
+                  type: string
+                  enum:
+                    - "1"
+                locale:
+                  $ref: "#/components/schemas/OrderLocale"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    $ref: "#/components/schemas/OrderTemplateRequirements"
+        "400":
+          description: Setup error 400
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderIntegrationFailure"
+        "401":
+          description: Setup error 401
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderIntegrationFailure"
+        "404":
+          description: Setup error 404
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderIntegrationFailure"
+        "409":
+          description: Setup error 409
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderIntegrationFailure"
+        "422":
+          description: Setup error 422
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderIntegrationFailure"
+        "429":
+          description: Setup error 429
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderIntegrationFailure"
+        "503":
+          description: Setup error 503
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderIntegrationFailure"
+  /v1/order-integrations/{integrationKey}/validate:
+    post:
+      tags:
+        - Order Confirmations
+      operationId: validateOrderIntegrationSetup
+      summary: Signed validate without sending a message
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/IntegrationKeyPath"
+        - $ref: "#/components/parameters/WkilTimestampHeader"
+        - $ref: "#/components/parameters/WkilSignatureHeader"
+        - $ref: "#/components/parameters/IdempotencyKeyHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CanonicalOrderEvent"
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderTestEventPreviewResponse"
+        "400":
+          description: Setup error 400
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderIntegrationFailure"
+        "401":
+          description: Setup error 401
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderIntegrationFailure"
+        "404":
+          description: Setup error 404
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderIntegrationFailure"
+        "409":
+          description: Setup error 409
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderIntegrationFailure"
+        "422":
+          description: Setup error 422
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderIntegrationFailure"
+        "429":
+          description: Setup error 429
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderIntegrationFailure"
+        "503":
+          description: Setup error 503
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderIntegrationFailure"
+  /v1/order-confirmations/fields:
+    get:
+      tags:
+        - Order Confirmations
+      operationId: downloadOrderIntegrationfields
+      summary: Get integration fields
+      security:
+        - bearerAuth: []
+        - accessTokenCookie: []
+      responses:
+        "200":
+          description: Integration asset
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - data
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/OrderTemplateFieldDescriptor"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/order-confirmations/schema:
+    get:
+      tags:
+        - Order Confirmations
+      operationId: downloadOrderIntegrationschema
+      summary: Get integration schema
+      security:
+        - bearerAuth: []
+        - accessTokenCookie: []
+      responses:
+        "200":
+          description: Integration asset
+          content:
+            application/schema+json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/order-confirmations/integration-guide:
+    get:
+      tags:
+        - Order Confirmations
+      operationId: downloadOrderIntegrationintegrationguide
+      summary: Get integration integration-guide
+      security:
+        - bearerAuth: []
+        - accessTokenCookie: []
+      responses:
+        "200":
+          description: Integration asset
+          content:
+            text/markdown:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /v1/order-integrations/{integrationKey}/events:
     post:
       tags: [Order Confirmations]
@@ -760,7 +972,8 @@ paths:
 
   /v1/order-integrations/{id}/test-event:
     post:
-      tags: [Order Confirmations]
+      tags:
+        - Order Confirmations
       operationId: previewOrderIntegrationEvent
       summary: Preview an order confirmation event
       description: Renders an order confirmation for the selected active approved template without contacting a customer.
@@ -771,17 +984,33 @@ paths:
           csrfHeader: []
       parameters:
         - $ref: "#/components/parameters/PositiveIdPath"
-      requestBody: { $ref: "#/components/requestBodies/OrderTestEvent" }
+      requestBody:
+        $ref: "#/components/requestBodies/OrderTestEvent"
       responses:
         "200":
           description: Rendered order confirmation preview.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/OrderTestEventPreviewResponse" }
-        "400": { $ref: "#/components/responses/BadRequest" }
-        "401": { $ref: "#/components/responses/Unauthorized" }
-        "404": { $ref: "#/components/responses/NotFound" }
-
+              schema:
+                $ref: "#/components/schemas/OrderTestEventPreviewResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Template readiness error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderIntegrationFailure"
+        "422":
+          description: Template readiness error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderIntegrationFailure"
   /v1/order-confirmations/templates:
     get:
       tags: [Order Confirmations]
@@ -4606,64 +4835,495 @@ components:
     OrderStoreSyncStatus:
       type: string
       enum: [DISABLED, PENDING, SUCCEEDED, FAILED]
+    OrderTemplateVariableRequirement:
+      type: object
+      additionalProperties: false
+      required:
+        - component
+        - placeholder
+        - field
+        - paths
+      properties:
+        component:
+          type: string
+          enum:
+            - body
+        placeholder: &a1
+          type: string
+        field:
+          $ref: "#/components/schemas/OrderTemplateField"
+        paths:
+          type: array
+          items: *a1
+    OrderTemplateVariablePresence:
+      type: object
+      additionalProperties: false
+      required:
+        - component
+        - placeholder
+        - field
+        - paths
+        - present
+      properties:
+        component:
+          type: string
+          enum:
+            - body
+        placeholder: &a1
+          type: string
+        field:
+          $ref: "#/components/schemas/OrderTemplateField"
+        paths:
+          type: array
+          items: *a1
+        present:
+          type: boolean
+    OrderTemplateVariableIssue:
+      type: object
+      additionalProperties: false
+      required:
+        - component
+        - placeholder
+        - field
+        - paths
+        - reason
+      properties:
+        component:
+          type: string
+          enum:
+            - body
+        placeholder: &a1
+          type: string
+        field:
+          $ref: "#/components/schemas/OrderTemplateField"
+        paths:
+          type: array
+          items: *a1
+        reason:
+          type: string
+          enum:
+            - missing
+            - blank
+            - invalid
+    OrderIntegrationFailure:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - message
+        - retryable
+        - errors
+      properties:
+        code: &a1
+          type: string
+        message: *a1
+        retryable:
+          type: boolean
+        errors:
+          type: array
+          items:
+            oneOf:
+              - $ref: "#/components/schemas/OrderTemplateVariableIssue"
+              - type: object
+                additionalProperties: false
+                required:
+                  - paths
+                  - reason
+                properties:
+                  paths:
+                    type: array
+                    items: *a1
+                  reason: *a1
+    OrderTemplateFieldDescriptor:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - labels
+        - paths
+        - requiredPaths
+        - rule
+      properties:
+        id:
+          $ref: "#/components/schemas/OrderTemplateField"
+        labels:
+          type: object
+          additionalProperties: false
+          required:
+            - en
+            - ar
+          properties:
+            en: &a1
+              type: string
+            ar: *a1
+        paths:
+          type: array
+          items: *a1
+        requiredPaths:
+          type: array
+          items: *a1
+        rule:
+          type: string
+          enum:
+            - nonblank
+            - any-item-name
+            - any-item-quantity
+            - money
+            - street-address
+    OrderTemplateRequirements:
+      type: object
+      additionalProperties: false
+      required:
+        - schemaVersion
+        - supportedFields
+        - template
+      properties:
+        schemaVersion:
+          type: string
+          enum:
+            - "1"
+        supportedFields:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderTemplateFieldDescriptor"
+        template:
+          type: object
+          additionalProperties: false
+          required:
+            - id
+            - name
+            - languageCode
+            - locale
+            - variableMapping
+            - variables
+          properties:
+            id:
+              type: integer
+            name: &a1
+              type: string
+            languageCode: *a1
+            locale:
+              $ref: "#/components/schemas/OrderLocale"
+            variableMapping:
+              $ref: "#/components/schemas/OrderTemplateMapping"
+            variables:
+              type: array
+              items:
+                $ref: "#/components/schemas/OrderTemplateVariableRequirement"
     CanonicalOrderEvent:
       type: object
       additionalProperties: false
-      required: [schemaVersion, eventId, eventType, occurredAt, order]
+      required:
+        - schemaVersion
+        - eventId
+        - eventType
+        - occurredAt
+        - order
       properties:
-        schemaVersion: { type: string, enum: ["1"] }
-        eventId: { type: string, minLength: 1 }
-        eventType: { type: string, enum: [order.created] }
-        occurredAt: { type: string, format: date-time }
-        order: { $ref: "#/components/schemas/CanonicalOrder" }
+        schemaVersion:
+          type: string
+          enum:
+            - "1"
+        eventId:
+          type: string
+          minLength: 1
+          pattern: \S
+        eventType:
+          type: string
+          enum:
+            - order.created
+        occurredAt:
+          type: string
+          format: date-time
+        order:
+          $ref: "#/components/schemas/CanonicalOrder"
     CanonicalOrder:
       type: object
       additionalProperties: false
-      required: [id, number, currency, total, customer]
+      required:
+        - id
+        - number
+        - currency
+        - total
+        - customer
       properties:
-        id: { type: string, minLength: 1 }
-        number: { type: string, minLength: 1 }
-        currency: { type: string, pattern: "^[A-Z]{3}$" }
-        total: { type: string, pattern: "^[0-9]+(?:\\.[0-9]+)?$" }
-        customer: { $ref: "#/components/schemas/CanonicalOrderCustomer" }
+        id:
+          type: string
+          minLength: 1
+          pattern: \S
+        number:
+          type: string
+          minLength: 1
+          pattern: \S
+        currency:
+          type: string
+          pattern: ^[A-Z]{3}$
+          enum:
+            - AED
+            - AFN
+            - ALL
+            - AMD
+            - ANG
+            - AOA
+            - ARS
+            - AUD
+            - AWG
+            - AZN
+            - BAM
+            - BBD
+            - BDT
+            - BGN
+            - BHD
+            - BIF
+            - BMD
+            - BND
+            - BOB
+            - BRL
+            - BSD
+            - BTN
+            - BWP
+            - BYN
+            - BZD
+            - CAD
+            - CDF
+            - CHF
+            - CLP
+            - CNY
+            - COP
+            - CRC
+            - CUC
+            - CUP
+            - CVE
+            - CZK
+            - DJF
+            - DKK
+            - DOP
+            - DZD
+            - EGP
+            - ERN
+            - ETB
+            - EUR
+            - FJD
+            - FKP
+            - GBP
+            - GEL
+            - GHS
+            - GIP
+            - GMD
+            - GNF
+            - GTQ
+            - GYD
+            - HKD
+            - HNL
+            - HRK
+            - HTG
+            - HUF
+            - IDR
+            - ILS
+            - INR
+            - IQD
+            - IRR
+            - ISK
+            - JMD
+            - JOD
+            - JPY
+            - KES
+            - KGS
+            - KHR
+            - KMF
+            - KPW
+            - KRW
+            - KWD
+            - KYD
+            - KZT
+            - LAK
+            - LBP
+            - LKR
+            - LRD
+            - LSL
+            - LYD
+            - MAD
+            - MDL
+            - MGA
+            - MKD
+            - MMK
+            - MNT
+            - MOP
+            - MRU
+            - MUR
+            - MVR
+            - MWK
+            - MXN
+            - MYR
+            - MZN
+            - NAD
+            - NGN
+            - NIO
+            - NOK
+            - NPR
+            - NZD
+            - OMR
+            - PAB
+            - PEN
+            - PGK
+            - PHP
+            - PKR
+            - PLN
+            - PYG
+            - QAR
+            - RON
+            - RSD
+            - RUB
+            - RWF
+            - SAR
+            - SBD
+            - SCR
+            - SDG
+            - SEK
+            - SGD
+            - SHP
+            - SLE
+            - SLL
+            - SOS
+            - SRD
+            - SSP
+            - STN
+            - SVC
+            - SYP
+            - SZL
+            - THB
+            - TJS
+            - TMT
+            - TND
+            - TOP
+            - TRY
+            - TTD
+            - TWD
+            - TZS
+            - UAH
+            - UGX
+            - USD
+            - UYU
+            - UZS
+            - VES
+            - VND
+            - VUV
+            - WST
+            - XAF
+            - XCD
+            - XCG
+            - XDR
+            - XOF
+            - XPF
+            - XSU
+            - YER
+            - ZAR
+            - ZMW
+            - ZWG
+            - ZWL
+        total:
+          type: string
+          pattern: ^[0-9]+(?:\.[0-9]+)?$
+        customer:
+          $ref: "#/components/schemas/CanonicalOrderCustomer"
         items:
           type: array
-          items: { $ref: "#/components/schemas/CanonicalOrderItem" }
-        shippingAddress: { $ref: "#/components/schemas/CanonicalShippingAddress" }
-        sourceStatus: { type: string, minLength: 1 }
-        paymentMethod: { type: string, minLength: 1 }
-        metadata: { type: object, additionalProperties: true }
+          items:
+            $ref: "#/components/schemas/CanonicalOrderItem"
+        shippingAddress:
+          $ref: "#/components/schemas/CanonicalShippingAddress"
+        sourceStatus:
+          type: string
+          minLength: 1
+          pattern: \S
+        paymentMethod:
+          type: string
+          minLength: 1
+          pattern: \S
+        metadata:
+          type: object
+          additionalProperties: true
     CanonicalOrderCustomer:
       type: object
       additionalProperties: false
-      required: [phone]
+      required:
+        - phone
       properties:
-        name: { type: string, minLength: 1 }
-        phone: { type: string, pattern: "^\\+[1-9][0-9]{1,14}$" }
-        locale: { $ref: "#/components/schemas/OrderLocale" }
+        name:
+          type: string
+          minLength: 1
+          pattern: \S
+        phone:
+          type: string
+          pattern: ^\+[1-9][0-9]{1,14}$
+        locale:
+          $ref: "#/components/schemas/OrderLocale"
     CanonicalOrderItem:
       type: object
       additionalProperties: false
-      required: [id, name, quantity, unitPrice, total]
+      required:
+        - id
+        - name
+        - quantity
+        - unitPrice
+        - total
       properties:
-        id: { type: string, minLength: 1 }
-        name: { type: string, minLength: 1 }
-        quantity: { type: string, pattern: "^[0-9]+(?:\\.[0-9]+)?$" }
-        unitPrice: { type: string, pattern: "^[0-9]+(?:\\.[0-9]+)?$" }
-        total: { type: string, pattern: "^[0-9]+(?:\\.[0-9]+)?$" }
+        id:
+          type: string
+          minLength: 1
+          pattern: \S
+        name:
+          type: string
+          minLength: 1
+          pattern: \S
+        quantity:
+          type: string
+          pattern: ^[0-9]+(?:\.[0-9]+)?$
+        unitPrice:
+          type: string
+          pattern: ^[0-9]+(?:\.[0-9]+)?$
+        total:
+          type: string
+          pattern: ^[0-9]+(?:\.[0-9]+)?$
     CanonicalShippingAddress:
       type: object
       additionalProperties: false
       properties:
-        addressLine1: { type: string, minLength: 1 }
-        addressLine2: { type: string, minLength: 1 }
-        city: { type: string, minLength: 1 }
-        state: { type: string, minLength: 1 }
-        postalCode: { type: string, minLength: 1 }
-        country: { type: string, minLength: 1 }
+        addressLine1:
+          type: string
+          minLength: 1
+          pattern: \S
+        addressLine2:
+          type: string
+          minLength: 1
+          pattern: \S
+        city:
+          type: string
+          minLength: 1
+          pattern: \S
+        state:
+          type: string
+          minLength: 1
+          pattern: \S
+        postalCode:
+          type: string
+          minLength: 1
+          pattern: \S
+        country:
+          type: string
+          minLength: 1
+          pattern: \S
     OrderTemplateField:
       type: string
-      enum: [customerName, orderNumber, itemSummary, quantity, total, shippingCity, shippingCountry]
+      enum:
+        - customerName
+        - orderNumber
+        - itemSummary
+        - quantity
+        - total
+        - shippingCity
+        - shippingCountry
+        - shippingFullAddress
     OrderTemplateButtonField:
       type: string
       enum: [confirmToken, cancelToken]
@@ -4996,75 +5656,262 @@ components:
     OrderTestEventPreviewResponse:
       type: object
       additionalProperties: false
-      required: [data]
+      required:
+        - data
       properties:
         data:
           type: object
           additionalProperties: false
-          required: [templateConfigId, templateName, languageCode, locale, body, buttons, previewText]
+          required:
+            - templateConfigId
+            - templateName
+            - languageCode
+            - locale
+            - body
+            - previewText
+            - schemaVersion
+            - schemaValid
+            - templateReady
+            - variables
           properties:
-            templateConfigId: { type: integer, minimum: 1 }
-            templateName: { type: string }
-            languageCode: { type: string }
-            locale: { $ref: "#/components/schemas/OrderLocale" }
+            templateConfigId:
+              type: integer
+              minimum: 1
+            templateName:
+              type: string
+            languageCode:
+              type: string
+            locale:
+              $ref: "#/components/schemas/OrderLocale"
             body:
               type: array
-              items: { type: string }
+              items:
+                type: string
             buttons:
               type: object
               additionalProperties: false
-              required: [confirm, cancel]
+              required:
+                - confirm
+                - cancel
               description: Preview placeholders only; no customer action tokens are returned.
               properties:
-                confirm: { type: string }
-                cancel: { type: string }
-            previewText: { type: string }
+                confirm:
+                  type: string
+                cancel:
+                  type: string
+            previewText:
+              type: string
+            schemaVersion:
+              type: string
+              enum:
+                - "1"
+            schemaValid:
+              type: boolean
+              const: true
+            templateReady:
+              type: boolean
+              const: true
+            variables:
+              type: array
+              items:
+                $ref: "#/components/schemas/OrderTemplateVariablePresence"
     OrderNotification:
       type: object
       additionalProperties: false
       required:
-        [id, kind, mode, status, providerMessageId, conversationMessageId, attemptCount, lastError, queuedAt, sentAt, deliveredAt, readAt, failedAt, createdAt, updatedAt]
+        - id
+        - kind
+        - mode
+        - status
+        - providerMessageId
+        - conversationMessageId
+        - attemptCount
+        - lastError
+        - queuedAt
+        - sentAt
+        - deliveredAt
+        - readAt
+        - failedAt
+        - createdAt
+        - updatedAt
+        - failureCode
+        - failureDetails
       properties:
-        id: { type: integer, minimum: 1 }
-        kind: { $ref: "#/components/schemas/OrderNotificationKind" }
-        mode: { type: string, enum: [CONFIRMATION, NOTIFICATION_ONLY] }
-        status: { $ref: "#/components/schemas/OrderNotificationStatus" }
-        providerMessageId: { type: [string, "null"] }
-        conversationMessageId: { type: [integer, "null"], minimum: 1 }
-        attemptCount: { type: integer, minimum: 0 }
-        lastError: { type: [string, "null"] }
-        queuedAt: { type: [string, "null"], format: date-time }
-        sentAt: { type: [string, "null"], format: date-time }
-        deliveredAt: { type: [string, "null"], format: date-time }
-        readAt: { type: [string, "null"], format: date-time }
-        failedAt: { type: [string, "null"], format: date-time }
-        createdAt: { type: [string, "null"], format: date-time }
-        updatedAt: { type: [string, "null"], format: date-time }
+        id:
+          type: integer
+          minimum: 1
+        kind:
+          $ref: "#/components/schemas/OrderNotificationKind"
+        mode:
+          type: string
+          enum:
+            - CONFIRMATION
+            - NOTIFICATION_ONLY
+        status:
+          $ref: "#/components/schemas/OrderNotificationStatus"
+        providerMessageId:
+          type:
+            - string
+            - "null"
+        conversationMessageId:
+          type:
+            - integer
+            - "null"
+          minimum: 1
+        attemptCount:
+          type: integer
+          minimum: 0
+        lastError:
+          type:
+            - string
+            - "null"
+        queuedAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        sentAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        deliveredAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        readAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        failedAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        createdAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        updatedAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        failureCode:
+          type:
+            - string
+            - "null"
+        failureDetails:
+          type:
+            - array
+            - "null"
+          items:
+            $ref: "#/components/schemas/OrderTemplateVariableIssue"
     OrderNotificationDetail:
       type: object
       additionalProperties: false
       required:
-        [id, kind, mode, status, providerMessageId, conversationMessageId, attemptCount, lastError, queuedAt, sentAt, deliveredAt, readAt, failedAt, createdAt, updatedAt, renderedVariables]
+        - id
+        - kind
+        - mode
+        - status
+        - providerMessageId
+        - conversationMessageId
+        - attemptCount
+        - lastError
+        - queuedAt
+        - sentAt
+        - deliveredAt
+        - readAt
+        - failedAt
+        - createdAt
+        - updatedAt
+        - renderedVariables
+        - failureCode
+        - failureDetails
       properties:
-        id: { type: integer, minimum: 1 }
-        kind: { $ref: "#/components/schemas/OrderNotificationKind" }
-        mode: { type: string, enum: [CONFIRMATION, NOTIFICATION_ONLY] }
-        status: { $ref: "#/components/schemas/OrderNotificationStatus" }
-        providerMessageId: { type: [string, "null"] }
-        conversationMessageId: { type: [integer, "null"], minimum: 1 }
-        attemptCount: { type: integer, minimum: 0 }
-        lastError: { type: [string, "null"] }
-        queuedAt: { type: [string, "null"], format: date-time }
-        sentAt: { type: [string, "null"], format: date-time }
-        deliveredAt: { type: [string, "null"], format: date-time }
-        readAt: { type: [string, "null"], format: date-time }
-        failedAt: { type: [string, "null"], format: date-time }
-        createdAt: { type: [string, "null"], format: date-time }
-        updatedAt: { type: [string, "null"], format: date-time }
+        id:
+          type: integer
+          minimum: 1
+        kind:
+          $ref: "#/components/schemas/OrderNotificationKind"
+        mode:
+          type: string
+          enum:
+            - CONFIRMATION
+            - NOTIFICATION_ONLY
+        status:
+          $ref: "#/components/schemas/OrderNotificationStatus"
+        providerMessageId:
+          type:
+            - string
+            - "null"
+        conversationMessageId:
+          type:
+            - integer
+            - "null"
+          minimum: 1
+        attemptCount:
+          type: integer
+          minimum: 0
+        lastError:
+          type:
+            - string
+            - "null"
+        queuedAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        sentAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        deliveredAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        readAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        failedAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        createdAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        updatedAt:
+          type:
+            - string
+            - "null"
+          format: date-time
         renderedVariables:
           description: Stored rendered-variable snapshot; action-token values are not returned.
-          type: [object, "null"]
+          type:
+            - object
+            - "null"
           additionalProperties: true
+        failureCode:
+          type:
+            - string
+            - "null"
+        failureDetails:
+          type:
+            - array
+            - "null"
+          items:
+            $ref: "#/components/schemas/OrderTemplateVariableIssue"
     OrderStoreSync:
       type: object
       additionalProperties: false

@@ -26,6 +26,7 @@ import {
   validateOrderTemplateMapping,
   type OrderTemplateConfig,
 } from "./orderConfirmation.template.service";
+import { inspectOrderTemplateVariables, OrderTemplateDataIncompleteError } from "./orderConfirmation.template-validation.service";
 import { hashOrderActionToken } from "./orderConfirmation.crypto";
 
 export class OrderConfirmationRateLimitError extends Error {
@@ -196,6 +197,8 @@ export async function sendConfirmationNotification(notificationId: number): Prom
   const account = getAccount(notification);
   const templateConfig = await getTemplateConfig(notification, account.id);
   validateOrderTemplateMapping(templateConfig.variableMapping);
+  const inspection = inspectOrderTemplateVariables(notification.order as any, templateConfig.variableMapping, templateConfig.locale);
+  if (inspection.errors.length) throw new OrderTemplateDataIncompleteError(inspection.errors);
   const usesActions = orderTemplateUsesActions(templateConfig.variableMapping);
   const actionTokens = usesActions ? await prepareOrderActionTokensForSend(notificationId) : undefined;
   if (

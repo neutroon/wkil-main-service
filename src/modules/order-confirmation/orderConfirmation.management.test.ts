@@ -522,6 +522,14 @@ describe("order-confirmation management APIs", () => {
     expect(mocks.listOrderTemplateConfigs).not.toHaveBeenCalled();
   });
 
+  it("returns missing template fields from the managed preview", async () => {
+    mocks.findOrderTemplateConfigForTest.mockResolvedValue({ id: 21, businessProfileId: 11, whatsappAccountId: 9, eventType: "order.created", locale: "en", templateName: "order", languageCode: "en", templateVersion: 1, isActive: true, approvalStatus: "APPROVED", variableMapping: { body: { "5": "shippingCountry" } } });
+    const response = await request(server, { method: "POST", path: "/order-integrations/4/test-event", body: { schemaVersion: "1", eventId: "test-missing", eventType: "order.created", occurredAt: "2026-10-02T00:00:00Z", order: { id: "1", number: "1", total: "0", currency: "EGP", customer: { phone: "+201000000000" } } } });
+    expect(response.status).toBe(422);
+    expect(response.json.errors[0]).toMatchObject({ placeholder: "5", field: "shippingCountry" });
+    expect(mocks.sendWhatsAppTemplate).not.toHaveBeenCalled();
+  });
+
   it("renders a test preview without contacting a customer", async () => {
     const response = await request(server, {
       method: "POST",
@@ -569,7 +577,7 @@ describe("order-confirmation management APIs", () => {
     });
 
     expect(response.status).toBe(200);
-    expect(response.json.data.locale).toBe("ar");
+    expect(response.json.data.locale).toBe("en");
     expect(mocks.findOrderTemplateConfigForTest).toHaveBeenCalledWith(
       expect.objectContaining({ id: 21, locale: "ar" }),
     );
@@ -899,6 +907,8 @@ describe("order-confirmation management APIs", () => {
       ],
       notification: {
         mode: "CONFIRMATION",
+        failureCode: null,
+        failureDetails: null,
         id: 41,
         kind: "CONFIRMATION_REQUEST",
         status: "FAILED",
@@ -923,6 +933,8 @@ describe("order-confirmation management APIs", () => {
       notifications: [
         {
           mode: "CONFIRMATION",
+          failureCode: null,
+          failureDetails: null,
           id: 41,
           kind: "CONFIRMATION_REQUEST",
           status: "FAILED",
@@ -946,6 +958,8 @@ describe("order-confirmation management APIs", () => {
         },
         {
           mode: "CONFIRMATION",
+          failureCode: null,
+          failureDetails: null,
           id: 42,
           kind: "ACKNOWLEDGEMENT",
           status: "SENT",

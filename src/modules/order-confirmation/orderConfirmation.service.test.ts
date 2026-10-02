@@ -308,6 +308,23 @@ describe("order confirmation workflow", () => {
     ).toBeLessThan(mocks.sendConfirmationNotification.mock.invocationCallOrder[0]);
   });
 
+  it("persists missing field diagnostics and terminates automatic retries", async () => {
+    mocks.findNotificationForSending.mockResolvedValue({ id: 18, status: "QUEUED", kind: "CONFIRMATION_REQUEST" });
+    const issues = [{ component: "body", placeholder: "5", field: "shippingCountry", paths: ["order.shippingAddress.country"], reason: "missing" }];
+    mocks.sendConfirmationNotification.mockRejectedValue(Object.assign(new Error("Missing template data"), { code: "TEMPLATE_DATA_INCOMPLETE", issues }));
+    await expect(sendOrderNotification(18)).resolves.toBeUndefined();
+    expect(mocks.markNotificationFailed).toHaveBeenCalledWith(18, "Missing template data", { code: "TEMPLATE_DATA_INCOMPLETE", details: issues });
+    expect(mocks.markNotificationQueued).not.toHaveBeenCalled();
+  });
+
+  it("terminates permanent definite rejections and retries temporary rejections", async () => {
+    mocks.findNotificationForSending.mockResolvedValue({ id: 18, status: "QUEUED", kind: "CONFIRMATION_REQUEST" });
+    mocks.sendConfirmationNotification.mockRejectedValueOnce(Object.assign(new Error("WhatsApp template rejected"), { code: "WHATSAPP_TEMPLATE_REJECTED", retryable: false }));
+    await expect(sendOrderNotification(18)).resolves.toBeUndefined();
+    mocks.sendConfirmationNotification.mockRejectedValueOnce(Object.assign(new Error("WhatsApp template rejected"), { code: "WHATSAPP_TEMPLATE_REJECTED", retryable: true }));
+    await expect(sendOrderNotification(18)).rejects.toThrow("WhatsApp template rejected");
+  });
+
   it("marks provider failures FAILED without mutating order state", async () => {
     mocks.findNotificationForSending.mockResolvedValue({
       id: 18,

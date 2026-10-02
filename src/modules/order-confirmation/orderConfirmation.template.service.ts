@@ -1,28 +1,9 @@
 import prisma from "@config/prisma";
-import type { CanonicalOrder, OrderTemplateField } from "./orderConfirmation.types";
-
-const allowedOrderFields = new Set<OrderTemplateField>([
-  "customerName",
-  "orderNumber",
-  "itemSummary",
-  "quantity",
-  "total",
-  "shippingCity",
-  "shippingCountry",
-]);
-
-const allowedButtonFields = new Set([
-  "confirmToken",
-  "cancelToken",
-]);
-
-export type OrderTemplateMapping =
-  | readonly OrderTemplateField[]
-  | {
-      body: readonly OrderTemplateField[] | Readonly<Record<string, OrderTemplateField>>;
-      buttons?: readonly string[] | Readonly<Record<string, string>>;
-    }
-  | Record<string, OrderTemplateField>;
+import type { CanonicalOrder } from "./orderConfirmation.types";
+import { renderOrderTemplateField } from "./orderConfirmation.fields";
+import { getBodyMappingEntries, validateOrderTemplateMapping, orderTemplateUsesActions, type OrderTemplateMapping } from "./orderConfirmation.template-mapping";
+export { validateOrderTemplateMapping, orderTemplateUsesActions } from "./orderConfirmation.template-mapping";
+export type { OrderTemplateMapping } from "./orderConfirmation.template-mapping";
 
 export type OrderTemplateConfig = {
   id: number;
@@ -46,131 +27,6 @@ export type RenderedOrderTemplateVariables = {
   };
   previewText: string;
 };
-
-function asMapping(value: unknown): OrderTemplateMapping {
-  if (Array.isArray(value)) return value as readonly OrderTemplateField[];
-  if (typeof value !== "object" || value === null) {
-    throw new Error("Template variable mapping must be an object or array");
-  }
-
-  return value as OrderTemplateMapping;
-}
-
-function normalizeLegacyField(value: unknown): string {
-  // Existing saved configurations used `currency` for this template slot.
-  // Keep those configurations readable while making quantity the canonical field.
-  return value === "currency" ? "quantity" : String(value);
-}
-
-function normalizeFieldCollection(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(normalizeLegacyField);
-  if (typeof value !== "object" || value === null) return value;
-
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>).map(([key, field]) => [
-      key,
-      normalizeLegacyField(field),
-    ]),
-  );
-}
-
-function normalizeOrderTemplateMapping(value: OrderTemplateMapping): OrderTemplateMapping {
-  if (Array.isArray(value)) return value.map(normalizeLegacyField) as OrderTemplateField[];
-
-  if ("body" in value) {
-    return {
-      ...value,
-      body: normalizeFieldCollection(value.body) as OrderTemplateField[] | Record<string, OrderTemplateField>,
-      ...(value.buttons === undefined
-        ? {}
-        : { buttons: normalizeFieldCollection(value.buttons) as string[] | Record<string, string> }),
-    };
-  }
-
-  return normalizeFieldCollection(value) as Record<string, OrderTemplateField>;
-}
-
-function trimDecimal(value: string): string {
-  const [integerPart, fractionPart] = value.split(".");
-  if (!fractionPart) return integerPart;
-  const trimmedFraction = fractionPart.replace(/0+$/, "");
-  return trimmedFraction ? `${integerPart}.${trimmedFraction}` : integerPart;
-}
-
-function valuesInPlaceholderOrder(value: unknown): string[] {
-  if (Array.isArray(value)) return value.map(String);
-  if (typeof value !== "object" || value === null) return [];
-
-  return Object.entries(value as Record<string, unknown>)
-    .sort(([left], [right]) => {
-      const leftNumber = Number(left);
-      const rightNumber = Number(right);
-      if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) {
-        return leftNumber - rightNumber;
-      }
-      return left.localeCompare(right);
-    })
-    .map(([, field]) => String(field));
-}
-
-function bodyFields(mapping: OrderTemplateMapping): string[] {
-  if (Array.isArray(mapping)) return mapping.map(String);
-  if ("body" in mapping) return valuesInPlaceholderOrder(mapping.body);
-  return valuesInPlaceholderOrder(mapping);
-}
-
-function buttonFields(mapping: OrderTemplateMapping): string[] {
-  if (Array.isArray(mapping) || !("buttons" in mapping) || mapping.buttons === undefined) {
-    return [];
-  }
-  return valuesInPlaceholderOrder(mapping.buttons);
-}
-
-function validateFieldList(fields: string[], allowed: Set<string>, label: string): void {
-  if (fields.length === 0) {
-    throw new Error(`${label} mapping is required`);
-  }
-
-  for (const field of fields) {
-    if (!allowed.has(field)) {
-      throw new Error(`Unknown ${label} field: ${field}`);
-    }
-  }
-}
-
-export function orderTemplateUsesActions(mapping: OrderTemplateMapping | unknown): boolean {
-  return buttonFields(asMapping(mapping)).length > 0;
-}
-
-function validateMapping(mapping: OrderTemplateMapping, requireButtons = false): void {
-  const body = bodyFields(mapping);
-  if (body.length > 0) validateFieldList(body, allowedOrderFields, "body");
-
-  const buttons = buttonFields(mapping);
-  if (requireButtons && buttons.length === 0) {
-    throw new Error("Confirm and Cancel button parameters are required");
-  }
-  if (buttons.length > 0) {
-    validateFieldList(buttons, allowedButtonFields, "button");
-    if (buttons.length !== 2) {
-      throw new Error("Confirm and Cancel button parameters are required");
-    }
-    if (
-      (buttons[0] !== "confirmToken" || buttons[1] !== "cancelToken")
-    ) {
-      throw new Error("Confirm and Cancel button parameters must be in order");
-    }
-  }
-}
-
-export function validateOrderTemplateMapping(
-  mapping: OrderTemplateMapping | unknown,
-  requireButtons = false,
-): OrderTemplateMapping {
-  const normalizedMapping = normalizeOrderTemplateMapping(asMapping(mapping));
-  validateMapping(normalizedMapping, requireButtons);
-  return normalizedMapping;
-}
 
 export async function resolveActiveTemplateConfig(params: {
   integrationId: number;
@@ -213,6 +69,7 @@ export async function resolveActiveTemplateConfig(params: {
       approvalStatus: true,
       variableMapping: true,
     },
+    orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
   });
 
   if (!config) {
@@ -235,118 +92,6 @@ export async function resolveActiveTemplateConfig(params: {
   return { ...config, variableMapping };
 }
 
-function localizedDigits(value: string, locale: string): string {
-  const digitFormatter = new Intl.NumberFormat(locale, { useGrouping: false });
-  const digits = new Map<string, string>();
-  for (let digit = 0; digit <= 9; digit += 1) {
-    digits.set(String(digit), digitFormatter.format(digit));
-  }
-  return [...value].map((character) => digits.get(character) ?? character).join("");
-}
-
-function formatMoneyWithoutNumber(
-  rawTotal: string,
-  currency: string,
-  locale: string,
-): string {
-  if (!/^\d+(?:\.\d+)?$/.test(rawTotal)) {
-    return `${currency} ${rawTotal}`.trim();
-  }
-
-  try {
-    const formatter = new Intl.NumberFormat(locale, {
-      style: "currency",
-      currency,
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 20,
-    });
-    const pattern = formatter.formatToParts(1.1);
-    const firstInteger = pattern.findIndex((part) => part.type === "integer");
-    let lastNumber = -1;
-    for (let index = 0; index < pattern.length; index += 1) {
-      if (pattern[index]?.type === "integer" || pattern[index]?.type === "fraction") {
-        lastNumber = index;
-      }
-    }
-    if (firstInteger < 0 || lastNumber < firstInteger) {
-      return `${currency} ${rawTotal}`.trim();
-    }
-
-    const prefix = pattern.slice(0, firstInteger).map((part) => part.value).join("");
-    const suffix = pattern.slice(lastNumber + 1).map((part) => part.value).join("");
-    const decimalSeparator =
-      pattern.find((part) => part.type === "decimal")?.value ?? ".";
-    const [integerPart, fractionPart] = rawTotal.split(".");
-    const localizedInteger = localizedDigits(integerPart, locale);
-    const localizedFraction = fractionPart
-      ? `${decimalSeparator}${localizedDigits(fractionPart, locale)}`
-      : "";
-
-    return `${prefix}${localizedInteger}${localizedFraction}${suffix}`;
-  } catch {
-    return `${currency} ${rawTotal}`.trim();
-  }
-}
-
-function readOrderValue(
-  order: CanonicalOrder | Record<string, unknown>,
-  field: string,
-  selectedLocale?: string,
-): string {
-  const source = order as Record<string, unknown>;
-  const customer = (source.customer ?? {}) as Record<string, unknown>;
-  const shippingAddress = (source.shippingAddress ?? {}) as Record<string, unknown>;
-
-  switch (field) {
-    case "customerName":
-      return String(source.customerName ?? customer.name ?? "");
-    case "orderNumber":
-      return String(source.orderNumber ?? source.number ?? "");
-    case "itemSummary": {
-      const items = (source.lineItems ?? source.items) as Array<Record<string, unknown>> | undefined;
-      if (!Array.isArray(items)) return "";
-      return items
-        .map((item) => String(item.name ?? "").trim())
-        .filter(Boolean)
-        .join(", ");
-    }
-    case "quantity": {
-      const items = (source.lineItems ?? source.items) as Array<Record<string, unknown>> | undefined;
-      if (!Array.isArray(items)) return "";
-
-      const quantities = items
-        .map((item) => String(item.quantity ?? ""))
-        .filter((quantity) => /^\d+(?:\.\d+)?$/.test(quantity));
-      if (quantities.length === 0) return "";
-
-      const scale = Math.max(
-        ...quantities.map((quantity) => quantity.split(".")[1]?.length ?? 0),
-      );
-      const total = quantities.reduce((sum, quantity) => {
-        const [integerPart, fractionPart = ""] = quantity.split(".");
-        return sum + BigInt(`${integerPart}${fractionPart.padEnd(scale, "0")}`);
-      }, 0n);
-      const digits = total.toString().padStart(scale + 1, "0");
-      if (scale === 0) return digits;
-      return trimDecimal(`${digits.slice(0, -scale)}.${digits.slice(-scale)}`);
-    }
-    case "total": {
-      const rawTotal = String(source.total ?? "");
-      const currency = String(source.currency ?? "USD");
-      const locale = selectedLocale ?? String(source.locale ?? customer.locale ?? "en");
-      return formatMoneyWithoutNumber(rawTotal, currency, locale);
-    }
-    case "currency":
-      return String(source.currency ?? "");
-    case "shippingCity":
-      return String(shippingAddress.city ?? "");
-    case "shippingCountry":
-      return String(shippingAddress.country ?? "");
-    default:
-      throw new Error(`Unknown order template field: ${field}`);
-  }
-}
-
 export function renderOrderTemplateVariables(
   order: CanonicalOrder | Record<string, unknown>,
   mapping: OrderTemplateMapping | unknown,
@@ -355,8 +100,8 @@ export function renderOrderTemplateVariables(
 ): RenderedOrderTemplateVariables {
   const normalizedMapping = validateOrderTemplateMapping(mapping);
 
-  const body = bodyFields(normalizedMapping).map((field) =>
-    readOrderValue(order, field, selectedLocale),
+  const body = getBodyMappingEntries(normalizedMapping).map(({ field }) =>
+    renderOrderTemplateField(order, field, selectedLocale ?? String((order as Record<string, unknown>).locale ?? "en")).text,
   );
   const rendered: RenderedOrderTemplateVariables = {
     body,

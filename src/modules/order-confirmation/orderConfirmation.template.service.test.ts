@@ -140,6 +140,44 @@ describe("order confirmation template mapping", () => {
     );
   });
 
+  it("resolves the newest eligible template to match setup selection", async () => {
+    const olderConfig = {
+      id: 4,
+      businessProfileId: 11,
+      whatsappAccountId: 9,
+      eventType: "order.created",
+      locale: "ar",
+      templateName: "older_order_confirm",
+      languageCode: "ar",
+      templateVersion: 1,
+      isActive: true,
+      approvalStatus: "APPROVED",
+      variableMapping: mapping,
+      updatedAt: new Date("2026-09-01T00:00:00Z"),
+    };
+    const newestConfig = {
+      ...olderConfig,
+      id: 5,
+      templateName: "newest_order_confirm",
+      templateVersion: 2,
+      updatedAt: new Date("2026-10-01T00:00:00Z"),
+    };
+
+    mocks.findFirst.mockImplementation(({ orderBy }) =>
+      Promise.resolve(orderBy?.[0]?.updatedAt === "desc" ? newestConfig : olderConfig),
+    );
+
+    const resolved = await resolveActiveTemplateConfig({
+      integrationId: 7,
+      businessProfileId: 11,
+      whatsappAccountId: 9,
+      locale: "ar",
+      eventType: "order.created",
+    });
+
+    expect(resolved.id).toBe(5);
+  });
+
   it("rejects a template snapshot returned for a different business profile", async () => {
     mocks.findFirst.mockResolvedValue({
       id: 4,

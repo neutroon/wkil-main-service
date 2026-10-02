@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -19,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   orderFindMany: vi.fn(),
   orderFindFirst: vi.fn(),
   queryRaw: vi.fn(),
+  templateFindFirst: vi.fn(),
 }));
 
 vi.mock("@config/prisma", () => ({
@@ -31,6 +33,7 @@ vi.mock("@config/prisma", () => ({
     orderIntegration: {
       findFirst: mocks.findFirst,
     },
+    orderTemplateConfig: { findFirst: mocks.templateFindFirst },
     orderEvent: {
       create: mocks.create,
     },
@@ -54,6 +57,7 @@ vi.mock("@config/prisma", () => ({
 }));
 
 import {
+  markNotificationFailed,
   claimOrderAction,
   findActiveIntegrationByPublicKey,
   insertOrderEventIfNew,
@@ -68,6 +72,7 @@ import {
   findManagedOrder,
 } from "./orderConfirmation.repository";
 import { hashOrderActionToken } from "./orderConfirmation.crypto";
+import { resolveOrderTemplateForIntegration } from "./orderConfirmation.template-validation.service";
 
 const eventParams = {
   integrationId: 7,
@@ -383,7 +388,7 @@ describe("order confirmation repository", () => {
           },
         ],
       },
-      data: { status: "SENDING", lastError: null, failedAt: null },
+      data: { status: "SENDING", lastError: null, failureCode: null, failureDetails: Prisma.DbNull, failedAt: null },
     });
 
     await markNotificationSent(18, "wamid-18");
@@ -438,7 +443,7 @@ describe("order confirmation repository", () => {
         providerMessageId: "wamid-18",
         status: { in: ["SENT", "DELIVERED", "READ"] },
       },
-      data: { status: "READ", readAt: occurredAt },
+      data: { status: "READ", readAt: occurredAt, failureCode: null, failureDetails: Prisma.DbNull },
     });
 
     await reconcileNotificationDeliveryStatus({
@@ -512,9 +517,31 @@ describe("order confirmation repository", () => {
       data: {
         status: "QUEUED",
         lastError: null,
+        failureCode: null,
+        failureDetails: Prisma.DbNull,
         failedAt: null,
         queuedAt: expect.any(Date),
       },
     });
+  });
+});
+
+describe("persistent template field diagnostics", () => {
+  it("setup selects the current approved template after an older one is retired", async () => {
+    const base={businessProfileId:11,whatsappAccountId:9,eventType:"order.created",locale:"en",templateName:"order",languageCode:"en",templateVersion:1,approvalStatus:"APPROVED",variableMapping:["orderNumber"]};
+    const rows=[{...base,id:1,isActive:false},{...base,id:2,isActive:true}];
+    mocks.templateFindFirst.mockImplementation(async ({where}) => rows.find(row =>
+      (where.isActive===undefined || row.isActive===where.isActive) &&
+      (where.approvalStatus===undefined || row.approvalStatus===where.approvalStatus)));
+    const result=await resolveOrderTemplateForIntegration({integrationId:7,businessProfileId:11,whatsappAccountId:9,defaultLocale:"en"});
+    expect(result.id).toBe(2);
+  });
+  it("stores safe structured paths and clears them on a successful send", async () => {
+    const details = [{ component: "body" as const, placeholder: "5", field: "shippingCountry" as const, paths: ["order.shippingAddress.country"], reason: "missing" as const }];
+    await markNotificationFailed(18, "Missing template data", { code: "TEMPLATE_DATA_INCOMPLETE", details });
+    expect(mocks.notificationUpdate).toHaveBeenLastCalledWith(expect.objectContaining({ data: expect.objectContaining({ failureCode: "TEMPLATE_DATA_INCOMPLETE", failureDetails: details }) }));
+    mocks.conversationMessageFindUnique.mockResolvedValue(null);
+    await markNotificationSent(18, "wamid-test");
+    expect(mocks.notificationUpdate).toHaveBeenLastCalledWith(expect.objectContaining({ data: expect.objectContaining({ failureCode: null }) }));
   });
 });

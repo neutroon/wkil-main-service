@@ -1,0 +1,40 @@
+{
+  "schemaVersion": "1",
+  "eventId": "order-created:synthetic-wkil-order",
+  "eventType": "order.created",
+  "occurredAt": "2026-10-02T00:00:00.000Z",
+  "order": {
+    "id": "synthetic-wkil-order",
+    "number": "1",
+    "currency": "EGP",
+    "total": "265.00",
+    "customer": {
+      "name": "Synthetic Customer",
+      "phone": "+201000000000"
+    },
+    "items": [
+      {
+        "id": "synthetic-item-1",
+        "name": "منتج تجريبي",
+        "quantity": "2",
+        "unitPrice": "100.00",
+        "total": "200.00"
+      },
+      {
+        "id": "synthetic-item-2",
+        "name": "Second test product",
+        "quantity": "1",
+        "unitPrice": "25.00",
+        "total": "25.00"
+      }
+    ],
+    "shippingAddress": {
+      "addressLine1": "Test Street 1",
+      "city": "cairo",
+      "postalCode": "12345",
+      "country": "Egypt"
+    },
+    "sourceStatus": "pending",
+    "paymentMethod": "cod"
+  }
+}

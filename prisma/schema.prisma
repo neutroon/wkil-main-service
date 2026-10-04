@@ -856,6 +856,7 @@ model OrderTemplateConfig {
   eventType         String
   locale            String
   templateName      String
+  metaTemplateId    String?
   languageCode      String
   templateVersion   Int             @default(1)
   isActive          Boolean         @default(false)

@@ -193,6 +193,16 @@ describe("order confirmation repository", () => {
     expect(await findNotificationForSending(18)).toBeNull();
   });
 
+  it("loads the authorized WABA ID required by pinned-template sending", async () => {
+    mocks.notificationFindUnique.mockResolvedValue(null);
+    await findNotificationForSending(18);
+    expect(mocks.notificationFindUnique).toHaveBeenCalledWith(expect.objectContaining({
+      select: expect.objectContaining({ order: { select: expect.objectContaining({
+        integration: { select: expect.objectContaining({ whatsappAccount: { select: expect.objectContaining({ wabaId: true }) } }) },
+      }) } }),
+    }));
+  });
+
   it("applies trimmed literal search to exactly three fields within the accessible profile scope", async () => {
     await listManagedOrders({
       profileIds: [11, 12],

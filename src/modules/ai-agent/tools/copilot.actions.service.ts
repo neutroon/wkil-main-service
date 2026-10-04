@@ -77,6 +77,7 @@ import {
   type OrderTemplateMapping,
 } from "@modules/order-confirmation/orderConfirmation.template.service";
 import { normalizeCanonicalOrderEvent } from "@modules/order-confirmation/orderConfirmation.normalizer";
+import { findApprovedWhatsAppTemplate, getMetaTemplateId, templateIdForUpdate } from "@modules/order-confirmation/orderConfirmation.template-identity";
 import {
   requireWorkspaceProfileAccess,
   WORKSPACE_MANAGER_ROLES,
@@ -852,28 +853,31 @@ export async function copilotListOrderTemplateConfigs(params: { userId: number; 
 
 async function resolveOrderTemplate(params: {
   userId: number; integrationId: number; templateName: string; languageCode: string; variableMapping: unknown;
+  metaTemplateId?: string | null;
 }) {
   const { integration } = await ownedOrderIntegration(params.userId, params.integrationId);
   if (!integration.whatsappAccountId) throw new AppError("Select a WhatsApp account before configuring templates", 400);
   const { templates } = await approvedTemplatesForAccount(params.userId, integration.whatsappAccountId);
-  const template = templates.find((item) => item?.name === params.templateName && templateLanguage(item) === params.languageCode);
+  const template = findApprovedWhatsAppTemplate(templates, params);
   if (!template) throw new AppError("Selected WhatsApp template is not currently approved", 400);
-  return { integration, mapping: requireQuickReplyTemplate(template, params.variableMapping) };
+  if (!getMetaTemplateId(template)) throw new AppError("Selected WhatsApp template ID is unavailable", 400);
+  return { integration, template, mapping: requireQuickReplyTemplate(template, params.variableMapping) };
 }
 
 export async function copilotCreateOrderTemplateConfig(params: {
   userId: number; integrationId: number; locale: string; templateName: string;
   languageCode: string; variableMapping: unknown; templateVersion?: number; isActive?: boolean;
 }) {
-  const { integration, mapping } = await resolveOrderTemplate(params);
+  const { integration, template, mapping } = await resolveOrderTemplate(params);
   const record = await createOrderTemplateConfig({
     integrationId: integration.id,
     businessProfileId: integration.businessProfileId,
     whatsappAccountId: integration.whatsappAccountId!,
     eventType: ORDER_EVENT_TYPE,
     locale: assertOrderLocale(params.locale),
-    templateName: params.templateName,
-    languageCode: params.languageCode,
+    templateName: template.name,
+    metaTemplateId: getMetaTemplateId(template),
+    languageCode: templateLanguage(template),
     templateVersion: params.templateVersion ?? 1,
     variableMapping: mapping as any,
     approvalStatus: "APPROVED",
@@ -895,20 +899,27 @@ export async function copilotUpdateOrderTemplateConfig(params: {
   const finalMapping = params.variableMapping ?? current.variableMapping;
   const finalActive = params.isActive ?? current.isActive;
   let mapping = finalMapping as OrderTemplateMapping;
+  let resolvedTemplate: any;
   if (finalActive || params.templateName !== undefined || params.languageCode !== undefined || params.variableMapping !== undefined) {
-    mapping = (await resolveOrderTemplate({
+    const resolved = await resolveOrderTemplate({
       userId: params.userId,
       integrationId: params.integrationId,
       templateName: finalName,
       languageCode: finalLanguage,
       variableMapping: finalMapping,
-    })).mapping;
+      metaTemplateId: templateIdForUpdate(current, params, current.whatsappAccountId),
+    });
+    mapping = resolved.mapping;
+    resolvedTemplate = resolved.template;
   }
   const locale = params.locale ? assertOrderLocale(params.locale) : current.locale;
   const data: Record<string, unknown> = {};
+  if (resolvedTemplate) {
+    data.metaTemplateId = getMetaTemplateId(resolvedTemplate);
+    data.templateName = resolvedTemplate.name;
+    data.languageCode = templateLanguage(resolvedTemplate);
+  }
   if (params.locale !== undefined) data.locale = locale;
-  if (params.templateName !== undefined) data.templateName = finalName;
-  if (params.languageCode !== undefined) data.languageCode = finalLanguage;
   if (params.variableMapping !== undefined || finalActive) data.variableMapping = mapping as any;
   if (params.templateVersion !== undefined) data.templateVersion = params.templateVersion;
   if (params.isActive !== undefined) data.isActive = params.isActive;

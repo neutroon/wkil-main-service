@@ -8,6 +8,7 @@ import {
   generateRandomToken,
 } from "@modules/auth/core/tokenCrypto";
 import { listWhatsAppTemplates } from "@modules/meta/whatsapp/whatsapp.service";
+import { findApprovedWhatsAppTemplate, getMetaTemplateId, templateIdForUpdate } from "./orderConfirmation.template-identity";
 import { getSystemSetting, updateSystemSetting } from "@modules/settings/settings.service";
 import {
   createOrderIntegration,
@@ -181,6 +182,7 @@ function serializeTemplateConfig(record: any): Record<string, unknown> {
     eventType: record.eventType,
     locale: record.locale,
     templateName: record.templateName,
+    metaTemplateId: record.metaTemplateId ?? null,
     languageCode: record.languageCode,
     templateVersion: record.templateVersion,
     isActive: record.isActive,
@@ -530,6 +532,7 @@ async function templatesForAccount(account: any): Promise<any[]> {
 
 async function currentApprovedTemplate(params: {
   account: any;
+  metaTemplateId?: string | null;
   templateName: string;
   languageCode: string;
   variableMapping: unknown;
@@ -542,14 +545,10 @@ async function currentApprovedTemplate(params: {
   }
 
   const templates = await templatesForAccount(params.account);
-  const template = templates.find(
-    (candidate) =>
-      candidate?.name === params.templateName &&
-      templateLanguage(candidate) === params.languageCode &&
-      templateStatus(candidate) === "APPROVED",
-  );
+  const template = findApprovedWhatsAppTemplate(templates, params);
 
   if (!template) badRequest("Selected WhatsApp template is not currently approved");
+  if (!getMetaTemplateId(template)) badRequest("Selected WhatsApp template ID is unavailable");
   const hasButtons = templateComponents(template).some(
     (component) => String(component?.type ?? "").toUpperCase() === "BUTTONS" &&
       Array.isArray(component.buttons) && component.buttons.length > 0,
@@ -821,6 +820,7 @@ export async function createTemplateConfig(req: Request, res: Response): Promise
   const target = await resolveTemplateTarget(req as ProfileScopedRequest, body);
   const current = await currentApprovedTemplate({
     account: target.account,
+    metaTemplateId: body.metaTemplateId,
     templateName: body.templateName,
     languageCode: body.languageCode,
     variableMapping: body.variableMapping,
@@ -831,8 +831,9 @@ export async function createTemplateConfig(req: Request, res: Response): Promise
     whatsappAccountId: body.whatsappAccountId,
     eventType: DEFAULT_EVENT_TYPE,
     locale: body.locale,
-    templateName: body.templateName,
-    languageCode: body.languageCode,
+    templateName: current.template.name,
+    metaTemplateId: getMetaTemplateId(current.template),
+    languageCode: templateLanguage(current.template),
     templateVersion: body.templateVersion,
     variableMapping: current.mapping as any,
     approvalStatus: "APPROVED",
@@ -876,21 +877,27 @@ export async function updateTemplateConfig(req: Request, res: Response): Promise
   const finalMapping = body.variableMapping ?? current.variableMapping;
   const finalActive = body.isActive ?? current.isActive;
   let validatedMapping: OrderTemplateMapping = finalMapping as OrderTemplateMapping;
-  if (finalActive || hasOwn(body, "templateName") || hasOwn(body, "languageCode") || hasOwn(body, "variableMapping")) {
+  let validatedTemplate: any;
+  if (finalActive || hasOwn(body, "metaTemplateId") || hasOwn(body, "templateName") || hasOwn(body, "languageCode") || hasOwn(body, "variableMapping")) {
     const approved = await currentApprovedTemplate({
       account,
+      metaTemplateId: templateIdForUpdate(current, body, current.whatsappAccountId),
       templateName: finalName,
       languageCode: finalLanguageCode,
       variableMapping: finalMapping,
     });
     validatedMapping = approved.mapping;
+    validatedTemplate = approved.template;
   }
 
   const data: Record<string, unknown> = {};
+  if (validatedTemplate) {
+    data.metaTemplateId = getMetaTemplateId(validatedTemplate);
+    data.templateName = validatedTemplate.name;
+    data.languageCode = templateLanguage(validatedTemplate);
+  }
   if (hasOwn(body, "whatsappAccountId")) data.whatsappAccountId = whatsappAccountId;
   if (hasOwn(body, "locale")) data.locale = body.locale;
-  if (hasOwn(body, "templateName")) data.templateName = finalName;
-  if (hasOwn(body, "languageCode")) data.languageCode = finalLanguageCode;
   if (hasOwn(body, "templateVersion")) data.templateVersion = body.templateVersion;
   if (hasOwn(body, "variableMapping")) data.variableMapping = validatedMapping as any;
   if (hasOwn(body, "isActive")) data.isActive = body.isActive;

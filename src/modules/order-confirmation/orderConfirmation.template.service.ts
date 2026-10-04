@@ -12,6 +12,7 @@ export type OrderTemplateConfig = {
   eventType: string;
   locale: string;
   templateName: string;
+  metaTemplateId?: string | null;
   languageCode: string;
   templateVersion: number;
   isActive: boolean;
@@ -63,6 +64,7 @@ export async function resolveActiveTemplateConfig(params: {
       eventType: true,
       locale: true,
       templateName: true,
+      metaTemplateId: true,
       languageCode: true,
       templateVersion: true,
       isActive: true,

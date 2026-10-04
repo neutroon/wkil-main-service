@@ -5535,7 +5535,7 @@ components:
       type: object
       additionalProperties: false
       required:
-        [id, businessProfileId, whatsappAccountId, eventType, locale, templateName, languageCode, templateVersion, isActive, approvalStatus, variableMapping, lastSyncedAt, createdAt, updatedAt]
+        [id, businessProfileId, whatsappAccountId, eventType, locale, templateName, metaTemplateId, languageCode, templateVersion, isActive, approvalStatus, variableMapping, lastSyncedAt, createdAt, updatedAt]
       properties:
         id: { type: integer, minimum: 1 }
         businessProfileId: { type: integer, minimum: 1 }
@@ -5543,6 +5543,9 @@ components:
         eventType: { type: string, enum: [order.created] }
         locale: { $ref: "#/components/schemas/OrderLocale" }
         templateName: { type: string, minLength: 1 }
+        metaTemplateId:
+          type: [string, "null"]
+          description: Meta template record ID, distinct from this configuration's numeric id. Null only for configurations created before ID pinning.
         languageCode: { type: string, minLength: 1 }
         templateVersion: { type: integer, minimum: 1 }
         isActive: { type: boolean }
@@ -5562,6 +5565,11 @@ components:
         eventType: { type: string, enum: [order.created] }
         locale: { $ref: "#/components/schemas/OrderLocale" }
         templateName: { type: string, minLength: 1 }
+        metaTemplateId:
+          type: string
+          pattern: '^\d+$'
+          maxLength: 100
+          description: Primary template identity, resolved within the integration's WhatsApp account. When omitted by legacy clients, the server resolves name and language and persists the resulting ID. Provider metadata overrides client name and language when an ID is supplied.
         languageCode: { type: string, minLength: 1 }
         templateVersion: { type: integer, minimum: 1, default: 1 }
         variableMapping: { $ref: "#/components/schemas/OrderTemplateMapping" }
@@ -5576,6 +5584,11 @@ components:
         whatsappAccountId: { type: integer, minimum: 1 }
         locale: { $ref: "#/components/schemas/OrderLocale" }
         templateName: { type: string, minLength: 1 }
+        metaTemplateId:
+          type: string
+          pattern: '^\d+$'
+          maxLength: 100
+          description: Explicitly select a Meta template record. An existing pinned ID is retained when omitted; it never falls back to a replacement with the same name. Legacy clients may change name or language explicitly to select a different template.
         languageCode: { type: string, minLength: 1 }
         templateVersion: { type: integer, minimum: 1 }
         variableMapping: { $ref: "#/components/schemas/OrderTemplateMapping" }

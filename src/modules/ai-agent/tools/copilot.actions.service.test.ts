@@ -70,6 +70,10 @@ const orderRepo = vi.hoisted(() => ({
   listOrderIntegrations: vi.fn(),
   findOrderIntegrationForProfiles: vi.fn(),
   updateOrderIntegration: vi.fn(),
+  findWhatsAppAccountForProfile: vi.fn(),
+  createOrderTemplateConfig: vi.fn(),
+  updateOrderTemplateConfig: vi.fn(),
+  findOrderTemplateConfigByIdForProfiles: vi.fn(),
   findNotificationForManagementRetry: vi.fn(),
   requeueNotificationForRetry: vi.fn(),
   findStoreSyncForManagementRetry: vi.fn(),
@@ -117,6 +121,7 @@ const customerSvc = vi.hoisted(() => ({
 vi.mock("@modules/business/customer/customer.service", () => customerSvc);
 
 const metaSvc = vi.hoisted(() => ({
+  listWhatsAppTemplates: vi.fn(),
   sendWhatsAppReply: vi.fn(),
   sendMessengerReply: vi.fn(),
 }));
@@ -173,6 +178,8 @@ import {
   copilotListOrders,
   copilotListOrderIntegrations,
   copilotUpdateOrderIntegration,
+  copilotCreateOrderTemplateConfig,
+  copilotUpdateOrderTemplateConfig,
   copilotRetryOrderNotification,
   copilotRetryOrderSync,
   copilotListWhatsAppAccounts,
@@ -892,6 +899,31 @@ describe("copilot channels — whatsapp", () => {
       where: { id: 4 }, data: { isActive: false },
     });
     expect(out.ok).toBe(true);
+  });
+});
+
+describe("copilot order template identity", () => {
+  const mapping = { body: ["orderNumber"], buttons: ["confirmToken", "cancelToken"] };
+  beforeEach(() => {
+    userSvc.getAccessibleProfileIds.mockResolvedValue([3]);
+    orderRepo.findOrderIntegrationForProfiles.mockResolvedValue({ id: 4, businessProfileId: 3, whatsappAccountId: 9 });
+    orderRepo.findWhatsAppAccountForProfile.mockResolvedValue({ id: 9, businessProfileId: 3, wabaId: "fixture-waba", accessToken: "fixture-access" });
+    metaSvc.listWhatsAppTemplates.mockResolvedValue([{ id: "1001", name: "order_confirm", language: "en", status: "APPROVED", components: [
+      { type: "BODY", text: "Order {{1}}" },
+      { type: "BUTTONS", buttons: [{ type: "QUICK_REPLY", text: "Confirm" }, { type: "QUICK_REPLY", text: "Cancel" }] },
+    ] }]);
+    orderRepo.createOrderTemplateConfig.mockResolvedValue({ id: 12 });
+    orderRepo.updateOrderTemplateConfig.mockResolvedValue({ id: 12 });
+  });
+  it("pins the provider ID for existing name/language tool inputs", async () => {
+    await copilotCreateOrderTemplateConfig({ userId: 7, integrationId: 4, locale: "en", templateName: "order_confirm", languageCode: "en", variableMapping: mapping });
+    expect(orderRepo.createOrderTemplateConfig).toHaveBeenCalledWith(expect.objectContaining({ metaTemplateId: "1001" }));
+  });
+  it("rejects a missing pinned ID on a mapping update", async () => {
+    orderRepo.findOrderTemplateConfigByIdForProfiles.mockResolvedValue({ id: 12, businessProfileId: 3, whatsappAccountId: 9,
+      templateName: "order_confirm", languageCode: "en", metaTemplateId: "1000", isActive: true, variableMapping: mapping });
+    await expect(copilotUpdateOrderTemplateConfig({ userId: 7, integrationId: 4, configId: 12, variableMapping: mapping })).rejects.toMatchObject({ statusCode: 400 });
+    expect(orderRepo.updateOrderTemplateConfig).not.toHaveBeenCalled();
   });
 });
 

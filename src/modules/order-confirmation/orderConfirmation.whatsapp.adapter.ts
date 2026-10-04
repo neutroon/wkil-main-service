@@ -9,6 +9,7 @@ import {
 import {
   sendWhatsAppReply,
   sendWhatsAppTemplate,
+  listWhatsAppTemplates,
 } from "@modules/meta/whatsapp/whatsapp.service";
 import { acquireBusinessSendPermit } from "./orderConfirmation.rateLimit";
 import {
@@ -26,6 +27,7 @@ import {
   validateOrderTemplateMapping,
   type OrderTemplateConfig,
 } from "./orderConfirmation.template.service";
+import { findApprovedWhatsAppTemplate, metaTemplateLanguage } from "./orderConfirmation.template-identity";
 import { inspectOrderTemplateVariables, OrderTemplateDataIncompleteError } from "./orderConfirmation.template-validation.service";
 import { hashOrderActionToken } from "./orderConfirmation.crypto";
 
@@ -196,6 +198,16 @@ export async function sendConfirmationNotification(notificationId: number): Prom
 
   const account = getAccount(notification);
   const templateConfig = await getTemplateConfig(notification, account.id);
+  const accessToken = decryptFacebookSecret(account.accessToken);
+  if (templateConfig.metaTemplateId) {
+    const template = findApprovedWhatsAppTemplate(
+      await listWhatsAppTemplates(account.wabaId, accessToken, { name: templateConfig.templateName }),
+      templateConfig,
+    );
+    if (!template || template.name !== templateConfig.templateName || metaTemplateLanguage(template) !== templateConfig.languageCode) {
+      throw new AppError("Configured WhatsApp template ID is no longer available; select and save an approved template", 409, true, "ORDER_TEMPLATE_ID_UNAVAILABLE");
+    }
+  }
   validateOrderTemplateMapping(templateConfig.variableMapping);
   const inspection = inspectOrderTemplateVariables(notification.order as any, templateConfig.variableMapping, templateConfig.locale);
   if (inspection.errors.length) throw new OrderTemplateDataIncompleteError(inspection.errors);
@@ -209,7 +221,6 @@ export async function sendConfirmationNotification(notificationId: number): Prom
   ) {
     throw new Error("Prepared order action token verification failed");
   }
-  const accessToken = decryptFacebookSecret(account.accessToken);
   const rendered = renderOrderTemplateVariables(
     notification.order as any,
     templateConfig.variableMapping,

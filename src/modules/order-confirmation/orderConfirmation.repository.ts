@@ -361,6 +361,7 @@ export type OrderNotificationForSending = {
       storeSyncEnabled: boolean;
       whatsappAccount: {
         id: number;
+        wabaId: string;
         phoneNumberId: string;
         accessToken: string;
       } | null;
@@ -412,7 +413,7 @@ export async function findNotificationForSending(
               defaultLocale: true,
               storeSyncEnabled: true,
               whatsappAccount: {
-                select: { id: true, phoneNumberId: true, accessToken: true },
+                select: { id: true, wabaId: true, phoneNumberId: true, accessToken: true },
               },
             },
           },
@@ -1059,6 +1060,7 @@ const templateConfigPublicSelect = {
   eventType: true,
   locale: true,
   templateName: true,
+  metaTemplateId: true,
   languageCode: true,
   templateVersion: true,
   isActive: true,
@@ -1162,6 +1164,7 @@ export type CreateOrderTemplateConfigRepositoryParams = {
   eventType: string;
   locale: string;
   templateName: string;
+  metaTemplateId?: string | null;
   languageCode: string;
   templateVersion: number;
   variableMapping: Prisma.InputJsonValue;
@@ -1205,6 +1208,7 @@ export async function createOrderTemplateConfig(
         eventType: params.eventType,
         locale: params.locale,
         templateName: params.templateName,
+          metaTemplateId: params.metaTemplateId ?? null,
         languageCode: params.languageCode,
         templateVersion: params.templateVersion,
         variableMapping: params.variableMapping,

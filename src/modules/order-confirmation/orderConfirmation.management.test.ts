@@ -210,6 +210,7 @@ describe("order-confirmation management APIs", () => {
     mocks.validateOrderTemplateMapping.mockImplementation((mapping: unknown) => mapping);
     mocks.listWhatsAppTemplates.mockResolvedValue([
       {
+        id: "1001",
         name: "order_confirm",
         language: "en",
         status: "APPROVED",
@@ -262,6 +263,60 @@ describe("order-confirmation management APIs", () => {
         server.close((error) => (error ? reject(error) : resolve()));
       }),
   );
+
+  const templatePayload = {
+    integrationId: 4, whatsappAccountId: 9, eventType: "order.created", locale: "en",
+    templateName: "order_confirm", languageCode: "en",
+    variableMapping: { body: ["orderNumber"], buttons: ["confirmToken", "cancelToken"] },
+  };
+
+  it("resolves a Meta ID within the account and persists provider metadata", async () => {
+    const response = await request(server, { method: "POST", path: "/order-confirmations/template-configs",
+      body: { ...templatePayload, metaTemplateId: "1001", templateName: "stale_name", languageCode: "ar" } });
+    expect(response.status).toBe(201);
+    expect(mocks.createOrderTemplateConfig).toHaveBeenCalledWith(expect.objectContaining({
+      metaTemplateId: "1001", templateName: "order_confirm", languageCode: "en",
+    }));
+  });
+
+  it("rejects an unknown Meta ID rather than falling back to a matching name", async () => {
+    const response = await request(server, { method: "POST", path: "/order-confirmations/template-configs",
+      body: { ...templatePayload, metaTemplateId: "9999" } });
+    expect(response.status).toBe(400);
+    expect(response.json.message).toContain("not currently approved");
+    expect(mocks.listWhatsAppTemplates).toHaveBeenCalledWith("waba-9", "enc:access");
+    expect(mocks.createOrderTemplateConfig).not.toHaveBeenCalled();
+  });
+
+  it("pins legacy name-and-language writes to the resolved Meta ID", async () => {
+    const response = await request(server, { method: "POST", path: "/order-confirmations/template-configs", body: templatePayload });
+    expect(response.status).toBe(201);
+    expect(mocks.createOrderTemplateConfig).toHaveBeenCalledWith(expect.objectContaining({ metaTemplateId: "1001" }));
+  });
+
+  it("does not repin a stored ID when a template was recreated under the same name", async () => {
+    mocks.findOrderTemplateConfigByIdForProfiles.mockResolvedValue({
+      ...templatePayload, id: 22, businessProfileId: 11, metaTemplateId: "1000", isActive: true,
+    });
+    const response = await request(server, { method: "PATCH", path: "/order-confirmations/template-configs/22",
+      body: { integrationId: 4, variableMapping: templatePayload.variableMapping } });
+    expect(response.status).toBe(400);
+    expect(mocks.updateOrderTemplateConfig).not.toHaveBeenCalled();
+  });
+
+  it("backfills a legacy config when successfully revalidated", async () => {
+    mocks.findOrderTemplateConfigByIdForProfiles.mockResolvedValue({
+      ...templatePayload, id: 22, businessProfileId: 11, isActive: true,
+    });
+    mocks.updateOrderTemplateConfig.mockResolvedValue({ ...templatePayload, id: 22, metaTemplateId: "1001" });
+    const response = await request(server, { method: "PATCH", path: "/order-confirmations/template-configs/22",
+      body: { integrationId: 4, isActive: true } });
+    expect(response.status).toBe(200);
+    expect(response.json.data.metaTemplateId).toBe("1001");
+    expect(mocks.updateOrderTemplateConfig).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ metaTemplateId: "1001" }),
+    }));
+  });
 
   it("lists only accessible integrations and omits every stored secret", async () => {
     const response = await request(server, { method: "GET", path: "/order-integrations" });
@@ -431,7 +486,7 @@ describe("order-confirmation management APIs", () => {
 
   it("accepts an approved notification-only template without button mappings", async () => {
     mocks.listWhatsAppTemplates.mockResolvedValue([{
-      name: "order_notice", language: "en", status: "APPROVED",
+      id: "1003", name: "order_notice", language: "en", status: "APPROVED",
       components: [{ type: "BODY", text: "Order {{1}}" }],
     }]);
     const response = await request(server, {
@@ -464,6 +519,7 @@ describe("order-confirmation management APIs", () => {
   it("accepts localized quick-reply labels because action mapping follows button position", async () => {
     mocks.listWhatsAppTemplates.mockResolvedValue([
       {
+        id: "1004",
         name: "order_confirm",
         language: "ar",
         status: "APPROVED",

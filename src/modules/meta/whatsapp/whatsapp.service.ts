@@ -122,26 +122,54 @@ export async function sendWhatsAppAction(
 export async function listWhatsAppTemplates(
   wabaId: string,
   accessToken: string,
+  options: { name?: string } = {},
 ): Promise<any[]> {
-  const response = await fetch(
-    `https://graph.facebook.com/v25.0/${wabaId}/message_templates?status=APPROVED`,
-    {
+  const baseUrl = new URL(
+    `https://graph.facebook.com/v25.0/${encodeURIComponent(wabaId)}/message_templates`,
+  );
+  baseUrl.searchParams.set("status", "APPROVED");
+  if (options.name) baseUrl.searchParams.set("name", options.name);
+  let pageUrl = new URL(baseUrl);
+  const templates: any[] = [];
+  const seenCursors = new Set<string>();
+  const invalidPage = () => new AppError(
+    "WhatsApp template listing returned invalid pagination", 502, true,
+    "WHATSAPP_TEMPLATE_LIST_INVALID",
+  );
+
+  while (true) {
+    const response = await fetch(pageUrl.toString(), {
       method: "GET",
       headers: {
         Authorization: `Bearer ${accessToken}`,
       },
       signal: AbortSignal.timeout(WHATSAPP_REQUEST_TIMEOUT_MS),
-    },
-  );
-
-  if (!response.ok) {
-    const error = await response.json();
-    logger.error("whatsapp.templates.list_failed", { wabaId, error });
-    throw new AppError(`WhatsApp Templates API error: ${JSON.stringify(error)}`, 502);
+    });
+    if (!response.ok) {
+      logger.error("whatsapp.templates.list_failed", { status: response.status });
+      throw new AppError("WhatsApp template listing failed", 502, true,
+        "WHATSAPP_TEMPLATE_LIST_FAILED");
+    }
+    const result = await response.json() as {
+      data?: any[]; paging?: { next?: unknown };
+    } | null;
+    if (!result || !Array.isArray(result.data)) throw invalidPage();
+    templates.push(...result.data);
+    const next = result.paging?.next;
+    if (next === undefined || next === null) return templates;
+    if (typeof next !== "string" || !next) throw invalidPage();
+    let nextUrl: URL;
+    try { nextUrl = new URL(next); } catch { throw invalidPage(); }
+    if (nextUrl.origin !== baseUrl.origin || nextUrl.pathname !== baseUrl.pathname ||
+        nextUrl.username || nextUrl.password) throw invalidPage();
+    const cursor = nextUrl.searchParams.get("after");
+    if (!cursor || seenCursors.has(cursor)) throw invalidPage();
+    seenCursors.add(cursor);
+    // Rebuild from the authorized account and filters; never copy a token or
+    // changed account/filter from the provider's pagination URL.
+    pageUrl = new URL(baseUrl);
+    pageUrl.searchParams.set("after", cursor);
   }
-
-  const result = (await response.json()) as { data: any[] };
-  return result.data || [];
 }
 
 /**

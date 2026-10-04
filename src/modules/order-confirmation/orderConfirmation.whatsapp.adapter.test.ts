@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   getOrCreateConversation: vi.fn(),
   saveMessage: vi.fn(),
   sendWhatsAppTemplate: vi.fn(),
+  listWhatsAppTemplates: vi.fn(),
   sendWhatsAppReply: vi.fn(),
   acquireBusinessSendPermit: vi.fn(),
   markNotificationAttempted: vi.fn(),
@@ -32,6 +33,7 @@ vi.mock("@modules/meta/core/conversation.service", () => ({
 }));
 vi.mock("@modules/meta/whatsapp/whatsapp.service", () => ({
   sendWhatsAppTemplate: mocks.sendWhatsAppTemplate,
+  listWhatsAppTemplates: mocks.listWhatsAppTemplates,
   sendWhatsAppReply: mocks.sendWhatsAppReply,
 }));
 vi.mock("./orderConfirmation.rateLimit", () => ({
@@ -98,6 +100,7 @@ const notification = {
       storeSyncEnabled: false,
       whatsappAccount: {
         id: 9,
+        wabaId: "fixture-waba",
         phoneNumberId: "phone-1",
         accessToken: "encrypted-access-token",
       },
@@ -107,6 +110,25 @@ const notification = {
 };
 
 describe("WhatsApp confirmation adapter", () => {
+  it("verifies a pinned ID within the sender's WABA before sending its name and language", async () => {
+    const config = await mocks.resolveActiveTemplateConfig();
+    mocks.resolveActiveTemplateConfig.mockResolvedValue({ ...config, metaTemplateId: "1001" });
+    mocks.listWhatsAppTemplates.mockResolvedValue([{ id: "1001", name: config.templateName, language: config.languageCode, status: "APPROVED" }]);
+    await sendConfirmationNotification(18);
+    expect(mocks.listWhatsAppTemplates).toHaveBeenCalledWith("fixture-waba", "plain-access-token", { name: config.templateName });
+    expect(mocks.sendWhatsAppTemplate).toHaveBeenCalledWith(
+      notification.order.customerPhone, config.templateName, config.languageCode,
+      expect.any(Array), "phone-1", "plain-access-token",
+    );
+  });
+  it("rejects a recreated template instead of sending under a stale pinned ID", async () => {
+    const config = await mocks.resolveActiveTemplateConfig();
+    mocks.resolveActiveTemplateConfig.mockResolvedValue({ ...config, metaTemplateId: "1000" });
+    mocks.listWhatsAppTemplates.mockResolvedValue([{ id: "1001", name: config.templateName, language: config.languageCode, status: "APPROVED" }]);
+    await expect(sendConfirmationNotification(18)).rejects.toMatchObject({ code: "ORDER_TEMPLATE_ID_UNAVAILABLE" });
+    expect(mocks.sendWhatsAppTemplate).not.toHaveBeenCalled();
+    expect(mocks.markNotificationAttempted).not.toHaveBeenCalled();
+  });
   it("stops missing fields before action tokens, rate permits, attempts or Meta", async () => {
     mocks.getSystemSetting.mockResolvedValue("true");
     mocks.findNotificationForSending.mockResolvedValue(notification);

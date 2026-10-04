@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   txAcknowledgementUpsert: vi.fn(),
   notificationUpdateMany: vi.fn(),
   notificationUpdate: vi.fn(),
+  notificationFindUnique: vi.fn(),
   notificationFindMany: vi.fn(),
   conversationMessageFindUnique: vi.fn(),
   storeSyncFindMany: vi.fn(),
@@ -41,6 +42,7 @@ vi.mock("@config/prisma", () => ({
       findFirst: mocks.findActionToken,
     },
     orderNotification: {
+      findUnique: mocks.notificationFindUnique,
       findMany: mocks.notificationFindMany,
       updateMany: mocks.notificationUpdateMany,
       update: mocks.notificationUpdate,
@@ -70,7 +72,10 @@ import {
   requeueNotificationForRetry,
   listManagedOrders,
   findManagedOrder,
+  findNotificationForSending,
 } from "./orderConfirmation.repository";
+import { inspectOrderTemplateVariables } from "./orderConfirmation.template-inspection";
+import { renderOrderTemplateVariables } from "./orderConfirmation.template.service";
 import { hashOrderActionToken } from "./orderConfirmation.crypto";
 import { resolveOrderTemplateForIntegration } from "./orderConfirmation.template-validation.service";
 
@@ -127,6 +132,65 @@ describe("order confirmation repository", () => {
         orderNotification: { upsert: mocks.txAcknowledgementUpsert },
       }),
     );
+  });
+
+  it.each([
+    ["349.00", "349", "$349"],
+    ["0", "0", "$0"],
+    ["0.000001", "0.000001", "$0.000001"],
+    ["99999999999999.999999", "99999999999999.999999", "$99999999999999.999999"],
+  ])("keeps persisted total %s usable by live template validation and rendering", async (stored, exact, rendered) => {
+    mocks.notificationFindUnique.mockResolvedValue({
+      id: 18,
+      businessProfileId: 11,
+      orderId: 12,
+      kind: "CONFIRMATION_REQUEST",
+      locale: "en",
+      status: "SENDING",
+      renderedVariables: null,
+      templateConfig: null,
+      actionTokens: [],
+      order: {
+        id: 12,
+        businessProfileId: 11,
+        integrationId: 7,
+        externalOrderId: "test-order",
+        orderNumber: "TEST-1",
+        status: "AWAITING_CONFIRMATION",
+        customerPhone: "+201000000000",
+        customerName: "Test Customer",
+        locale: "en",
+        total: new Prisma.Decimal(stored),
+        currency: "USD",
+        lineItems: null,
+        shippingAddress: null,
+        integration: {
+          id: 7,
+          whatsappAccountId: null,
+          defaultLocale: "en",
+          storeSyncEnabled: false,
+          whatsappAccount: null,
+        },
+      },
+    });
+
+    const notification = await findNotificationForSending(18);
+    expect(notification?.order.total).toBe(exact);
+    const mapping = { body: { "1": "customerName", "2": "total" } } as const;
+    for (const locale of ["en", "ar"]) {
+      const inspection = inspectOrderTemplateVariables(notification!.order, mapping, locale);
+      expect(inspection.errors).toEqual([]);
+      expect(renderOrderTemplateVariables(notification!.order, mapping, undefined, locale).body).toEqual(inspection.body);
+      if (locale === "en") expect(inspection.body).toEqual(["Test Customer", rendered]);
+    }
+    expect(inspectOrderTemplateVariables({ ...notification!.order, currency: "" }, mapping, "en").errors).toEqual([
+      { component: "body", placeholder: "2", field: "total", paths: ["order.total", "order.currency"], reason: "blank" },
+    ]);
+  });
+
+  it("returns null when the notification to send no longer exists", async () => {
+    mocks.notificationFindUnique.mockResolvedValue(null);
+    expect(await findNotificationForSending(18)).toBeNull();
   });
 
   it("applies trimmed literal search to exactly three fields within the accessible profile scope", async () => {

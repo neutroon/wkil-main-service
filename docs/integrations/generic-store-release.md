@@ -73,6 +73,21 @@ order data repair, including the originally reported order, requires a separate
 authorized procedure; creating a different event ID to force a second message
 is not a repair.
 
+## Persisted totals and confirmation retries
+
+WKIL stores order totals as Prisma Decimals. Before live template validation and
+rendering, the notification repository converts them to exact decimal strings.
+Setup previews validate incoming JSON strings, so an older backend missing this
+conversion can pass setup yet fail live sends with `TEMPLATE_DATA_INCOMPLETE` for
+`total` (`order.total`, `order.currency`). This can happen with valid store data
+and a correctly saved template mapping.
+
+After deploying the corrected WKIL backend, retry affected failed confirmations
+from WKIL order details while the order is still awaiting confirmation. A failure
+from this validation occurs before any provider send attempt. The existing retry
+flow clears the diagnostic and uses the current template with the stored order;
+no store event replay, data repair, or template re-save is needed for this bug.
+
 ## Rollback and verification limits
 
 Disable the store connection to pause delivery before rolling back its worker.

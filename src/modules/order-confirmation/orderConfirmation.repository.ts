@@ -350,7 +350,7 @@ export type OrderNotificationForSending = {
     customerPhone: string;
     customerName: string | null;
     locale: string;
-    total: unknown;
+    total: string;
     currency: string;
     lineItems: unknown;
     shippingAddress: unknown;
@@ -372,7 +372,7 @@ export type OrderNotificationForSending = {
 export async function findNotificationForSending(
   notificationId: number,
 ): Promise<OrderNotificationForSending | null> {
-  return prisma.orderNotification.findUnique({
+  const notification = await prisma.orderNotification.findUnique({
     where: { id: notificationId },
     select: {
       id: true,
@@ -421,6 +421,14 @@ export async function findNotificationForSending(
       actionTokens: { select: { action: true, tokenHash: true } },
     },
   });
+
+  if (!notification) return null;
+
+  // Template validation consumes decimal strings, while Prisma reads Decimal objects.
+  return {
+    ...notification,
+    order: { ...notification.order, total: notification.order.total.toFixed() },
+  };
 }
 
 export async function markNotificationSending(notificationId: number): Promise<boolean> {

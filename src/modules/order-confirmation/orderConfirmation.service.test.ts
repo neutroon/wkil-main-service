@@ -19,7 +19,9 @@ const mocks = vi.hoisted(() => ({
   enqueueStoreSync: vi.fn(),
   sendConfirmationNotification: vi.fn(),
   sendAcknowledgementNotification: vi.fn(),
+  sendOrderConfirmationPush: vi.fn(),
   sendGenericOrderStatusCallback: vi.fn(),
+  syncOrderConfirmationUpdated: vi.fn(),
   loggerInfo: vi.fn(),
   loggerWarn: vi.fn(),
   loggerError: vi.fn(),
@@ -64,6 +66,14 @@ vi.mock("./orderConfirmation.whatsapp.adapter", () => ({
 
 vi.mock("./orderConfirmation.store.adapter", () => ({
   sendGenericOrderStatusCallback: mocks.sendGenericOrderStatusCallback,
+}));
+
+vi.mock("@modules/notifications/orderConfirmationPush.service", () => ({
+  sendOrderConfirmationPush: mocks.sendOrderConfirmationPush,
+}));
+
+vi.mock("@modules/realtime/socketSync.service", () => ({
+  syncOrderConfirmationUpdated: mocks.syncOrderConfirmationUpdated,
 }));
 
 vi.mock("@utils/logger", () => ({
@@ -160,6 +170,10 @@ describe("order confirmation workflow", () => {
     );
     expect(mocks.enqueueNotification).toHaveBeenCalledWith(18, expect.any(String));
     expect(mocks.markOrderEventProcessed).toHaveBeenCalledWith(101, 12);
+    expect(mocks.syncOrderConfirmationUpdated).toHaveBeenCalledWith({
+      businessProfileId: 11,
+      orderId: 12,
+    });
   });
 
   it("does not enqueue a second notification when the event was already processed", async () => {
@@ -228,6 +242,16 @@ describe("order confirmation workflow", () => {
     ).resolves.toMatchObject({ applied: false, currentStatus: "CONFIRMED" });
 
     expect(mocks.enqueueNotification).toHaveBeenCalledTimes(1);
+    expect(mocks.sendOrderConfirmationPush).toHaveBeenCalledWith({
+      businessProfileId: 11,
+      orderId: 12,
+      status: "CONFIRMED",
+      locale: "en",
+    });
+    expect(mocks.syncOrderConfirmationUpdated).toHaveBeenCalledWith({
+      businessProfileId: 11,
+      orderId: 12,
+    });
     expect(mocks.createAcknowledgementNotification).not.toHaveBeenCalled();
     expect(mocks.createPendingStoreSync).toHaveBeenCalledWith(12, 11, "CONFIRMED");
     expect(mocks.enqueueStoreSync).toHaveBeenCalledWith(20, "corr-1");
@@ -250,6 +274,39 @@ describe("order confirmation workflow", () => {
     expect(mocks.createPendingStoreSync).toHaveBeenCalledWith(12, 11, "CONFIRMED");
     expect(mocks.enqueueStoreSync).toHaveBeenCalledWith(20, "corr-1");
     expect(mocks.enqueueNotification).not.toHaveBeenCalled();
+    expect(mocks.sendOrderConfirmationPush).not.toHaveBeenCalled();
+    expect(mocks.syncOrderConfirmationUpdated).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { action: "CANCEL", currentStatus: "CANCELED", status: "CANCELED", locale: "ar" },
+    { action: "CONFIRM", currentStatus: "CONFIRMED", status: "CONFIRMED", locale: "en" },
+  ] as const)("sends one push for an applied $status action", async ({ action, currentStatus, status, locale }) => {
+    mocks.claimOrderAction.mockResolvedValue({
+      applied: true,
+      orderId: 12,
+      action,
+      currentStatus,
+      businessProfileId: 11,
+      locale,
+      storeSyncEnabled: false,
+      acknowledgement: null,
+      shouldEnqueueAcknowledgement: false,
+    });
+
+    await processOrderAction(actionInput);
+
+    expect(mocks.sendOrderConfirmationPush).toHaveBeenCalledOnce();
+    expect(mocks.sendOrderConfirmationPush).toHaveBeenCalledWith({
+      businessProfileId: 11,
+      orderId: 12,
+      status,
+      locale,
+    });
+    expect(mocks.syncOrderConfirmationUpdated).toHaveBeenCalledWith({
+      businessProfileId: 11,
+      orderId: 12,
+    });
   });
 
   it("re-enqueues an existing acknowledgement after the first enqueue fails", async () => {
@@ -291,6 +348,8 @@ describe("order confirmation workflow", () => {
   it("marks a notification SENDING before the provider call and SENT after success", async () => {
     mocks.findNotificationForSending.mockResolvedValue({
       id: 18,
+      businessProfileId: 11,
+      orderId: 12,
       status: "QUEUED",
       kind: "CONFIRMATION_REQUEST",
     });
@@ -306,6 +365,10 @@ describe("order confirmation workflow", () => {
     expect(
       mocks.markNotificationSending.mock.invocationCallOrder[0],
     ).toBeLessThan(mocks.sendConfirmationNotification.mock.invocationCallOrder[0]);
+    expect(mocks.syncOrderConfirmationUpdated).toHaveBeenCalledWith({
+      businessProfileId: 11,
+      orderId: 12,
+    });
   });
 
   it("persists missing field diagnostics and terminates automatic retries", async () => {

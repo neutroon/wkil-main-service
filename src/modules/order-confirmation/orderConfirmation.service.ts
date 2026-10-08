@@ -29,6 +29,8 @@ import {
   sendConfirmationNotification,
 } from "./orderConfirmation.whatsapp.adapter";
 import { sendGenericOrderStatusCallback } from "./orderConfirmation.store.adapter";
+import { sendOrderConfirmationPush } from "@modules/notifications/orderConfirmationPush.service";
+import { syncOrderConfirmationUpdated } from "@modules/realtime/socketSync.service";
 import type { OrderAction, OrderActionInput, OrderStatus } from "./orderConfirmation.types";
 
 function errorMessage(error: unknown): string {
@@ -85,6 +87,13 @@ export async function processOrderEvent(eventId: number): Promise<void> {
     confirmTokenHash: confirmToken.tokenHash,
     cancelTokenHash: cancelToken.tokenHash,
   });
+
+  if (workflow.order) {
+    syncOrderConfirmationUpdated({
+      businessProfileId: event.businessProfileId,
+      orderId: workflow.order.id,
+    });
+  }
 
   if (!workflow.notification || !workflow.order) {
     return;
@@ -170,6 +179,11 @@ export async function sendOrderNotification(notificationId: number): Promise<voi
     const message = errorMessage(error);
     await markNotificationFailed(notificationId, message);
     throw error;
+  } finally {
+    syncOrderConfirmationUpdated({
+      businessProfileId: notification.businessProfileId,
+      orderId: notification.orderId,
+    });
   }
 }
 
@@ -180,6 +194,20 @@ export async function processOrderAction(input: OrderActionInput): Promise<{
   currentStatus: OrderStatus;
 }> {
   const result = await claimOrderAction(input);
+  const requestedStatus = result.action === "CONFIRM" ? "CONFIRMED" : "CANCELED";
+
+  if (result.applied && result.currentStatus === requestedStatus) {
+    void sendOrderConfirmationPush({
+      businessProfileId: result.businessProfileId,
+      orderId: result.orderId,
+      status: requestedStatus,
+      locale: result.locale ?? "en",
+    });
+    syncOrderConfirmationUpdated({
+      businessProfileId: result.businessProfileId,
+      orderId: result.orderId,
+    });
+  }
 
   if (result.acknowledgement && result.shouldEnqueueAcknowledgement) {
     await enqueueNotification(
@@ -188,7 +216,6 @@ export async function processOrderAction(input: OrderActionInput): Promise<{
     );
   }
 
-  const requestedStatus = result.action === "CONFIRM" ? "CONFIRMED" : "CANCELED";
   if (result.storeSyncEnabled && result.currentStatus === requestedStatus) {
     const sync = await createPendingStoreSync(
       result.orderId,

@@ -1,24 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+const userServiceMocks = vi.hoisted(() => ({
+  getAccessibleProfileIds: vi.fn(),
+}));
+
 vi.mock("@config/prisma", () => ({
   default: {
-    businessProfile: {
-      findUnique: vi.fn(),
-    },
     conversation: {
       findUnique: vi.fn(),
-    },
-    user: {
-      findFirst: vi.fn(),
-    },
-    userManagement: {
-      findFirst: vi.fn(),
     },
     widgetInstall: {
       findFirst: vi.fn(),
     },
   },
 }));
+
+vi.mock("@modules/auth/user/user.service", () => userServiceMocks);
 
 import prisma from "@config/prisma";
 import {
@@ -77,23 +74,44 @@ describe("socket room authorization", () => {
   });
 
   it("allows dashboard users to join their own business profile room", async () => {
-    mockedPrisma.businessProfile.findUnique.mockResolvedValue({
-      userId: 10,
-    } as any);
+    userServiceMocks.getAccessibleProfileIds.mockResolvedValue([20]);
 
     await expect(
       authorizeBusinessRoomJoin({ user: { id: 10, role: "user" } }, 20),
     ).resolves.toBe(true);
+    expect(userServiceMocks.getAccessibleProfileIds).toHaveBeenCalledWith(10);
   });
 
   it("allows managers to join assigned users' business rooms", async () => {
-    mockedPrisma.businessProfile.findUnique.mockResolvedValue({
-      userId: 15,
-    } as any);
-    mockedPrisma.userManagement.findFirst.mockResolvedValue({ id: 7 } as any);
+    userServiceMocks.getAccessibleProfileIds.mockResolvedValue([20]);
 
     await expect(
       authorizeBusinessRoomJoin({ user: { id: 10, role: "manager" } }, 20),
+    ).resolves.toBe(true);
+    expect(userServiceMocks.getAccessibleProfileIds).toHaveBeenCalledWith(10);
+  });
+
+  it("allows active workspace collaborators using the same access policy as order REST", async () => {
+    userServiceMocks.getAccessibleProfileIds.mockResolvedValue([20, 21]);
+
+    await expect(
+      authorizeBusinessRoomJoin({ user: { id: 17, role: "user" } }, 20),
+    ).resolves.toBe(true);
+  });
+
+  it("blocks collaborators who are not in the accessible profile set", async () => {
+    userServiceMocks.getAccessibleProfileIds.mockResolvedValue([21]);
+
+    await expect(
+      authorizeBusinessRoomJoin({ user: { id: 17, role: "user" } }, 20),
+    ).resolves.toBe(false);
+  });
+
+  it("preserves administrator access as defined by the shared policy", async () => {
+    userServiceMocks.getAccessibleProfileIds.mockResolvedValue([20, 21, 22]);
+
+    await expect(
+      authorizeBusinessRoomJoin({ user: { id: 1, role: "admin" } }, 22),
     ).resolves.toBe(true);
   });
 
@@ -104,10 +122,7 @@ describe("socket room authorization", () => {
       pageId: "widget:1",
       senderId: "visitor-123",
     } as any);
-    mockedPrisma.businessProfile.findUnique.mockResolvedValue({
-      userId: 99,
-    } as any);
-    mockedPrisma.userManagement.findFirst.mockResolvedValue(null);
+    userServiceMocks.getAccessibleProfileIds.mockResolvedValue([]);
 
     await expect(
       authorizeConversationRoomJoin({ user: { id: 10, role: "user" } }, 55),

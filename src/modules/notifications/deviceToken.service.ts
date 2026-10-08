@@ -91,13 +91,12 @@ export async function listActiveTokensForUser(params: {
 }
 
 /**
- * Resolve "all users owning business X" to a flat list of FCM tokens,
- * partitioned by platform. Used by the handoff push fan-out.
+ * Resolve the business owner and active workspace collaborators to a flat
+ * list of FCM tokens. Used by push fan-out.
  *
- * We hit the DeviceToken table directly via a Prisma join rather than
- * User → businessProfiles → User → DeviceToken because DeviceToken
- * already carries `userId`, and a single `findMany` with a `userId: { in }`
- * is one round-trip and reads from the right index.
+ * DeviceToken is keyed by userId, so resolve the authorized users first and
+ * then query its indexed userId column. The active membership filter mirrors
+ * the order REST visibility policy for workspace collaborators.
  */
 export async function listActiveTokensForBusiness(params: {
   businessProfileId: number;
@@ -106,19 +105,22 @@ export async function listActiveTokensForBusiness(params: {
   const { businessProfileId, staleAfterDays = 90 } = params;
   const cutoff = new Date(Date.now() - staleAfterDays * 24 * 60 * 60 * 1000);
 
-  // Find every User whose businessProfiles include this id. The
-  // BusinessProfile -> User relation is `businessProfile.userId` so we
-  // look up from the business side.
-  const profiles = await prisma.businessProfile.findMany({
+  const profile = await prisma.businessProfile.findUnique({
     where: { id: businessProfileId },
+    select: { userId: true, workspaceId: true },
+  });
+  if (!profile) return [];
+
+  const memberships = await prisma.workspaceMember.findMany({
+    where: { workspaceId: profile.workspaceId, isActive: true },
     select: { userId: true },
   });
-  const userIds = profiles.map((p) => p.userId);
-  if (userIds.length === 0) return [];
+  const userIds = [...new Set([profile.userId, ...memberships.map((membership) => membership.userId)])];
 
   const rows = await prisma.deviceToken.findMany({
     where: {
       userId: { in: userIds },
+      user: { isActive: true },
       lastSeenAt: { gte: cutoff },
     },
     select: { token: true },

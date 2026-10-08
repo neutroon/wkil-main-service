@@ -7,6 +7,7 @@ import {
   classifyNetworkRetry,
 } from "@modules/integrations/retryPolicy";
 import { logger } from "@utils/logger";
+import { syncOrderConfirmationUpdated } from "@modules/realtime/socketSync.service";
 import { computeOrderWebhookSignature } from "./orderConfirmation.crypto";
 
 const CALLBACK_TIMEOUT_MS = 8_000;
@@ -33,6 +34,7 @@ async function findStoreSync(syncId: number) {
       order: {
         select: {
           id: true,
+          businessProfileId: true,
           externalOrderId: true,
           events: {
             orderBy: { occurredAt: "desc" },
@@ -268,67 +270,76 @@ export async function sendGenericOrderStatusCallback(syncId: number): Promise<vo
   }
 
   const attempt = await markAttemptStarted(sync);
-  const integration = sync.order?.integration;
-  if (!integration || !integration.isActive || !integration.storeSyncEnabled) {
-    await markFailed(sync.id, "Store synchronization is not active");
-    return;
-  }
-
-  let callbackUrl: string;
-  let currentSecret: string;
   try {
-    callbackUrl = parseHttpsCallbackUrl(integration.statusCallbackUrl);
-    if (typeof integration.statusCallbackSecret !== "string" || integration.statusCallbackSecret.length === 0) {
-      throw new Error("Missing status callback secret");
+    const integration = sync.order?.integration;
+    if (!integration || !integration.isActive || !integration.storeSyncEnabled) {
+      await markFailed(sync.id, "Store synchronization is not active");
+      return;
     }
-    currentSecret = decryptFacebookSecret(integration.statusCallbackSecret);
-    if (currentSecret.length === 0) {
-      throw new Error("Missing status callback secret");
-    }
-  } catch (error) {
-    await recordNetworkFailure(sync, attempt, error);
-    return;
-  }
 
-  const body = callbackBody(sync);
-  const timestamp = String(Math.floor(Date.now() / 1000));
-  let response: Response;
-  try {
-    await assertExternalApiUrlNetworkSafe(callbackUrl);
-    response = await postCallback(
-      callbackUrl,
-      body,
-      sync.providerIdempotencyKey,
-      timestamp,
-      currentSecret,
-    );
-
-    if ((response.status === 401 || response.status === 403) && integration.previousStatusCallbackSecret) {
-      const previousSecret = decryptFacebookSecret(integration.previousStatusCallbackSecret);
-      if (previousSecret.length > 0 && previousSecret !== currentSecret) {
-        await assertExternalApiUrlNetworkSafe(callbackUrl);
-        response = await postCallback(
-          callbackUrl,
-          body,
-          sync.providerIdempotencyKey,
-          timestamp,
-          previousSecret,
-        );
+    let callbackUrl: string;
+    let currentSecret: string;
+    try {
+      callbackUrl = parseHttpsCallbackUrl(integration.statusCallbackUrl);
+      if (typeof integration.statusCallbackSecret !== "string" || integration.statusCallbackSecret.length === 0) {
+        throw new Error("Missing status callback secret");
       }
+      currentSecret = decryptFacebookSecret(integration.statusCallbackSecret);
+      if (currentSecret.length === 0) {
+        throw new Error("Missing status callback secret");
+      }
+    } catch (error) {
+      await recordNetworkFailure(sync, attempt, error);
+      return;
     }
-  } catch (error) {
-    await recordNetworkFailure(sync, attempt, error);
-    return;
-  }
 
-  if (isSuccessResponse(response)) {
-    await markSucceeded(sync.id, String(response.status));
-    logger.info("order_confirmation.store_sync_succeeded", {
-      syncId: sync.id,
-      providerStatus: response.status,
-    });
-    return;
-  }
+    const body = callbackBody(sync);
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    let response: Response;
+    try {
+      await assertExternalApiUrlNetworkSafe(callbackUrl);
+      response = await postCallback(
+        callbackUrl,
+        body,
+        sync.providerIdempotencyKey,
+        timestamp,
+        currentSecret,
+      );
 
-  await recordDeliveryFailure(sync, attempt, response);
+      if ((response.status === 401 || response.status === 403) && integration.previousStatusCallbackSecret) {
+        const previousSecret = decryptFacebookSecret(integration.previousStatusCallbackSecret);
+        if (previousSecret.length > 0 && previousSecret !== currentSecret) {
+          await assertExternalApiUrlNetworkSafe(callbackUrl);
+          response = await postCallback(
+            callbackUrl,
+            body,
+            sync.providerIdempotencyKey,
+            timestamp,
+            previousSecret,
+          );
+        }
+      }
+    } catch (error) {
+      await recordNetworkFailure(sync, attempt, error);
+      return;
+    }
+
+    if (isSuccessResponse(response)) {
+      await markSucceeded(sync.id, String(response.status));
+      logger.info("order_confirmation.store_sync_succeeded", {
+        syncId: sync.id,
+        providerStatus: response.status,
+      });
+      return;
+    }
+
+    await recordDeliveryFailure(sync, attempt, response);
+  } finally {
+    if (sync.order) {
+      syncOrderConfirmationUpdated({
+        businessProfileId: sync.order.businessProfileId,
+        orderId: sync.order.id,
+      });
+    }
+  }
 }

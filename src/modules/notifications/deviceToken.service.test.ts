@@ -9,6 +9,9 @@ vi.mock("@config/prisma", () => ({
       updateMany: vi.fn(),
     },
     businessProfile: {
+      findUnique: vi.fn(),
+    },
+    workspaceMember: {
       findMany: vi.fn(),
     },
   },
@@ -41,6 +44,9 @@ const mockedPrisma = prisma as unknown as {
     updateMany: ReturnType<typeof vi.fn>;
   };
   businessProfile: {
+    findUnique: ReturnType<typeof vi.fn>;
+  };
+  workspaceMember: {
     findMany: ReturnType<typeof vi.fn>;
   };
 };
@@ -150,18 +156,24 @@ describe("deviceToken.service.listActiveTokensForBusiness", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("returns [] when no business profile matches", async () => {
-    mockedPrisma.businessProfile.findMany.mockResolvedValueOnce([]);
+    mockedPrisma.businessProfile.findUnique.mockResolvedValueOnce(null);
     const result = await listActiveTokensForBusiness({
       businessProfileId: 999,
     });
     expect(result).toEqual([]);
+    expect(mockedPrisma.workspaceMember.findMany).not.toHaveBeenCalled();
     expect(mockedPrisma.deviceToken.findMany).not.toHaveBeenCalled();
   });
 
-  it("fans out across all users owning the business", async () => {
-    mockedPrisma.businessProfile.findMany.mockResolvedValueOnce([
+  it("fans out to the owner and active workspace members without duplicate users", async () => {
+    mockedPrisma.businessProfile.findUnique.mockResolvedValueOnce({
+      userId: 1,
+      workspaceId: 8,
+    });
+    mockedPrisma.workspaceMember.findMany.mockResolvedValueOnce([
       { userId: 1 },
       { userId: 2 },
+      { userId: 3 },
     ]);
     mockedPrisma.deviceToken.findMany.mockResolvedValueOnce([
       { token: "x" },
@@ -174,14 +186,19 @@ describe("deviceToken.service.listActiveTokensForBusiness", () => {
     });
 
     expect(result).toEqual(["x", "y", "z"]);
-    expect(mockedPrisma.businessProfile.findMany).toHaveBeenCalledWith({
+    expect(mockedPrisma.businessProfile.findUnique).toHaveBeenCalledWith({
       where: { id: 5 },
+      select: { userId: true, workspaceId: true },
+    });
+    expect(mockedPrisma.workspaceMember.findMany).toHaveBeenCalledWith({
+      where: { workspaceId: 8, isActive: true },
       select: { userId: true },
     });
     const deviceCall = mockedPrisma.deviceToken.findMany.mock.calls[0]![0] as {
-      where: { userId: { in: number[] }; lastSeenAt: { gte: Date } };
+      where: { userId: { in: number[] }; user: { isActive: boolean }; lastSeenAt: { gte: Date } };
     };
-    expect(deviceCall.where.userId.in).toEqual([1, 2]);
+    expect(deviceCall.where.userId.in).toEqual([1, 2, 3]);
+    expect(deviceCall.where.user).toEqual({ isActive: true });
   });
 });
 

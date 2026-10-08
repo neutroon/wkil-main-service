@@ -31,7 +31,12 @@ vi.mock("@utils/logger", () => ({
   },
 }));
 
-import { syncCoexistenceHistoryImported, syncManualReply } from "./socketSync.service";
+import {
+  syncCoexistenceHistoryImported,
+  syncHandoffRequested,
+  syncManualReply,
+  syncOrderConfirmationUpdated,
+} from "./socketSync.service";
 
 describe("Manual reply realtime synchronization", () => {
   beforeEach(() => {
@@ -68,6 +73,50 @@ describe("Manual reply realtime synchronization", () => {
       conversationId: 45,
       aiEnabled: false,
     });
+  });
+});
+
+describe("order confirmation realtime synchronization", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("emits only business and order identifiers for client invalidation", () => {
+    syncOrderConfirmationUpdated({ businessProfileId: 10, orderId: 42 });
+
+    expect(socketMocks.emitToBusiness).toHaveBeenCalledWith(
+      10,
+      "order_confirmation_updated",
+      { businessProfileId: 10, orderId: 42 },
+    );
+    expect(socketMocks.emitToConversation).not.toHaveBeenCalled();
+  });
+
+  it("does not let socket transport errors break order processing", () => {
+    socketMocks.emitToBusiness.mockImplementationOnce(() => {
+      throw new Error("socket unavailable");
+    });
+
+    expect(() => syncOrderConfirmationUpdated({ businessProfileId: 10, orderId: 42 }))
+      .not.toThrow();
+  });
+});
+
+describe("handoff realtime synchronization", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("keeps socket errors from interrupting a durable handoff", () => {
+    socketMocks.emitToBusiness.mockImplementationOnce(() => {
+      throw new Error("socket unavailable");
+    });
+
+    expect(() => syncHandoffRequested({
+      businessProfileId: 10,
+      conversationId: 45,
+      message: { id: 2, content: "Human handoff requested." },
+    })).not.toThrow();
   });
 });
 

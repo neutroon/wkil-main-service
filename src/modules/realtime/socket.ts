@@ -1,5 +1,6 @@
 import { env } from "@config/env";
 import prisma from "@config/prisma";
+import { getAccessibleProfileIds } from "@modules/auth/user/user.service";
 import jwt from "jsonwebtoken";
 import { Server as SocketIOServer, Socket } from "socket.io";
 import { Server as HTTPServer } from "http";
@@ -240,28 +241,8 @@ export async function canAccessBusinessProfile(
 ): Promise<boolean> {
   const user = identity?.user;
   if (!user) return false;
-  if (["super_admin", "admin"].includes(user.role)) return true;
-
-  const profile = await prisma.businessProfile.findUnique({
-    where: { id: businessProfileId },
-    select: { userId: true },
-  });
-  if (!profile) return false;
-  if (profile.userId === user.id) return true;
-
-  if (user.role !== "manager") return false;
-  const assignment = await prisma.userManagement.findFirst({
-    where: {
-      managerId: user.id,
-      userId: profile.userId,
-      isActive: true,
-      manager: { role: "manager" },
-      user: { role: "user" },
-    },
-    select: { id: true },
-  });
-
-  return Boolean(assignment);
+  const accessibleProfileIds = await getAccessibleProfileIds(user.id);
+  return accessibleProfileIds.includes(businessProfileId);
 }
 
 export async function authorizeBusinessRoomJoin(

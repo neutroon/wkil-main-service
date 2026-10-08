@@ -10,10 +10,12 @@ const followUpMock = vi.hoisted(() => ({
   cancelConversationFollowUps: vi.fn(),
 }));
 const socketMock = vi.hoisted(() => ({ syncHandoffRequested: vi.fn() }));
+const pushMock = vi.hoisted(() => ({ sendHandoffPush: vi.fn() }));
 
 vi.mock("@config/prisma", () => ({ default: prismaMock }));
 vi.mock("@modules/follow-up/followUp.service", () => followUpMock);
 vi.mock("@modules/realtime/socketSync.service", () => socketMock);
+vi.mock("@modules/notifications/handoffPush.service", () => pushMock);
 
 import {
   applyCustomerDecision,
@@ -219,7 +221,29 @@ describe("customer decision applier", () => {
     expect(socketMock.syncHandoffRequested).toHaveBeenCalledWith(expect.objectContaining({
       businessProfileId: 10, conversationId: 45,
     }));
+    expect(pushMock.sendHandoffPush).toHaveBeenCalledOnce();
+    expect(pushMock.sendHandoffPush).toHaveBeenCalledWith({
+      businessProfileId: 10,
+      conversationId: 45,
+      handoffCategory: "SUPPORT",
+      locale: "en",
+    });
     expect(deliver).not.toHaveBeenCalled();
+  });
+
+  it("does not send a second handoff push when the durable handoff already exists", async () => {
+    prismaMock.conversationMessage.findUnique.mockResolvedValue(
+      message({ content: "Human handoff requested.", status: "SENT" }),
+    );
+
+    await applyCustomerDecision({
+      ...params,
+      decision: { action: "HANDOFF", content: null, reason_code: "HUMAN_ACTION_REQUIRED", handoff_category: "SUPPORT" },
+      deliver: vi.fn(),
+    });
+
+    expect(prismaMock.conversationMessage.create).not.toHaveBeenCalled();
+    expect(pushMock.sendHandoffPush).not.toHaveBeenCalled();
   });
 
   it("resolves without creating or delivering an outbound message", async () => {

@@ -55,14 +55,10 @@ describe("buildConversationUid", () => {
 describe("sendHandoffPush", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Default: two active devices, conversation exists, last customer
-    // message is a short Arabic string.
+    // Default: two active devices and a conversation that can be routed.
     mockedList.mockResolvedValue(["token-A", "token-B"]);
     mockedPrisma.conversation.findUnique.mockResolvedValue({
       channel: "whatsapp",
-    });
-    mockedPrisma.conversationMessage.findFirst.mockResolvedValue({
-      content: "محتاج اسعار المنتجات",
     });
     mockedSend.mockResolvedValue({
       attempted: 2,
@@ -83,7 +79,7 @@ describe("sendHandoffPush", () => {
     expect(mockedSend).not.toHaveBeenCalled();
   });
 
-  it("sends the localized title + truncated preview body to every active token", async () => {
+  it("sends a localized generic body without exposing customer message content", async () => {
     await sendHandoffPush({
       businessProfileId: 1,
       conversationId: 99,
@@ -95,12 +91,17 @@ describe("sendHandoffPush", () => {
       tokens: string[];
       notification: { title: string; body: string };
       data: Record<string, string>;
-      android: { channelId: string; priority: string };
+      android: { channelId: string; priority: string; visibility: string };
       apns: { pushType: string; payload: { aps: { sound: string } } };
     };
     expect(msg.tokens).toEqual(["token-A", "token-B"]);
     expect(msg.notification.title).toBe("طلب تسليم بشري");
-    expect(msg.notification.body).toBe("محتاج اسعار المنتجات");
+    expect(msg.notification.body).toBe("يحتاج أحد العملاء إلى مساعدة من فريق الدعم");
+    expect(mockedPrisma.conversation.findUnique).toHaveBeenCalledWith({
+      where: { id: 99, businessProfileId: 1 },
+      select: { channel: true },
+    });
+    expect(mockedPrisma.conversationMessage.findFirst).not.toHaveBeenCalled();
     expect(msg.data).toMatchObject({
       type: "handoff_request",
       conversation_id: "99",
@@ -111,11 +112,11 @@ describe("sendHandoffPush", () => {
     });
     expect(msg.android.channelId).toBe("handoff_requests_v2");
     expect(msg.android.priority).toBe("high");
+    expect(msg.android.visibility).toBe("private");
     expect(msg.apns.pushType).toBe("alert");
   });
 
-  it("falls back to the default body when there's no customer preview", async () => {
-    mockedPrisma.conversationMessage.findFirst.mockResolvedValueOnce(null);
+  it("uses generic lock-screen wording in English", async () => {
     await sendHandoffPush({
       businessProfileId: 1,
       conversationId: 99,
@@ -126,26 +127,7 @@ describe("sendHandoffPush", () => {
       notification: { title: string; body: string };
     };
     expect(msg.notification.title).toBe("Handoff requested");
-    expect(msg.notification.body).toBe("Customer needs a human");
-  });
-
-  it("truncates the preview to fit OS notification body limits", async () => {
-    const huge = "x".repeat(500);
-    mockedPrisma.conversationMessage.findFirst.mockResolvedValueOnce({
-      content: huge,
-    });
-    await sendHandoffPush({
-      businessProfileId: 1,
-      conversationId: 99,
-      handoffCategory: "SALES",
-      locale: "en",
-    });
-    const msg = mockedSend.mock.calls[0]![0] as {
-      notification: { body: string };
-    };
-    // 119 chars + ellipsis = 120 chars total
-    expect(msg.notification.body.length).toBe(120);
-    expect(msg.notification.body.endsWith("…")).toBe(true);
+    expect(msg.notification.body).toBe("A customer needs help from your team");
   });
 
   it("uses 'web' as the default channel when the conversation has none", async () => {

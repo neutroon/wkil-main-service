@@ -228,6 +228,28 @@ export const syncManualReply = (params: {
  * Handles real-time sync for bulk operations (updateMany) where Prisma 
  * hooks cannot provide the updated objects.
  */
+/**
+ * Tells connected clients to refetch the current order confirmation state.
+ * The payload deliberately contains no customer or order details.
+ */
+export const syncOrderConfirmationUpdated = (params: {
+  businessProfileId: number;
+  orderId: number;
+}) => {
+  try {
+    emitToBusiness(params.businessProfileId, "order_confirmation_updated", {
+      businessProfileId: params.businessProfileId,
+      orderId: params.orderId,
+    });
+  } catch (error) {
+    logger.warn("socket.order_confirmation_sync_failed", {
+      businessProfileId: params.businessProfileId,
+      orderId: params.orderId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+};
+
 export const syncBulkMessageStatus = (params: {
   businessProfileId: number;
   conversationId: number;
@@ -309,10 +331,18 @@ export const syncHandoffRequested = (params: {
   conversationId: number;
   message: any;
 }) => {
-  emitToBusiness(params.businessProfileId, "handoff_requested", {
-    conversationId: params.conversationId,
-    message: params.message,
-  });
+  try {
+    emitToBusiness(params.businessProfileId, "handoff_requested", {
+      conversationId: params.conversationId,
+      message: params.message,
+    });
+  } catch (error) {
+    logger.warn("socket.handoff_sync_failed", {
+      businessProfileId: params.businessProfileId,
+      conversationId: params.conversationId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 };
 
 /**

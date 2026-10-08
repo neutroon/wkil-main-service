@@ -1,4 +1,5 @@
 import prisma from "@config/prisma";
+import { sendHandoffPush } from "@modules/notifications/handoffPush.service";
 import { syncHandoffRequested } from "@modules/realtime/socketSync.service";
 import { logger } from "@utils/logger";
 import {
@@ -282,7 +283,8 @@ async function applyHandoff(
   await cancelConversationFollowUps(params.conversationId);
 
   const existing = await getMessageForTurn(params);
-  const message = existing ?? await createHandoffAudit(params, category);
+  const createdAudit = existing ? null : await createHandoffAudit(params, category);
+  const message = existing ?? createdAudit!.message;
   assertMessageScope(message, params);
 
   // Socket delivery is intentionally at-least-once. The audit row is durable
@@ -292,15 +294,23 @@ async function applyHandoff(
     conversationId: params.conversationId,
     message,
   });
+  if (createdAudit?.created) {
+    void sendHandoffPush({
+      businessProfileId: params.businessProfileId,
+      conversationId: params.conversationId,
+      handoffCategory: category,
+      locale: "en",
+    });
+  }
   return { action: "HANDOFF", message };
 }
 
 async function createHandoffAudit(
   params: ApplyCustomerDecisionParams,
   category: string,
-): Promise<PersistedMessage> {
+): Promise<{ message: PersistedMessage; created: boolean }> {
   try {
-    return await prisma.conversationMessage.create({
+    const message = await prisma.conversationMessage.create({
       data: {
         conversationId: params.conversationId,
         agentTurnId: params.agentTurnId,
@@ -311,11 +321,12 @@ async function createHandoffAudit(
         origin: "customer_agent_handoff",
       },
     });
+    return { message, created: true };
   } catch (error) {
     if (!isUniqueConstraintError(error)) throw error;
     const concurrent = await getMessageForTurn(params);
     if (!concurrent) throw error;
-    return concurrent;
+    return { message: concurrent, created: false };
   }
 }
 

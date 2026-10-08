@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   loggerInfo: vi.fn(),
   loggerWarn: vi.fn(),
   loggerError: vi.fn(),
+  syncOrderConfirmationUpdated: vi.fn(),
 }));
 
 vi.mock("@config/prisma", () => ({
@@ -36,6 +37,10 @@ vi.mock("@utils/logger", () => ({
   },
 }));
 
+vi.mock("@modules/realtime/socketSync.service", () => ({
+  syncOrderConfirmationUpdated: mocks.syncOrderConfirmationUpdated,
+}));
+
 import { computeOrderWebhookSignature } from "./orderConfirmation.crypto";
 import { sendGenericOrderStatusCallback } from "./orderConfirmation.store.adapter";
 
@@ -47,6 +52,7 @@ const syncRecord = {
   attemptCount: 0,
   order: {
     id: 12,
+    businessProfileId: 11,
     externalOrderId: "external-order-12",
     status: "CONFIRMED",
     events: [{ externalEventId: "source-event-7" }],
@@ -120,6 +126,10 @@ describe("generic signed store status callback", () => {
         nextAttemptAt: null,
         completedAt: expect.any(Date),
       }),
+    });
+    expect(mocks.syncOrderConfirmationUpdated).toHaveBeenCalledWith({
+      businessProfileId: 11,
+      orderId: 12,
     });
   });
 
